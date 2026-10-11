@@ -27,6 +27,7 @@ export default function AdvancesPage() {
 
   const [searchQuery, setSearchQuery] = useState('');
   const [statusFilter, setStatusFilter] = useState<string>('all');
+  const [projectFilter, setProjectFilter] = useState<string>('all');
 
   // Modals
   const [isAddModalOpen, setIsAddModalOpen] = useState(false);
@@ -45,7 +46,12 @@ export default function AdvancesPage() {
 
   const formatPHP = formatPesoCompact;
 
-  const filteredAdvances = advances.filter((adv) => {
+  const projectScopedAdvances =
+    projectFilter === 'all'
+      ? advances
+      : advances.filter((adv) => adv.project_id === projectFilter);
+
+  const filteredAdvances = projectScopedAdvances.filter((adv) => {
     const worker = workers.find((w) => w.id === adv.worker_id);
     const proj = projects.find((p) => p.id === adv.project_id);
 
@@ -58,7 +64,7 @@ export default function AdvancesPage() {
     return matchesSearch && matchesStatus;
   });
 
-  const totalOutstandingBale = advances
+  const totalOutstandingBale = projectScopedAdvances
     .filter((a) => a.status === 'active' || a.status === 'partially_deducted')
     .reduce((sum, a) => sum + (a.amount - a.amount_deducted), 0);
 
@@ -136,7 +142,7 @@ export default function AdvancesPage() {
           <div className="p-5 rounded-3xl bg-white border border-surface-border shadow-sm">
             <div className="text-xs font-semibold text-ink-secondary uppercase">Workers with Advances</div>
             <div className="text-2xl font-bold text-navy mt-1">
-              {new Set(advances.filter((a) => a.status === 'active' || a.status === 'partially_deducted').map((a) => a.worker_id)).size}
+              {new Set(projectScopedAdvances.filter((a) => a.status === 'active' || a.status === 'partially_deducted').map((a) => a.worker_id)).size}
             </div>
             <div className="text-[11px] text-ink-muted mt-0.5">Active site craftsmen</div>
           </div>
@@ -144,20 +150,34 @@ export default function AdvancesPage() {
           <div className="p-5 rounded-3xl bg-white border border-surface-border shadow-sm">
             <div className="text-xs font-semibold text-ink-secondary uppercase">Total Repaid to Date</div>
             <div className="text-2xl font-bold text-status-success mt-1">
-              {formatPHP(advances.reduce((sum, a) => sum + Number(a.amount_deducted || 0), 0))}
+              {formatPHP(projectScopedAdvances.reduce((sum, a) => sum + Number(a.amount_deducted || 0), 0))}
             </div>
             <div className="text-[11px] text-status-success mt-0.5">Recovered via payroll deductions</div>
           </div>
         </div>
 
         {/* Filters */}
-        <div className="flex flex-col sm:flex-row items-center gap-3">
+        <div className="flex flex-col sm:flex-row flex-wrap items-center gap-3">
           <div className="w-full sm:w-80">
             <Input
               placeholder="Search worker name, reason, project..."
               value={searchQuery}
               onChange={(e) => setSearchQuery(e.target.value)}
               leftIcon={<Search className="w-4 h-4" />}
+            />
+          </div>
+
+          <div className="w-full sm:w-64">
+            <Select
+              value={projectFilter}
+              onChange={(e) => setProjectFilter(e.target.value)}
+              options={[
+                { label: 'All Project Sites', value: 'all' },
+                ...projects.map((p) => ({
+                  label: `${p.name} (${p.location.split(',')[0]})`,
+                  value: p.id,
+                })),
+              ]}
             />
           </div>
 

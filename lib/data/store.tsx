@@ -95,7 +95,11 @@ interface DataStoreContextType {
   getAttendanceForProjectAndDate: (projectId: string, date: string) => Attendance[];
 
   // Payroll Actions
-  createPayrollRun: (periodStart: string, periodEnd: string) => Promise<Payroll[] | null>;
+  createPayrollRun: (
+    periodStart: string,
+    periodEnd: string,
+    projectId?: string
+  ) => Promise<Payroll[] | null>;
   updatePayrollStatus: (id: string, status: Payroll['status']) => Promise<boolean>;
 
   // Tool Actions
@@ -767,8 +771,11 @@ export const DataStoreProvider: React.FC<{ children: React.ReactNode }> = ({ chi
   // --- PAYROLL ACTIONS ---
   const createPayrollRun = async (
     periodStart: string,
-    periodEnd: string
+    periodEnd: string,
+    projectId?: string
   ): Promise<Payroll[] | null> => {
+    const targetProject =
+      projectId && projectId !== 'all' ? projects.find((p) => p.id === projectId) : undefined;
     // Generate payroll rows for active workers based on attendance in range.
     const rows: Array<Omit<Payroll, 'id' | 'created_at'>> = [];
 
@@ -776,8 +783,18 @@ export const DataStoreProvider: React.FC<{ children: React.ReactNode }> = ({ chi
       .filter((w) => w.active)
       .forEach((w) => {
         const workerAtt = attendance.filter(
-          (a) => a.worker_id === w.id && a.date >= periodStart && a.date <= periodEnd
+          (a) =>
+            a.worker_id === w.id &&
+            a.date >= periodStart &&
+            a.date <= periodEnd &&
+            (!targetProject || a.project_id === targetProject.id)
         );
+
+        // When computing for a specific project site, skip workers with no
+        // attendance on that project in the selected period.
+        if (targetProject && workerAtt.length === 0) {
+          return;
+        }
 
         const daysPresent = workerAtt.filter((a) => a.status === 'present').length;
         const halfDays = workerAtt.filter((a) => a.status === 'half_day').length;
@@ -788,7 +805,9 @@ export const DataStoreProvider: React.FC<{ children: React.ReactNode }> = ({ chi
 
         const activeBales = advances.filter(
           (adv) =>
-            adv.worker_id === w.id && (adv.status === 'active' || adv.status === 'partially_deducted')
+            adv.worker_id === w.id &&
+            (adv.status === 'active' || adv.status === 'partially_deducted') &&
+            (!targetProject || adv.project_id === targetProject.id)
         );
         const totalBaleOutstanding = activeBales.reduce(
           (sum, adv) => sum + (adv.amount - adv.amount_deducted),
@@ -807,6 +826,16 @@ export const DataStoreProvider: React.FC<{ children: React.ReactNode }> = ({ chi
 
         const net = Math.max(0, gross - suggestedDeduction);
 
+        const siteIds = Array.from(new Set(workerAtt.map((a) => a.project_id)));
+        const siteNames = siteIds
+          .map((pid) => projects.find((p) => p.id === pid)?.name)
+          .filter(Boolean) as string[];
+        const siteLabel = targetProject
+          ? ` — Site: ${targetProject.name}`
+          : siteNames.length > 0
+            ? ` — Site: ${siteNames.join(', ')}`
+            : '';
+
         rows.push({
           worker_id: w.id,
           period_start: periodStart,
@@ -818,9 +847,19 @@ export const DataStoreProvider: React.FC<{ children: React.ReactNode }> = ({ chi
           status: 'draft',
           days_worked: effectiveDays,
           hours_worked: hoursTotal,
-          notes: `Auto-computed from ${effectiveDays} days attendance`,
+          notes: `Auto-computed from ${effectiveDays} days attendance${siteLabel}`,
         });
       });
+
+    if (rows.length === 0) {
+      showToast(
+        'error',
+        targetProject
+          ? `No active worker attendance found for ${targetProject.name} in ${periodStart} → ${periodEnd}.`
+          : 'No active workers found to compute payroll.'
+      );
+      return null;
+    }
 
     const inserted = await runMutation('Create payroll run', (db) =>
       db.from('payroll').insert(rows).select()

@@ -62,6 +62,12 @@ export default function AttendancePage() {
   const [submissionSuccess, setSubmissionSuccess] = useState(false);
   const [searchWorker, setSearchWorker] = useState('');
 
+  // History tab filters
+  const [historyProjectFilter, setHistoryProjectFilter] = useState<string>('all');
+  const [historyStatusFilter, setHistoryStatusFilter] = useState<string>('all');
+  const [historyDateFilter, setHistoryDateFilter] = useState<string>('');
+  const [historySearchQuery, setHistorySearchQuery] = useState<string>('');
+
   // Founder Override modal
   const [overrideModalOpen, setOverrideModalOpen] = useState(false);
   const [selectedRecordForOverride, setSelectedRecordForOverride] = useState<any>(null);
@@ -204,6 +210,35 @@ export default function AttendancePage() {
   const halfDayCount = Object.values(draftAttendance).filter((d) => d.status === 'half_day').length;
   const absentCount = Object.values(draftAttendance).filter((d) => d.status === 'absent').length;
   const leaveCount = Object.values(draftAttendance).filter((d) => d.status === 'leave').length;
+
+  const accessibleProjectIdSet = new Set(accessibleProjects.map((p) => p.id));
+  const filteredHistoryAttendance = attendance.filter((rec) => {
+    if (isSupervisor && !accessibleProjectIdSet.has(rec.project_id)) {
+      return false;
+    }
+    if (historyProjectFilter !== 'all' && rec.project_id !== historyProjectFilter) {
+      return false;
+    }
+    if (historyStatusFilter !== 'all' && rec.status !== historyStatusFilter) {
+      return false;
+    }
+    if (historyDateFilter && rec.date !== historyDateFilter) {
+      return false;
+    }
+    if (historySearchQuery.trim()) {
+      const q = historySearchQuery.toLowerCase();
+      const worker = workers.find((w) => w.id === rec.worker_id);
+      const proj = projects.find((p) => p.id === rec.project_id);
+      const matchesName = worker?.name.toLowerCase().includes(q) || false;
+      const matchesPos = worker?.position.toLowerCase().includes(q) || false;
+      const matchesProj = proj?.name.toLowerCase().includes(q) || false;
+      const matchesNotes = rec.notes?.toLowerCase().includes(q) || false;
+      if (!matchesName && !matchesPos && !matchesProj && !matchesNotes) {
+        return false;
+      }
+    }
+    return true;
+  });
 
   return (
     <AppShell>
@@ -463,18 +498,89 @@ export default function AttendancePage() {
         {/* TAB 2: ATTENDANCE HISTORY & FOUNDER OVERRIDE */}
         {activeTab === 'history' && (
           <div className="space-y-4">
+            {/* Project Site, Status, Date & Worker Filters for History */}
+            <div className="p-4 rounded-3xl bg-white border border-surface-border shadow-sm flex flex-col sm:flex-row flex-wrap items-center gap-3">
+              <div className="w-full sm:w-64">
+                <Input
+                  placeholder="Search worker, craft, project, or notes..."
+                  value={historySearchQuery}
+                  onChange={(e) => setHistorySearchQuery(e.target.value)}
+                  leftIcon={<Search className="w-4 h-4" />}
+                />
+              </div>
+
+              <div className="w-full sm:w-60">
+                <Select
+                  value={historyProjectFilter}
+                  onChange={(e) => setHistoryProjectFilter(e.target.value)}
+                  options={[
+                    { label: 'All Project Sites', value: 'all' },
+                    ...accessibleProjects.map((p) => ({
+                      label: `${p.name} (${p.location.split(',')[0]})`,
+                      value: p.id,
+                    })),
+                  ]}
+                />
+              </div>
+
+              <div className="w-full sm:w-44">
+                <Select
+                  value={historyStatusFilter}
+                  onChange={(e) => setHistoryStatusFilter(e.target.value)}
+                  options={[
+                    { label: 'All Statuses', value: 'all' },
+                    { label: 'Present', value: 'present' },
+                    { label: 'Half Day', value: 'half_day' },
+                    { label: 'Absent', value: 'absent' },
+                    { label: 'Approved Leave', value: 'leave' },
+                  ]}
+                />
+              </div>
+
+              <div className="w-full sm:w-auto flex items-center gap-2">
+                <Input
+                  type="date"
+                  value={historyDateFilter}
+                  max={today}
+                  onChange={(e) => setHistoryDateFilter(e.target.value)}
+                  className="py-1.5 text-xs"
+                />
+                {(historyProjectFilter !== 'all' ||
+                  historyStatusFilter !== 'all' ||
+                  historyDateFilter ||
+                  historySearchQuery) && (
+                  <Button
+                    type="button"
+                    variant="secondary"
+                    size="sm"
+                    onClick={() => {
+                      setHistoryProjectFilter('all');
+                      setHistoryStatusFilter('all');
+                      setHistoryDateFilter('');
+                      setHistorySearchQuery('');
+                    }}
+                  >
+                    Reset
+                  </Button>
+                )}
+              </div>
+            </div>
+
             <div className="bg-white rounded-3xl border border-surface-border shadow-sm overflow-hidden">
-              <div className="p-4 border-b border-surface-border/60 flex items-center justify-between">
+              <div className="p-4 border-b border-surface-border/60 flex flex-col sm:flex-row sm:items-center justify-between gap-2">
                 <div>
-                  <h3 className="font-bold text-navy text-sm">Attendance Logs & Audit Trail</h3>
+                  <h3 className="font-bold text-navy text-sm">Attendance Logs &amp; Audit Trail</h3>
                   <p className="text-xs text-ink-secondary">
-                    Review historical records. {isFounder ? 'Founders may override or correct records.' : 'Read-only access.'}
+                    Review historical records by project site. {isFounder ? 'Founders may override or correct records.' : 'Read-only access.'}
                   </p>
                 </div>
+                <Badge variant="neutral" size="sm">
+                  {filteredHistoryAttendance.length} record{filteredHistoryAttendance.length === 1 ? '' : 's'}
+                </Badge>
               </div>
 
               <div className="divide-y divide-surface-border/70">
-                {attendance.map((rec) => {
+                {filteredHistoryAttendance.map((rec) => {
                   const worker = workers.find((w) => w.id === rec.worker_id);
                   const proj = projects.find((p) => p.id === rec.project_id);
 
@@ -537,10 +643,14 @@ export default function AttendancePage() {
                   );
                 })}
 
-                {attendance.length === 0 && (
+                {filteredHistoryAttendance.length === 0 && (
                   <EmptyState
-                    title="No attendance records yet"
-                    description="Submitted site attendance will appear here with its full audit trail."
+                    title="No attendance records match"
+                    description={
+                      attendance.length === 0
+                        ? 'Submitted site attendance will appear here with its full audit trail.'
+                        : 'Try selecting "All Project Sites" or clearing the date/search filter.'
+                    }
                   />
                 )}
               </div>

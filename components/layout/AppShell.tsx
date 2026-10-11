@@ -9,6 +9,7 @@ import { useAuth } from '@/lib/auth/authContext';
 import { useDataStore } from '@/lib/data/store';
 import { isSupabaseConfigured } from '@/lib/supabase/client';
 import { SkeletonShell } from '@/components/ui/Skeleton';
+import { PasswordSetupGate } from '@/components/auth/PasswordSetupGate';
 import { ShieldAlert, Loader2, AlertTriangle, RefreshCw, Settings2 } from 'lucide-react';
 import Link from 'next/link';
 import { Button } from '@/components/ui/Button';
@@ -177,7 +178,7 @@ export const AppShell: React.FC<AppShellProps> = ({ children, requireFounder = f
       <div className="flex-1 flex max-w-7xl w-full mx-auto">
         <Sidebar />
         <main className="flex-1 p-4 sm:p-6 lg:p-8 min-w-0 overflow-x-hidden">
-          {children}
+          <PasswordSetupGate>{children}</PasswordSetupGate>
         </main>
       </div>
     </div>
