@@ -16,6 +16,7 @@ import { Badge } from '@/components/ui/Badge';
 import { Input } from '@/components/ui/Input';
 import { Select } from '@/components/ui/Select';
 import { Modal } from '@/components/ui/Modal';
+import { AsintaEmblem, AsintaWordmark } from '@/components/ui/AsintaLogo';
 import { formatPesoCompact } from '@/lib/email/format';
 
 export default function PayrollPage() {
@@ -167,25 +168,22 @@ export default function PayrollPage() {
         </div>
 
         {/* Top Summary Cards */}
-        <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
-          <div className="p-5 rounded-3xl bg-white border border-surface-border shadow-sm">
-            <div className="text-xs font-semibold text-ink-secondary uppercase">Total Net Payroll</div>
-            <div className="text-2xl font-bold text-navy mt-1">{formatPHP(totalNetDisbursement)}</div>
-            <div className="text-[11px] text-ink-muted mt-0.5">Net cash disbursement required</div>
+        <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 auto-rows-fr">
+          <div className="h-full p-5 rounded-2xl bg-white border border-surface-border shadow-sm flex flex-col justify-between">
+            <div className="text-xs font-semibold text-ink-secondary uppercase truncate">Total Net Payroll</div>
+            <div className="text-2xl font-bold text-navy mt-1 tabular-nums truncate">{formatPHP(totalNetDisbursement)}</div>
           </div>
 
-          <div className="p-5 rounded-3xl bg-white border border-surface-border shadow-sm">
-            <div className="text-xs font-semibold text-ink-secondary uppercase">Bale Deductions Recovered</div>
-            <div className="text-2xl font-bold text-status-success mt-1">{formatPHP(totalBaleRecovered)}</div>
-            <div className="text-[11px] text-status-success mt-0.5">Subtracted from worker advances</div>
+          <div className="h-full p-5 rounded-2xl bg-white border border-surface-border shadow-sm flex flex-col justify-between">
+            <div className="text-xs font-semibold text-ink-secondary uppercase truncate">Bale Deductions Recovered</div>
+            <div className="text-2xl font-bold text-status-success mt-1 tabular-nums truncate">{formatPHP(totalBaleRecovered)}</div>
           </div>
 
-          <div className="p-5 rounded-3xl bg-white border border-surface-border shadow-sm">
-            <div className="text-xs font-semibold text-ink-secondary uppercase">Pending Founder Approval</div>
-            <div className="text-2xl font-bold text-status-warning mt-1">
+          <div className="h-full p-5 rounded-2xl bg-white border border-surface-border shadow-sm flex flex-col justify-between">
+            <div className="text-xs font-semibold text-ink-secondary uppercase truncate">Pending Founder Approval</div>
+            <div className="text-2xl font-bold text-status-warning mt-1 tabular-nums">
               {filteredPayroll.filter((p) => p.status === 'draft' || p.status === 'reviewed').length}
             </div>
-            <div className="text-[11px] text-status-warning mt-0.5">Draft payroll vouchers</div>
           </div>
         </div>
 
@@ -446,15 +444,18 @@ export default function PayrollPage() {
               <div className="p-6 rounded-2xl bg-white border border-slate-300 font-sans space-y-5 text-ink-primary">
                 {/* Header */}
                 <div className="flex items-start justify-between pb-4 border-b-2 border-navy">
-                  <div>
-                    <div className="text-xl font-black text-navy tracking-tight">ASINTA ARCHITECTS</div>
-                    <div className="text-[10px] uppercase font-semibold text-ink-secondary tracking-widest">
-                      Design · Build · Batangas
+                  <div className="flex items-center gap-3">
+                    <AsintaEmblem size={30} />
+                    <div>
+                      <AsintaWordmark height={18} />
+                      <div className="text-[10px] uppercase font-semibold text-ink-secondary tracking-widest mt-1">
+                        Design · Build · Batangas
+                      </div>
                     </div>
                   </div>
                   <div className="text-right">
                     <div className="text-xs font-bold text-navy">WORKER PAYSLIP</div>
-                    <div className="text-[11px] text-ink-secondary">
+                    <div className="text-[11px] text-ink-secondary tabular-nums">
                       Period: {selectedPayroll.period_start} to {selectedPayroll.period_end}
                     </div>
                   </div>

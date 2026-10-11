@@ -4,10 +4,11 @@ import React, { useEffect, useState } from 'react';
 import { AppShell } from '@/components/layout/AppShell';
 import { useDataStore } from '@/lib/data/store';
 import { useAuth } from '@/lib/auth/authContext';
-import { Building2, Bot, Database, RefreshCw, HardHat } from 'lucide-react';
+import { Bot, Database, RefreshCw, HardHat } from 'lucide-react';
 import { Button } from '@/components/ui/Button';
 import { Badge } from '@/components/ui/Badge';
 import { Card, CardHeader, CardTitle, CardDescription, CardContent } from '@/components/ui/Card';
+import { AsintaEmblem, AsintaWordmark } from '@/components/ui/AsintaLogo';
 import { TemplateEditorCard } from '@/components/email/TemplateEditorCard';
 import { TestEmailCard } from '@/components/email/TestEmailCard';
 import { MfaCard } from '@/components/auth/MfaCard';
@@ -198,11 +199,18 @@ export default function SettingsPage() {
         {/* Firm Profile */}
         <Card>
           <CardHeader>
-            <div className="flex items-center space-x-2.5">
-              <Building2 className="w-5 h-5 text-navy" />
-              <CardTitle>Asinta Architects Studio Profile</CardTitle>
+            <div className="flex items-center justify-between gap-3">
+              <div className="flex items-center space-x-3">
+                <div className="w-10 h-10 rounded-xl bg-surface-inset/70 border border-surface-border flex items-center justify-center">
+                  <AsintaEmblem size={24} />
+                </div>
+                <div>
+                  <CardTitle>Asinta Corp. Studio Profile</CardTitle>
+                  <CardDescription>Architecture curated to your style — built with quality and precision</CardDescription>
+                </div>
+              </div>
+              <AsintaWordmark height={20} className="hidden sm:block" />
             </div>
-            <CardDescription>Firm principals and official studio registration</CardDescription>
           </CardHeader>
           <CardContent>
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 text-xs">
@@ -435,16 +443,11 @@ export default function SettingsPage() {
                       : 'Local Dev Default'}
                 </Badge>
               </div>
-              <div className="text-ink-secondary">
+              <div className="text-ink-secondary truncate">
                 Endpoint:{' '}
                 <span className="font-mono text-navy font-semibold">
                   {process.env.NEXT_PUBLIC_SUPABASE_URL || 'http://localhost:54321'}
                 </span>
-              </div>
-              <div className="text-[11px] text-ink-muted">
-                Data is fetched and mutated directly through Supabase PostgreSQL with Row Level
-                Security enforced on every query. There is no local mock data — to seed the demo
-                ledger, run the SQL scripts in <span className="font-mono">supabase/migrations/</span>.
               </div>
               <div className="text-[11px] text-ink-secondary">
                 Ledger status:{' '}
@@ -458,8 +461,7 @@ export default function SettingsPage() {
               <div className="space-y-0.5">
                 <div className="font-bold text-navy">Resync Ledger from Supabase</div>
                 <div className="text-ink-secondary">
-                  Re-fetches projects, invoices, expenses, attendance, payroll, and bale records
-                  from the live database.
+                  Refresh projects, invoices, expenses, attendance, payroll, and bale records.
                 </div>
               </div>
               <Button
@@ -473,28 +475,20 @@ export default function SettingsPage() {
               </Button>
             </div>
 
-            <div className="p-4 rounded-2xl bg-slate-50 border border-slate-200 space-y-1.5">
-              <div className="font-bold text-navy">Session Timeouts &amp; Sign-in Rate Limits</div>
+            <div className="p-4 rounded-2xl bg-slate-50 border border-slate-200 space-y-1">
+              <div className="font-bold text-navy">Session Security Policy</div>
               <div className="text-ink-secondary">
-                Active client policy:{' '}
                 <span className="font-mono font-semibold text-navy">
                   {integrationStatus?.sessionPolicy?.idleMinutes ?? 20} min idle
                 </span>
                 {' · '}
                 <span className="font-mono font-semibold text-navy">
-                  {integrationStatus?.sessionPolicy?.absoluteHours ?? 8} h absolute
+                  {integrationStatus?.sessionPolicy?.absoluteHours ?? 8} h max session
                 </span>
                 {' · '}
                 <span className="font-mono font-semibold text-navy">
                   {integrationStatus?.sessionPolicy?.warningSeconds ?? 120} s warning
-                </span>{' '}
-                (applies to all roles: Founder and Supervisor).
-              </div>
-              <div className="text-[11px] text-ink-muted">
-                Must match Supabase Dashboard → Authentication → Sessions (inactivity 20 min,
-                time-box 8 h). Because <span className="font-mono">NEXT_PUBLIC_SESSION_*</span>{' '}
-                values are baked in at build time, changing them in Vercel requires a rebuild, not a
-                redeploy. Sign-in is rate-limited per IP (10 per 5 min, never per-account lockout).
+                </span>
               </div>
             </div>
           </CardContent>

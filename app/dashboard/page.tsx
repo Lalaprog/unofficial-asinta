@@ -115,7 +115,7 @@ export default function FounderDashboard() {
         </div>
 
         {/* Primary Statistics Grid */}
-        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 sm:gap-6">
+        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 sm:gap-6 auto-rows-fr">
           <StatCard
             title="Total Invoiced"
             value={formatPHP(metrics.totalInvoiced)}
@@ -163,16 +163,16 @@ export default function FounderDashboard() {
         {/* Overdue Invoices Alert Banner (if any) */}
         {metrics.totalOverdue > 0 && (
           <div className="p-4 sm:p-5 rounded-2xl bg-status-warning-bg border border-status-warning/25 shadow-sm flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4">
-            <div className="flex items-start space-x-3.5">
+            <div className="flex items-start space-x-3.5 min-w-0">
               <div className="p-2 rounded-xl bg-status-warning-bg text-status-warning shrink-0">
                 <AlertTriangle className="w-5 h-5" />
               </div>
-              <div>
-                <h4 className="text-sm font-bold text-navy">
+              <div className="min-w-0">
+                <h4 className="text-sm font-bold text-navy truncate">
                   Action Required: {metrics.overdueInvoicesCount} Overdue Progress Billing ({formatPHP(metrics.totalOverdue)})
                 </h4>
-                <p className="text-xs text-ink-secondary mt-0.5">
-                  Milestone billing ASINTA-2026-004 is past its grace period. You can send an immediate PhilSMS reminder.
+                <p className="text-xs text-ink-secondary mt-0.5 truncate">
+                  Dispatch an immediate PhilSMS or email reminder to settle overdue milestones.
                 </p>
               </div>
             </div>

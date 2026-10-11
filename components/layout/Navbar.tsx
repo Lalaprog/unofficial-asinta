@@ -6,7 +6,6 @@ import { useRouter } from 'next/navigation';
 import { useAuth } from '@/lib/auth/authContext';
 import { useDataStore } from '@/lib/data/store';
 import {
-  Building2,
   LogOut,
   ChevronDown,
   Menu,
@@ -17,6 +16,7 @@ import {
   CheckCheck,
 } from 'lucide-react';
 import { Badge } from '@/components/ui/Badge';
+import { AsintaEmblem, AsintaWordmark } from '@/components/ui/AsintaLogo';
 import { formatPesoCompact } from '@/lib/email/format';
 
 interface NavbarProps {
@@ -329,27 +329,20 @@ export const Navbar: React.FC<NavbarProps> = ({ onToggleMobileMenu }) => {
             <Menu className="w-5 h-5" />
           </button>
 
-          <Link href={isFounder ? '/dashboard' : '/attendance'} className="flex items-center space-x-3 group">
-            <div className="w-9 h-9 rounded-xl bg-navy text-white flex items-center justify-center font-bold text-base shadow-[0_3px_10px_rgba(11,31,58,0.25)] group-hover:bg-navy-deep transition-all">
-              B
+          <Link
+            href={isFounder ? '/dashboard' : '/attendance'}
+            className="flex items-center space-x-2.5 group"
+          >
+            <div className="w-9 h-9 rounded-xl bg-white border border-surface-border flex items-center justify-center shadow-neu-raised-sm group-hover:border-navy/30 transition-all">
+              <AsintaEmblem size={24} />
             </div>
-            <div className="flex flex-col">
-              <span className="font-bold tracking-tight text-navy text-base leading-none group-hover:text-navy-light transition-colors">
+            <div className="flex items-center gap-2">
+              <AsintaWordmark height={18} />
+              <span className="px-1.5 py-0.5 rounded-md bg-navy text-white text-[9px] font-extrabold uppercase tracking-widest">
                 BALE
-              </span>
-              <span className="text-[10px] uppercase font-semibold tracking-wider text-ink-secondary leading-tight mt-0.5">
-                Asinta Architects
               </span>
             </div>
           </Link>
-
-          <div className="hidden sm:block h-5 w-px bg-surface-border mx-2" />
-
-          {/* Architectural Badge */}
-          <div className="hidden md:flex items-center space-x-1.5 text-xs text-ink-secondary bg-surface-inset/70 px-2.5 py-1 rounded-lg border border-surface-border/50">
-            <Building2 className="w-3.5 h-3.5 text-navy" />
-            <span>Batangas Studio &amp; Build</span>
-          </div>
         </div>
 
         {/* Right: Account panel and notifications */}

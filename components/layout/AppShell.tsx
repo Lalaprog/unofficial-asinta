@@ -1,7 +1,7 @@
 'use client';
 
 import React, { useEffect, useState } from 'react';
-import { useRouter } from 'next/navigation';
+import { usePathname, useRouter } from 'next/navigation';
 import { Navbar } from './Navbar';
 import { Sidebar } from './Sidebar';
 import { MobileNav } from './MobileNav';
@@ -39,6 +39,51 @@ export const AppShell: React.FC<AppShellProps> = ({ children, requireFounder = f
   const { user, isFounder, isLoading: authLoading } = useAuth();
   const { isLoaded, loadError, refresh } = useDataStore();
   const router = useRouter();
+  const pathname = usePathname();
+
+  // Connected workflow stepper groups so related modules are 1 click apart
+  const workflowGroup = React.useMemo(() => {
+    if (!isFounder || !pathname) return null;
+    const groups = [
+      {
+        label: 'Workforce & Payroll Flow',
+        steps: [
+          { label: '1. Site Attendance', href: '/attendance' },
+          { label: '2. Bale Advances', href: '/advances' },
+          { label: '3. Payroll Engine', href: '/payroll' },
+        ],
+      },
+      {
+        label: 'Client Receivables Flow',
+        steps: [
+          { label: '1. Clients', href: '/clients' },
+          { label: '2. Invoices & Billing', href: '/invoices' },
+          { label: '3. Reminder Queue', href: '/reminders' },
+          { label: '4. SMS Dispatch', href: '/sms' },
+        ],
+      },
+      {
+        label: 'Site Operations Flow',
+        steps: [
+          { label: '1. Projects & Sites', href: '/projects' },
+          { label: '2. Expenses & AI', href: '/expenses' },
+          { label: '3. Tools & Inventory', href: '/tools' },
+        ],
+      },
+      {
+        label: 'Administration',
+        steps: [
+          { label: '1. Team Accounts', href: '/users' },
+          { label: '2. Firm Settings', href: '/settings' },
+        ],
+      },
+    ];
+    return (
+      groups.find((g) =>
+        g.steps.some((s) => pathname === s.href || pathname.startsWith(`${s.href}/`))
+      ) || null
+    );
+  }, [isFounder, pathname]);
 
   // A session can end while a protected page is open (idle timeout, revoked
   // session, expiry). Showing the Founder "Restricted Business Portal" in that
@@ -159,7 +204,11 @@ export const AppShell: React.FC<AppShellProps> = ({ children, requireFounder = f
   return (
     <div className="min-h-screen bg-surface flex flex-col antialiased">
       <Navbar onToggleMobileMenu={() => setIsMobileMenuOpen(true)} />
-      <MobileNav isOpen={isMobileMenuOpen} onClose={() => setIsMobileMenuOpen(false)} />
+      <MobileNav
+        isOpen={isMobileMenuOpen}
+        onClose={() => setIsMobileMenuOpen(false)}
+        onOpen={() => setIsMobileMenuOpen(true)}
+      />
 
       {loadError && (
         <div className="max-w-7xl w-full mx-auto px-4 sm:px-6 lg:px-8 pt-4">
@@ -177,8 +226,37 @@ export const AppShell: React.FC<AppShellProps> = ({ children, requireFounder = f
 
       <div className="flex-1 flex max-w-7xl w-full mx-auto">
         <Sidebar />
-        <main className="flex-1 p-4 sm:p-6 lg:p-8 min-w-0 overflow-x-hidden">
-          <PasswordSetupGate>{children}</PasswordSetupGate>
+        <main className="flex-1 p-4 sm:p-6 lg:p-8 pb-24 lg:pb-8 min-w-0 overflow-x-hidden">
+          {workflowGroup && (
+            <div className="mb-4 flex items-center justify-between gap-2 overflow-x-auto pb-1 no-scrollbar">
+              <div className="inline-flex items-center gap-1 p-1 rounded-xl bg-white border border-surface-border shadow-sm">
+                <span className="hidden sm:inline-block px-2.5 py-1 text-[10px] font-extrabold uppercase tracking-wider text-ink-muted">
+                  {workflowGroup.label}
+                </span>
+                {workflowGroup.steps.map((step) => {
+                  const active =
+                    pathname === step.href || pathname.startsWith(`${step.href}/`);
+                  return (
+                    <Link
+                      key={step.href}
+                      href={step.href}
+                      className={`px-3 py-1 rounded-lg text-[11px] font-bold whitespace-nowrap transition-all ${
+                        active
+                          ? 'bg-navy text-white shadow-sm'
+                          : 'text-ink-secondary hover:text-navy hover:bg-surface-inset'
+                      }`}
+                    >
+                      {step.label}
+                    </Link>
+                  );
+                })}
+              </div>
+            </div>
+          )}
+
+          <div className="animate-in fade-in duration-150">
+            <PasswordSetupGate>{children}</PasswordSetupGate>
+          </div>
         </main>
       </div>
     </div>

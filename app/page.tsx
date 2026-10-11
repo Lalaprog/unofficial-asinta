@@ -15,6 +15,7 @@ import {
 import { Badge } from '@/components/ui/Badge';
 import { Button } from '@/components/ui/Button';
 import { Input } from '@/components/ui/Input';
+import { AsintaEmblem, AsintaWordmark } from '@/components/ui/AsintaLogo';
 
 const MIDDLEWARE_ERRORS: Record<string, string> = {
   no_profile:
@@ -161,29 +162,33 @@ export default function LoginPage() {
   };
 
   return (
-    <div className="min-h-screen bg-surface flex flex-col justify-between p-4 sm:p-6">
-      <div className="max-w-md w-full mx-auto pt-10 sm:pt-16">
+    <div className="min-h-screen bg-surface flex flex-col justify-between p-4 sm:p-6 relative overflow-hidden">
+      {/* Subtle architectural CHB watermark */}
+      <div className="pointer-events-none select-none fixed -right-12 -bottom-16 opacity-[0.035] text-navy">
+        <AsintaEmblem size={420} monochrome />
+      </div>
+
+      <div className="max-w-md w-full mx-auto pt-10 sm:pt-16 relative z-10">
         <div className="bg-white rounded-3xl p-6 sm:p-8 border border-surface-border shadow-[8px_8px_24px_rgba(11,31,58,0.08),-8px_-8px_24px_rgba(255,255,255,0.95)]">
           <div className="flex items-center justify-between pb-5 border-b border-surface-border/60">
             <div className="flex items-center space-x-3">
-              <div className="w-10 h-10 rounded-2xl bg-navy text-white flex items-center justify-center font-bold text-base shadow-[0_3px_10px_rgba(11,31,58,0.25)]">
-                B
+              <div className="w-11 h-11 rounded-2xl bg-surface-inset/60 border border-surface-border flex items-center justify-center shadow-neu-raised-sm">
+                <AsintaEmblem size={28} />
               </div>
-              <div>
-                <div className="text-base font-bold text-navy leading-none">BALE</div>
-                <div className="text-[10px] font-semibold text-ink-secondary uppercase tracking-wider mt-1">
-                  Asinta Architects
-                </div>
+              <div className="flex flex-col">
+                <AsintaWordmark height={20} />
+                <span className="text-[10px] font-bold text-ink-secondary uppercase tracking-widest mt-1">
+                  BALE · Design &amp; Build Ledger
+                </span>
               </div>
             </div>
-            <Badge variant="navy" size="sm">Secure Portal</Badge>
+            <Badge variant="navy" size="sm">BALE</Badge>
           </div>
 
-          <div className="mt-6">
-            <h1 className="text-xl font-bold text-navy tracking-tight">Sign in to BALE</h1>
-            <p className="text-xs text-ink-secondary mt-1">
-              Billing &amp; Advance Ledger Engine. Your account role determines which workspace you
-              can access.
+          <div className="mt-5">
+            <h1 className="text-xl font-extrabold text-navy tracking-tight">Sign In</h1>
+            <p className="text-xs text-ink-secondary mt-0.5">
+              Architecture curated to your style — built with quality and precision.
             </p>
           </div>
 
@@ -303,16 +308,11 @@ export default function LoginPage() {
               Sign In
             </Button>
           </form>
-
-          <p className="mt-4 text-[11px] text-ink-muted leading-relaxed">
-            Credentials are verified by Supabase Auth. Access is restricted by your BALE database
-            role and PostgreSQL Row Level Security. Authorized personnel only.
-          </p>
         </div>
       </div>
 
-      <div className="text-center text-xs text-ink-muted py-6">
-        © 2026 Asinta Architects · Batangas, Philippines · Secure Ledger Platform
+      <div className="text-center text-xs text-ink-muted py-6 relative z-10">
+        © 2026 Asinta Corp. · Design &amp; Build
       </div>
     </div>
   );

@@ -149,7 +149,7 @@ export default function ProjectsPage() {
         </div>
 
         {/* Projects Cards Grid */}
-        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-2 gap-6">
+        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-2 gap-6 auto-rows-fr">
           {filteredProjects.map((proj) => {
             const client = clients.find((c) => c.id === proj.client_id);
             const projInvoices = invoices.filter((i) => i.project_id === proj.id);
@@ -172,33 +172,36 @@ export default function ProjectsPage() {
             return (
               <div
                 key={proj.id}
-                className="bg-white rounded-3xl p-6 border border-surface-border/80 shadow-[6px_6px_18px_rgba(11,31,58,0.06),-6px_-6px_18px_rgba(255,255,255,0.95)] hover:shadow-[10px_10px_26px_rgba(11,31,58,0.09),-10px_-10px_26px_rgba(255,255,255,1)] hover:border-navy/30 transition-all flex flex-col justify-between group"
+                className="h-full min-w-0 bg-white rounded-3xl p-6 border border-surface-border/80 shadow-[6px_6px_18px_rgba(11,31,58,0.06),-6px_-6px_18px_rgba(255,255,255,0.95)] hover:shadow-[10px_10px_26px_rgba(11,31,58,0.09),-10px_-10px_26px_rgba(255,255,255,1)] hover:border-navy/30 transition-all flex flex-col justify-between group"
               >
-                <div>
+                <div className="min-w-0">
                   {/* Top line */}
                   <div className="flex items-start justify-between gap-3">
-                    <div className="space-y-1">
-                      <div className="text-xs font-semibold text-ink-secondary uppercase tracking-wider">
+                    <div className="space-y-1 min-w-0 flex-1">
+                      <div className="text-xs font-semibold text-ink-secondary uppercase tracking-wider truncate">
                         {client?.name || 'Private Client'}
                       </div>
-                      <h3 className="text-lg font-bold text-navy group-hover:text-navy-light transition-colors">
+                      <h3
+                        className="text-lg font-bold text-navy group-hover:text-navy-light transition-colors truncate"
+                        title={proj.name}
+                      >
                         {proj.name}
                       </h3>
                     </div>
-                    <Badge variant={statusBadgeVariant} size="sm">
+                    <Badge variant={statusBadgeVariant} size="sm" className="shrink-0">
                       {proj.status.replace('_', ' ')}
                     </Badge>
                   </div>
 
                   {/* Location & Timeline */}
                   <div className="mt-4 space-y-2 text-xs text-ink-secondary">
-                    <div className="flex items-center space-x-2">
+                    <div className="flex items-center space-x-2 min-w-0">
                       <MapPin className="w-3.5 h-3.5 text-navy shrink-0" />
-                      <span>{proj.location}</span>
+                      <span className="truncate">{proj.location}</span>
                     </div>
                     <div className="flex items-center space-x-2">
                       <Calendar className="w-3.5 h-3.5 text-navy shrink-0" />
-                      <span>
+                      <span className="tabular-nums">
                         {proj.start_date} → {proj.target_completion_date}
                       </span>
                     </div>

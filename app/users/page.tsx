@@ -350,19 +350,6 @@ export default function UsersPage() {
           </div>
         )}
 
-        {/* Security Hierarchy Info Banner */}
-        <div className="p-5 rounded-3xl bg-white border border-surface-border shadow-sm flex flex-col md:flex-row items-start md:items-center justify-between gap-4">
-          <div className="space-y-1">
-            <h3 className="text-sm font-bold text-navy">Asinta Architects Security Source of Truth</h3>
-            <p className="text-xs text-ink-secondary leading-relaxed max-w-3xl">
-              Founders can provision accounts with a temporary password, assign roles and project sites, and optionally include Supervisors in daily attendance and payroll calculations.
-            </p>
-          </div>
-          <Badge variant="navy" size="md" className="shrink-0">
-            PostgreSQL RLS Active
-          </Badge>
-        </div>
-
         {/* Search & Filters */}
         <div className="flex flex-col sm:flex-row items-center gap-3">
           <div className="w-full sm:w-80">
@@ -388,7 +375,7 @@ export default function UsersPage() {
         </div>
 
         {/* Users Cards Grid */}
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-6 auto-rows-fr">
           {filteredUsers.map((u) => {
             const assignedProjectIds = projectSupervisors
               .filter((ps) => ps.supervisor_id === u.id)
@@ -400,35 +387,35 @@ export default function UsersPage() {
             return (
               <div
                 key={u.id}
-                className="p-6 rounded-3xl bg-white border border-surface-border shadow-[6px_6px_18px_rgba(11,31,58,0.06),-6px_-6px_18px_rgba(255,255,255,0.95)] space-y-4 flex flex-col justify-between"
+                className="h-full min-w-0 p-6 rounded-3xl bg-white border border-surface-border shadow-[6px_6px_18px_rgba(11,31,58,0.06),-6px_-6px_18px_rgba(255,255,255,0.95)] space-y-4 flex flex-col justify-between"
               >
-                <div className="space-y-4">
+                <div className="space-y-4 min-w-0">
                   <div className="flex items-start justify-between gap-2">
-                    <div className="flex items-center space-x-3.5">
-                      <div className="w-12 h-12 rounded-2xl bg-surface-inset text-navy flex items-center justify-center font-bold text-base border border-surface-border shadow-[inset_1px_1px_3px_rgba(11,31,58,0.06)]">
+                    <div className="flex items-center space-x-3.5 min-w-0 flex-1">
+                      <div className="w-12 h-12 rounded-2xl bg-surface-inset text-navy flex items-center justify-center font-bold text-base border border-surface-border shadow-[inset_1px_1px_3px_rgba(11,31,58,0.06)] shrink-0">
                         {u.role === 'founder' ? (
                           <Compass className="w-6 h-6 text-navy" />
                         ) : (
                           <HardHat className="w-6 h-6 text-status-warning" />
                         )}
                       </div>
-                      <div>
-                        <div className="flex items-center gap-2 flex-wrap">
-                          <h3 className="font-bold text-base text-navy">{u.name}</h3>
+                      <div className="min-w-0 flex-1">
+                        <div className="flex items-center gap-2">
+                          <h3 className="font-bold text-base text-navy truncate">{u.name}</h3>
                           {isSelf && (
                             <Badge variant="info" size="sm">
                               You
                             </Badge>
                           )}
                         </div>
-                        <div className="text-xs text-ink-secondary flex items-center gap-1.5 mt-0.5">
-                          <Mail className="w-3.5 h-3.5" />
-                          <span>{u.email}</span>
+                        <div className="text-xs text-ink-secondary flex items-center gap-1.5 mt-0.5 min-w-0">
+                          <Mail className="w-3.5 h-3.5 shrink-0" />
+                          <span className="truncate">{u.email}</span>
                         </div>
                       </div>
                     </div>
 
-                    <Badge variant={u.role === 'founder' ? 'navy' : 'warning'} size="sm">
+                    <Badge variant={u.role === 'founder' ? 'navy' : 'warning'} size="sm" className="shrink-0">
                       {u.role === 'founder' ? 'Founder' : 'Supervisor'}
                     </Badge>
                   </div>
