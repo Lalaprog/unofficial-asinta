@@ -17,8 +17,8 @@ Last updated: 2026-10-06.
 | Data access | PostgreSQL RLS on every table, `to authenticated` policies | Verified by `tests/rls-migration.test.ts` and `tests/migrations-parse.test.ts`. |
 | Session lifetime | Supabase Auth `auth.sessions.inactivity_timeout` (`20m`) / `timebox` (`8h`) + `SessionWatcher` | Project-wide across **all roles** (`founder` and `supervisor`). `NEXT_PUBLIC_SESSION_*` is baked in at build time (rebuild required when changed). |
 | MFA | Supabase TOTP, opt-in enforcement (`MFA_ENFORCE_FOUNDERS`) | See §5. |
-| Sign-in & cost abuse | `lib/rateLimit.ts` per-route limits (including `/api/auth/login` and `/api/export`) | Single-instance; per-IP on login (no account lockout), per-Founder on authenticated routes — see §7. |
-| Trail | `public.audit_log` (append-only) | Covers money-moving mutations AND Founder CSV exports (RA 10173). No UPDATE/DELETE policy exists. |
+| Sign-in & cost abuse | `lib/rateLimit.ts` per-route limits (including `/api/auth/login`) | Single-instance; per-IP on login (no account lockout), per-Founder on authenticated routes — see §7. |
+| Trail | `public.audit_log` (append-only) | Covers money-moving mutations (invoices, expenses, advances, payroll). No UPDATE/DELETE policy exists. |
 
 **Not** a control: anything rendered in the browser. The UI states what the
 server decided; it never decides.
@@ -151,7 +151,7 @@ send fails instead of downgrading.
 
 `lib/rateLimit.ts` implements a sliding-window limiter; `RATE_LIMITS` names the
 per-route budgets (SMS 15/10 min, SMTP test 5/hour, AI extract 12/min, login
-10/5 min per IP, CSV export 10/hour per Founder, …). Authenticated routes call
+10/5 min per IP, …). Authenticated routes call
 `enforceRateLimit()` **after** authentication so the key is the Founder's user
 id rather than a spoofable header. Limits return 429 with `Retry-After` and a
 message stating the limit and the wait.
@@ -241,14 +241,17 @@ where email = 'junel@asinta.ph';
 
 ---
 
-## 10. Backups vs. CSV Exports (finding #11) — **RESTORE TEST REQUIRED**
+## 10. Backups vs. Ad-hoc Exports (finding #11) — **RESTORE TEST REQUIRED**
 
 The live project is on **Supabase Free**, which does **not** include PITR or
-automated platform backups. Keep the two mechanisms distinct:
+automated platform backups. Keep backup and ad-hoc table exports strictly
+distinct:
 
 - **Backup** = restorable `pg_dump` SQL archive (`.github/workflows/backup.yml`).
-- **Export** = readable CSV for opening in Excel (`GET /api/export?table=<name>`).
-  A manual button is never a backup strategy because people forget to press it.
+- **Ad-hoc export** = exporting a table from the **Supabase Dashboard (Table
+  Editor → Export to CSV)** when needed for external inspection. A manual CSV
+  button inside the app is never a backup strategy because people forget to
+  press it and a flat CSV is not a restorable database archive.
 
 ### 10a. Automated database backup (primary)
 
@@ -272,38 +275,31 @@ Asia/Manila) and on manual `workflow_dispatch`:
    and (b) that `audit_log` rows are present through the backup timestamp.
 5. Record the date and result below.
 
-### 10b. Founder CSV export (secondary convenience)
+### 10b. Why manual in-app CSV export was deliberately omitted
 
-`GET /api/export?table=<name>` (`lib/export/csv.ts`, surfaced in **Settings →
-Export Ledger Table to CSV**):
+BALE intentionally does **not** ship a manual CSV table export button in
+Settings or a data-export API route:
 
-- **Founder-only enforced server-side** with `requireFounder()` (including MFA
-  assurance when `MFA_ENFORCE_FOUNDERS=true`), never a hidden UI button.
-- **Rate-limited** via `lib/rateLimit.ts` (`RATE_LIMITS.ledgerExport`: 10 per
-  hour per Founder).
-- **Logged in `public.audit_log`** (`table_name = 'export:<tableName>'`, with
-  actor, row count, and timestamp). If the audit write fails, the route **fails
-  closed** and refuses to stream the CSV.
-- **Excel-safe CSV, never JSON:** UTF-8 BOM (`\uFEFF`) so Filipino characters
-  (`Ñ`/`ñ`, `₱`) open cleanly in Excel, RFC 4180 quoting, and formula-injection
-  neutralisation (`=`, `+`, `-`, `@`).
-- **Strict allowlist:** only the 9 public ledger tables (`invoices`, `expenses`,
-  `payroll`, `advances`, `attendance`, `projects`, `clients`, `workers`,
-  `audit_log`) can be exported. `auth.*` tables, `public.users`, and password
-  hashes/tokens can never be exported.
-- **RA 10173:** exporting `workers`, `clients`, `attendance`, `payroll`, or
-  `advances` downloads personal data (worker names, contact numbers, wages) —
-  which is why every download is restricted to Founders and recorded in
-  `audit_log`.
+1. **Keeps backup (`pg_dump`) distinct from ad-hoc exports.** A download button
+   inside Settings invites treating a flat CSV as a backup; `.github/workflows/backup.yml`
+   (`pg_dump`) is the real restorable backup. When an ad-hoc spreadsheet is
+    genuinely needed, Founders can export directly from the **Supabase Dashboard
+   (Table Editor → Export to CSV)**.
+2. **RA 10173 local-file exposure.** One-click dumps of `workers`, `clients`,
+   `attendance`, `payroll`, and `advances` place unencrypted files containing
+   personal data (names, phone numbers, and wages) into a local `Downloads/`
+   folder outside PostgreSQL RLS and session timeouts.
+3. **No dead or unnecessary egress routes.** Omitting the in-app export avoids
+   mounting an extra bulk data-egress endpoint on the application server.
 
 ### 10c. Storage gap (receipt photos)
 
-**Neither `pg_dump` nor the CSV table export includes the receipt photos in the
-`receipts` Supabase Storage bucket.** `public.expenses.receipt_url` stores only
-the bare storage path; the image bytes live in Supabase Storage (`storage.objects`
-+ S3-backed object storage). Copy receipt files separately from **Supabase
-Dashboard → Storage → `receipts`** (or via the Storage API) alongside your
-database backup schedule.
+**`pg_dump` (and any CSV table export from the Supabase Dashboard) does not
+include the receipt photos in the `receipts` Supabase Storage bucket.**
+`public.expenses.receipt_url` stores only the bare storage path; the image bytes
+live in Supabase Storage (`storage.objects` + S3-backed object storage). Copy
+receipt files separately from **Supabase Dashboard → Storage → `receipts`** (or
+via the Storage API) alongside your database backup schedule.
 
 | Restore test date | Performed by | Result | Artifact / retention window |
 | --- | --- | --- | --- |

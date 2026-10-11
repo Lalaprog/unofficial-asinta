@@ -8,7 +8,7 @@
 -- Run this if the base BALE schema is already present.
 --
 -- GENERATED FILE — do not edit. Regenerate with `npm run build:apply-sql`.
--- Generated: 2026-10-11T05:10:41.611Z
+-- Generated: 2026-10-11T06:31:25.700Z
 --
 -- Source files (in execution order) and their SHA-256:
 --   20261006000000_security_hardening.sql  5990a60a9251e5ff…
