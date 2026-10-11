@@ -30,7 +30,7 @@ export async function sendPhilSMS({ phone, message }: SendSMSParams): Promise<Se
   }
 
   try {
-    const response = await fetch('https://app.philsms.com/api/v3/sms/send', {
+    const response = await fetch('https://dashboard.philsms.com/api/v3/sms/send', {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
