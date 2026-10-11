@@ -944,11 +944,12 @@ export const DataStoreProvider: React.FC<{ children: React.ReactNode }> = ({ chi
     const rowsToInsert: Array<Omit<Payroll, 'id' | 'created_at'>> = [];
     const rowsToUpdate: Array<{ id: string; before: Payroll; patch: Partial<Payroll> }> = [];
     let skippedFinalizedCount = 0;
+    let unverifiedSupervisorSelfCount = 0;
 
     workers
       .filter((w) => w.active)
       .forEach((w) => {
-        const workerAtt = attendance.filter(
+        const rawWorkerAtt = attendance.filter(
           (a) =>
             a.worker_id === w.id &&
             a.date >= periodStart &&
@@ -956,16 +957,41 @@ export const DataStoreProvider: React.FC<{ children: React.ReactNode }> = ({ chi
             (!targetProject || a.project_id === targetProject.id)
         );
 
-        // Skip workers who logged 0 attendance records in the selected period
+        // Anti-fraud control: Supervisor self-attendance (worker_id === recorded_by)
+        // for Present/Half-Day must be verified by a Founder (is_founder_override === true)
+        // before it counts toward payroll disbursement.
+        const workerAtt = rawWorkerAtt.filter((a) => {
+          const isUnverifiedSelfLog =
+            a.worker_id === a.recorded_by &&
+            !a.is_founder_override &&
+            (a.status === 'present' || a.status === 'half_day');
+          if (isUnverifiedSelfLog) {
+            unverifiedSupervisorSelfCount += 1;
+            return false;
+          }
+          return true;
+        });
+
+        // Skip workers who logged 0 verified attendance records in the selected period
         // so empty ₱0 payslips are not spammed into the ledger.
         if (workerAtt.length === 0) {
           return;
         }
 
-        const daysPresent = workerAtt.filter((a) => a.status === 'present').length;
-        const halfDays = workerAtt.filter((a) => a.status === 'half_day').length;
-        const effectiveDays = daysPresent + halfDays * 0.5;
-        const hoursTotal = workerAtt.reduce((sum, a) => sum + (a.hours_worked || 0), 0);
+        // Cap each calendar date at max 1.0 effective day (8 hours) so a
+        // Supervisor or worker assigned to two sites on the same day is never
+        // double-paid for a single calendar date.
+        const dayCreditsByDate = new Map<string, number>();
+        workerAtt.forEach((a) => {
+          const prev = dayCreditsByDate.get(a.date) || 0;
+          const credit = a.status === 'present' ? 1 : a.status === 'half_day' ? 0.5 : 0;
+          dayCreditsByDate.set(a.date, Math.min(1, prev + credit));
+        });
+        const effectiveDays = Array.from(dayCreditsByDate.values()).reduce(
+          (sum, val) => sum + val,
+          0
+        );
+        const hoursTotal = effectiveDays * 8;
 
         const gross = w.pay_rate_type === 'daily' ? effectiveDays * w.pay_rate : hoursTotal * w.pay_rate;
 
@@ -1049,6 +1075,11 @@ export const DataStoreProvider: React.FC<{ children: React.ReactNode }> = ({ chi
         showToast(
           'info',
           `Payroll for ${periodStart} → ${periodEnd} is already approved/paid (${skippedFinalizedCount} voucher${skippedFinalizedCount === 1 ? '' : 's'}). No duplicate vouchers created.`
+        );
+      } else if (unverifiedSupervisorSelfCount > 0) {
+        showToast(
+          'info',
+          `${unverifiedSupervisorSelfCount} Supervisor self-attendance log(s) require Founder verification on the Attendance page before payroll can be computed.`
         );
       } else {
         showToast(
