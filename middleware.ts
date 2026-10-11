@@ -97,20 +97,38 @@ export async function middleware(request: NextRequest) {
     return redirectTo(request, '/', returnTo ? { redirect_to: returnTo } : undefined);
   }
 
-  // Fetch the database role for the authenticated user from public.users.
-  // RLS allows every authenticated user to read their own profile row.
-  const { data: profile, error: profileError } = await supabase
-    .from('users')
-    .select('id, role')
-    .eq('id', user.id)
-    .maybeSingle();
+  // Fast-path role resolution: if we recently verified this exact user.id's
+  // role in public.users, reuse the short-lived httpOnly cookie so page
+  // navigation doesn't pay a second sequential database round-trip.
+  const cachedRoleCookie = request.cookies.get('bale-role-cache')?.value;
+  let role: string | null = null;
 
-  if (profileError || !profile) {
-    // Authenticated in Supabase Auth but no BALE profile row exists.
-    return redirectTo(request, '/', { error: 'no_profile' });
+  if (cachedRoleCookie === `${user.id}:founder`) {
+    role = 'founder';
+  } else if (cachedRoleCookie === `${user.id}:supervisor`) {
+    role = 'supervisor';
+  } else {
+    const { data: profile, error: profileError } = await supabase
+      .from('users')
+      .select('id, role')
+      .eq('id', user.id)
+      .maybeSingle();
+
+    if (profileError || !profile) {
+      return redirectTo(request, '/', { error: 'no_profile' });
+    }
+
+    role = profile.role as string | null;
+
+    if (role === 'founder' || role === 'supervisor') {
+      response.cookies.set('bale-role-cache', `${user.id}:${role}`, {
+        httpOnly: true,
+        sameSite: 'lax',
+        path: '/',
+        maxAge: 300,
+      });
+    }
   }
-
-  const role = profile.role as string | null;
 
   if (role !== 'founder' && role !== 'supervisor') {
     return redirectTo(request, '/', { error: 'invalid_role' });

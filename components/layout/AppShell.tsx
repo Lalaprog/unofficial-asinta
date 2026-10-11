@@ -25,6 +25,41 @@ export const AppShell: React.FC<AppShellProps> = ({ children, requireFounder = f
   const { isLoaded, loadError, refresh } = useDataStore();
   const router = useRouter();
 
+  // Once the session and ledger are loaded, silently pre-warm the role's routes
+  // so subsequent page navigation is instantaneous.
+  useEffect(() => {
+    if (!user || !isLoaded) return;
+    const routes = isFounder
+      ? [
+          '/dashboard',
+          '/projects',
+          '/attendance',
+          '/payroll',
+          '/advances',
+          '/invoices',
+          '/expenses',
+          '/clients',
+          '/tools',
+          '/users',
+          '/reminders',
+          '/sms',
+          '/settings',
+        ]
+      : ['/attendance', '/projects', '/settings'];
+
+    const timer = window.setTimeout(() => {
+      routes.forEach((route) => {
+        try {
+          router.prefetch(route);
+        } catch {
+          // Ignore prefetch errors
+        }
+      });
+    }, 300);
+
+    return () => window.clearTimeout(timer);
+  }, [user, isLoaded, isFounder, router]);
+
   // Guard against transient network/hydration blips before redirecting to `/`
   const sessionGone = !authLoading && !user;
   useEffect(() => {
@@ -193,15 +228,13 @@ export const AppShell: React.FC<AppShellProps> = ({ children, requireFounder = f
         </div>
       )}
 
-      <main className="flex-1 w-full max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-6 min-w-0 overflow-x-hidden">
+      <main className="flex-1 w-full max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-6 lg:pb-14 min-w-0 overflow-x-hidden">
         <div className="animate-page-enter">
           <PasswordSetupGate>{children}</PasswordSetupGate>
         </div>
       </main>
 
-      <div className="pb-20 lg:pb-0">
-        <Footer />
-      </div>
+      <Footer />
     </div>
   );
 };

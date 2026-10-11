@@ -65,23 +65,60 @@ const FOUNDER_APP_GRID_SECTIONS = [
 export const MobileNav: React.FC<MobileNavProps> = () => {
   const pathname = usePathname();
   const searchParams = useSearchParams();
-  const currentTab = searchParams?.get('tab') || 'terminal';
+  const urlTab = searchParams?.get('tab') || 'terminal';
   const { isFounder } = useAuth();
   const [isSheetOpen, setIsSheetOpen] = useState(false);
+  const [localAttendanceTab, setLocalAttendanceTab] = useState<string>(urlTab);
+  const [pendingHref, setPendingHref] = useState<string | null>(null);
 
-  // Close sheet on route change
   useEffect(() => {
+    setLocalAttendanceTab(urlTab);
+    setPendingHref(null);
     setIsSheetOpen(false);
-  }, [pathname, currentTab]);
+  }, [pathname, urlTab]);
+
+  useEffect(() => {
+    const onTabEvent = (e: Event) => {
+      const detail = (e as CustomEvent<string>).detail;
+      if (detail) {
+        setLocalAttendanceTab(detail);
+        setPendingHref(null);
+      }
+    };
+    window.addEventListener('bale:attendance-tab', onTabEvent);
+    return () => window.removeEventListener('bale:attendance-tab', onTabEvent);
+  }, []);
 
   const isHrefActive = (href: string) => {
+    if (pendingHref) {
+      return pendingHref === href;
+    }
     const [basePath, query] = href.split('?');
     if (basePath === '/attendance') {
       if (pathname !== '/attendance') return false;
       const targetTab = new URLSearchParams(query || '').get('tab') || 'terminal';
-      return currentTab === targetTab;
+      return localAttendanceTab === targetTab;
     }
     return pathname === basePath || Boolean(pathname?.startsWith(`${basePath}/`));
+  };
+
+  const handleNavClick = (e: React.MouseEvent<HTMLAnchorElement>, href: string) => {
+    setIsSheetOpen(false);
+    const [basePath, query] = href.split('?');
+
+    // 0ms client-side tab switch when already on `/attendance`
+    if (basePath === '/attendance' && pathname === '/attendance') {
+      e.preventDefault();
+      const targetTab = new URLSearchParams(query || '').get('tab') || 'terminal';
+      setLocalAttendanceTab(targetTab);
+      window.history.replaceState(null, '', href);
+      window.dispatchEvent(new CustomEvent('bale:attendance-tab', { detail: targetTab }));
+      return;
+    }
+
+    if (pathname !== basePath) {
+      setPendingHref(href);
+    }
   };
 
   // Bottom dock items
@@ -103,6 +140,13 @@ export const MobileNav: React.FC<MobileNavProps> = () => {
 
   return (
     <>
+      {/* Sleek 2px Top Route Progress Line on Mobile */}
+      {pendingHref && (
+        <div className="fixed top-0 inset-x-0 z-50 h-0.5 bg-surface-inset overflow-hidden lg:hidden">
+          <div className="h-full w-1/2 bg-[#1B4978] animate-[asintaProgress_0.9s_ease-in-out_infinite]" />
+        </div>
+      )}
+
       {/* Fixed Mobile Bottom Navigation Bar */}
       <nav
         aria-label="Mobile Bottom Navigation"
@@ -121,16 +165,15 @@ export const MobileNav: React.FC<MobileNavProps> = () => {
               <Link
                 key={item.href}
                 href={item.href}
-                prefetch={false}
-                onClick={() => setIsSheetOpen(false)}
-                className={`flex flex-col items-center justify-center py-1.5 px-1 rounded-2xl transition-all duration-200 active:scale-95 ${
+                onClick={(e) => handleNavClick(e, item.href)}
+                className={`flex flex-col items-center justify-center py-1.5 px-1 rounded-2xl transition-all duration-150 active:scale-95 ${
                   active
                     ? 'bg-navy text-white shadow-[0_4px_12px_rgba(11,31,58,0.22)]'
                     : 'text-ink-secondary hover:text-navy hover:bg-surface-inset/50'
                 }`}
               >
                 <Icon
-                  className={`w-4 h-4 transition-transform duration-200 ${
+                  className={`w-4 h-4 transition-transform duration-150 ${
                     active ? '-translate-y-0.5 scale-105 text-white' : 'text-ink-secondary'
                   }`}
                 />
@@ -146,14 +189,14 @@ export const MobileNav: React.FC<MobileNavProps> = () => {
             <button
               type="button"
               onClick={() => setIsSheetOpen(!isSheetOpen)}
-              className={`flex flex-col items-center justify-center py-1.5 px-1 rounded-2xl transition-all duration-200 active:scale-95 ${
+              className={`flex flex-col items-center justify-center py-1.5 px-1 rounded-2xl transition-all duration-150 active:scale-95 ${
                 isSheetOpen
                   ? 'bg-navy text-white shadow-[0_4px_12px_rgba(11,31,58,0.22)]'
                   : 'text-ink-secondary hover:text-navy hover:bg-surface-inset/50'
               }`}
             >
               <LayoutGrid
-                className={`w-4 h-4 transition-transform duration-200 ${
+                className={`w-4 h-4 transition-transform duration-150 ${
                   isSheetOpen ? 'rotate-90 scale-105 text-white' : 'text-ink-secondary'
                 }`}
               />
@@ -163,18 +206,15 @@ export const MobileNav: React.FC<MobileNavProps> = () => {
         </div>
       </nav>
 
-      {/* Founder Slide-Up Bottom Sheet App Grid (No numbering, no sidebar, zero scrolling required) */}
+      {/* Founder Slide-Up Bottom Sheet App Grid */}
       {isFounder && isSheetOpen && (
         <div className="fixed inset-0 z-50 lg:hidden flex flex-col justify-end">
-          {/* Backdrop */}
           <div
             className="fixed inset-0 bg-navy/35 backdrop-blur-xs transition-opacity animate-in fade-in duration-150"
             onClick={() => setIsSheetOpen(false)}
           />
 
-          {/* Bottom Sheet Card */}
           <div className="relative z-10 w-full max-w-lg mx-auto bg-surface rounded-t-3xl border-t border-surface-border shadow-[0_-12px_36px_rgba(11,31,58,0.18)] p-4 pb-6 space-y-3.5 animate-sheet-up">
-            {/* Sheet Grab Handle & Header */}
             <div className="flex items-center justify-between px-1">
               <div>
                 <h3 className="text-sm font-extrabold text-navy tracking-tight">
@@ -194,7 +234,6 @@ export const MobileNav: React.FC<MobileNavProps> = () => {
               </button>
             </div>
 
-            {/* Grouped 3-Column Icon Grid */}
             <div className="space-y-3">
               {FOUNDER_APP_GRID_SECTIONS.map((section) => (
                 <div
@@ -213,8 +252,7 @@ export const MobileNav: React.FC<MobileNavProps> = () => {
                         <Link
                           key={item.href}
                           href={item.href}
-                          prefetch={false}
-                          onClick={() => setIsSheetOpen(false)}
+                          onClick={(e) => handleNavClick(e, item.href)}
                           className={`flex flex-col items-center justify-center py-2 px-1.5 rounded-xl text-center transition-all active:scale-95 ${
                             active
                               ? 'bg-navy text-white shadow-xs'

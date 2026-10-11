@@ -5,12 +5,12 @@ import { AsintaEmblem, AsintaWordmark } from '@/components/ui/AsintaLogo';
 
 /**
  * Global Asinta Corp. Trademark Footer.
- * - Desktop (`lg:`): Slim sticky frosted-glass bar pinned to the bottom of the screen.
- * - Mobile (`< lg`): Static footer at the end of the page scroll (above the bottom nav clearance).
+ * - PC (`lg:`): Pinned (`fixed bottom-0 inset-x-0 z-30`) to the bottom edge of the viewport.
+ * - Mobile (`< lg`): Static at the bottom of the page scroll (above the mobile bottom nav bar).
  */
 export const Footer: React.FC = () => {
   return (
-    <footer className="mt-8 lg:mt-auto lg:sticky lg:bottom-0 lg:z-20 border-t border-surface-border/80 bg-white/90 backdrop-blur-md">
+    <footer className="mt-8 pb-20 lg:pb-0 lg:mt-0 lg:fixed lg:bottom-0 lg:inset-x-0 lg:z-30 border-t border-surface-border/80 bg-white/95 backdrop-blur-md shadow-[0_-2px_10px_rgba(11,31,58,0.03)]">
       <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-3 lg:py-2 flex flex-col sm:flex-row items-center justify-between gap-2">
         {/* Official Asinta Corp. Trademark Lockup */}
         <div className="flex items-center space-x-2.5">

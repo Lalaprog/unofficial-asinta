@@ -203,16 +203,33 @@ export const Navbar: React.FC<NavbarProps> = () => {
   const [isRefreshing, setIsRefreshing] = useState(false);
   const [isSigningOut, setIsSigningOut] = useState(false);
   const [dismissedSignatures, setDismissedSignatures] = useState<string[]>([]);
+  const [localAttendanceTab, setLocalAttendanceTab] = useState<string>(currentTab);
+  const [pendingHref, setPendingHref] = useState<string | null>(null);
   const navRef = useRef<HTMLDivElement>(null);
 
   const storageKey = user?.id ? `bale-dismissed-notifs:${user.id}` : null;
 
   // Close popovers on route/query change
   useEffect(() => {
+    setLocalAttendanceTab(currentTab);
+    setPendingHref(null);
     setOpenDropdownId(null);
     setShowUserMenu(false);
     setShowNotifications(false);
   }, [pathname, currentTab]);
+
+  // Listen for 0ms client-side attendance tab changes
+  useEffect(() => {
+    const onTabEvent = (e: Event) => {
+      const detail = (e as CustomEvent<string>).detail;
+      if (detail) {
+        setLocalAttendanceTab(detail);
+        setPendingHref(null);
+      }
+    };
+    window.addEventListener('bale:attendance-tab', onTabEvent);
+    return () => window.removeEventListener('bale:attendance-tab', onTabEvent);
+  }, []);
 
   // Close popovers on outside click
   useEffect(() => {
@@ -288,13 +305,37 @@ export const Navbar: React.FC<NavbarProps> = () => {
   };
 
   const isHrefActive = (href: string) => {
+    if (pendingHref) {
+      return pendingHref === href;
+    }
     const [basePath, query] = href.split('?');
     if (basePath === '/attendance') {
       if (pathname !== '/attendance') return false;
       const targetTab = new URLSearchParams(query || '').get('tab') || 'terminal';
-      return currentTab === targetTab;
+      return localAttendanceTab === targetTab;
     }
     return pathname === basePath || Boolean(pathname?.startsWith(`${basePath}/`));
+  };
+
+  const handleNavClick = (e: React.MouseEvent<HTMLAnchorElement>, href: string) => {
+    setOpenDropdownId(null);
+    setShowUserMenu(false);
+    setShowNotifications(false);
+    const [basePath, query] = href.split('?');
+
+    // 0ms client-side tab switch when already on `/attendance`
+    if (basePath === '/attendance' && pathname === '/attendance') {
+      e.preventDefault();
+      const targetTab = new URLSearchParams(query || '').get('tab') || 'terminal';
+      setLocalAttendanceTab(targetTab);
+      window.history.replaceState(null, '', href);
+      window.dispatchEvent(new CustomEvent('bale:attendance-tab', { detail: targetTab }));
+      return;
+    }
+
+    if (pathname !== basePath) {
+      setPendingHref(href);
+    }
   };
 
   const isGroupActive = (group: NavDropdownGroup) =>
@@ -511,13 +552,18 @@ export const Navbar: React.FC<NavbarProps> = () => {
 
       <header
         ref={navRef}
-        className="sticky top-0 z-40 w-full bg-white/95 backdrop-blur-md border-b border-surface-border/80 shadow-[0_2px_12px_rgba(11,31,58,0.04)]"
+        className="sticky top-0 z-40 w-full bg-white/95 backdrop-blur-md border-b border-surface-border/80 shadow-[0_2px_12px_rgba(11,31,58,0.04)] relative"
       >
+        {pendingHref && (
+          <div className="absolute top-0 inset-x-0 h-0.5 bg-surface-inset overflow-hidden">
+            <div className="h-full w-1/2 bg-[#1B4978] animate-[asintaProgress_0.9s_ease-in-out_infinite]" />
+          </div>
+        )}
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 h-16 flex items-center justify-between gap-4">
           {/* Left: Minimalist BALE System Mark (Asinta Corp. logo lives in the global Trademark Footer) */}
           <Link
             href={isFounder ? '/dashboard' : '/attendance'}
-            prefetch={false}
+            onClick={(e) => handleNavClick(e, isFounder ? '/dashboard' : '/attendance')}
             className="flex items-center space-x-2.5 group shrink-0"
           >
             <div className="px-2.5 py-1 rounded-xl bg-navy text-white font-black text-xs tracking-[0.18em] shadow-sm group-hover:bg-navy-light transition-all">
@@ -534,9 +580,9 @@ export const Navbar: React.FC<NavbarProps> = () => {
               <>
                 <Link
                   href="/dashboard"
-                  prefetch={false}
+                  onClick={(e) => handleNavClick(e, '/dashboard')}
                   className={`flex items-center space-x-1.5 px-3.5 py-2 rounded-xl text-xs font-bold transition-all active:scale-[0.98] ${
-                    pathname === '/dashboard'
+                    isHrefActive('/dashboard')
                       ? 'bg-navy text-white shadow-[0_4px_12px_rgba(11,31,58,0.18)]'
                       : 'text-ink-secondary hover:text-navy hover:bg-surface-inset/70'
                   }`}
@@ -585,8 +631,7 @@ export const Navbar: React.FC<NavbarProps> = () => {
                                 <Link
                                   key={item.href}
                                   href={item.href}
-                                  prefetch={false}
-                                  onClick={() => setOpenDropdownId(null)}
+                                  onClick={(e) => handleNavClick(e, item.href)}
                                   className={`flex items-start space-x-3 p-2.5 rounded-xl transition-all ${
                                     itemActive
                                       ? 'bg-navy text-white shadow-sm'
@@ -637,7 +682,7 @@ export const Navbar: React.FC<NavbarProps> = () => {
                   <Link
                     key={item.href}
                     href={item.href}
-                    prefetch={false}
+                    onClick={(e) => handleNavClick(e, item.href)}
                     className={`flex items-center space-x-1.5 px-4 py-2 rounded-xl text-xs font-bold transition-all active:scale-[0.98] ${
                       active
                         ? 'bg-navy text-white shadow-[0_4px_12px_rgba(11,31,58,0.18)]'

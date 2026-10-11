@@ -186,6 +186,21 @@
   }
 }
 
+@keyframes archStroke {
+  0% {
+    stroke-dasharray: 40 160;
+    stroke-dashoffset: 0;
+  }
+  50% {
+    stroke-dasharray: 120 80;
+    stroke-dashoffset: -60;
+  }
+  100% {
+    stroke-dasharray: 40 160;
+    stroke-dashoffset: -200;
+  }
+}
+
 /* Respect the operating system's reduced-motion preference. The app uses
    hover transforms, `animate-in` transitions and spinners; without this,
    users who ask for less motion still receive all of it. */
