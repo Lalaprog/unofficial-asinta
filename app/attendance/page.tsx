@@ -117,8 +117,7 @@ function AttendancePageInner() {
   const [selectedDate, setSelectedDate] = useState<string>(today);
   const [activeTab, setActiveTab] = useState<'terminal' | 'history' | 'workforce'>('terminal');
 
-  // Sync activeTab with URL `?tab=history` or `?tab=workforce` so History and Workforce
-  // operate as standalone pages from both the Desktop Top Nav and Mobile Bottom Nav
+  // Sync activeTab with URL `?tab=history` or `?tab=workforce` and 0ms client-side tab events
   useEffect(() => {
     const tabParam = searchParams?.get('tab');
     if (tabParam === 'history' || tabParam === 'workforce') {
@@ -127,6 +126,17 @@ function AttendancePageInner() {
       setActiveTab('terminal');
     }
   }, [searchParams]);
+
+  useEffect(() => {
+    const onTabEvent = (e: Event) => {
+      const detail = (e as CustomEvent<string>).detail;
+      if (detail === 'history' || detail === 'workforce' || detail === 'terminal') {
+        setActiveTab(detail);
+      }
+    };
+    window.addEventListener('bale:attendance-tab', onTabEvent);
+    return () => window.removeEventListener('bale:attendance-tab', onTabEvent);
+  }, []);
 
   // Compact vs Card view for Daily Roster (defaults to compact grouped rows)
   const [viewMode, setViewMode] = useState<'compact' | 'cards'>('compact');
@@ -1071,6 +1081,39 @@ function AttendancePageInner() {
                   Mark Crew Present
                 </Button>
 
+                <Button
+                  type="submit"
+                  variant={
+                    existingSiteDateRecords.length > 0 && !hasUnsavedChanges
+                      ? 'secondary'
+                      : 'primary'
+                  }
+                  size="sm"
+                  isLoading={isSubmitting}
+                  disabled={
+                    isSubmitting ||
+                    !selectedProjectId ||
+                    markableWorkers.length === 0 ||
+                    uncheckedCount > 0 ||
+                    (existingSiteDateRecords.length > 0 && !hasUnsavedChanges)
+                  }
+                  leftIcon={
+                    existingSiteDateRecords.length > 0 && !hasUnsavedChanges ? (
+                      <CheckCircle2 className="w-3.5 h-3.5 text-status-success" />
+                    ) : (
+                      <Save className="w-3.5 h-3.5" />
+                    )
+                  }
+                >
+                  {uncheckedCount > 0
+                    ? `${uncheckedCount} Left`
+                    : existingSiteDateRecords.length > 0
+                      ? hasUnsavedChanges
+                        ? 'Save'
+                        : 'Synced ✓'
+                      : 'Submit'}
+                </Button>
+
                 <div className="inline-flex rounded-xl border border-surface-border bg-surface-inset p-0.5">
                   <button
                     type="button"
@@ -1466,8 +1509,8 @@ function AttendancePageInner() {
               )}
             </div>
 
-            {/* Slim Single-Line Submit Action Bar (Never overlaps worker cards with paragraphs of text) */}
-            <div className="sticky bottom-[68px] lg:bottom-12 z-20 px-3.5 py-2.5 rounded-2xl bg-white/95 backdrop-blur-md border border-surface-border shadow-[0_8px_24px_rgba(11,31,58,0.10)] flex items-center justify-between gap-3">
+            {/* In-Flow Bottom Submit & Sync Card (Moves naturally with collapsed/expanded groups — never overlaps) */}
+            <div className="mt-4 px-4 py-3 rounded-2xl bg-white border border-surface-border shadow-xs flex items-center justify-between gap-3">
               <div className="text-xs text-ink-secondary truncate min-w-0">
                 {uncheckedCount > 0 ? (
                   <span>

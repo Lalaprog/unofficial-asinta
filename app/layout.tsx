@@ -5,6 +5,7 @@ import { AuthProvider } from '@/lib/auth/authContext';
 import { DataStoreProvider } from '@/lib/data/store';
 import { SessionWatcher } from '@/components/auth/SessionWatcher';
 import { InspectGuard } from '@/components/security/InspectGuard';
+import { MobileKeyboardCenter } from '@/components/ui/MobileKeyboardCenter';
 
 export const metadata: Metadata = {
   title: 'BALE | Billing & Advance Ledger Engine — Asinta Architects',
@@ -28,6 +29,7 @@ export default function RootLayout({
                   when there is no session or while the session is healthy. */}
               <SessionWatcher />
               <InspectGuard />
+              <MobileKeyboardCenter />
             </DataStoreProvider>
           </AuthProvider>
         </ToastProvider>
