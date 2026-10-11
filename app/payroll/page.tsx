@@ -106,11 +106,18 @@ export default function PayrollPage() {
   const totalNetDisbursement = filteredPayroll.reduce((sum, p) => sum + Number(p.net_pay || 0), 0);
   const totalBaleRecovered = filteredPayroll.reduce((sum, p) => sum + Number(p.bale_deduction || 0), 0);
 
-  const periodAttendanceCount = attendance.filter(
+  const periodAttendanceRecords = attendance.filter(
     (a) =>
       a.date >= periodStart &&
       a.date <= periodEnd &&
       (generateProjectId === 'all' || a.project_id === generateProjectId)
+  );
+  const periodAttendanceCount = periodAttendanceRecords.length;
+  const unverifiedSelfLogsCount = periodAttendanceRecords.filter(
+    (a) =>
+      a.worker_id === a.recorded_by &&
+      !a.is_founder_override &&
+      (a.status === 'present' || a.status === 'half_day')
   ).length;
 
   const existingPeriodVouchers = payroll.filter(
@@ -390,6 +397,11 @@ export default function PayrollPage() {
             <div>
               Supervisor-submitted attendance is synced automatically — you do not need to re-submit attendance before running payroll.
             </div>
+            {unverifiedSelfLogsCount > 0 && (
+              <div className="text-[11px] font-semibold text-status-warning pt-1 border-t border-surface-border/60">
+                Anti-Fraud Gate: {unverifiedSelfLogsCount} Supervisor self-attendance log(s) are awaiting Founder verification on the Attendance page and are held back until verified.
+              </div>
+            )}
             {existingPeriodVouchers.length > 0 && (
               <div className="text-[11px] font-semibold text-navy pt-1 border-t border-surface-border/60">
                 Note: {existingPeriodVouchers.length} voucher(s) already exist for {periodStart} → {periodEnd}. Running again will refresh draft vouchers in-place without creating duplicates.

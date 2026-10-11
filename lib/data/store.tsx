@@ -944,11 +944,12 @@ export const DataStoreProvider: React.FC<{ children: React.ReactNode }> = ({ chi
     const rowsToInsert: Array<Omit<Payroll, 'id' | 'created_at'>> = [];
     const rowsToUpdate: Array<{ id: string; before: Payroll; patch: Partial<Payroll> }> = [];
     let skippedFinalizedCount = 0;
+    let unverifiedSupervisorSelfCount = 0;
 
     workers
       .filter((w) => w.active)
       .forEach((w) => {
-        const workerAtt = attendance.filter(
+        const rawWorkerAtt = attendance.filter(
           (a) =>
             a.worker_id === w.id &&
             a.date >= periodStart &&
@@ -956,7 +957,22 @@ export const DataStoreProvider: React.FC<{ children: React.ReactNode }> = ({ chi
             (!targetProject || a.project_id === targetProject.id)
         );
 
-        // Skip workers who logged 0 attendance records in the selected period
+        // Anti-fraud control: Supervisor self-attendance (worker_id === recorded_by)
+        // for Present/Half-Day must be verified by a Founder (is_founder_override === true)
+        // before it counts toward payroll disbursement.
+        const workerAtt = rawWorkerAtt.filter((a) => {
+          const isUnverifiedSelfLog =
+            a.worker_id === a.recorded_by &&
+            !a.is_founder_override &&
+            (a.status === 'present' || a.status === 'half_day');
+          if (isUnverifiedSelfLog) {
+            unverifiedSupervisorSelfCount += 1;
+            return false;
+          }
+          return true;
+        });
+
+        // Skip workers who logged 0 verified attendance records in the selected period
         // so empty ₱0 payslips are not spammed into the ledger.
         if (workerAtt.length === 0) {
           return;
@@ -1049,6 +1065,11 @@ export const DataStoreProvider: React.FC<{ children: React.ReactNode }> = ({ chi
         showToast(
           'info',
           `Payroll for ${periodStart} → ${periodEnd} is already approved/paid (${skippedFinalizedCount} voucher${skippedFinalizedCount === 1 ? '' : 's'}). No duplicate vouchers created.`
+        );
+      } else if (unverifiedSupervisorSelfCount > 0) {
+        showToast(
+          'info',
+          `${unverifiedSupervisorSelfCount} Supervisor self-attendance log(s) require Founder verification on the Attendance page before payroll can be computed.`
         );
       } else {
         showToast(

@@ -1,19 +1,27 @@
 'use client';
 
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
 import { AppShell } from '@/components/layout/AppShell';
 import { useDataStore } from '@/lib/data/store';
 import { useAuth } from '@/lib/auth/authContext';
-import { AttendanceStatus, Worker } from '@/types';
+import { Attendance, AttendanceStatus, Worker } from '@/types';
 import {
-  UserCheck,
   CheckCircle2,
-  Search,
-  History,
+  Clock,
   Save,
-  HardHat,
+  Search,
   UserPlus,
   Settings2,
+  MapPin,
+  ShieldAlert,
+  ShieldCheck,
+  ChevronDown,
+  ChevronRight,
+  LayoutList,
+  LayoutGrid,
+  MessageSquare,
+  CheckCheck,
+  XCircle,
 } from 'lucide-react';
 import { Button } from '@/components/ui/Button';
 import { Badge } from '@/components/ui/Badge';
@@ -22,6 +30,47 @@ import { Select } from '@/components/ui/Select';
 import { Modal } from '@/components/ui/Modal';
 import { EmptyState } from '@/components/ui/EmptyState';
 import { useToast } from '@/components/ui/Toast';
+
+type CraftGroupKey =
+  | 'supervision'
+  | 'masonry'
+  | 'carpentry'
+  | 'mep_steel'
+  | 'general';
+
+const CRAFT_GROUP_META: Record<
+  CraftGroupKey,
+  { label: string; order: number }
+> = {
+  supervision: { label: 'Site Supervision & Foremen', order: 1 },
+  masonry: { label: 'Masonry & Concrete', order: 2 },
+  carpentry: { label: 'Carpentry & Formworks', order: 3 },
+  mep_steel: { label: 'Steel, Electrical & Plumbing', order: 4 },
+  general: { label: 'Finishing & General Labor', order: 5 },
+};
+
+function getCraftGroup(position: string): CraftGroupKey {
+  const pos = position.toLowerCase();
+  if (pos.includes('supervisor') || pos.includes('foreman') || pos.includes('engineer')) {
+    return 'supervision';
+  }
+  if (pos.includes('mason') || pos.includes('concrete') || pos.includes('tile')) {
+    return 'masonry';
+  }
+  if (pos.includes('carpenter') || pos.includes('formwork') || pos.includes('joiner')) {
+    return 'carpentry';
+  }
+  if (
+    pos.includes('steel') ||
+    pos.includes('welder') ||
+    pos.includes('tinsmith') ||
+    pos.includes('electric') ||
+    pos.includes('plumb')
+  ) {
+    return 'mep_steel';
+  }
+  return 'general';
+}
 
 export default function AttendancePage() {
   const { user, isFounder, isSupervisor } = useAuth();
@@ -40,9 +89,8 @@ export default function AttendancePage() {
   } = useDataStore();
 
   // Accessible projects for user
-  const accessibleProjects = isSupervisor && user
-    ? getProjectsForSupervisor(user.id)
-    : projects;
+  const accessibleProjects =
+    isSupervisor && user ? getProjectsForSupervisor(user.id) : projects;
 
   // Terminal workflow state
   const today = new Date().toISOString().split('T')[0];
@@ -53,6 +101,13 @@ export default function AttendancePage() {
   const [selectedDate, setSelectedDate] = useState<string>(today);
   const [activeTab, setActiveTab] = useState<'terminal' | 'history' | 'workforce'>('terminal');
 
+  // Compact vs Card view for Daily Roster (defaults to compact grouped rows)
+  const [viewMode, setViewMode] = useState<'compact' | 'cards'>('compact');
+  const [craftFilter, setCraftFilter] = useState<string>('all');
+  const [collapsedGroups, setCollapsedGroups] = useState<Record<string, boolean>>({});
+  const [expandedNoteWorkers, setExpandedNoteWorkers] = useState<Record<string, boolean>>({});
+  const [isLocatingGps, setIsLocatingGps] = useState(false);
+
   // Workforce tab state (add & edit worker)
   const [workerName, setWorkerName] = useState('');
   const [workerPosition, setWorkerPosition] = useState('Mason');
@@ -60,6 +115,8 @@ export default function AttendancePage() {
   const [workerRateType, setWorkerRateType] = useState<'daily' | 'hourly'>('daily');
   const [workerPhone, setWorkerPhone] = useState('');
   const [isAddingWorker, setIsAddingWorker] = useState(false);
+  const [workforceSearch, setWorkforceSearch] = useState('');
+  const [workforceCraftFilter, setWorkforceCraftFilter] = useState<string>('all');
 
   const [editingWorker, setEditingWorker] = useState<Worker | null>(null);
   const [editWorkerName, setEditWorkerName] = useState('');
@@ -85,22 +142,33 @@ export default function AttendancePage() {
   const [submissionSuccess, setSubmissionSuccess] = useState(false);
   const [searchWorker, setSearchWorker] = useState('');
 
-  // History tab filters
+  // History tab filters & collapsible daily sheets
   const [historyProjectFilter, setHistoryProjectFilter] = useState<string>('all');
   const [historyStatusFilter, setHistoryStatusFilter] = useState<string>('all');
   const [historyDateFilter, setHistoryDateFilter] = useState<string>('');
   const [historySearchQuery, setHistorySearchQuery] = useState<string>('');
+  const [collapsedHistorySheets, setCollapsedHistorySheets] = useState<Record<string, boolean>>({});
 
   // Founder Override modal
   const [overrideModalOpen, setOverrideModalOpen] = useState(false);
-  const [selectedRecordForOverride, setSelectedRecordForOverride] = useState<any>(null);
+  const [selectedRecordForOverride, setSelectedRecordForOverride] = useState<Attendance | null>(null);
   const [overrideStatus, setOverrideStatus] = useState<AttendanceStatus>('present');
   const [overrideHours, setOverrideHours] = useState('8');
   const [overrideNotes, setOverrideNotes] = useState('');
 
+  const isSelfSupervisorWorker = (w: Worker): boolean => {
+    if (!isSupervisor || !user) return false;
+    return (
+      w.id === user.id || w.name.trim().toLowerCase() === user.name.trim().toLowerCase()
+    );
+  };
+
   // Update selectedProjectId when accessible projects change
   useEffect(() => {
-    if (accessibleProjects.length > 0 && !accessibleProjects.some((p) => p.id === selectedProjectId)) {
+    if (
+      accessibleProjects.length > 0 &&
+      !accessibleProjects.some((p) => p.id === selectedProjectId)
+    ) {
       setSelectedProjectId(accessibleProjects[0].id);
     }
   }, [accessibleProjects, selectedProjectId]);
@@ -122,39 +190,123 @@ export default function AttendancePage() {
       (a) => a.project_id === selectedProjectId && a.date === selectedDate
     );
 
-    const initialDraft: Record<string, { status: AttendanceStatus; hours_worked: number; notes: string }> = {};
+    const initialDraft: Record<
+      string,
+      { status: AttendanceStatus; hours_worked: number; notes: string }
+    > = {};
 
-    workers.filter((w) => w.active).forEach((w) => {
-      const match = existing.find((a) => a.worker_id === w.id);
-      if (match) {
-        initialDraft[w.id] = {
-          status: match.status,
-          hours_worked: match.hours_worked,
-          notes: match.notes || '',
-        };
-      } else {
-        // Default to present 8 hours
-        initialDraft[w.id] = {
-          status: 'present',
-          hours_worked: 8,
-          notes: '',
-        };
-      }
-    });
+    workers
+      .filter((w) => w.active)
+      .forEach((w) => {
+        const match = existing.find((a) => a.worker_id === w.id);
+        if (match) {
+          initialDraft[w.id] = {
+            status: match.status,
+            hours_worked: match.hours_worked,
+            notes: match.notes || '',
+          };
+        } else if (isSupervisor && user && (w.id === user.id || w.name.trim().toLowerCase() === user.name.trim().toLowerCase())) {
+          // Anti-fraud default: Supervisor's OWN row defaults to Absent (0h)
+          // until they perform an explicit GPS Self Check-In (which still requires
+          // Founder verification before payroll payout).
+          initialDraft[w.id] = {
+            status: 'absent',
+            hours_worked: 0,
+            notes: '',
+          };
+        } else {
+          // Regular field crew defaults to present 8 hours
+          initialDraft[w.id] = {
+            status: 'present',
+            hours_worked: 8,
+            notes: '',
+          };
+        }
+      });
 
     setDraftAttendance(initialDraft);
     setSubmissionSuccess(false);
-  }, [selectedProjectId, selectedDate, attendance, workers]);
+  }, [selectedProjectId, selectedDate, attendance, workers, isSupervisor, user]);
 
-  const handleStatusChange = (workerId: string, status: AttendanceStatus) => {
-    const current = draftAttendance[workerId] || { status: 'present', hours_worked: 8, notes: '' };
+  // Capture GPS proof when a Supervisor checks themselves in as Present or Half Day
+  const stampSupervisorSelfCheckIn = (workerId: string, status: AttendanceStatus, hours: number) => {
+    const timeLabel = new Date().toLocaleTimeString('en-PH', {
+      hour: '2-digit',
+      minute: '2-digit',
+    });
+
+    if (typeof navigator !== 'undefined' && 'geolocation' in navigator) {
+      setIsLocatingGps(true);
+      navigator.geolocation.getCurrentPosition(
+        (pos) => {
+          setIsLocatingGps(false);
+          const lat = pos.coords.latitude.toFixed(4);
+          const lng = pos.coords.longitude.toFixed(4);
+          const acc = Math.round(pos.coords.accuracy);
+          const stamp = `[SELF-CHECKIN | GPS: ${lat}, ${lng} (±${acc}m) @ ${timeLabel} | Pending Founder Verification]`;
+          setDraftAttendance((prev) => ({
+            ...prev,
+            [workerId]: {
+              status,
+              hours_worked: hours,
+              notes: stamp,
+            },
+          }));
+          showToast(
+            'info',
+            `GPS Check-In stamped (${lat}, ${lng}). A Founder must verify your self-attendance before payroll.`
+          );
+        },
+        () => {
+          setIsLocatingGps(false);
+          const stamp = `[SELF-CHECKIN | NO GPS PROOF (Location Denied/Unavailable) @ ${timeLabel} | Pending Founder Verification]`;
+          setDraftAttendance((prev) => ({
+            ...prev,
+            [workerId]: {
+              status,
+              hours_worked: hours,
+              notes: stamp,
+            },
+          }));
+          showToast(
+            'info',
+            'GPS location was unavailable — self-attendance is flagged as No GPS Proof for Founder review.'
+          );
+        },
+        { enableHighAccuracy: true, timeout: 6000, maximumAge: 60000 }
+      );
+    } else {
+      const stamp = `[SELF-CHECKIN | NO GPS DEVICE @ ${timeLabel} | Pending Founder Verification]`;
+      setDraftAttendance((prev) => ({
+        ...prev,
+        [workerId]: {
+          status,
+          hours_worked: hours,
+          notes: stamp,
+        },
+      }));
+    }
+  };
+
+  const handleStatusChange = (worker: Worker, status: AttendanceStatus) => {
+    const current = draftAttendance[worker.id] || {
+      status: 'present',
+      hours_worked: 8,
+      notes: '',
+    };
     let hours = 8;
     if (status === 'half_day') hours = 4;
     if (status === 'absent' || status === 'leave') hours = 0;
 
+    // If a Supervisor is marking their OWN row Present or Half Day, require GPS stamp
+    if (isSelfSupervisorWorker(worker) && (status === 'present' || status === 'half_day')) {
+      stampSupervisorSelfCheckIn(worker.id, status, hours);
+      return;
+    }
+
     setDraftAttendance({
       ...draftAttendance,
-      [workerId]: {
+      [worker.id]: {
         ...current,
         status,
         hours_worked: hours,
@@ -182,6 +334,21 @@ export default function AttendancePage() {
         notes,
       },
     });
+  };
+
+  // Bulk mark all regular crew (or a specific craft group) Present 8h
+  const handleMarkCrewPresent = (targetWorkers: Worker[]) => {
+    const updated = { ...draftAttendance };
+    targetWorkers.forEach((w) => {
+      // Never bulk-mark a Supervisor's own row without explicit GPS check-in
+      if (isSelfSupervisorWorker(w)) return;
+      updated[w.id] = {
+        status: 'present',
+        hours_worked: 8,
+        notes: updated[w.id]?.notes || '',
+      };
+    });
+    setDraftAttendance(updated);
   };
 
   const handleBatchSubmit = async (e: React.FormEvent) => {
@@ -212,6 +379,41 @@ export default function AttendancePage() {
     }
   };
 
+  // 1-Click Founder Verification or Rejection of Supervisor Self-Attendance
+  const handleQuickVerifySelfAttendance = async (rec: Attendance, approve: boolean) => {
+    const cleanExistingNotes = (rec.notes || '').replace(
+      /\s*\|\s*Pending Founder Verification\]?/gi,
+      ']'
+    );
+    if (approve) {
+      const ok = await updateAttendanceRecord(
+        rec.id,
+        {
+          status: rec.status,
+          hours_worked: rec.hours_worked,
+          notes: `${cleanExistingNotes} [Founder Verified On-Site by ${user?.name || 'Founder'}]`.trim(),
+        },
+        true
+      );
+      if (ok) {
+        showToast('success', 'Supervisor self-attendance verified and unlocked for Payroll.');
+      }
+    } else {
+      const ok = await updateAttendanceRecord(
+        rec.id,
+        {
+          status: 'absent',
+          hours_worked: 0,
+          notes: `[Founder Rejected Self-Check-In → Marked Absent by ${user?.name || 'Founder'}] ${cleanExistingNotes}`.trim(),
+        },
+        true
+      );
+      if (ok) {
+        showToast('info', 'Supervisor self-check-in rejected and marked Absent (0h).');
+      }
+    }
+  };
+
   const handleFounderOverrideSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!selectedRecordForOverride) return;
@@ -225,7 +427,7 @@ export default function AttendancePage() {
           ? `[Founder Override]: ${overrideNotes}`
           : `[Founder Override by ${user?.name || 'Founder'}]`,
       },
-      true // set founder override = true
+      true
     );
 
     if (success) {
@@ -281,18 +483,42 @@ export default function AttendancePage() {
   };
 
   // Filtered workers (Supervisors placed at the top of the daily roster)
-  const filteredWorkers = workers
-    .filter((w) => w.active)
-    .filter((w) => w.name.toLowerCase().includes(searchWorker.toLowerCase()) || w.position.toLowerCase().includes(searchWorker.toLowerCase()))
-    .sort((a, b) => {
-      const aSup = a.position.toLowerCase().includes('supervisor') ? 0 : 1;
-      const bSup = b.position.toLowerCase().includes('supervisor') ? 0 : 1;
-      return aSup - bSup;
-    });
+  const filteredWorkers = useMemo(() => {
+    return workers
+      .filter((w) => w.active)
+      .filter((w) => {
+        if (craftFilter !== 'all' && getCraftGroup(w.position) !== craftFilter) {
+          return false;
+        }
+        if (!searchWorker.trim()) return true;
+        const q = searchWorker.toLowerCase();
+        return (
+          w.name.toLowerCase().includes(q) || w.position.toLowerCase().includes(q)
+        );
+      })
+      .sort((a, b) => {
+        const aSup = a.position.toLowerCase().includes('supervisor') ? 0 : 1;
+        const bSup = b.position.toLowerCase().includes('supervisor') ? 0 : 1;
+        if (aSup !== bSup) return aSup - bSup;
+        return a.name.localeCompare(b.name);
+      });
+  }, [workers, craftFilter, searchWorker]);
 
-  // Detect any Supervisor profiles (either the signed-in Supervisor or team
-  // Supervisors in `public.users`) that are not yet enrolled on the active
-  // `workers` payroll roster so they can be enrolled with one click.
+  // Group filteredWorkers by CraftGroupKey for compact collapsible display
+  const groupedRosterWorkers = useMemo(() => {
+    const map = new Map<CraftGroupKey, Worker[]>();
+    filteredWorkers.forEach((w) => {
+      const key = getCraftGroup(w.position);
+      const list = map.get(key) || [];
+      list.push(w);
+      map.set(key, list);
+    });
+    return Array.from(map.entries()).sort(
+      (a, b) => CRAFT_GROUP_META[a[0]].order - CRAFT_GROUP_META[b[0]].order
+    );
+  }, [filteredWorkers]);
+
+  // Detect any Supervisor profiles not yet enrolled on the active `workers` roster
   const candidateSupervisors = [
     ...(isSupervisor && user ? [user] : []),
     ...users.filter((u) => u.role === 'supervisor'),
@@ -328,10 +554,14 @@ export default function AttendancePage() {
     (a) => a.project_id === selectedProjectId && a.date === selectedDate
   );
 
-  // Determine whether the current draft differs from the already-submitted
-  // records for (selectedProjectId, selectedDate). Prevents spam-submitting
-  // identical attendance and makes it clear to Founders that Supervisor-
-  // submitted attendance is already live in the Payroll Engine.
+  // Unverified Supervisor self-attendance logs across the ledger
+  const unverifiedSelfLogs = attendance.filter(
+    (a) =>
+      a.worker_id === a.recorded_by &&
+      !a.is_founder_override &&
+      (a.status === 'present' || a.status === 'half_day')
+  );
+
   const activeWorkersList = workers.filter((w) => w.active);
   const hasUnsavedChanges =
     existingSiteDateRecords.length === 0
@@ -388,9 +618,63 @@ export default function AttendancePage() {
     return true;
   });
 
+  // Group history records by (date + project_id) so each daily sheet is compact & collapsible
+  const groupedHistorySheets = useMemo(() => {
+    const sheets = new Map<
+      string,
+      { key: string; date: string; projectId: string; records: Attendance[] }
+    >();
+    filteredHistoryAttendance.forEach((rec) => {
+      const key = `${rec.date}::${rec.project_id}`;
+      const existing = sheets.get(key);
+      if (existing) {
+        existing.records.push(rec);
+      } else {
+        sheets.set(key, {
+          key,
+          date: rec.date,
+          projectId: rec.project_id,
+          records: [rec],
+        });
+      }
+    });
+    return Array.from(sheets.values()).sort((a, b) => b.date.localeCompare(a.date));
+  }, [filteredHistoryAttendance]);
+
+  // Group Workforce tab workers by craft group
+  const groupedWorkforceDirectory = useMemo(() => {
+    const filtered = workers.filter((w) => {
+      if (workforceCraftFilter !== 'all' && getCraftGroup(w.position) !== workforceCraftFilter) {
+        return false;
+      }
+      if (!workforceSearch.trim()) return true;
+      const q = workforceSearch.toLowerCase();
+      return w.name.toLowerCase().includes(q) || w.position.toLowerCase().includes(q);
+    });
+
+    const map = new Map<CraftGroupKey, Worker[]>();
+    filtered.forEach((w) => {
+      const key = getCraftGroup(w.position);
+      const list = map.get(key) || [];
+      list.push(w);
+      map.set(key, list);
+    });
+    return Array.from(map.entries()).sort(
+      (a, b) => CRAFT_GROUP_META[a[0]].order - CRAFT_GROUP_META[b[0]].order
+    );
+  }, [workers, workforceCraftFilter, workforceSearch]);
+
+  const toggleGroupCollapse = (key: string) => {
+    setCollapsedGroups((prev) => ({ ...prev, [key]: !prev[key] }));
+  };
+
+  const toggleNoteInput = (workerId: string) => {
+    setExpandedNoteWorkers((prev) => ({ ...prev, [workerId]: !prev[workerId] }));
+  };
+
   return (
     <AppShell>
-      <div className="space-y-6 max-w-5xl mx-auto">
+      <div className="space-y-5 max-w-5xl mx-auto">
         {/* Terminal Header */}
         <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 pb-2 border-b border-surface-border/60">
           <div>
@@ -400,11 +684,11 @@ export default function AttendancePage() {
               </span>
               <span className="text-xs text-ink-muted">·</span>
               <span className="text-xs text-ink-secondary">
-                {isFounder ? 'Founder Override Enabled' : 'Touch Optimized'}
+                {isFounder ? 'Founder Verification & Override' : 'GPS Self-Check-In Protected'}
               </span>
             </div>
             <h1 className="text-2xl sm:text-3xl font-extrabold text-navy tracking-tight mt-1">
-              Site Workforce & Attendance
+              Site Workforce &amp; Attendance
             </h1>
           </div>
 
@@ -413,7 +697,7 @@ export default function AttendancePage() {
               variant={activeTab === 'terminal' ? 'primary' : 'secondary'}
               size="sm"
               onClick={() => setActiveTab('terminal')}
-              leftIcon={<UserCheck className="w-3.5 h-3.5" />}
+              leftIcon={<CheckCircle2 className="w-4 h-4" />}
             >
               Daily Roster
             </Button>
@@ -421,27 +705,103 @@ export default function AttendancePage() {
               variant={activeTab === 'history' ? 'primary' : 'secondary'}
               size="sm"
               onClick={() => setActiveTab('history')}
-              leftIcon={<History className="w-3.5 h-3.5" />}
+              leftIcon={<Clock className="w-4 h-4" />}
             >
               Logs &amp; History
+              {isFounder && unverifiedSelfLogs.length > 0 && (
+                <span className="ml-1.5 px-1.5 py-0.2 rounded-full bg-status-warning text-navy text-[10px] font-extrabold">
+                  {unverifiedSelfLogs.length}
+                </span>
+              )}
             </Button>
             <Button
               variant={activeTab === 'workforce' ? 'primary' : 'secondary'}
               size="sm"
               onClick={() => setActiveTab('workforce')}
-              leftIcon={<HardHat className="w-3.5 h-3.5" />}
+              leftIcon={<UserPlus className="w-4 h-4" />}
             >
               Workforce ({workers.filter((w) => w.active).length})
             </Button>
           </div>
         </div>
 
-        {/* WORKFLOW BAR: STEP 1 (PROJECT) & STEP 2 (DATE) — shown only on Daily Roster */}
+        {/* Founder Anti-Fraud Alert: Unverified Supervisor Self-Attendance */}
+        {isFounder && unverifiedSelfLogs.length > 0 && (
+          <div className="p-4 rounded-2xl bg-status-warning-bg/80 border border-status-warning/40 space-y-3 text-xs">
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+              <div className="flex items-start sm:items-center gap-2.5">
+                <ShieldAlert className="w-5 h-5 text-status-warning shrink-0 mt-0.5 sm:mt-0" />
+                <div>
+                  <div className="font-bold text-navy text-sm">
+                    Supervisor Self-Attendance Requires Founder Verification ({unverifiedSelfLogs.length})
+                  </div>
+                  <div className="text-ink-secondary">
+                    To prevent a Supervisor from marking themselves Present while absent, self-logged Supervisor hours are held back from Payroll until you verify or reject them below.
+                  </div>
+                </div>
+              </div>
+              <Badge variant="warning" size="sm">
+                Held from Payroll
+              </Badge>
+            </div>
+
+            <div className="divide-y divide-surface-border/60 bg-white rounded-xl border border-surface-border overflow-hidden">
+              {unverifiedSelfLogs.map((rec) => {
+                const supWorker = workers.find((w) => w.id === rec.worker_id);
+                const proj = projects.find((p) => p.id === rec.project_id);
+                return (
+                  <div
+                    key={rec.id}
+                    className="p-3 flex flex-col sm:flex-row sm:items-center justify-between gap-2"
+                  >
+                    <div className="space-y-0.5">
+                      <div className="flex items-center gap-2 flex-wrap">
+                        <span className="font-bold text-navy">{supWorker?.name || 'Supervisor'}</span>
+                        <Badge variant="warning" size="sm">
+                          {rec.status.replace('_', ' ')} ({rec.hours_worked}h)
+                        </Badge>
+                        <span className="text-ink-secondary">
+                          · {proj?.name} · {rec.date}
+                        </span>
+                      </div>
+                      {rec.notes && (
+                        <div className="text-[11px] text-ink-muted font-mono">{rec.notes}</div>
+                      )}
+                    </div>
+
+                    <div className="flex items-center gap-2 shrink-0">
+                      <Button
+                        type="button"
+                        variant="primary"
+                        size="sm"
+                        onClick={() => handleQuickVerifySelfAttendance(rec, true)}
+                        leftIcon={<ShieldCheck className="w-3.5 h-3.5" />}
+                      >
+                        Verify On-Site
+                      </Button>
+                      <Button
+                        type="button"
+                        variant="danger"
+                        size="sm"
+                        onClick={() => handleQuickVerifySelfAttendance(rec, false)}
+                        leftIcon={<XCircle className="w-3.5 h-3.5" />}
+                      >
+                        Reject (Absent)
+                      </Button>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+        )}
+
+        {/* Active Project & Date Selector Bar (Only shown on Daily Roster tab) */}
         {activeTab === 'terminal' && (
-          <div className="p-4 sm:p-5 rounded-3xl bg-white border border-surface-border shadow-[6px_6px_18px_rgba(11,31,58,0.06),-6px_-6px_18px_rgba(255,255,255,0.95)] grid grid-cols-1 sm:grid-cols-2 gap-4 items-center">
+          <div className="p-4 rounded-2xl bg-white border border-surface-border shadow-sm grid grid-cols-1 md:grid-cols-2 gap-4 items-center">
             <div>
-              <label className="text-[11px] font-bold text-navy uppercase tracking-wider block mb-1.5">
-                1. Project Site
+              <label className="text-[11px] font-bold text-navy uppercase tracking-wider block mb-1">
+                1. Select Project Site
               </label>
               <Select
                 value={selectedProjectId}
@@ -460,39 +820,35 @@ export default function AttendancePage() {
             </div>
 
             <div>
-              <label className="text-[11px] font-bold text-navy uppercase tracking-wider block mb-1.5">
-                2. Attendance Date
+              <label className="text-[11px] font-bold text-navy uppercase tracking-wider block mb-1">
+                2. Select Attendance Date (Today or Yesterday for Supervisors)
               </label>
-              <div className="grid grid-cols-3 gap-2">
-                <button
+              <div className="flex items-center space-x-2">
+                <Button
                   type="button"
+                  variant={selectedDate === today ? 'primary' : 'secondary'}
+                  size="sm"
                   onClick={() => setSelectedDate(today)}
-                  className={`py-2 px-3 text-xs font-semibold rounded-xl border transition-all ${
-                    selectedDate === today
-                      ? 'bg-navy text-white border-navy shadow-sm'
-                      : 'bg-surface-inset text-navy border-surface-border hover:bg-slate-200'
-                  }`}
                 >
-                  Today
-                </button>
-                <button
+                  Today ({today.slice(5)})
+                </Button>
+                <Button
                   type="button"
+                  variant={selectedDate === yesterday ? 'primary' : 'secondary'}
+                  size="sm"
                   onClick={() => setSelectedDate(yesterday)}
-                  className={`py-2 px-3 text-xs font-semibold rounded-xl border transition-all ${
-                    selectedDate === yesterday
-                      ? 'bg-navy text-white border-navy shadow-sm'
-                      : 'bg-surface-inset text-navy border-surface-border hover:bg-slate-200'
-                  }`}
                 >
-                  Yesterday
-                </button>
-                <Input
-                  type="date"
-                  value={selectedDate}
-                  max={today}
-                  onChange={(e) => setSelectedDate(e.target.value)}
-                  className="py-1.5 text-xs"
-                />
+                  Yesterday ({yesterday.slice(5)})
+                </Button>
+                {isFounder && (
+                  <Input
+                    type="date"
+                    value={selectedDate}
+                    max={today}
+                    onChange={(e) => setSelectedDate(e.target.value)}
+                    className="py-1.5 text-xs"
+                  />
+                )}
               </div>
             </div>
           </div>
@@ -500,177 +856,460 @@ export default function AttendancePage() {
 
         {/* TAB 1: TERMINAL / DAILY ROSTER */}
         {activeTab === 'terminal' && (
-          <form onSubmit={handleBatchSubmit} className="space-y-6">
-            {/* Live Count Summary */}
-            <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
-              <div className="p-3 rounded-2xl bg-status-success-bg/70 border border-status-success/20 text-status-success text-center">
-                <div className="text-xl font-bold">{presentCount}</div>
-                <div className="text-[11px] font-semibold uppercase tracking-wider">Present Full Day</div>
+          <form onSubmit={handleBatchSubmit} className="space-y-4">
+            {/* Compact Live Count Summary Bar */}
+            <div className="grid grid-cols-4 gap-2.5">
+              <div className="p-2.5 rounded-xl bg-status-success-bg/70 border border-status-success/20 text-status-success text-center">
+                <div className="text-lg font-extrabold leading-tight">{presentCount}</div>
+                <div className="text-[10px] font-bold uppercase tracking-wider">Present (8h)</div>
               </div>
-              <div className="p-3 rounded-2xl bg-status-warning-bg/70 border border-status-warning/20 text-status-warning text-center">
-                <div className="text-xl font-bold">{halfDayCount}</div>
-                <div className="text-[11px] font-semibold uppercase tracking-wider">Half Day (4h)</div>
+              <div className="p-2.5 rounded-xl bg-status-warning-bg/70 border border-status-warning/20 text-status-warning text-center">
+                <div className="text-lg font-extrabold leading-tight">{halfDayCount}</div>
+                <div className="text-[10px] font-bold uppercase tracking-wider">Half Day (4h)</div>
               </div>
-              <div className="p-3 rounded-2xl bg-status-danger-bg/70 border border-status-danger/20 text-status-danger text-center">
-                <div className="text-xl font-bold">{absentCount}</div>
-                <div className="text-[11px] font-semibold uppercase tracking-wider">Absent</div>
+              <div className="p-2.5 rounded-xl bg-status-danger-bg/70 border border-status-danger/20 text-status-danger text-center">
+                <div className="text-lg font-extrabold leading-tight">{absentCount}</div>
+                <div className="text-[10px] font-bold uppercase tracking-wider">Absent (0h)</div>
               </div>
-              <div className="p-3 rounded-2xl bg-status-info-bg/70 border border-status-info/20 text-status-info text-center">
-                <div className="text-xl font-bold">{leaveCount}</div>
-                <div className="text-[11px] font-semibold uppercase tracking-wider">Approved Leave</div>
+              <div className="p-2.5 rounded-xl bg-status-info-bg/70 border border-status-info/20 text-status-info text-center">
+                <div className="text-lg font-extrabold leading-tight">{leaveCount}</div>
+                <div className="text-[10px] font-bold uppercase tracking-wider">Leave (0h)</div>
               </div>
-            </div>
-
-            {/* Quick search & Unenrolled Supervisor Quick-Enroll */}
-            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
-              <div className="w-full sm:max-w-md">
-                <Input
-                  placeholder="Filter worker by name or craft..."
-                  value={searchWorker}
-                  onChange={(e) => setSearchWorker(e.target.value)}
-                  leftIcon={<Search className="w-4 h-4" />}
-                />
-              </div>
-
-              {candidateSupervisors.length > 0 && (
-                <div className="flex flex-wrap items-center gap-2">
-                  {candidateSupervisors.map((sup) => (
-                    <Button
-                      key={sup.id}
-                      type="button"
-                      variant="secondary"
-                      size="sm"
-                      isLoading={isAddingWorker}
-                      onClick={() => handleEnrollSupervisor(sup)}
-                      leftIcon={<UserPlus className="w-3.5 h-3.5" />}
-                    >
-                      Include {sup.name} (Supervisor) on Roster
-                    </Button>
-                  ))}
-                </div>
-              )}
             </div>
 
             {/* Already-Synced Status Banner (prevents Founder confusion & Supervisor spam) */}
             {existingSiteDateRecords.length > 0 && (
-              <div className="p-4 rounded-2xl bg-status-success-bg/80 border border-status-success/25 text-xs flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+              <div className="p-3.5 rounded-2xl bg-status-success-bg/80 border border-status-success/25 text-xs flex flex-col sm:flex-row sm:items-center justify-between gap-2">
                 <div className="flex items-start sm:items-center gap-2.5 text-status-success">
-                  <CheckCircle2 className="w-5 h-5 shrink-0 mt-0.5 sm:mt-0" />
+                  <CheckCircle2 className="w-4 h-4 shrink-0 mt-0.5 sm:mt-0" />
                   <div>
-                    <div className="font-bold text-sm">
-                      Site Attendance Recorded &amp; Synced to Payroll Engine
-                    </div>
-                    <div className="text-ink-secondary">
+                    <span className="font-bold">
+                      Site Attendance Recorded &amp; Synced to Payroll Engine:
+                    </span>{' '}
+                    <span className="text-ink-secondary">
                       {existingSiteDateRecords.length} worker record{existingSiteDateRecords.length === 1 ? '' : 's'} saved for {selectedDate}
-                      {latestSubmittedAt ? ` (last updated ${new Date(latestSubmittedAt).toLocaleTimeString('en-PH', { hour: '2-digit', minute: '2-digit' })})` : ''}.
-                      {' '}Automatically included in Payroll runs — no re-submission needed unless you edit a status below.
-                    </div>
+                      {latestSubmittedAt
+                        ? ` (${new Date(latestSubmittedAt).toLocaleTimeString('en-PH', { hour: '2-digit', minute: '2-digit' })})`
+                        : ''}
+                      . No Founder re-submission needed unless editing below.
+                    </span>
                   </div>
                 </div>
                 <Badge variant={hasUnsavedChanges ? 'warning' : 'success'} size="sm">
-                  {hasUnsavedChanges ? 'Unsaved Edits' : 'Synced to Payroll'}
+                  {hasUnsavedChanges ? 'Unsaved Edits' : 'Synced ✓'}
                 </Badge>
               </div>
             )}
 
-            {/* Submission Banner */}
+            {/* Filter, Group & Bulk-Action Toolbar */}
+            <div className="p-3 rounded-2xl bg-white border border-surface-border shadow-sm flex flex-col lg:flex-row lg:items-center justify-between gap-2.5">
+              <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-2 flex-1">
+                <div className="w-full sm:w-64">
+                  <Input
+                    placeholder="Filter worker or craft..."
+                    value={searchWorker}
+                    onChange={(e) => setSearchWorker(e.target.value)}
+                    leftIcon={<Search className="w-4 h-4" />}
+                  />
+                </div>
+
+                <div className="w-full sm:w-52">
+                  <Select
+                    value={craftFilter}
+                    onChange={(e) => setCraftFilter(e.target.value)}
+                    options={[
+                      { label: 'All Craft Groups', value: 'all' },
+                      { label: 'Supervision & Foremen', value: 'supervision' },
+                      { label: 'Masonry & Concrete', value: 'masonry' },
+                      { label: 'Carpentry & Formworks', value: 'carpentry' },
+                      { label: 'Steel, Electrical & Plumbing', value: 'mep_steel' },
+                      { label: 'Finishing & General Labor', value: 'general' },
+                    ]}
+                  />
+                </div>
+
+                {candidateSupervisors.map((sup) => (
+                  <Button
+                    key={sup.id}
+                    type="button"
+                    variant="secondary"
+                    size="sm"
+                    isLoading={isAddingWorker}
+                    onClick={() => handleEnrollSupervisor(sup)}
+                    leftIcon={<UserPlus className="w-3.5 h-3.5" />}
+                  >
+                    Include {sup.name} on Roster
+                  </Button>
+                ))}
+              </div>
+
+              <div className="flex items-center justify-between sm:justify-end gap-2">
+                <Button
+                  type="button"
+                  variant="secondary"
+                  size="sm"
+                  onClick={() => handleMarkCrewPresent(filteredWorkers)}
+                  leftIcon={<CheckCheck className="w-3.5 h-3.5" />}
+                >
+                  Mark Crew Present (8h)
+                </Button>
+
+                <div className="inline-flex rounded-xl border border-surface-border bg-surface-inset p-0.5">
+                  <button
+                    type="button"
+                    onClick={() => setViewMode('compact')}
+                    className={`px-2.5 py-1 rounded-lg text-xs font-semibold flex items-center gap-1 transition-all ${
+                      viewMode === 'compact'
+                        ? 'bg-white text-navy shadow-sm'
+                        : 'text-ink-secondary hover:text-navy'
+                    }`}
+                    title="Compact Grouped Table"
+                  >
+                    <LayoutList className="w-3.5 h-3.5" />
+                    <span>Compact</span>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setViewMode('cards')}
+                    className={`px-2.5 py-1 rounded-lg text-xs font-semibold flex items-center gap-1 transition-all ${
+                      viewMode === 'cards'
+                        ? 'bg-white text-navy shadow-sm'
+                        : 'text-ink-secondary hover:text-navy'
+                    }`}
+                    title="Expanded Cards"
+                  >
+                    <LayoutGrid className="w-3.5 h-3.5" />
+                    <span>Cards</span>
+                  </button>
+                </div>
+              </div>
+            </div>
+
             {submissionSuccess && (
-              <div className="p-4 rounded-2xl bg-status-success-bg border border-status-success/20 text-status-success text-sm font-semibold flex items-center space-x-2 animate-in fade-in">
-                <CheckCircle2 className="w-5 h-5 text-status-success" />
+              <div className="p-3.5 rounded-2xl bg-status-success-bg border border-status-success/20 text-status-success text-xs font-semibold flex items-center space-x-2">
+                <CheckCircle2 className="w-4 h-4 text-status-success" />
                 <span>Attendance records saved and live in the Payroll Engine!</span>
               </div>
             )}
 
-            {/* WORKER ATTENDANCE CARDS (TOUCH-OPTIMIZED) */}
-            <div className="space-y-4">
-              {filteredWorkers.map((worker) => {
-                const currentDraft = draftAttendance[worker.id] || {
-                  status: 'present',
-                  hours_worked: 8,
-                  notes: '',
-                };
+            {/* GROUPED WORKER ROSTER */}
+            <div className="space-y-3">
+              {groupedRosterWorkers.map(([groupKey, groupWorkers]) => {
+                const isCollapsed = Boolean(collapsedGroups[groupKey]);
+                const groupPresent = groupWorkers.filter(
+                  (w) => (draftAttendance[w.id]?.status || 'present') === 'present'
+                ).length;
+                const groupHalf = groupWorkers.filter(
+                  (w) => draftAttendance[w.id]?.status === 'half_day'
+                ).length;
+                const groupAbsent = groupWorkers.filter(
+                  (w) =>
+                    draftAttendance[w.id]?.status === 'absent' ||
+                    draftAttendance[w.id]?.status === 'leave'
+                ).length;
 
                 return (
                   <div
-                    key={worker.id}
-                    className="p-5 rounded-3xl bg-white border border-surface-border shadow-[5px_5px_15px_rgba(11,31,58,0.05),-5px_-5px_15px_rgba(255,255,255,0.95)] space-y-4"
+                    key={groupKey}
+                    className="rounded-2xl bg-white border border-surface-border shadow-sm overflow-hidden"
                   >
-                    {/* Top worker line */}
-                    <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
-                      <div>
-                        <div className="flex items-center gap-2">
-                          <span className="text-base font-bold text-navy">{worker.name}</span>
-                          {worker.position.toLowerCase().includes('supervisor') && (
-                            <Badge variant="warning" size="sm">
-                              Supervisor
-                            </Badge>
-                          )}
-                        </div>
-                        <div className="text-xs text-ink-secondary flex items-center gap-2">
-                          <span>{worker.position}</span>
-                          <span>·</span>
-                          <span>
-                            {worker.pay_rate_type === 'hourly' ? 'Hourly' : 'Daily'} Rate: ₱{worker.pay_rate}
-                          </span>
-                        </div>
-                      </div>
+                    {/* Collapsible Craft Group Header */}
+                    <div className="px-4 py-2.5 bg-surface-inset/70 border-b border-surface-border/60 flex flex-wrap items-center justify-between gap-2">
+                      <button
+                        type="button"
+                        onClick={() => toggleGroupCollapse(groupKey)}
+                        className="flex items-center gap-2 text-left font-bold text-xs text-navy hover:text-navy-deep"
+                      >
+                        {isCollapsed ? (
+                          <ChevronRight className="w-4 h-4 text-ink-secondary" />
+                        ) : (
+                          <ChevronDown className="w-4 h-4 text-ink-secondary" />
+                        )}
+                        <span>{CRAFT_GROUP_META[groupKey].label}</span>
+                        <Badge variant="neutral" size="sm">
+                          {groupWorkers.length}
+                        </Badge>
+                      </button>
 
-                      <div className="flex items-center space-x-2">
-                        <span className="text-xs text-ink-secondary">Hours Worked:</span>
-                        <input
-                          type="number"
-                          step="0.5"
-                          min="0"
-                          max="24"
-                          value={currentDraft.hours_worked}
-                          onChange={(e) =>
-                            handleHoursChange(worker.id, parseFloat(e.target.value) || 0)
-                          }
-                          className="w-16 p-1.5 text-center text-sm font-bold text-navy bg-surface-inset border border-surface-border rounded-xl focus:bg-white focus:outline-none"
-                        />
+                      <div className="flex items-center gap-2 text-[11px]">
+                        <span className="text-status-success font-bold">{groupPresent}P</span>
+                        <span className="text-ink-muted">·</span>
+                        <span className="text-status-warning font-bold">{groupHalf}½</span>
+                        <span className="text-ink-muted">·</span>
+                        <span className="text-status-danger font-bold">{groupAbsent}A</span>
+
+                        <button
+                          type="button"
+                          onClick={() => handleMarkCrewPresent(groupWorkers)}
+                          className="ml-2 px-2 py-0.5 rounded-lg bg-white border border-surface-border text-[11px] font-semibold text-navy hover:bg-surface-inset transition-colors"
+                        >
+                          All Present
+                        </button>
                       </div>
                     </div>
 
-                    {/* LARGE TOUCH-TOGGLE STATUS BUTTONS */}
-                    <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
-                      {[
-                        { id: 'present', label: 'Present (8h)', color: 'bg-status-success', activeBg: 'bg-status-success-bg border-status-success text-status-success shadow-sm ring-2 ring-status-success/20' },
-                        { id: 'half_day', label: 'Half Day (4h)', color: 'bg-status-warning', activeBg: 'bg-status-warning-bg border-status-warning text-status-warning shadow-sm ring-2 ring-status-warning/20' },
-                        { id: 'absent', label: 'Absent (0h)', color: 'bg-status-danger', activeBg: 'bg-status-danger-bg border-status-danger text-status-danger shadow-sm ring-2 ring-status-danger/20' },
-                        { id: 'leave', label: 'Leave (0h)', color: 'bg-status-info', activeBg: 'bg-status-info-bg border-status-info text-status-info shadow-sm ring-2 ring-status-info/20' },
-                      ].map((item) => {
-                        const isSelected = currentDraft.status === item.id;
-                        return (
-                          <button
-                            key={item.id}
-                            type="button"
-                            onClick={() => handleStatusChange(worker.id, item.id as AttendanceStatus)}
-                            className={`p-3 rounded-2xl border text-xs font-bold transition-all select-none flex items-center justify-center space-x-2 ${
-                              isSelected
-                                ? item.activeBg
-                                : 'bg-surface-inset/50 border-surface-border/70 text-ink-secondary hover:bg-surface-inset'
-                            }`}
-                          >
-                            <span
-                              className={`w-2.5 h-2.5 rounded-full ${
-                                isSelected ? item.color : 'bg-slate-300'
+                    {!isCollapsed && viewMode === 'compact' && (
+                      <div className="divide-y divide-surface-border/60">
+                        {groupWorkers.map((worker) => {
+                          const currentDraft = draftAttendance[worker.id] || {
+                            status: 'present',
+                            hours_worked: 8,
+                            notes: '',
+                          };
+                          const isSelfSup = isSelfSupervisorWorker(worker);
+                          const savedRec = existingSiteDateRecords.find(
+                            (a) => a.worker_id === worker.id
+                          );
+                          const isVerifiedByFounder = Boolean(savedRec?.is_founder_override);
+                          const showNoteBox =
+                            Boolean(expandedNoteWorkers[worker.id]) ||
+                            Boolean(currentDraft.notes);
+
+                          return (
+                            <div
+                              key={worker.id}
+                              className={`px-4 py-2.5 text-xs transition-colors ${
+                                isSelfSup ? 'bg-amber-50/40' : 'hover:bg-slate-50/80'
                               }`}
-                            />
-                            <span>{item.label}</span>
-                          </button>
-                        );
-                      })}
-                    </div>
+                            >
+                              <div className="flex flex-col md:flex-row md:items-center justify-between gap-2">
+                                {/* Left: Compact Worker Identity */}
+                                <div className="min-w-0 flex-1">
+                                  <div className="flex items-center gap-1.5 flex-wrap">
+                                    <span className="font-bold text-navy text-sm truncate">
+                                      {worker.name}
+                                    </span>
+                                    <span className="text-ink-secondary text-[11px]">
+                                      {worker.position} · ₱{worker.pay_rate}/
+                                      {worker.pay_rate_type === 'hourly' ? 'hr' : 'd'}
+                                    </span>
+                                    {worker.position.toLowerCase().includes('supervisor') && (
+                                      <Badge variant="warning" size="sm">
+                                        Supervisor
+                                      </Badge>
+                                    )}
+                                    {isSelfSup && (
+                                      <Badge
+                                        variant={isVerifiedByFounder ? 'success' : 'warning'}
+                                        size="sm"
+                                      >
+                                        {isVerifiedByFounder
+                                          ? 'Founder Verified ✓'
+                                          : 'Your Row · GPS + Founder Approval Required'}
+                                      </Badge>
+                                    )}
+                                  </div>
+                                </div>
 
-                    {/* Activity Notes */}
-                    <div>
-                      <Input
-                        placeholder="Site activity notes (e.g. Balcony formwork, concrete pouring assistance)..."
-                        value={currentDraft.notes}
-                        onChange={(e) => handleNotesChange(worker.id, e.target.value)}
-                        className="text-xs"
-                      />
-                    </div>
+                                {/* Right: Segmented 1-Tap Status Pills + Hours + Note Toggle */}
+                                <div className="flex items-center flex-wrap gap-1.5">
+                                  {isSelfSup && (
+                                    <button
+                                      type="button"
+                                      disabled={isLocatingGps}
+                                      onClick={() =>
+                                        stampSupervisorSelfCheckIn(worker.id, 'present', 8)
+                                      }
+                                      className="px-2.5 py-1 rounded-lg bg-navy text-white text-[11px] font-bold flex items-center gap-1 hover:bg-navy-deep transition-colors"
+                                      title="Capture live GPS coordinates for your self check-in"
+                                    >
+                                      <MapPin className="w-3 h-3" />
+                                      <span>{isLocatingGps ? 'Locating…' : 'GPS Check-In'}</span>
+                                    </button>
+                                  )}
+
+                                  <div className="inline-flex rounded-xl bg-surface-inset p-0.5 border border-surface-border">
+                                    {[
+                                      {
+                                        id: 'present',
+                                        short: 'Present',
+                                        activeClass:
+                                          'bg-status-success text-white font-bold shadow-sm',
+                                      },
+                                      {
+                                        id: 'half_day',
+                                        short: 'Half',
+                                        activeClass:
+                                          'bg-status-warning text-white font-bold shadow-sm',
+                                      },
+                                      {
+                                        id: 'absent',
+                                        short: 'Absent',
+                                        activeClass:
+                                          'bg-status-danger text-white font-bold shadow-sm',
+                                      },
+                                      {
+                                        id: 'leave',
+                                        short: 'Leave',
+                                        activeClass:
+                                          'bg-status-info text-white font-bold shadow-sm',
+                                      },
+                                    ].map((st) => {
+                                      const active = currentDraft.status === st.id;
+                                      return (
+                                        <button
+                                          key={st.id}
+                                          type="button"
+                                          onClick={() =>
+                                            handleStatusChange(worker, st.id as AttendanceStatus)
+                                          }
+                                          className={`px-2.5 py-1 rounded-lg text-[11px] transition-all ${
+                                            active
+                                              ? st.activeClass
+                                              : 'text-ink-secondary hover:text-navy font-medium'
+                                          }`}
+                                        >
+                                          {st.short}
+                                        </button>
+                                      );
+                                    })}
+                                  </div>
+
+                                  <div className="flex items-center gap-1">
+                                    <input
+                                      type="number"
+                                      step="0.5"
+                                      min="0"
+                                      max="24"
+                                      value={currentDraft.hours_worked}
+                                      onChange={(e) =>
+                                        handleHoursChange(
+                                          worker.id,
+                                          parseFloat(e.target.value) || 0
+                                        )
+                                      }
+                                      aria-label={`Hours worked for ${worker.name}`}
+                                      className="w-14 py-1 px-1.5 text-center text-xs font-bold text-navy bg-surface-inset border border-surface-border rounded-lg focus:bg-white focus:outline-none"
+                                    />
+                                    <span className="text-[10px] text-ink-muted">h</span>
+                                  </div>
+
+                                  <button
+                                    type="button"
+                                    onClick={() => toggleNoteInput(worker.id)}
+                                    className={`p-1.5 rounded-lg border transition-colors ${
+                                      currentDraft.notes
+                                        ? 'border-navy/30 bg-navy/5 text-navy'
+                                        : 'border-transparent text-ink-muted hover:text-navy hover:bg-surface-inset'
+                                    }`}
+                                    title="Add or view activity note"
+                                    aria-label={`Toggle note for ${worker.name}`}
+                                  >
+                                    <MessageSquare className="w-3.5 h-3.5" />
+                                  </button>
+                                </div>
+                              </div>
+
+                              {showNoteBox && (
+                                <div className="mt-2">
+                                  <Input
+                                    placeholder="Activity note (e.g. 2F slab rebar, concrete pouring)..."
+                                    value={currentDraft.notes}
+                                    onChange={(e) =>
+                                      handleNotesChange(worker.id, e.target.value)
+                                    }
+                                    disabled={isSelfSup && currentDraft.notes.startsWith('[SELF-CHECKIN')}
+                                    className="text-xs py-1.5"
+                                  />
+                                </div>
+                              )}
+                            </div>
+                          );
+                        })}
+                      </div>
+                    )}
+
+                    {!isCollapsed && viewMode === 'cards' && (
+                      <div className="p-4 grid grid-cols-1 md:grid-cols-2 gap-3">
+                        {groupWorkers.map((worker) => {
+                          const currentDraft = draftAttendance[worker.id] || {
+                            status: 'present',
+                            hours_worked: 8,
+                            notes: '',
+                          };
+                          const isSelfSup = isSelfSupervisorWorker(worker);
+
+                          return (
+                            <div
+                              key={worker.id}
+                              className="p-4 rounded-2xl bg-surface-inset/30 border border-surface-border space-y-3"
+                            >
+                              <div className="flex items-center justify-between gap-2">
+                                <div>
+                                  <div className="flex items-center gap-1.5 flex-wrap">
+                                    <span className="text-sm font-bold text-navy">
+                                      {worker.name}
+                                    </span>
+                                    {worker.position.toLowerCase().includes('supervisor') && (
+                                      <Badge variant="warning" size="sm">
+                                        Supervisor
+                                      </Badge>
+                                    )}
+                                  </div>
+                                  <div className="text-[11px] text-ink-secondary">
+                                    {worker.position} · ₱{worker.pay_rate}/
+                                    {worker.pay_rate_type === 'hourly' ? 'hr' : 'day'}
+                                  </div>
+                                </div>
+
+                                <div className="flex items-center space-x-1.5">
+                                  <span className="text-[11px] text-ink-secondary">Hrs:</span>
+                                  <input
+                                    type="number"
+                                    step="0.5"
+                                    min="0"
+                                    max="24"
+                                    value={currentDraft.hours_worked}
+                                    onChange={(e) =>
+                                      handleHoursChange(
+                                        worker.id,
+                                        parseFloat(e.target.value) || 0
+                                      )
+                                    }
+                                    className="w-14 p-1 text-center text-xs font-bold text-navy bg-white border border-surface-border rounded-lg"
+                                  />
+                                </div>
+                              </div>
+
+                              <div className="grid grid-cols-4 gap-1.5">
+                                {[
+                                  { id: 'present', label: 'Present' },
+                                  { id: 'half_day', label: 'Half Day' },
+                                  { id: 'absent', label: 'Absent' },
+                                  { id: 'leave', label: 'Leave' },
+                                ].map((item) => {
+                                  const isSelected = currentDraft.status === item.id;
+                                  return (
+                                    <button
+                                      key={item.id}
+                                      type="button"
+                                      onClick={() =>
+                                        handleStatusChange(worker, item.id as AttendanceStatus)
+                                      }
+                                      className={`py-2 px-2 rounded-xl border text-[11px] font-bold transition-all ${
+                                        isSelected
+                                          ? 'bg-navy text-white border-navy'
+                                          : 'bg-white border-surface-border text-ink-secondary hover:bg-surface-inset'
+                                      }`}
+                                    >
+                                      {item.label}
+                                    </button>
+                                  );
+                                })}
+                              </div>
+
+                              <Input
+                                placeholder="Activity notes..."
+                                value={currentDraft.notes}
+                                onChange={(e) => handleNotesChange(worker.id, e.target.value)}
+                                disabled={isSelfSup && currentDraft.notes.startsWith('[SELF-CHECKIN')}
+                                className="text-xs py-1.5"
+                              />
+                            </div>
+                          );
+                        })}
+                      </div>
+                    )}
                   </div>
                 );
               })}
@@ -681,7 +1320,7 @@ export default function AttendancePage() {
                     title="No workers on this site"
                     description={
                       workers.length === 0
-                        ? 'Register workers first — they will appear here for daily attendance.'
+                        ? 'Register workers in the Workforce tab first — they will appear here grouped by craft.'
                         : 'No worker matches the current filter.'
                     }
                   />
@@ -690,7 +1329,7 @@ export default function AttendancePage() {
             </div>
 
             {/* Bottom Submit Sticky Bar */}
-            <div className="sticky bottom-4 z-30 p-4 rounded-2xl bg-white/95 backdrop-blur-md border border-surface-border shadow-2xl flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+            <div className="sticky bottom-4 z-30 p-3.5 rounded-2xl bg-white/95 backdrop-blur-md border border-surface-border shadow-2xl flex flex-col sm:flex-row sm:items-center justify-between gap-3">
               <div className="text-xs text-ink-secondary">
                 {existingSiteDateRecords.length > 0 && !hasUnsavedChanges ? (
                   <span>
@@ -698,15 +1337,19 @@ export default function AttendancePage() {
                   </span>
                 ) : (
                   <span>
-                    Ready to save <span className="font-bold text-navy">{filteredWorkers.length} workers</span> for {selectedDate}.
+                    Ready to save <span className="font-bold text-navy">{filteredWorkers.length} workers</span> ({presentCount} Present, {halfDayCount} Half Day, {absentCount} Absent) for {selectedDate}.
                   </span>
                 )}
               </div>
 
               <Button
                 type="submit"
-                variant={existingSiteDateRecords.length > 0 && !hasUnsavedChanges ? 'secondary' : 'primary'}
-                size="lg"
+                variant={
+                  existingSiteDateRecords.length > 0 && !hasUnsavedChanges
+                    ? 'secondary'
+                    : 'primary'
+                }
+                size="md"
                 isLoading={isSubmitting}
                 disabled={
                   isSubmitting ||
@@ -732,11 +1375,11 @@ export default function AttendancePage() {
           </form>
         )}
 
-        {/* TAB 2: ATTENDANCE HISTORY & FOUNDER OVERRIDE */}
+        {/* TAB 2: ATTENDANCE HISTORY & FOUNDER OVERRIDE (GROUPED BY DAILY SITE SHEETS) */}
         {activeTab === 'history' && (
           <div className="space-y-4">
             {/* Project Site, Status, Date & Worker Filters for History */}
-            <div className="p-4 rounded-3xl bg-white border border-surface-border shadow-sm flex flex-col sm:flex-row flex-wrap items-center gap-3">
+            <div className="p-3.5 rounded-2xl bg-white border border-surface-border shadow-sm flex flex-col sm:flex-row flex-wrap items-center gap-2.5">
               <div className="w-full sm:w-64">
                 <Input
                   placeholder="Search worker, craft, project, or notes..."
@@ -746,7 +1389,7 @@ export default function AttendancePage() {
                 />
               </div>
 
-              <div className="w-full sm:w-60">
+              <div className="w-full sm:w-56">
                 <Select
                   value={historyProjectFilter}
                   onChange={(e) => setHistoryProjectFilter(e.target.value)}
@@ -760,7 +1403,7 @@ export default function AttendancePage() {
                 />
               </div>
 
-              <div className="w-full sm:w-44">
+              <div className="w-full sm:w-40">
                 <Select
                   value={historyStatusFilter}
                   onChange={(e) => setHistoryStatusFilter(e.target.value)}
@@ -803,116 +1446,190 @@ export default function AttendancePage() {
               </div>
             </div>
 
-            <div className="bg-white rounded-3xl border border-surface-border shadow-sm overflow-hidden">
-              <div className="p-4 border-b border-surface-border/60 flex flex-col sm:flex-row sm:items-center justify-between gap-2">
-                <div>
-                  <h3 className="font-bold text-navy text-sm">Attendance Logs &amp; Audit Trail</h3>
-                  <p className="text-xs text-ink-secondary">
-                    Review historical records by project site. {isFounder ? 'Founders may override or correct records.' : 'Read-only access.'}
-                  </p>
-                </div>
-                <Badge variant="neutral" size="sm">
-                  {filteredHistoryAttendance.length} record{filteredHistoryAttendance.length === 1 ? '' : 's'}
-                </Badge>
-              </div>
+            {/* Grouped Daily Attendance Sheets */}
+            <div className="space-y-3">
+              {groupedHistorySheets.map((sheet) => {
+                const proj = projects.find((p) => p.id === sheet.projectId);
+                const isCollapsed = Boolean(collapsedHistorySheets[sheet.key]);
+                const pCount = sheet.records.filter((r) => r.status === 'present').length;
+                const hCount = sheet.records.filter((r) => r.status === 'half_day').length;
+                const aCount = sheet.records.filter(
+                  (r) => r.status === 'absent' || r.status === 'leave'
+                ).length;
 
-              <div className="divide-y divide-surface-border/70">
-                {filteredHistoryAttendance.map((rec) => {
-                  const worker = workers.find((w) => w.id === rec.worker_id);
-                  const proj = projects.find((p) => p.id === rec.project_id);
-
-                  return (
-                    <div
-                      key={rec.id}
-                      className="p-4 flex flex-col sm:flex-row sm:items-center justify-between gap-3 text-xs hover:bg-slate-50 transition-colors"
+                return (
+                  <div
+                    key={sheet.key}
+                    className="rounded-2xl bg-white border border-surface-border shadow-sm overflow-hidden"
+                  >
+                    <button
+                      type="button"
+                      onClick={() =>
+                        setCollapsedHistorySheets((prev) => ({
+                          ...prev,
+                          [sheet.key]: !prev[sheet.key],
+                        }))
+                      }
+                      className="w-full px-4 py-3 bg-surface-inset/70 border-b border-surface-border/60 flex flex-wrap items-center justify-between gap-2 text-left hover:bg-surface-inset transition-colors"
                     >
-                      <div className="space-y-1">
-                        <div className="flex items-center flex-wrap gap-2">
-                          <span className="font-bold text-navy text-sm">{worker?.name}</span>
-                          <span className="text-ink-secondary">({worker?.position})</span>
-                          {rec.worker_id === rec.recorded_by && (
-                            <Badge variant="warning" size="sm">
-                              Supervisor Self-Attendance
-                            </Badge>
-                          )}
-                          {rec.is_founder_override && (
-                            <Badge variant="navy" size="sm">
-                              Founder Override
-                            </Badge>
-                          )}
-                        </div>
-                        <div className="text-ink-secondary">
-                          Project: <span className="font-semibold text-navy">{proj?.name}</span> · Date: {rec.date}
-                        </div>
-                        {rec.notes && <div className="text-ink-muted italic">{rec.notes}</div>}
-                      </div>
-
-                      <div className="flex items-center space-x-4">
-                        <div className="text-right">
-                          <div className="font-bold text-navy">{rec.hours_worked} Hours</div>
-                          <Badge
-                            variant={
-                              rec.status === 'present'
-                                ? 'success'
-                                : rec.status === 'half_day'
-                                ? 'warning'
-                                : 'danger'
-                            }
-                            size="sm"
-                            className="mt-0.5 capitalize"
-                          >
-                            {rec.status.replace('_', ' ')}
-                          </Badge>
-                        </div>
-
-                        {isFounder && (
-                          <Button
-                            variant="secondary"
-                            size="sm"
-                            onClick={() => {
-                              setSelectedRecordForOverride(rec);
-                              setOverrideStatus(rec.status);
-                              setOverrideHours(String(rec.hours_worked));
-                              setOverrideNotes(rec.notes || '');
-                              setOverrideModalOpen(true);
-                            }}
-                          >
-                            Override
-                          </Button>
+                      <div className="flex items-center gap-2">
+                        {isCollapsed ? (
+                          <ChevronRight className="w-4 h-4 text-ink-secondary" />
+                        ) : (
+                          <ChevronDown className="w-4 h-4 text-ink-secondary" />
                         )}
+                        <span className="font-bold text-navy text-xs sm:text-sm">
+                          {sheet.date} · {proj?.name || 'Project Site'}
+                        </span>
+                        <Badge variant="neutral" size="sm">
+                          {sheet.records.length} worker{sheet.records.length === 1 ? '' : 's'}
+                        </Badge>
                       </div>
-                    </div>
-                  );
-                })}
 
-                {filteredHistoryAttendance.length === 0 && (
+                      <div className="flex items-center gap-2 text-[11px]">
+                        <span className="text-status-success font-bold">{pCount} Present</span>
+                        <span className="text-ink-muted">·</span>
+                        <span className="text-status-warning font-bold">{hCount} Half</span>
+                        <span className="text-ink-muted">·</span>
+                        <span className="text-status-danger font-bold">{aCount} Absent/Leave</span>
+                      </div>
+                    </button>
+
+                    {!isCollapsed && (
+                      <div className="divide-y divide-surface-border/60">
+                        {sheet.records.map((rec) => {
+                          const worker = workers.find((w) => w.id === rec.worker_id);
+                          const isSelfLog = rec.worker_id === rec.recorded_by;
+                          const isUnverifiedSelf =
+                            isSelfLog &&
+                            !rec.is_founder_override &&
+                            (rec.status === 'present' || rec.status === 'half_day');
+
+                          return (
+                            <div
+                              key={rec.id}
+                              className="px-4 py-2.5 flex flex-col sm:flex-row sm:items-center justify-between gap-2 text-xs hover:bg-slate-50 transition-colors"
+                            >
+                              <div className="space-y-0.5 min-w-0">
+                                <div className="flex items-center flex-wrap gap-1.5">
+                                  <span className="font-bold text-navy">{worker?.name}</span>
+                                  <span className="text-ink-secondary text-[11px]">
+                                    ({worker?.position})
+                                  </span>
+                                  {isUnverifiedSelf && (
+                                    <Badge variant="warning" size="sm">
+                                      Unverified Supervisor Self-Log (Held from Payroll)
+                                    </Badge>
+                                  )}
+                                  {isSelfLog && rec.is_founder_override && (
+                                    <Badge variant="success" size="sm">
+                                      Founder Verified Self-Log ✓
+                                    </Badge>
+                                  )}
+                                  {!isSelfLog && rec.is_founder_override && (
+                                    <Badge variant="navy" size="sm">
+                                      Founder Override
+                                    </Badge>
+                                  )}
+                                </div>
+                                {rec.notes && (
+                                  <div className="text-[11px] text-ink-muted truncate max-w-2xl">
+                                    {rec.notes}
+                                  </div>
+                                )}
+                              </div>
+
+                              <div className="flex items-center gap-2 shrink-0">
+                                <span className="font-bold text-navy">{rec.hours_worked}h</span>
+                                <Badge
+                                  variant={
+                                    rec.status === 'present'
+                                      ? 'success'
+                                      : rec.status === 'half_day'
+                                        ? 'warning'
+                                        : 'danger'
+                                  }
+                                  size="sm"
+                                  className="capitalize"
+                                >
+                                  {rec.status.replace('_', ' ')}
+                                </Badge>
+
+                                {isFounder && isUnverifiedSelf && (
+                                  <>
+                                    <Button
+                                      type="button"
+                                      variant="primary"
+                                      size="sm"
+                                      onClick={() => handleQuickVerifySelfAttendance(rec, true)}
+                                    >
+                                      Verify
+                                    </Button>
+                                    <Button
+                                      type="button"
+                                      variant="danger"
+                                      size="sm"
+                                      onClick={() => handleQuickVerifySelfAttendance(rec, false)}
+                                    >
+                                      Reject
+                                    </Button>
+                                  </>
+                                )}
+
+                                {isFounder && (
+                                  <Button
+                                    variant="secondary"
+                                    size="sm"
+                                    onClick={() => {
+                                      setSelectedRecordForOverride(rec);
+                                      setOverrideStatus(rec.status);
+                                      setOverrideHours(String(rec.hours_worked));
+                                      setOverrideNotes(rec.notes || '');
+                                      setOverrideModalOpen(true);
+                                    }}
+                                  >
+                                    Edit
+                                  </Button>
+                                )}
+                              </div>
+                            </div>
+                          );
+                        })}
+                      </div>
+                    )}
+                  </div>
+                );
+              })}
+
+              {groupedHistorySheets.length === 0 && (
+                <div className="bg-white rounded-3xl border border-surface-border">
                   <EmptyState
                     title="No attendance records match"
                     description={
                       attendance.length === 0
-                        ? 'Submitted site attendance will appear here with its full audit trail.'
+                        ? 'Submitted site attendance will appear here grouped by date and site.'
                         : 'Try selecting "All Project Sites" or clearing the date/search filter.'
                     }
                   />
-                )}
-              </div>
+                </div>
+              )}
             </div>
           </div>
         )}
 
-        {/* TAB 3: WORKFORCE DIRECTORY (ADD & MANAGE WORKERS IN ONE CLEAN PLACE) */}
+        {/* TAB 3: WORKFORCE DIRECTORY (COMPACT & GROUPED BY CRAFT) */}
         {activeTab === 'workforce' && (
-          <div className="space-y-6">
+          <div className="space-y-4">
             {/* Inline Register Worker Form */}
             <form
               onSubmit={handleAddWorkerSubmit}
-              className="p-5 rounded-3xl bg-white border border-surface-border shadow-sm space-y-4 text-xs"
+              className="p-4 rounded-2xl bg-white border border-surface-border shadow-sm space-y-3 text-xs"
             >
               <div className="flex items-center justify-between">
                 <div>
                   <h3 className="font-bold text-navy text-sm">Register Site Worker</h3>
                   <p className="text-xs text-ink-secondary">
-                    Newly registered workers immediately appear on the Daily Roster and Payroll Engine.
+                    Newly registered workers are automatically grouped by craft on the Daily Roster and Payroll Engine.
                   </p>
                 </div>
               </div>
@@ -963,94 +1680,132 @@ export default function AttendancePage() {
                   />
                 </div>
 
-                <div>
-                  <Input
-                    label="Contact Number"
-                    placeholder="0917XXXXXXX"
-                    value={workerPhone}
-                    onChange={(e) => setWorkerPhone(e.target.value)}
-                  />
+                <div className="flex items-end gap-2">
+                  <div className="flex-1">
+                    <Input
+                      label="Contact Number"
+                      placeholder="0917XXXXXXX"
+                      value={workerPhone}
+                      onChange={(e) => setWorkerPhone(e.target.value)}
+                    />
+                  </div>
+                  <Button
+                    type="submit"
+                    variant="primary"
+                    size="md"
+                    isLoading={isAddingWorker}
+                    leftIcon={<UserPlus className="w-4 h-4" />}
+                  >
+                    Add
+                  </Button>
                 </div>
-              </div>
-
-              <div className="flex justify-end">
-                <Button
-                  type="submit"
-                  variant="primary"
-                  size="sm"
-                  isLoading={isAddingWorker}
-                  leftIcon={<UserPlus className="w-4 h-4" />}
-                >
-                  Add to Workforce
-                </Button>
               </div>
             </form>
 
-            {/* Workforce Roster List */}
-            <div className="bg-white rounded-3xl border border-surface-border shadow-sm overflow-hidden">
-              <div className="p-4 border-b border-surface-border/60 flex items-center justify-between">
-                <div>
-                  <h3 className="font-bold text-navy text-sm">Active &amp; Registered Workforce</h3>
-                  <p className="text-xs text-ink-secondary">
-                    Includes field craftsmen and Supervisors enrolled in attendance &amp; payroll.
-                  </p>
+            {/* Filter Bar for Workforce Directory */}
+            <div className="p-3 rounded-2xl bg-white border border-surface-border shadow-sm flex flex-col sm:flex-row items-center justify-between gap-2.5">
+              <div className="flex flex-col sm:flex-row items-center gap-2 w-full sm:w-auto">
+                <div className="w-full sm:w-64">
+                  <Input
+                    placeholder="Search worker name or craft..."
+                    value={workforceSearch}
+                    onChange={(e) => setWorkforceSearch(e.target.value)}
+                    leftIcon={<Search className="w-4 h-4" />}
+                  />
                 </div>
-                <Badge variant="neutral" size="sm">
-                  {workers.length} total
-                </Badge>
+                <div className="w-full sm:w-52">
+                  <Select
+                    value={workforceCraftFilter}
+                    onChange={(e) => setWorkforceCraftFilter(e.target.value)}
+                    options={[
+                      { label: 'All Craft Groups', value: 'all' },
+                      { label: 'Supervision & Foremen', value: 'supervision' },
+                      { label: 'Masonry & Concrete', value: 'masonry' },
+                      { label: 'Carpentry & Formworks', value: 'carpentry' },
+                      { label: 'Steel, Electrical & Plumbing', value: 'mep_steel' },
+                      { label: 'Finishing & General Labor', value: 'general' },
+                    ]}
+                  />
+                </div>
               </div>
 
-              <div className="divide-y divide-surface-border/70">
-                {workers.map((w) => (
-                  <div
-                    key={w.id}
-                    className="p-4 flex flex-col sm:flex-row sm:items-center justify-between gap-3 text-xs hover:bg-slate-50 transition-colors"
-                  >
-                    <div className="space-y-0.5">
-                      <div className="flex items-center gap-2">
-                        <span className="font-bold text-navy text-sm">{w.name}</span>
-                        <Badge variant={w.active ? 'success' : 'neutral'} size="sm">
-                          {w.active ? 'Active' : 'Inactive'}
-                        </Badge>
-                        {w.position.toLowerCase().includes('supervisor') && (
-                          <Badge variant="warning" size="sm">
-                            Supervisor
+              <Badge variant="neutral" size="sm">
+                {workers.filter((w) => w.active).length} active / {workers.length} total
+              </Badge>
+            </div>
+
+            {/* Grouped Compact Workforce List */}
+            <div className="space-y-3">
+              {groupedWorkforceDirectory.map(([groupKey, groupWorkers]) => (
+                <div
+                  key={groupKey}
+                  className="rounded-2xl bg-white border border-surface-border shadow-sm overflow-hidden"
+                >
+                  <div className="px-4 py-2.5 bg-surface-inset/70 border-b border-surface-border/60 flex items-center justify-between">
+                    <span className="font-bold text-xs text-navy">
+                      {CRAFT_GROUP_META[groupKey].label}
+                    </span>
+                    <Badge variant="neutral" size="sm">
+                      {groupWorkers.length} worker{groupWorkers.length === 1 ? '' : 's'}
+                    </Badge>
+                  </div>
+
+                  <div className="divide-y divide-surface-border/60">
+                    {groupWorkers.map((w) => (
+                      <div
+                        key={w.id}
+                        className="px-4 py-2.5 flex items-center justify-between gap-3 text-xs hover:bg-slate-50 transition-colors"
+                      >
+                        <div className="flex items-center flex-wrap gap-2 min-w-0">
+                          <span className="font-bold text-navy text-sm">{w.name}</span>
+                          <span className="text-ink-secondary">
+                            {w.position} · ₱{w.pay_rate}/
+                            {w.pay_rate_type === 'hourly' ? 'hr' : 'day'}
+                            {w.contact_number && w.contact_number !== '—'
+                              ? ` · ${w.contact_number}`
+                              : ''}
+                          </span>
+                          <Badge variant={w.active ? 'success' : 'neutral'} size="sm">
+                            {w.active ? 'Active' : 'Inactive'}
                           </Badge>
+                          {w.position.toLowerCase().includes('supervisor') && (
+                            <Badge variant="warning" size="sm">
+                              Supervisor
+                            </Badge>
+                          )}
+                        </div>
+
+                        {isFounder && (
+                          <Button
+                            type="button"
+                            variant="secondary"
+                            size="sm"
+                            onClick={() => openEditWorkerModal(w)}
+                            leftIcon={<Settings2 className="w-3.5 h-3.5" />}
+                          >
+                            Manage
+                          </Button>
                         )}
                       </div>
-                      <div className="text-ink-secondary">
-                        {w.position} · ₱{w.pay_rate}/{w.pay_rate_type === 'hourly' ? 'hr' : 'day'}
-                        {w.contact_number && w.contact_number !== '—' ? ` · ${w.contact_number}` : ''}
-                      </div>
-                    </div>
-
-                    {isFounder && (
-                      <Button
-                        type="button"
-                        variant="secondary"
-                        size="sm"
-                        onClick={() => openEditWorkerModal(w)}
-                        leftIcon={<Settings2 className="w-3.5 h-3.5" />}
-                      >
-                        Manage
-                      </Button>
-                    )}
+                    ))}
                   </div>
-                ))}
+                </div>
+              ))}
 
-                {workers.length === 0 && (
+              {groupedWorkforceDirectory.length === 0 && (
+                <div className="bg-white rounded-3xl border border-surface-border">
                   <EmptyState
-                    title="No workers registered yet"
-                    description="Use the form above to add craftsmen to the BALE workforce roster."
+                    title="No workers match"
+                    description="Register craftsmen above or clear your search filter."
                   />
-                )}
-              </div>
+                </div>
+              )}
             </div>
           </div>
         )}
       </div>
 
-      {/* EDIT WORKER MODAL (Founder only — single place for editing rate/craft or toggling active status) */}
+      {/* EDIT WORKER MODAL (Founder only) */}
       <Modal
         isOpen={Boolean(editingWorker)}
         onClose={() => setEditingWorker(null)}
@@ -1186,7 +1941,7 @@ export default function AttendancePage() {
             />
 
             <div className="pt-3 flex justify-end space-x-2">
-              <Button variant="secondary" onClick={() => setOverrideModalOpen(false)}>
+              <Button type="button" variant="secondary" onClick={() => setOverrideModalOpen(false)}>
                 Cancel
               </Button>
               <Button variant="primary" type="submit">
