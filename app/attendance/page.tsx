@@ -1,13 +1,13 @@
 'use client';
 
-import React, { useState, useEffect, useMemo, useRef, useCallback } from 'react';
+import React, { Suspense, useState, useEffect, useMemo, useRef, useCallback } from 'react';
+import { useSearchParams } from 'next/navigation';
 import { AppShell } from '@/components/layout/AppShell';
 import { useDataStore } from '@/lib/data/store';
 import { useAuth } from '@/lib/auth/authContext';
 import { Attendance, AttendanceStatus, Worker } from '@/types';
 import {
   CheckCircle2,
-  Clock,
   Save,
   Search,
   UserPlus,
@@ -85,8 +85,9 @@ function formatStatusLabel(status: AttendanceStatus): string {
   return 'Approved Leave';
 }
 
-export default function AttendancePage() {
+function AttendancePageInner() {
   const { user, isFounder, isSupervisor } = useAuth();
+  const searchParams = useSearchParams();
   const { showToast } = useToast();
   const {
     users,
@@ -115,6 +116,17 @@ export default function AttendancePage() {
   );
   const [selectedDate, setSelectedDate] = useState<string>(today);
   const [activeTab, setActiveTab] = useState<'terminal' | 'history' | 'workforce'>('terminal');
+
+  // Sync activeTab with URL `?tab=history` or `?tab=workforce` so History and Workforce
+  // operate as standalone pages from both the Desktop Top Nav and Mobile Bottom Nav
+  useEffect(() => {
+    const tabParam = searchParams?.get('tab');
+    if (tabParam === 'history' || tabParam === 'workforce') {
+      setActiveTab(tabParam);
+    } else {
+      setActiveTab('terminal');
+    }
+  }, [searchParams]);
 
   // Compact vs Card view for Daily Roster (defaults to compact grouped rows)
   const [viewMode, setViewMode] = useState<'compact' | 'cards'>('compact');
@@ -802,55 +814,36 @@ export default function AttendancePage() {
 
   return (
     <AppShell>
-      <div className="space-y-5 max-w-5xl mx-auto">
-        {/* Terminal Header */}
-        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 pb-2 border-b border-surface-border/60">
+      <div key={activeTab} className="space-y-5 max-w-5xl mx-auto animate-page-enter">
+        {/* Clean Dedicated Page Header for each separated view */}
+        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 pb-3 border-b border-surface-border/60">
           <div>
-            <div className="flex items-center space-x-2">
-              <span className="text-xs font-bold text-navy uppercase tracking-widest">
-                {isFounder ? 'Workforce Management' : 'Field Attendance Terminal'}
-              </span>
-              <span className="text-xs text-ink-muted">·</span>
-              <span className="text-xs text-ink-secondary">
-                {isFounder ? 'Founder Review & Override' : 'Daily Roll Call'}
-              </span>
-            </div>
-            <h1 className="text-2xl sm:text-3xl font-extrabold text-navy tracking-tight mt-1">
-              Site Workforce &amp; Attendance
+            <h1 className="text-2xl sm:text-3xl font-extrabold text-navy tracking-tight">
+              {activeTab === 'history'
+                ? 'Attendance History & Logs'
+                : activeTab === 'workforce'
+                  ? 'Site Workforce Roster'
+                  : 'Daily Site Roll Call'}
             </h1>
+            <p className="text-xs text-ink-secondary mt-0.5">
+              {activeTab === 'history'
+                ? 'Submitted daily attendance sheets and Founder approval status'
+                : activeTab === 'workforce'
+                  ? `${workers.filter((w) => w.active).length} active craftsmen & site supervisors`
+                  : 'Select a project site and check off each crew member on site today'}
+            </p>
           </div>
 
-          <div className="flex items-center space-x-2">
+          {activeTab === 'workforce' && (
             <Button
-              variant={activeTab === 'terminal' ? 'primary' : 'secondary'}
+              variant="primary"
               size="sm"
-              onClick={() => setActiveTab('terminal')}
-              leftIcon={<CheckCircle2 className="w-4 h-4" />}
-            >
-              Daily Roster
-            </Button>
-            <Button
-              variant={activeTab === 'history' ? 'primary' : 'secondary'}
-              size="sm"
-              onClick={() => setActiveTab('history')}
-              leftIcon={<Clock className="w-4 h-4" />}
-            >
-              Logs &amp; History
-              {isFounder && unverifiedSelfLogs.length > 0 && (
-                <span className="ml-1.5 px-1.5 py-0.2 rounded-full bg-status-warning text-navy text-[10px] font-extrabold">
-                  {unverifiedSelfLogs.length}
-                </span>
-              )}
-            </Button>
-            <Button
-              variant={activeTab === 'workforce' ? 'primary' : 'secondary'}
-              size="sm"
-              onClick={() => setActiveTab('workforce')}
+              onClick={() => setIsQuickAddOpen(true)}
               leftIcon={<UserPlus className="w-4 h-4" />}
             >
-              Workforce ({workers.filter((w) => w.active).length})
+              Register Worker
             </Button>
-          </div>
+          )}
         </div>
 
         {/* Founder Review Banner: Supervisor Attendance Submitted with Crew Report */}
@@ -2197,5 +2190,13 @@ export default function AttendancePage() {
         )}
       </Modal>
     </AppShell>
+  );
+}
+
+export default function AttendancePage() {
+  return (
+    <Suspense fallback={null}>
+      <AttendancePageInner />
+    </Suspense>
   );
 }

@@ -2,7 +2,7 @@
 
 import React, { useEffect, useMemo, useState } from 'react';
 import { useRouter } from 'next/navigation';
-import { AlertCircle, Clock, Eye, EyeOff, KeyRound, Loader2, Lock, Mail, ShieldCheck } from 'lucide-react';
+import { AlertCircle, Clock, Eye, EyeOff, KeyRound, Loader2, Lock, Mail } from 'lucide-react';
 import { useAuth } from '@/lib/auth/authContext';
 import { createClient } from '@/lib/supabase/client';
 import { friendlyMfaError, normalizeTotpCode } from '@/lib/auth/mfa';
@@ -16,6 +16,7 @@ import { Badge } from '@/components/ui/Badge';
 import { Button } from '@/components/ui/Button';
 import { Input } from '@/components/ui/Input';
 import { AsintaEmblem, AsintaWordmark } from '@/components/ui/AsintaLogo';
+import { AsintaLoader } from '@/components/ui/AsintaLoader';
 
 const MIDDLEWARE_ERRORS: Record<string, string> = {
   no_profile:
@@ -37,19 +38,9 @@ export default function LoginPage() {
   const [showPassword, setShowPassword] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [isLoading, setIsLoading] = useState(false);
-  const [redirectNotice, setRedirectNotice] = useState<string | null>(null);
-  /**
-   * Set by the session watcher when a session ends. Without it a Founder whose
-   * session timed out mid-task just lands back here with no explanation.
-   */
+  const [isEnteringWorkspace, setIsEnteringWorkspace] = useState(false);
   const [sessionNotice, setSessionNotice] = useState<string | null>(null);
 
-  /**
-   * Second factor. Password sign-in yields a session at aal1; when the account
-   * has a verified TOTP factor, Supabase reports nextLevel 'aal2' and this step
-   * runs BEFORE any workspace is opened. The code is verified by Supabase Auth,
-   * never by us.
-   */
   const [mfaChallenge, setMfaChallenge] = useState<{ factorId: string; role: AppRole } | null>(null);
   const [mfaCode, setMfaCode] = useState('');
   const [mfaError, setMfaError] = useState<string | null>(null);
@@ -62,7 +53,6 @@ export default function LoginPage() {
     try {
       const notice = parseAuthNotice(window.sessionStorage.getItem(AUTH_NOTICE_STORAGE_KEY));
       if (notice) {
-        // Read once: a refresh should not replay a message about an old session.
         window.sessionStorage.removeItem(AUTH_NOTICE_STORAGE_KEY);
         setSessionNotice(authNoticeMessage(notice.code));
       }
@@ -71,7 +61,11 @@ export default function LoginPage() {
     }
   }, []);
 
-  /** Sends the user to their role's workspace (or the requested path). */
+  /**
+   * Immediately shows the branded Asinta CHB Loading Screen and routes into
+   * the user's workspace (where AppShell keeps the loader active until the
+   * Supabase ledger finishes pre-fetching into cache).
+   */
   const proceedToWorkspace = (role: AppRole) => {
     const requestedPath = getSafeRedirectPath(
       new URLSearchParams(window.location.search).get('redirect_to')
@@ -79,10 +73,9 @@ export default function LoginPage() {
     const fallback = role === 'founder' ? '/dashboard' : '/attendance';
     const destination =
       requestedPath && canRoleAccessPath(role, requestedPath) ? requestedPath : fallback;
-    const roleLabel = role === 'founder' ? 'Founder' : 'Supervisor';
 
-    setRedirectNotice(`${roleLabel} role detected. Redirecting…`);
-    window.setTimeout(() => router.replace(destination), 900);
+    setIsEnteringWorkspace(true);
+    router.replace(destination);
   };
 
   const handleVerifyMfa = async (event: React.FormEvent) => {
@@ -105,6 +98,7 @@ export default function LoginPage() {
 
       if (verifyError) {
         setMfaError(friendlyMfaError(verifyError.message));
+        setIsVerifyingMfa(false);
         return;
       }
 
@@ -114,7 +108,6 @@ export default function LoginPage() {
       proceedToWorkspace(role);
     } catch (caught) {
       setMfaError(caught instanceof Error ? friendlyMfaError(caught.message) : 'Verification failed.');
-    } finally {
       setIsVerifyingMfa(false);
     }
   };
@@ -122,7 +115,6 @@ export default function LoginPage() {
   const handleSubmit = async (event: React.FormEvent) => {
     event.preventDefault();
     setError(null);
-    setRedirectNotice(null);
     setIsLoading(true);
 
     try {
@@ -141,8 +133,7 @@ export default function LoginPage() {
 
       const role = result.role as AppRole;
 
-      // Ask Supabase whether this session needs a second factor. `nextLevel`
-      // is 'aal2' only when a VERIFIED factor exists for this account.
+      // Check whether this account requires a 6-digit TOTP second factor
       const { data: assurance } = await supabase.auth.mfa.getAuthenticatorAssuranceLevel();
       if (assurance?.nextLevel === 'aal2' && assurance.currentLevel !== 'aal2') {
         const { data: factorData } = await supabase.auth.mfa.listFactors();
@@ -161,158 +152,268 @@ export default function LoginPage() {
     }
   };
 
+  if (isEnteringWorkspace) {
+    return (
+      <AsintaLoader
+        variant="fullscreen"
+        title="Preparing your Asinta workspace…"
+        subtitle="Synchronizing studio ledger & site records"
+      />
+    );
+  }
+
   return (
-    <div className="min-h-screen bg-surface flex flex-col justify-between p-4 sm:p-6 relative overflow-hidden">
-      {/* Subtle architectural CHB watermark */}
-      <div className="pointer-events-none select-none fixed -right-12 -bottom-16 opacity-[0.035] text-navy">
-        <AsintaEmblem size={420} monochrome />
-      </div>
-
-      <div className="max-w-md w-full mx-auto pt-10 sm:pt-16 relative z-10">
-        <div className="bg-white rounded-3xl p-6 sm:p-8 border border-surface-border shadow-[8px_8px_24px_rgba(11,31,58,0.08),-8px_-8px_24px_rgba(255,255,255,0.95)]">
-          <div className="flex items-center justify-between pb-5 border-b border-surface-border/60">
-            <div className="flex items-center space-x-3">
-              <div className="w-11 h-11 rounded-2xl bg-surface-inset/60 border border-surface-border flex items-center justify-center shadow-neu-raised-sm">
-                <AsintaEmblem size={28} />
-              </div>
-              <div className="flex flex-col">
-                <AsintaWordmark height={20} />
-                <span className="text-[10px] font-bold text-ink-secondary uppercase tracking-widest mt-1">
-                  BALE · Design &amp; Build Ledger
-                </span>
-              </div>
-            </div>
-            <Badge variant="navy" size="sm">BALE</Badge>
-          </div>
-
-          <div className="mt-5">
-            <h1 className="text-xl font-extrabold text-navy tracking-tight">Sign In</h1>
-            <p className="text-xs text-ink-secondary mt-0.5">
-              Architecture curated to your style — built with quality and precision.
-            </p>
-          </div>
-
-          {error && (
-            <div className="mt-4 p-3 rounded-xl bg-status-danger-bg border border-status-danger/20 text-status-danger text-xs flex items-center space-x-2">
-              <AlertCircle className="w-4 h-4 shrink-0" />
-              <span>{error}</span>
-            </div>
-          )}
-
-          {sessionNotice && (
-            <div
-              role="status"
-              className="mt-4 p-3 rounded-xl bg-status-warning-bg border border-status-warning/20 text-status-warning text-xs flex items-center space-x-2"
-            >
-              <Clock className="w-4 h-4 shrink-0" />
-              <span>{sessionNotice}</span>
-            </div>
-          )}
-
-          {redirectNotice && (
-            <div className="mt-4 p-3 rounded-xl bg-status-info-bg border border-status-info/20 text-status-info text-xs flex items-center space-x-2">
-              <ShieldCheck className="w-4 h-4 shrink-0" />
-              <span>{redirectNotice}</span>
-            </div>
-          )}
-
-          {mfaChallenge && (
-            <form onSubmit={handleVerifyMfa} className="mt-6 space-y-4">
-              <div className="p-3 rounded-xl bg-status-info-bg border border-status-info/20 text-status-info flex items-start gap-2 text-xs">
-                <KeyRound className="w-4 h-4 shrink-0 mt-0.5" />
-                <span>
-                  Password accepted. Enter the current 6-digit code from your authenticator app to
-                  finish signing in.
-                </span>
-              </div>
-
-              {mfaError && (
-                <div className="p-3 rounded-xl bg-status-danger-bg border border-status-danger/20 text-status-danger text-xs flex items-center space-x-2">
-                  <AlertCircle className="w-4 h-4 shrink-0" />
-                  <span>{mfaError}</span>
-                </div>
-              )}
-
-              <Input
-                label="Authenticator code"
-                inputMode="numeric"
-                autoComplete="one-time-code"
-                placeholder="123456"
-                value={mfaCode}
-                onChange={(event) => setMfaCode(event.target.value)}
-                required
-                leftIcon={<Loader2 className="w-4 h-4 opacity-0" />}
-              />
-
-              <Button type="submit" variant="primary" size="lg" className="w-full" isLoading={isVerifyingMfa}>
-                Verify &amp; continue
-              </Button>
-
-              <button
-                type="button"
-                onClick={() => {
-                  setMfaChallenge(null);
-                  setMfaCode('');
-                  setMfaError(null);
-                }}
-                className="w-full text-center text-[11px] font-semibold text-ink-secondary hover:text-navy hover:underline"
-              >
-                Use a different account
-              </button>
-            </form>
-          )}
-
-          <form
-            onSubmit={handleSubmit}
-            className={mfaChallenge ? 'hidden' : 'mt-6 space-y-4'}
-            aria-hidden={mfaChallenge ? 'true' : undefined}
-          >
-            <Input
-              label="Email"
-              type="email"
-              value={email}
-              onChange={(event) => setEmail(event.target.value)}
-              placeholder="name@asinta.ph"
-              autoComplete="email"
-              required
-              leftIcon={<Mail className="w-4 h-4" />}
-            />
-            <Input
-              label="Password"
-              type={showPassword ? 'text' : 'password'}
-              value={password}
-              onChange={(event) => setPassword(event.target.value)}
-              placeholder="Enter your account password"
-              autoComplete="current-password"
-              required
-              leftIcon={<Lock className="w-4 h-4" />}
-              rightIcon={
-                <button
-                  type="button"
-                  onClick={() => setShowPassword((previous) => !previous)}
-                  aria-label={showPassword ? 'Hide password' : 'Show password'}
-                  aria-pressed={showPassword}
-                  className="text-ink-muted hover:text-navy focus:outline-none focus:ring-2 focus:ring-navy/30 rounded-md p-0.5 transition-colors"
-                >
-                  {showPassword ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
-                </button>
-              }
-            />
-            <Button
-              type="submit"
-              variant="primary"
-              size="lg"
-              className="w-full mt-2"
-              isLoading={isLoading}
-            >
-              Sign In
-            </Button>
-          </form>
+    <div className="min-h-screen bg-surface flex flex-col justify-between p-4 sm:p-6 lg:p-10 relative overflow-hidden">
+      {/* Subtle Ambient Architectural Blueprint Grid & Visible CHB Watermark */}
+      <div
+        aria-hidden="true"
+        className="pointer-events-none fixed inset-0 overflow-hidden select-none"
+      >
+        <div
+          className="absolute inset-0 opacity-[0.035]"
+          style={{
+            backgroundImage:
+              'linear-gradient(to right, #1B4978 1px, transparent 1px), linear-gradient(to bottom, #1B4978 1px, transparent 1px)',
+            backgroundSize: '36px 36px',
+          }}
+        />
+        <div className="absolute -right-12 -bottom-12 opacity-[0.11] hidden lg:block">
+          <AsintaEmblem size={460} />
+        </div>
+        <div className="absolute -left-16 -top-16 opacity-[0.08] hidden lg:block">
+          <AsintaEmblem size={320} />
         </div>
       </div>
 
-      <div className="text-center text-xs text-ink-muted py-6 relative z-10">
-        © 2026 Asinta Corp. · Design &amp; Build
+      <div className="flex-1 flex items-center justify-center relative z-10 my-auto">
+        <div className="w-full max-w-4xl grid grid-cols-1 lg:grid-cols-12 rounded-3xl bg-white border border-surface-border shadow-[14px_14px_38px_rgba(11,31,58,0.10),-10px_-10px_30px_rgba(255,255,255,0.98)] overflow-hidden animate-page-enter">
+          {/* Left Panel: Desktop Architectural Brand Showcase */}
+          <div className="hidden lg:flex lg:col-span-5 bg-gradient-to-br from-[#0B1F3A] via-[#132C4E] to-[#1B4978] text-white p-9 flex-col justify-between relative overflow-hidden">
+            {/* Blueprint grid overlay */}
+            <div
+              aria-hidden="true"
+              className="pointer-events-none absolute inset-0 opacity-[0.08]"
+              style={{
+                backgroundImage:
+                  'linear-gradient(to right, #FFFFFF 1px, transparent 1px), linear-gradient(to bottom, #FFFFFF 1px, transparent 1px)',
+                backgroundSize: '24px 24px',
+              }}
+            />
+
+            {/* Prominent watermark emblem inside the dark showcase panel */}
+            <div
+              aria-hidden="true"
+              className="pointer-events-none absolute -right-10 -bottom-10 opacity-20"
+            >
+              <AsintaEmblem size={250} />
+            </div>
+
+            {/* Top Brand Badge */}
+            <div className="relative z-10 flex items-center justify-between">
+              <div className="inline-flex items-center space-x-2 px-3 py-1 rounded-full bg-white/10 border border-white/15 backdrop-blur-xs">
+                <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse" />
+                <span className="text-[10px] font-extrabold uppercase tracking-[0.18em] text-white/90">
+                  BALE Workspace
+                </span>
+              </div>
+              <span className="text-[10px] font-mono text-white/50">EST. 2023</span>
+            </div>
+
+            {/* Center Emblem & Brand Story */}
+            <div className="relative z-10 space-y-5 my-8">
+              <div className="w-16 h-16 rounded-2xl bg-white p-3 shadow-xl flex items-center justify-center">
+                <AsintaEmblem size={42} />
+              </div>
+
+              <div className="space-y-2">
+                <div className="text-[11px] font-bold uppercase tracking-[0.22em] text-sky-300">
+                  Asintado · Precision Alignment
+                </div>
+                <h1 className="text-2xl font-extrabold tracking-tight text-white leading-snug">
+                  Architecture curated to your style — built with quality and precision.
+                </h1>
+                <p className="text-xs text-white/75 leading-relaxed pt-1">
+                  Unified project billing, site expense ledger, daily workforce attendance, and automated payroll for Asinta Corp.
+                </p>
+              </div>
+            </div>
+
+            {/* Bottom Studio Metadata */}
+            <div className="relative z-10 pt-4 border-t border-white/15 flex items-center justify-between text-[11px] text-white/70">
+              <span>Design · Build · Management</span>
+              <span className="font-mono text-[10px] text-white/60">PH · PHP ₱</span>
+            </div>
+          </div>
+
+          {/* Right Panel: Sign-In / 2FA Form */}
+          <div className="lg:col-span-7 p-6 sm:p-10 flex flex-col justify-center bg-white">
+            {/* Mobile & Tablet Brand Header */}
+            <div className="flex flex-col items-center lg:items-start text-center lg:text-left mb-6 space-y-2">
+              <div className="flex items-center gap-3">
+                <div className="w-12 h-12 rounded-2xl bg-surface flex items-center justify-center border border-surface-border shadow-neu-raised-sm lg:hidden">
+                  <AsintaEmblem size={28} />
+                </div>
+                <div>
+                  <AsintaWordmark height={22} />
+                  <p className="text-xs text-ink-secondary mt-1">
+                    Sign in to your BALE Studio or Field Supervisor account
+                  </p>
+                </div>
+              </div>
+            </div>
+
+            {/* Session-ended notice */}
+            {sessionNotice && (
+              <div
+                role="status"
+                className="mb-5 p-3.5 rounded-2xl bg-status-warning-bg border border-status-warning/25 text-status-warning text-xs flex items-start space-x-2.5"
+              >
+                <Clock className="w-4 h-4 shrink-0 mt-0.5" />
+                <span>{sessionNotice}</span>
+              </div>
+            )}
+
+            {mfaChallenge ? (
+              <form onSubmit={handleVerifyMfa} className="space-y-5 animate-page-enter">
+                <div className="flex items-center justify-between">
+                  <span className="text-xs font-bold text-navy uppercase tracking-wider">
+                    Two-Factor Verification
+                  </span>
+                  <Badge variant="navy" size="sm">
+                    Step 2 of 2
+                  </Badge>
+                </div>
+
+                <p className="text-xs text-ink-secondary leading-relaxed">
+                  Open your authenticator app and enter the 6-digit code for{' '}
+                  <span className="font-semibold text-navy">{email}</span>.
+                </p>
+
+                {mfaError && (
+                  <div className="p-3.5 rounded-xl bg-status-danger-bg border border-status-danger/20 text-status-danger text-xs flex items-start space-x-2.5">
+                    <AlertCircle className="w-4 h-4 shrink-0 mt-0.5" />
+                    <span>{mfaError}</span>
+                  </div>
+                )}
+
+                <Input
+                  label="6-Digit Authenticator Code"
+                  type="text"
+                  inputMode="numeric"
+                  autoComplete="one-time-code"
+                  placeholder="123 456"
+                  maxLength={7}
+                  value={mfaCode}
+                  onChange={(e) => setMfaCode(e.target.value)}
+                  leftIcon={<KeyRound className="w-4 h-4" />}
+                  autoFocus
+                  required
+                />
+
+                <div className="flex items-center gap-2 pt-1">
+                  <Button
+                    type="button"
+                    variant="secondary"
+                    size="md"
+                    className="flex-1"
+                    disabled={isVerifyingMfa}
+                    onClick={() => {
+                      supabase.auth.signOut();
+                      setMfaChallenge(null);
+                      setMfaCode('');
+                      setMfaError(null);
+                    }}
+                  >
+                    Back
+                  </Button>
+                  <Button
+                    type="submit"
+                    variant="primary"
+                    size="md"
+                    className="flex-1"
+                    disabled={isVerifyingMfa}
+                  >
+                    {isVerifyingMfa ? (
+                      <span className="inline-flex items-center gap-2">
+                        <Loader2 className="w-4 h-4 animate-spin" />
+                        Verifying…
+                      </span>
+                    ) : (
+                      'Verify & Open Workspace'
+                    )}
+                  </Button>
+                </div>
+              </form>
+            ) : (
+              <form onSubmit={handleSubmit} className="space-y-4">
+                {error && (
+                  <div className="p-3.5 rounded-xl bg-status-danger-bg border border-status-danger/20 text-status-danger text-xs flex items-start space-x-2.5">
+                    <AlertCircle className="w-4 h-4 shrink-0 mt-0.5" />
+                    <span>{error}</span>
+                  </div>
+                )}
+
+                <Input
+                  label="Work Email Address"
+                  type="email"
+                  placeholder="name@asinta.ph"
+                  value={email}
+                  onChange={(event) => setEmail(event.target.value)}
+                  leftIcon={<Mail className="w-4 h-4" />}
+                  required
+                />
+
+                <div className="relative">
+                  <Input
+                    label="Password"
+                    type={showPassword ? 'text' : 'password'}
+                    placeholder="Enter your password"
+                    value={password}
+                    onChange={(event) => setPassword(event.target.value)}
+                    leftIcon={<Lock className="w-4 h-4" />}
+                    required
+                  />
+                  <button
+                    type="button"
+                    onClick={() => setShowPassword(!showPassword)}
+                    className="absolute right-3 top-[32px] text-ink-muted hover:text-navy p-1"
+                    aria-label={showPassword ? 'Hide password' : 'Show password'}
+                  >
+                    {showPassword ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+                  </button>
+                </div>
+
+                <div className="pt-2">
+                  <Button
+                    type="submit"
+                    variant="primary"
+                    size="lg"
+                    className="w-full"
+                    disabled={isLoading}
+                  >
+                    {isLoading ? (
+                      <span className="inline-flex items-center gap-2">
+                        <Loader2 className="w-4 h-4 animate-spin" />
+                        Signing in…
+                      </span>
+                    ) : (
+                      'Sign In to Workspace'
+                    )}
+                  </Button>
+                </div>
+              </form>
+            )}
+          </div>
+        </div>
+      </div>
+
+      {/* Bottom Trademark Footer */}
+      <div className="relative z-10 pt-6 flex items-center justify-center gap-2.5 text-xs text-ink-secondary">
+        <AsintaEmblem size={16} />
+        <AsintaWordmark height={13} />
+        <span className="text-[10px] font-bold text-ink-muted">TM</span>
+        <span className="text-surface-border">·</span>
+        <span className="text-[11px] text-ink-muted">&copy; {new Date().getFullYear()} All Rights Reserved</span>
       </div>
     </div>
   );

@@ -1,55 +1,112 @@
 'use client';
 
-import React from 'react';
+import React, { useState, useEffect } from 'react';
 import Link from 'next/link';
-import { usePathname } from 'next/navigation';
+import { usePathname, useSearchParams } from 'next/navigation';
 import { useAuth } from '@/lib/auth/authContext';
-import { FOUNDER_NAV_GROUPS, SUPERVISOR_NAV_GROUPS } from './Sidebar';
-import { AsintaEmblem, AsintaWordmark } from '@/components/ui/AsintaLogo';
 import {
   LayoutDashboard,
   FolderKanban,
   Receipt,
+  CreditCard,
   UserCheck,
-  UserCog,
-  Clock,
-  Menu,
+  History,
+  UserPlus,
+  HandCoins,
+  Banknote,
+  Users,
+  Wrench,
+  MessageSquareShare,
+  CalendarClock,
+  Settings,
+  ShieldCheck,
   X,
+  LayoutGrid,
 } from 'lucide-react';
 
 interface MobileNavProps {
-  isOpen: boolean;
-  onClose: () => void;
-  onOpen?: () => void;
+  isOpen?: boolean;
+  onClose?: () => void;
 }
 
-export const MobileNav: React.FC<MobileNavProps> = ({ isOpen, onClose, onOpen }) => {
-  const pathname = usePathname();
-  const { isFounder, user } = useAuth();
-  const groups = isFounder ? FOUNDER_NAV_GROUPS : SUPERVISOR_NAV_GROUPS;
+const FOUNDER_APP_GRID_SECTIONS = [
+  {
+    label: 'Studio & Workforce',
+    items: [
+      { label: 'Overview', href: '/dashboard', icon: LayoutDashboard },
+      { label: 'Projects', href: '/projects', icon: FolderKanban },
+      { label: 'Roll Call', href: '/attendance', icon: UserCheck },
+      { label: 'History', href: '/attendance?tab=history', icon: History },
+      { label: 'Workforce', href: '/attendance?tab=workforce', icon: UserPlus },
+      { label: 'Payroll', href: '/payroll', icon: Banknote },
+    ],
+  },
+  {
+    label: 'Receivables & Ledger',
+    items: [
+      { label: 'Invoices', href: '/invoices', icon: Receipt },
+      { label: 'Clients', href: '/clients', icon: Users },
+      { label: 'Expenses', href: '/expenses', icon: CreditCard },
+      { label: 'Worker Bale', href: '/advances', icon: HandCoins },
+      { label: 'Reminders', href: '/reminders', icon: CalendarClock },
+      { label: 'PhilSMS', href: '/sms', icon: MessageSquareShare },
+    ],
+  },
+  {
+    label: 'Equipment & Administration',
+    items: [
+      { label: 'Tools', href: '/tools', icon: Wrench },
+      { label: 'Team', href: '/users', icon: ShieldCheck },
+      { label: 'Settings', href: '/settings', icon: Settings },
+    ],
+  },
+];
 
+export const MobileNav: React.FC<MobileNavProps> = () => {
+  const pathname = usePathname();
+  const searchParams = useSearchParams();
+  const currentTab = searchParams?.get('tab') || 'terminal';
+  const { isFounder } = useAuth();
+  const [isSheetOpen, setIsSheetOpen] = useState(false);
+
+  // Close sheet on route change
+  useEffect(() => {
+    setIsSheetOpen(false);
+  }, [pathname, currentTab]);
+
+  const isHrefActive = (href: string) => {
+    const [basePath, query] = href.split('?');
+    if (basePath === '/attendance') {
+      if (pathname !== '/attendance') return false;
+      const targetTab = new URLSearchParams(query || '').get('tab') || 'terminal';
+      return currentTab === targetTab;
+    }
+    return pathname === basePath || Boolean(pathname?.startsWith(`${basePath}/`));
+  };
+
+  // Bottom dock items
   const founderDockItems = [
-    { label: 'Dashboard', href: '/dashboard', icon: LayoutDashboard },
+    { label: 'Overview', href: '/dashboard', icon: LayoutDashboard },
     { label: 'Projects', href: '/projects', icon: FolderKanban },
-    { label: 'Attendance', href: '/attendance', icon: UserCheck },
-    { label: 'Billing', href: '/invoices', icon: Receipt },
+    { label: 'Roll Call', href: '/attendance', icon: UserCheck },
+    { label: 'Payroll', href: '/payroll', icon: Banknote },
   ];
 
   const supervisorDockItems = [
-    { label: 'Attendance', href: '/attendance', icon: UserCheck },
+    { label: 'Roll Call', href: '/attendance', icon: UserCheck },
+    { label: 'History', href: '/attendance?tab=history', icon: History },
+    { label: 'Workforce', href: '/attendance?tab=workforce', icon: UserPlus },
     { label: 'Projects', href: '/projects', icon: FolderKanban },
-    { label: 'History', href: '/attendance?tab=history', icon: Clock },
-    { label: 'Profile', href: '/settings', icon: UserCog },
   ];
 
   const dockItems = isFounder ? founderDockItems : supervisorDockItems;
 
   return (
     <>
-      {/* Fixed Bottom Thumb Navigation Dock (Mobile / Tablet) */}
+      {/* Fixed Mobile Bottom Navigation Bar */}
       <nav
-        aria-label="Mobile quick navigation"
-        className="fixed bottom-0 inset-x-0 z-40 lg:hidden bg-white/95 backdrop-blur-md border-t border-surface-border shadow-[0_-2px_12px_rgba(11,31,58,0.06)] px-2 py-1"
+        aria-label="Mobile Bottom Navigation"
+        className="fixed bottom-0 inset-x-0 z-40 lg:hidden bg-white/95 backdrop-blur-md border-t border-surface-border/90 shadow-[0_-4px_20px_rgba(11,31,58,0.07)] px-2 py-1.5"
       >
         <div
           className={`grid ${
@@ -58,125 +115,124 @@ export const MobileNav: React.FC<MobileNavProps> = ({ isOpen, onClose, onOpen })
         >
           {dockItems.map((item) => {
             const Icon = item.icon;
-            const isActive =
-              pathname === item.href ||
-              (item.href !== '/dashboard' &&
-                item.href !== '/attendance' &&
-                !item.href.includes('?') &&
-                pathname.startsWith(item.href));
+            const active = isHrefActive(item.href) && !isSheetOpen;
 
             return (
               <Link
                 key={item.href}
                 href={item.href}
-                className={`flex flex-col items-center justify-center py-1.5 px-1 rounded-xl text-[10px] font-bold transition-colors truncate ${
-                  isActive
-                    ? 'text-navy bg-surface-inset/90'
-                    : 'text-ink-secondary hover:text-navy'
+                prefetch={false}
+                onClick={() => setIsSheetOpen(false)}
+                className={`flex flex-col items-center justify-center py-1.5 px-1 rounded-2xl transition-all duration-200 active:scale-95 ${
+                  active
+                    ? 'bg-navy text-white shadow-[0_4px_12px_rgba(11,31,58,0.22)]'
+                    : 'text-ink-secondary hover:text-navy hover:bg-surface-inset/50'
                 }`}
               >
-                <Icon className={`w-4 h-4 mb-0.5 ${isActive ? 'text-navy' : 'text-ink-secondary'}`} />
-                <span className="truncate max-w-full">{item.label}</span>
+                <Icon
+                  className={`w-4 h-4 transition-transform duration-200 ${
+                    active ? '-translate-y-0.5 scale-105 text-white' : 'text-ink-secondary'
+                  }`}
+                />
+                <span className="text-[10px] font-bold mt-1 truncate max-w-full">
+                  {item.label}
+                </span>
               </Link>
             );
           })}
 
+          {/* Founder "More" Button -> Opens Clean Bottom-Sheet App Grid */}
           {isFounder && (
             <button
               type="button"
-              onClick={onOpen}
-              className={`flex flex-col items-center justify-center py-1.5 px-1 rounded-xl text-[10px] font-bold transition-colors ${
-                isOpen ? 'text-navy bg-surface-inset' : 'text-ink-secondary hover:text-navy'
+              onClick={() => setIsSheetOpen(!isSheetOpen)}
+              className={`flex flex-col items-center justify-center py-1.5 px-1 rounded-2xl transition-all duration-200 active:scale-95 ${
+                isSheetOpen
+                  ? 'bg-navy text-white shadow-[0_4px_12px_rgba(11,31,58,0.22)]'
+                  : 'text-ink-secondary hover:text-navy hover:bg-surface-inset/50'
               }`}
             >
-              <Menu className="w-4 h-4 mb-0.5" />
-              <span>More</span>
+              <LayoutGrid
+                className={`w-4 h-4 transition-transform duration-200 ${
+                  isSheetOpen ? 'rotate-90 scale-105 text-white' : 'text-ink-secondary'
+                }`}
+              />
+              <span className="text-[10px] font-bold mt-1">More</span>
             </button>
           )}
         </div>
       </nav>
 
-      {/* Slide-Over Grouped Drawer */}
-      {isOpen && (
-        <div className="fixed inset-0 z-50 lg:hidden">
+      {/* Founder Slide-Up Bottom Sheet App Grid (No numbering, no sidebar, zero scrolling required) */}
+      {isFounder && isSheetOpen && (
+        <div className="fixed inset-0 z-50 lg:hidden flex flex-col justify-end">
+          {/* Backdrop */}
           <div
-            className="fixed inset-0 bg-navy/50 backdrop-blur-sm animate-in fade-in"
-            onClick={onClose}
+            className="fixed inset-0 bg-navy/35 backdrop-blur-xs transition-opacity animate-in fade-in duration-150"
+            onClick={() => setIsSheetOpen(false)}
           />
 
-          <div className="fixed inset-y-0 left-0 w-4/5 max-w-xs bg-white border-r border-surface-border shadow-2xl z-10 flex flex-col p-4 animate-in slide-in-from-left duration-200">
-            <div className="flex items-center justify-between pb-3 border-b border-surface-border/80">
-              <div className="flex items-center space-x-2">
-                <div className="w-8 h-8 rounded-xl bg-white border border-surface-border flex items-center justify-center shadow-sm">
-                  <AsintaEmblem size={20} />
-                </div>
-                <AsintaWordmark height={16} />
+          {/* Bottom Sheet Card */}
+          <div className="relative z-10 w-full max-w-lg mx-auto bg-surface rounded-t-3xl border-t border-surface-border shadow-[0_-12px_36px_rgba(11,31,58,0.18)] p-4 pb-6 space-y-3.5 animate-sheet-up">
+            {/* Sheet Grab Handle & Header */}
+            <div className="flex items-center justify-between px-1">
+              <div>
+                <h3 className="text-sm font-extrabold text-navy tracking-tight">
+                  Workspace Modules
+                </h3>
+                <p className="text-[11px] text-ink-secondary">
+                  Tap any module to switch views
+                </p>
               </div>
               <button
-                onClick={onClose}
-                className="p-1.5 rounded-lg text-ink-secondary hover:text-navy hover:bg-surface-inset"
-                aria-label="Close navigation menu"
+                type="button"
+                onClick={() => setIsSheetOpen(false)}
+                className="w-8 h-8 rounded-xl bg-white border border-surface-border text-ink-secondary hover:text-navy flex items-center justify-center active:scale-95 transition-all"
+                aria-label="Close workspace launcher"
               >
-                <X className="w-5 h-5" />
+                <X className="w-4 h-4" />
               </button>
             </div>
 
-            <div className="my-3 px-3 py-2 rounded-xl bg-surface-inset border border-surface-border flex items-center justify-between">
-              <span className="text-xs font-bold text-navy truncate">{user?.name}</span>
-              <span className="text-[10px] font-extrabold uppercase tracking-wider text-ink-secondary shrink-0">
-                {isFounder ? 'Founder' : 'Supervisor'}
-              </span>
-            </div>
-
-            <div className="flex-1 overflow-y-auto space-y-4 py-1">
-              {groups.map((group) => (
-                <div key={group.id} className="space-y-1">
-                  <div className="px-2.5 text-[10px] font-bold text-ink-muted uppercase tracking-wider">
-                    {group.title}
+            {/* Grouped 3-Column Icon Grid */}
+            <div className="space-y-3">
+              {FOUNDER_APP_GRID_SECTIONS.map((section) => (
+                <div
+                  key={section.label}
+                  className="bg-white rounded-2xl p-2.5 border border-surface-border/80 shadow-xs"
+                >
+                  <div className="text-[10px] font-extrabold uppercase tracking-wider text-ink-muted px-1.5 mb-1.5">
+                    {section.label}
                   </div>
-                  <nav className="space-y-0.5">
-                    {group.items.map((item) => {
+                  <div className="grid grid-cols-3 gap-1.5">
+                    {section.items.map((item) => {
                       const Icon = item.icon;
-                      const isActive =
-                        pathname === item.href ||
-                        (item.href !== '/dashboard' &&
-                          item.href !== '/attendance' &&
-                          !item.href.includes('?') &&
-                          pathname.startsWith(item.href));
+                      const active = isHrefActive(item.href);
 
                       return (
                         <Link
                           key={item.href}
                           href={item.href}
-                          onClick={onClose}
-                          aria-current={isActive ? 'page' : undefined}
-                          className={`flex items-center justify-between px-3 py-2 rounded-xl text-xs font-semibold transition-all ${
-                            isActive
-                              ? 'bg-navy text-white shadow-sm'
-                              : 'text-ink-secondary hover:text-navy hover:bg-surface-inset'
+                          prefetch={false}
+                          onClick={() => setIsSheetOpen(false)}
+                          className={`flex flex-col items-center justify-center py-2 px-1.5 rounded-xl text-center transition-all active:scale-95 ${
+                            active
+                              ? 'bg-navy text-white shadow-xs'
+                              : 'bg-surface/60 text-navy hover:bg-surface-inset'
                           }`}
                         >
-                          <div className="flex items-center space-x-2.5 min-w-0">
-                            <Icon
-                              className={`w-4 h-4 shrink-0 ${
-                                isActive ? 'text-white' : 'text-ink-secondary'
-                              }`}
-                            />
-                            <span className="truncate">{item.label}</span>
-                          </div>
-                          {item.badge && (
-                            <span
-                              className={`px-1.5 py-0.5 rounded text-[9px] font-bold ${
-                                isActive ? 'bg-white/20 text-white' : 'bg-navy/10 text-navy'
-                              }`}
-                            >
-                              {item.badge}
-                            </span>
-                          )}
+                          <Icon
+                            className={`w-4 h-4 mb-1 ${
+                              active ? 'text-white' : 'text-navy'
+                            }`}
+                          />
+                          <span className="text-[11px] font-bold truncate max-w-full">
+                            {item.label}
+                          </span>
                         </Link>
                       );
                     })}
-                  </nav>
+                  </div>
                 </div>
               ))}
             </div>
