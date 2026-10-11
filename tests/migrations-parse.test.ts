@@ -332,3 +332,36 @@ describe('the generated bundles are valid SQL too', () => {
     });
   }
 });
+
+describe('hand-written apply scripts parse and stay safe', () => {
+  for (const name of ['preflight.sql', 'seed-cleanup.sql', 'verify-live.sql']) {
+    it(`parses supabase/apply/${name}`, async () => {
+      const sql = readFileSync(join(APPLY_DIR, name), 'utf8');
+      const statements = await parseFile(sql, `supabase/apply/${name}`);
+      expect(statements.length).toBeGreaterThan(0);
+    });
+  }
+
+  it('seed-cleanup.sql compares as ::text = any($1::text[]) in all 32 places and stays disarmed', async () => {
+    const sql = readFileSync(join(APPLY_DIR, 'seed-cleanup.sql'), 'utf8');
+
+    // Every dynamic query in §3 must parse as valid SQL and compare via
+    // `::text = any($1::text[])` because `auth.refresh_tokens.user_id` is
+    // `character varying`, not `uuid`.
+    const dynamicQueries = [...sql.matchAll(/execute\s+'([^']+)'/gi)].map((m) => m[1]);
+    expect(dynamicQueries.length).toBe(34); // 2 in §2 + 32 in §3
+    for (const query of dynamicQueries) {
+      await parseFile(query, `seed-cleanup dynamic SQL (${query})`);
+    }
+
+    const allAnyComparisons = sql.match(/=\s*any\s*\([^)]+\)/gi) ?? [];
+    const textCastComparisons = sql.match(/::text\s*=\s*any\(\$1::text\[\]\)/g) ?? [];
+    expect(textCastComparisons.length).toBe(32);
+    expect(allAnyComparisons.length).toBe(32);
+
+    // Never ship a live replacement password or an armed §3 block in git.
+    expect(sql).toMatch(/k_new_password\s+constant\s+text\s*:=\s*'CHANGE-ME-BEFORE-RUNNING'/);
+    expect(sql).toMatch(/k_armed\s+constant\s+boolean\s*:=\s*false/);
+  });
+});
+

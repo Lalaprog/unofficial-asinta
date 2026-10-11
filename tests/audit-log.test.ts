@@ -1,4 +1,6 @@
-import { describe, expect, it, vi } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
+import { readFileSync } from 'node:fs';
+import { join } from 'node:path';
 import {
   AUDITED_TABLES,
   auditFailureMessage,
@@ -6,6 +8,18 @@ import {
   writeAuditEntry,
   type AuditEntry,
 } from '@/lib/audit/log';
+import {
+  EXPORTABLE_TABLES,
+  handleLedgerExport,
+  isExportableTable,
+  sanitizeCsvCell,
+  toCsv,
+} from '@/lib/export/csv';
+import { resetRateLimits } from '@/lib/rateLimit';
+
+afterEach(() => {
+  resetRateLimits();
+});
 
 const entry: AuditEntry = {
   actorId: 'user-1',
@@ -100,3 +114,178 @@ describe('audit write failures are visible', () => {
     expect(message).toMatch(/report/i);
   });
 });
+
+describe('Founder CSV export (Task 3b — audited, Founder-only, Excel-safe)', () => {
+  function makeExportSupabase(options?: {
+    user?: { id: string; email?: string } | null;
+    role?: 'founder' | 'supervisor' | null;
+    rows?: Record<string, unknown>[];
+    auditError?: { message: string } | null;
+  }) {
+    const user = options && 'user' in options ? options.user : { id: 'founder-1', email: 'junel@asinta.ph' };
+    const role = options && 'role' in options ? options.role : 'founder';
+    const rows = options?.rows ?? [
+      {
+        id: 'w-1',
+        name: 'Juan Dela Cruz',
+        contact_number: '09171234567',
+        position: 'Mason',
+        pay_rate: 850,
+        pay_rate_type: 'daily',
+        active: true,
+        created_at: '2026-10-06T00:00:00Z',
+        encrypted_password: '$2a$10$mustneverleak',
+      },
+    ];
+    const auditInsertSpy = vi.fn(async () => ({ error: options?.auditError ?? null }));
+
+    const client = {
+      auth: {
+        getUser: async () => ({ data: { user: user ?? null }, error: user ? null : new Error('no session') }),
+      },
+      from: (table: string) => {
+        if (table === 'users') {
+          return {
+            select: () => ({
+              eq: () => ({
+                maybeSingle: async () => ({
+                  data: role ? { role } : null,
+                  error: null,
+                }),
+              }),
+            }),
+          };
+        }
+        if (table === 'audit_log') {
+          return { insert: auditInsertSpy };
+        }
+        return {
+          select: () => ({
+            order: async () => ({ data: rows, error: null }),
+          }),
+        };
+      },
+    };
+
+    return { client, auditInsertSpy };
+  }
+
+  it('enforces requireFounder() server-side (blocks unauthenticated and Supervisor callers)', async () => {
+    const unauth = makeExportSupabase({ user: null });
+    const resUnauth = await handleLedgerExport({
+      tableParam: 'expenses',
+      headers: new Headers(),
+      supabase: unauth.client as any,
+    });
+    expect(resUnauth.status).toBe(401);
+
+    const supervisor = makeExportSupabase({ role: 'supervisor' });
+    const resSup = await handleLedgerExport({
+      tableParam: 'expenses',
+      headers: new Headers(),
+      supabase: supervisor.client as any,
+    });
+    expect(resSup.status).toBe(403);
+    expect(supervisor.auditInsertSpy).not.toHaveBeenCalled();
+  });
+
+  it('never exports auth tables, public.users, or password hashes', async () => {
+    for (const forbidden of ['auth.users', 'auth.refresh_tokens', 'users', 'pg_shadow', '']) {
+      expect(isExportableTable(forbidden)).toBe(false);
+      const { client, auditInsertSpy } = makeExportSupabase();
+      const res = await handleLedgerExport({
+        tableParam: forbidden,
+        headers: new Headers(),
+        supabase: client as any,
+      });
+      expect(res.status).toBe(400);
+      expect(auditInsertSpy).not.toHaveBeenCalled();
+    }
+
+    // Even if a row object contains `encrypted_password`, `toCsv` strips it.
+    const csv = toCsv('workers', [
+      {
+        id: 'w-1',
+        name: 'Pedro Penduko',
+        contact_number: '09180001111',
+        position: 'Carpenter',
+        pay_rate: 900,
+        pay_rate_type: 'daily',
+        active: true,
+        created_at: '2026-10-06T00:00:00Z',
+        encrypted_password: 'LEAKED_HASH_VALUE',
+      },
+    ]);
+    expect(csv).not.toContain('LEAKED_HASH_VALUE');
+    expect(csv).not.toContain('encrypted_password');
+  });
+
+  it('writes an audit_log entry recording who exported what and when, and fails closed if audit logging fails', async () => {
+    const now = new Date('2026-10-11T05:00:00.000Z');
+    const { client, auditInsertSpy } = makeExportSupabase();
+
+    const okRes = await handleLedgerExport({
+      tableParam: 'workers',
+      headers: new Headers(),
+      supabase: client as any,
+      now,
+    });
+
+    expect(okRes.status).toBe(200);
+    expect(okRes.headers['Content-Type']).toContain('text/csv');
+    expect(okRes.headers['Content-Disposition']).toContain('bale-workers-2026-10-11.csv');
+    expect(typeof okRes.body).toBe('string');
+    expect((okRes.body as string).startsWith('\uFEFF')).toBe(true);
+    expect(auditInsertSpy).toHaveBeenCalledTimes(1);
+    expect(auditInsertSpy).toHaveBeenCalledWith({
+      actor_id: 'founder-1',
+      actor_email: 'junel@asinta.ph',
+      action: 'insert',
+      table_name: 'export:workers',
+      record_id: null,
+      before_row: null,
+      after_row: {
+        operation: 'csv_export',
+        table: 'workers',
+        row_count: 1,
+        contains_personal_data: true,
+        exported_at: '2026-10-11T05:00:00.000Z',
+      },
+    });
+
+    // When audit_log fails, the export MUST fail closed (no unlogged RA 10173 export).
+    const brokenAudit = makeExportSupabase({ auditError: { message: 'audit table locked' } });
+    const failRes = await handleLedgerExport({
+      tableParam: 'workers',
+      headers: new Headers(),
+      supabase: brokenAudit.client as any,
+      now,
+    });
+    expect(failRes.status).toBe(500);
+    expect(typeof failRes.body).toBe('object');
+  });
+
+  it('neutralises Excel formula injection while keeping negative numbers intact', () => {
+    expect(sanitizeCsvCell('=CMD|\' /C calc\'!A0')).toBe("'=CMD|' /C calc'!A0");
+    expect(sanitizeCsvCell('+SUM(A1:A2)')).toBe("'+SUM(A1:A2)");
+    expect(sanitizeCsvCell('@IMPORTXML()')).toBe("'@IMPORTXML()");
+    expect(sanitizeCsvCell('-cmd')).toBe("'-cmd");
+    expect(sanitizeCsvCell(-1250.5)).toBe('-1250.5');
+    expect(sanitizeCsvCell('-500')).toBe('-500');
+    expect(Object.keys(EXPORTABLE_TABLES)).not.toContain('users');
+  });
+});
+
+describe('automated pg_dump backup workflow (Task 3a)', () => {
+  it('ships .github/workflows/backup.yml with cron, workflow_dispatch, and the project-ref guard', () => {
+    const workflow = readFileSync(join(process.cwd(), '.github/workflows/backup.yml'), 'utf8');
+    expect(workflow).toMatch(/schedule:/);
+    expect(workflow).toMatch(/cron:/);
+    expect(workflow).toMatch(/workflow_dispatch:/);
+    expect(workflow).toMatch(/EXPECTED_REF:\s*mchkdkjntnbwrgmyobpd/);
+    expect(workflow).toMatch(/SUPABASE_DB_URL/);
+    expect(workflow).toMatch(/pg_dump/);
+    expect(workflow).toMatch(/actions\/upload-artifact@v4/);
+  });
+});
+

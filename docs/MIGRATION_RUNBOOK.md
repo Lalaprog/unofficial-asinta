@@ -295,10 +295,12 @@ app if skipped:
 
 | Where | Setting | Value | Why |
 | --- | --- | --- | --- |
-| Authentication → Sessions | Inactivity timeout | `20` minutes | mirrors `supabase/config.toml` |
-| Authentication → Sessions | Time-box | `8` hours | absolute cap; the app's warning dialog counts down to these |
-| Authentication → Rate Limits | tighten sign-in / token refresh | your call | the app's own limiter never sees login traffic (docs/SECURITY.md §7) |
-| Database → Backups | PITR | on | docs/SECURITY.md §10 |
+| Authentication → Sessions | Inactivity timeout | `20` minutes | Mirrors `supabase/config.toml`; applies project-wide to **all roles** (`founder` and `supervisor`) |
+| Authentication → Sessions | Time-box | `8` hours | Absolute cap; the app's warning dialog counts down to these |
+| Vercel → Environment Variables | `NEXT_PUBLIC_SESSION_*` (`20`, `8`, `120`) | **Rebuild** | `NEXT_PUBLIC_*` is inlined at build time; redeploying without rebuilding keeps old values |
+| Authentication → Rate Limits | `sign_in_sign_ups` | `30 → 10` per 5 min per IP | Per-IP only (no account lockout). `/api/auth/login` also enforces 10/5m per IP in the app (docs/SECURITY.md §7) |
+| Authentication → Attack Protection | CAPTCHA | hCaptcha / Turnstile | Defends sign-in against distributed IPs |
+| GitHub Actions | `.github/workflows/backup.yml` | Weekly `pg_dump` + restore test | Supabase Free has no PITR; receipt photos in Storage still need a separate copy (docs/SECURITY.md §10) |
 
 `supabase/config.toml` only configures the local stack; the managed project is
 configured in the dashboard. When you change one, change the other.

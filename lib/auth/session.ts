@@ -4,8 +4,19 @@
  * Supabase Auth is the ENFORCER: the project-level settings
  * (`auth.sessions.inactivity_timeout`, `auth.sessions.timebox`) decide when a
  * session stops being refreshable. This module is the MESSENGER: it predicts
- * when that will happen so the Founder gets a two-minute warning and a "stay
- * signed in" button instead of being bounced to the login screen mid-task.
+ * when that will happen so every signed-in user (`founder` and `supervisor`)
+ * gets a two-minute warning and a "stay signed in" button instead of being
+ * bounced to the login screen mid-task.
+ *
+ * Role scope: timeouts apply to ALL roles, not Founder-only. Supervisors record
+ * attendance, which feeds payroll, so an always-valid session is a standing
+ * exposure. In addition, Supabase `inactivity_timeout` and `timebox` are
+ * project-wide — per-role enforcement does not exist in GoTrue, so any
+ * per-role difference in the browser would be advisory only.
+ *
+ * Build-time note: `NEXT_PUBLIC_SESSION_*` variables are inlined into the
+ * client bundle by `next build`. Changing them in Vercel requires a rebuild,
+ * not a redeploy of an existing build artifact.
  *
  * Two limits, deliberately both:
  *   - idle: no user activity for N minutes → the session stops refreshing.

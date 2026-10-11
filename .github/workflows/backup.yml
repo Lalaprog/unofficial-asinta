@@ -1,0 +1,148 @@
+name: Automated database backup
+
+# PRIMARY BACKUP STRATEGY (Supabase Free tier has no PITR and no automated
+# project backups).
+#
+# Keep the two mechanisms distinct:
+#   - BACKUP (this workflow) = restorable `pg_dump` SQL archive of `public.*`.
+#   - EXPORT (`/api/export`) = human-readable CSV for opening in Excel. A manual
+#     button is never a backup strategy because people forget to press it.
+#
+# STORAGE GAP (important)
+# -----------------------
+# Neither `pg_dump` nor a CSV table export includes receipt photos stored in the
+# `receipts` Supabase Storage bucket (`expenses.receipt_url` holds only the bare
+# storage path). Receipt image files must be copied separately from Supabase
+# Storage (Dashboard → Storage → receipts, or the Storage API).
+#
+# SETUP
+# -----
+# Reuses the `SUPABASE_DB_URL` repository secret from `apply-migrations.yml`:
+#   Repository → Settings → Secrets and variables → Actions → `SUPABASE_DB_URL`
+#   (pooled connection string for project `mchkdkjntnbwrgmyobpd`).
+#
+# RESTORE TEST (required — an untested dump is not a backup)
+# ----------------------------------------------------------
+# 1. Run this workflow (Actions → "Automated database backup" → Run workflow).
+# 2. Download the `bale-pg-dump-<run_id>` artifact and verify its `.sha256`.
+# 3. Restore into a throwaway Supabase project:
+#      psql "$THROWAWAY_DB_URL" -v ON_ERROR_STOP=1 -f bale-backup-*.sql
+# 4. Verify row counts on `invoices`, `expenses`, `payroll`, and `audit_log`,
+#    then record the date and result in `docs/SECURITY.md` §10.
+
+on:
+  schedule:
+    # Weekly: Sunday 06:00 Asia/Manila (Saturday 22:00 UTC), after the Mon–Sat
+    # site week closes.
+    - cron: '0 22 * * 6'
+  workflow_dispatch:
+    inputs:
+      confirm_project_ref:
+        description: 'Project ref to back up (mchkdkjntnbwrgmyobpd)'
+        required: false
+        type: string
+        default: mchkdkjntnbwrgmyobpd
+      retention_days:
+        description: 'Days to retain the uploaded backup artifact in GitHub Actions (1–90)'
+        required: false
+        type: string
+        default: '90'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: database-backup
+  cancel-in-progress: false
+
+jobs:
+  pg-dump:
+    name: pg_dump public schema
+    runs-on: ubuntu-latest
+    env:
+      EXPECTED_REF: mchkdkjntnbwrgmyobpd
+    steps:
+      - name: Confirm the target project (manual runs)
+        if: ${{ github.event_name == 'workflow_dispatch' }}
+        run: |
+          if [ "${{ inputs.confirm_project_ref }}" != "$EXPECTED_REF" ]; then
+            echo "::error::Confirmation '${{ inputs.confirm_project_ref }}' does not match this workflow's project ($EXPECTED_REF). Refusing to run."
+            exit 1
+          fi
+
+      - name: Check the database URL secret is present, and that it points at this project
+        env:
+          SUPABASE_DB_URL: ${{ secrets.SUPABASE_DB_URL }}
+        run: |
+          if [ -z "$SUPABASE_DB_URL" ]; then
+            echo "::error::SUPABASE_DB_URL is not set. Add the pooled connection string in Settings → Secrets and variables → Actions."
+            exit 1
+          fi
+          # Same ref-check guard as .github/workflows/apply-migrations.yml:
+          # the ref appears in the username (postgres.<ref>) or host
+          # (db.<ref>.supabase.co). Refuse to dump an unknown database.
+          case "$SUPABASE_DB_URL" in
+            *"$EXPECTED_REF"*) echo "URL matches $EXPECTED_REF." ;;
+            *) echo "::error::SUPABASE_DB_URL does not contain $EXPECTED_REF — refusing to back up an unknown database."; exit 1 ;;
+          esac
+
+      - name: Install PostgreSQL client
+        run: sudo apt-get update -qq && sudo apt-get install -y -qq postgresql-client
+
+      - name: Run pg_dump (public schema + data, restorable SQL)
+        env:
+          SUPABASE_DB_URL: ${{ secrets.SUPABASE_DB_URL }}
+        run: |
+          set -euo pipefail
+          umask 077
+          mkdir -p backup-out
+          TIMESTAMP="$(date -u +%Y%m%dT%H%M%SZ)"
+          DUMP_FILE="backup-out/bale-backup-${EXPECTED_REF}-${TIMESTAMP}.sql"
+
+          # --schema=public: dumps all BALE tables, constraints, functions, RLS
+          # policies, and audit_log rows without touching `auth.*` password
+          # hashes or Supabase-managed internal schemas that cannot be restored
+          # by a non-superuser on a throwaway project.
+          # --no-owner --no-privileges --clean --if-exists: makes the SQL file
+          # restorable into a fresh throwaway project via `psql -v ON_ERROR_STOP=1`.
+          pg_dump "$SUPABASE_DB_URL" \
+            --schema=public \
+            --clean \
+            --if-exists \
+            --no-owner \
+            --no-privileges \
+            --file="$DUMP_FILE"
+
+          if [ ! -s "$DUMP_FILE" ]; then
+            echo "::error::pg_dump produced an empty file."
+            exit 1
+          fi
+
+          if ! tail -n 5 "$DUMP_FILE" | grep -q "PostgreSQL database dump complete"; then
+            echo "::error::pg_dump output did not finish with 'PostgreSQL database dump complete'."
+            exit 1
+          fi
+
+          sha256sum "$DUMP_FILE" > "${DUMP_FILE}.sha256"
+          ls -lh backup-out/
+
+      - name: Upload pg_dump artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: bale-pg-dump-${{ github.run_id }}
+          path: |
+            backup-out/*.sql
+            backup-out/*.sha256
+          if-no-files-found: error
+          retention-days: ${{ inputs.retention_days || 90 }}
+
+      - name: Restore test & Storage gap reminder
+        run: |
+          {
+            echo "### Backup artifact uploaded"
+            echo ""
+            echo "- **Artifact:** \`bale-pg-dump-${{ github.run_id }}\`"
+            echo "- **Scope:** \`public\` schema (tables, rows, functions, RLS policies, \`audit_log\`)."
+            echo "- **Not included (Storage gap):** Receipt photos in the \`receipts\` Supabase Storage bucket live in object storage, not PostgreSQL. Copy them separately from Supabase Storage."
+            echo "- **Restore verification (required):** Download the artifact, verify the \`.sha256\` checksum, and restore into a throwaway Supabase project with \`psql \"\$THROWAWAY_DB_URL\" -v ON_ERROR_STOP=1 -f bale-backup-*.sql\`. Record the result in \`docs/SECURITY.md\` §10."
+          } >> "$GITHUB_STEP_SUMMARY"

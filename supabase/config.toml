@@ -45,6 +45,11 @@ jwt_expiry = 3600
 enable_signup = true
 
 [auth.sessions]
+# Applies to ALL authenticated roles (`founder` and `supervisor`). Supabase
+# enforces session timeouts project-wide — per-role timeouts do not exist in
+# GoTrue, and supervisors handle attendance that feeds payroll so an always-on
+# session is a standing exposure.
+#
 # Absolute limit: a session is closed this long after sign-in, no matter how
 # active it is. 8 hours covers a full site day without an overnight-open tab.
 timebox = "8h"
@@ -52,6 +57,14 @@ timebox = "8h"
 # Enforced at token refresh, so an expired session is not killed at the instant
 # the clock runs out — it is refused on the next refresh.
 inactivity_timeout = "20m"
+
+[auth.rate_limit]
+# Sign-in attempts per 5 minutes per IP (tightened from the 30 default to 10).
+# Keyed per IP, NEVER per account: per-account lockout lets anyone who knows a
+# founder's email lock them out of the books (NIST SP 800-63B). Note: Supabase
+# issue #41947 (Jan 2026) reported under-enforcement of this limit in GoTrue, so
+# `/api/auth/login` also enforces 10/5m per IP via `lib/rateLimit.ts`.
+sign_in_sign_ups = 10
 
 [auth.email]
 # Local development only — no real mail is sent; messages land in Inbucket.

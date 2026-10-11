@@ -20,10 +20,15 @@
  * (documented in docs/SECURITY.md) is a shared store — Upstash Redis, or a
  * Supabase table — plugged into the same `checkRateLimit` interface.
  *
- * Login brute-force cannot be covered here at all: the browser talks to
- * Supabase Auth directly (`supabase.auth.signInWithPassword`), so those
- * requests never reach this process. Supabase Auth applies its own per-IP
- * limits, which is the honest answer recorded in docs/SECURITY.md.
+ * Login brute-force is rate-limited per IP through `/api/auth/login`
+ * (`authLogin`: 10 attempts per 5 minutes per IP, mirroring the Supabase Auth
+ * `sign_in_sign_ups` setting). It is deliberately NEVER keyed by email or
+ * account: per-account lockout is a denial-of-service vector against the firm
+ * (anyone who knows a founder's email could lock them out of the books —
+ * NIST SP 800-63B advises against account lockout for this reason; TOTP MFA is
+ * the real control against password guessing). Supabase Auth also enforces its
+ * own per-IP limit (though Supabase issue #41947 in Jan 2026 reported under-
+ * enforcement, so `/api/auth/login` enforces this limit before forwarding).
  */
 
 export interface RateLimitRule {
@@ -137,6 +142,18 @@ export const RATE_LIMITS = {
   aiExtract: { limit: 12, windowMs: 60 * 1000 },
   /** Gateway connectivity checks. */
   integrationTest: { limit: 5, windowMs: 15 * 60 * 1000 },
+  /**
+   * Sign-in attempts per IP (10 per 5 minutes — matches Supabase Auth
+   * `sign_in_sign_ups`). Keyed by IP only, never by email/account, so a third
+   * party who knows a Founder's email cannot lock them out of the books.
+   */
+  authLogin: { limit: 10, windowMs: 5 * 60 * 1000 },
+  /**
+   * Founder CSV ledger exports (RA 10173 personal + financial data leaving the
+   * system). 10 downloads per hour covers exporting all tables by hand while
+   * stopping bulk scraping or a runaway loop.
+   */
+  ledgerExport: { limit: 10, windowMs: 60 * 60 * 1000 },
 } as const satisfies Record<string, RateLimitRule>;
 
 export type RateLimitName = keyof typeof RATE_LIMITS;
@@ -187,6 +204,17 @@ export function getRateLimitIdentity(headers: Headers, userId?: string | null): 
   return userId ? `user:${userId}` : `ip:${getClientAddress(headers)}`;
 }
 
+/**
+ * IP-only identity for sign-in rate limiting.
+ *
+ * Deliberately ignores any email address in the request body: keying on the
+ * target email would let anyone who knows a Founder's address lock them out of
+ * the books (account lockout DoS, see NIST SP 800-63B).
+ */
+export function getLoginRateLimitIdentity(headers: Headers): string {
+  return `ip:${getClientAddress(headers)}`;
+}
+
 export interface RateLimitHeaders {
   'Retry-After': string;
   'X-RateLimit-Limit': string;
@@ -214,7 +242,11 @@ export function rateLimitMessage(name: RateLimitName, decision: RateLimitDecisio
   const scope =
     name === 'smsSend'
       ? 'SMS messages outside the business day are usually a stuck tab rather than a human.'
-      : 'This is a cost-control limit.';
+      : name === 'authLogin'
+        ? 'Sign-in attempts are limited per IP address; accounts are never locked out by email.'
+        : name === 'ledgerExport'
+          ? 'CSV exports contain personal and financial records and are rate-limited per Founder.'
+          : 'This is a cost-control limit.';
   return `Too many requests (limit: ${RATE_LIMITS[name].limit} per ${Math.round(
     RATE_LIMITS[name].windowMs / 60000
   )} min). Try again in about ${minutes} minute${minutes === 1 ? '' : 's'}. ${scope}`;
