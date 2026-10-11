@@ -148,12 +148,6 @@ export const RATE_LIMITS = {
    * party who knows a Founder's email cannot lock them out of the books.
    */
   authLogin: { limit: 10, windowMs: 5 * 60 * 1000 },
-  /**
-   * Founder CSV ledger exports (RA 10173 personal + financial data leaving the
-   * system). 10 downloads per hour covers exporting all tables by hand while
-   * stopping bulk scraping or a runaway loop.
-   */
-  ledgerExport: { limit: 10, windowMs: 60 * 60 * 1000 },
 } as const satisfies Record<string, RateLimitRule>;
 
 export type RateLimitName = keyof typeof RATE_LIMITS;
@@ -244,9 +238,7 @@ export function rateLimitMessage(name: RateLimitName, decision: RateLimitDecisio
       ? 'SMS messages outside the business day are usually a stuck tab rather than a human.'
       : name === 'authLogin'
         ? 'Sign-in attempts are limited per IP address; accounts are never locked out by email.'
-        : name === 'ledgerExport'
-          ? 'CSV exports contain personal and financial records and are rate-limited per Founder.'
-          : 'This is a cost-control limit.';
+        : 'This is a cost-control limit.';
   return `Too many requests (limit: ${RATE_LIMITS[name].limit} per ${Math.round(
     RATE_LIMITS[name].windowMs / 60000
   )} min). Try again in about ${minutes} minute${minutes === 1 ? '' : 's'}. ${scope}`;

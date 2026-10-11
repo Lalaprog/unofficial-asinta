@@ -22,12 +22,16 @@ export default function PayrollPage() {
   const {
     payroll,
     workers,
+    projects,
+    attendance,
+    advances,
     createPayrollRun,
     updatePayrollStatus,
   } = useDataStore();
 
   const [searchQuery, setSearchQuery] = useState('');
   const [statusFilter, setStatusFilter] = useState<string>('all');
+  const [projectFilter, setProjectFilter] = useState<string>('all');
 
   // Modals
   const [isGenerateModalOpen, setIsGenerateModalOpen] = useState(false);
@@ -37,18 +41,63 @@ export default function PayrollPage() {
   // Generate run state
   const [periodStart, setPeriodStart] = useState('2026-09-08');
   const [periodEnd, setPeriodEnd] = useState('2026-09-14');
+  const [generateProjectId, setGenerateProjectId] = useState<string>('all');
 
   const formatPHP = formatPesoCompact;
 
+  /**
+   * Resolves the project site(s) associated with a payroll record using:
+   * 1. Attendance logged by the worker during the payroll period
+   * 2. Project site names recorded in `pay.notes`
+   * 3. Fallback to the worker's overall attendance/advance project assignments
+   */
+  const getProjectsForPayroll = (pay: Payroll) => {
+    const periodProjectIds = new Set(
+      attendance
+        .filter(
+          (a) =>
+            a.worker_id === pay.worker_id &&
+            a.date >= pay.period_start &&
+            a.date <= pay.period_end
+        )
+        .map((a) => a.project_id)
+    );
+
+    if (pay.notes) {
+      projects.forEach((proj) => {
+        if (pay.notes?.toLowerCase().includes(proj.name.toLowerCase())) {
+          periodProjectIds.add(proj.id);
+        }
+      });
+    }
+
+    if (periodProjectIds.size === 0) {
+      attendance
+        .filter((a) => a.worker_id === pay.worker_id)
+        .forEach((a) => periodProjectIds.add(a.project_id));
+      advances
+        .filter((adv) => adv.worker_id === pay.worker_id)
+        .forEach((adv) => periodProjectIds.add(adv.project_id));
+    }
+
+    return projects.filter((p) => periodProjectIds.has(p.id));
+  };
+
   const filteredPayroll = payroll.filter((p) => {
     const worker = workers.find((w) => w.id === p.worker_id);
+    const payProjects = getProjectsForPayroll(p);
+
+    const matchesProject =
+      projectFilter === 'all' || payProjects.some((proj) => proj.id === projectFilter);
+
     const matchesSearch =
       worker?.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
       worker?.position.toLowerCase().includes(searchQuery.toLowerCase()) ||
+      payProjects.some((proj) => proj.name.toLowerCase().includes(searchQuery.toLowerCase())) ||
       (p.notes && p.notes.toLowerCase().includes(searchQuery.toLowerCase()));
 
     const matchesStatus = statusFilter === 'all' || p.status === statusFilter;
-    return matchesSearch && matchesStatus;
+    return matchesProject && matchesSearch && matchesStatus;
   });
 
   const totalNetDisbursement = filteredPayroll.reduce((sum, p) => sum + Number(p.net_pay || 0), 0);
@@ -56,7 +105,7 @@ export default function PayrollPage() {
 
   const handleGenerateSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    const created = await createPayrollRun(periodStart, periodEnd);
+    const created = await createPayrollRun(periodStart, periodEnd, generateProjectId);
     if (created) {
       setIsGenerateModalOpen(false);
     }
@@ -107,20 +156,34 @@ export default function PayrollPage() {
           <div className="p-5 rounded-3xl bg-white border border-surface-border shadow-sm">
             <div className="text-xs font-semibold text-ink-secondary uppercase">Pending Founder Approval</div>
             <div className="text-2xl font-bold text-status-warning mt-1">
-              {payroll.filter((p) => p.status === 'draft' || p.status === 'reviewed').length}
+              {filteredPayroll.filter((p) => p.status === 'draft' || p.status === 'reviewed').length}
             </div>
             <div className="text-[11px] text-status-warning mt-0.5">Draft payroll vouchers</div>
           </div>
         </div>
 
         {/* Filters */}
-        <div className="flex flex-col sm:flex-row items-center gap-3">
+        <div className="flex flex-col sm:flex-row flex-wrap items-center gap-3">
           <div className="w-full sm:w-80">
             <Input
-              placeholder="Search worker or position..."
+              placeholder="Search worker, position, or project..."
               value={searchQuery}
               onChange={(e) => setSearchQuery(e.target.value)}
               leftIcon={<Search className="w-4 h-4" />}
+            />
+          </div>
+
+          <div className="w-full sm:w-64">
+            <Select
+              value={projectFilter}
+              onChange={(e) => setProjectFilter(e.target.value)}
+              options={[
+                { label: 'All Project Sites', value: 'all' },
+                ...projects.map((p) => ({
+                  label: `${p.name} (${p.location.split(',')[0]})`,
+                  value: p.id,
+                })),
+              ]}
             />
           </div>
 
@@ -143,6 +206,7 @@ export default function PayrollPage() {
           <div className="divide-y divide-surface-border/70">
             {filteredPayroll.map((pay) => {
               const worker = workers.find((w) => w.id === pay.worker_id);
+              const payProjects = getProjectsForPayroll(pay);
 
               const statusBadgeVariant =
                 pay.status === 'paid'
@@ -158,7 +222,7 @@ export default function PayrollPage() {
                 >
                   {/* Left: Worker info */}
                   <div className="space-y-1">
-                    <div className="flex items-center space-x-2">
+                    <div className="flex items-center flex-wrap gap-2">
                       <span className="font-bold text-sm text-navy">{worker?.name}</span>
                       <span className="text-xs text-ink-secondary">({worker?.position})</span>
                       <Badge variant={statusBadgeVariant} size="sm">
@@ -169,6 +233,20 @@ export default function PayrollPage() {
                     <div className="text-xs text-ink-secondary">
                       Period: <span className="font-semibold text-navy">{pay.period_start} → {pay.period_end}</span> · Days: {pay.days_worked || 6} days ({pay.hours_worked || 48}h)
                     </div>
+
+                    {payProjects.length > 0 && (
+                      <div className="text-xs text-ink-secondary flex items-center flex-wrap gap-1.5">
+                        <span>Project Site{payProjects.length > 1 ? 's' : ''}:</span>
+                        {payProjects.map((proj) => (
+                          <span
+                            key={proj.id}
+                            className="px-2 py-0.5 rounded-lg bg-surface-inset border border-surface-border text-[11px] font-semibold text-navy"
+                          >
+                            {proj.name}
+                          </span>
+                        ))}
+                      </div>
+                    )}
 
                     {pay.notes && (
                       <div className="text-xs text-ink-muted italic">{pay.notes}</div>
@@ -252,6 +330,19 @@ export default function PayrollPage() {
         description="Automatically calculates gross pay from attendance and deducts active worker advances (bale)."
       >
         <form onSubmit={handleGenerateSubmit} className="space-y-4 text-xs">
+          <Select
+            label="Project Site Scope"
+            value={generateProjectId}
+            onChange={(e) => setGenerateProjectId(e.target.value)}
+          >
+            <option value="all">All Project Sites (Firm-wide Run)</option>
+            {projects.map((p) => (
+              <option key={p.id} value={p.id}>
+                {p.name} ({p.location.split(',')[0]})
+              </option>
+            ))}
+          </Select>
+
           <div className="grid grid-cols-2 gap-4">
             <Input
               label="Period Start Date"
@@ -325,6 +416,11 @@ export default function PayrollPage() {
                     <div className="text-[10px] font-bold uppercase text-ink-secondary">Worker Name</div>
                     <div className="font-bold text-navy text-sm mt-0.5">{worker?.name}</div>
                     <div className="text-ink-secondary">{worker?.position}</div>
+                    {getProjectsForPayroll(selectedPayroll).length > 0 && (
+                      <div className="text-[11px] text-navy font-semibold mt-1">
+                        Site: {getProjectsForPayroll(selectedPayroll).map((p) => p.name).join(', ')}
+                      </div>
+                    )}
                   </div>
                   <div className="text-right">
                     <div className="text-[10px] font-bold uppercase text-ink-secondary">Wage Rate</div>
