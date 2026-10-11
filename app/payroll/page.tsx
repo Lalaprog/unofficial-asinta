@@ -38,10 +38,13 @@ export default function PayrollPage() {
   const [isPayslipModalOpen, setIsPayslipModalOpen] = useState(false);
   const [selectedPayroll, setSelectedPayroll] = useState<Payroll | null>(null);
 
-  // Generate run state
-  const [periodStart, setPeriodStart] = useState('2026-09-08');
-  const [periodEnd, setPeriodEnd] = useState('2026-09-14');
+  // Generate run state (defaults to the past 7 days through today)
+  const todayStr = new Date().toISOString().split('T')[0];
+  const weekAgoStr = new Date(Date.now() - 6 * 24 * 60 * 60 * 1000).toISOString().split('T')[0];
+  const [periodStart, setPeriodStart] = useState(weekAgoStr);
+  const [periodEnd, setPeriodEnd] = useState(todayStr);
   const [generateProjectId, setGenerateProjectId] = useState<string>('all');
+  const [isGenerating, setIsGenerating] = useState(false);
 
   const formatPHP = formatPesoCompact;
 
@@ -103,11 +106,28 @@ export default function PayrollPage() {
   const totalNetDisbursement = filteredPayroll.reduce((sum, p) => sum + Number(p.net_pay || 0), 0);
   const totalBaleRecovered = filteredPayroll.reduce((sum, p) => sum + Number(p.bale_deduction || 0), 0);
 
+  const periodAttendanceCount = attendance.filter(
+    (a) =>
+      a.date >= periodStart &&
+      a.date <= periodEnd &&
+      (generateProjectId === 'all' || a.project_id === generateProjectId)
+  ).length;
+
+  const existingPeriodVouchers = payroll.filter(
+    (p) => p.period_start === periodStart && p.period_end === periodEnd
+  );
+
   const handleGenerateSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    const created = await createPayrollRun(periodStart, periodEnd, generateProjectId);
-    if (created) {
-      setIsGenerateModalOpen(false);
+    if (isGenerating) return;
+    setIsGenerating(true);
+    try {
+      const created = await createPayrollRun(periodStart, periodEnd, generateProjectId);
+      if (created) {
+        setIsGenerateModalOpen(false);
+      }
+    } finally {
+      setIsGenerating(false);
     }
   };
 
@@ -361,19 +381,37 @@ export default function PayrollPage() {
           </div>
 
           <div className="p-3.5 rounded-2xl bg-surface-inset border border-surface-border space-y-1.5 text-ink-secondary">
-            <div className="font-bold text-navy text-xs">Automated Engine Logic:</div>
-            <div>1. Aggregates site attendance records within selected date range.</div>
-            <div>2. Multiplies days/hours worked by worker craft daily wage rates.</div>
-            <div>3. Checks active Bale ledger balance and factors in deductible amounts.</div>
-            <div>4. Outputs draft payroll vouchers for Founder final approval.</div>
+            <div className="flex items-center justify-between">
+              <span className="font-bold text-navy text-xs">Live Attendance Sync:</span>
+              <Badge variant={periodAttendanceCount > 0 ? 'success' : 'warning'} size="sm">
+                {periodAttendanceCount} attendance log{periodAttendanceCount === 1 ? '' : 's'} in range
+              </Badge>
+            </div>
+            <div>
+              Supervisor-submitted attendance is synced automatically — you do not need to re-submit attendance before running payroll.
+            </div>
+            {existingPeriodVouchers.length > 0 && (
+              <div className="text-[11px] font-semibold text-navy pt-1 border-t border-surface-border/60">
+                Note: {existingPeriodVouchers.length} voucher(s) already exist for {periodStart} → {periodEnd}. Running again will refresh draft vouchers in-place without creating duplicates.
+              </div>
+            )}
           </div>
 
           <div className="pt-3 flex justify-end space-x-2">
-            <Button variant="secondary" onClick={() => setIsGenerateModalOpen(false)}>
+            <Button
+              type="button"
+              variant="secondary"
+              onClick={() => setIsGenerateModalOpen(false)}
+            >
               Cancel
             </Button>
-            <Button variant="primary" type="submit">
-              Generate Payroll Run
+            <Button
+              variant="primary"
+              type="submit"
+              isLoading={isGenerating}
+              disabled={isGenerating || periodAttendanceCount === 0}
+            >
+              {existingPeriodVouchers.length > 0 ? 'Refresh / Recalculate Run' : 'Generate Payroll Run'}
             </Button>
           </div>
         </form>

@@ -50,6 +50,10 @@ export async function POST(request: NextRequest) {
     );
   }
 
+  const customId =
+    typeof body.id === 'string' && /^[0-9a-f-]{36}$/i.test(body.id.trim())
+      ? body.id.trim()
+      : undefined;
   const name = typeof body.name === 'string' ? body.name.trim() : '';
   const contactNumber = typeof body.contact_number === 'string' ? body.contact_number.trim() : '';
   const position = typeof body.position === 'string' ? body.position.trim() : '';
@@ -78,6 +82,7 @@ export async function POST(request: NextRequest) {
   }
 
   const insertPayload = {
+    ...(customId ? { id: customId } : {}),
     name,
     contact_number: contactNumber || '—',
     position,
@@ -95,7 +100,7 @@ export async function POST(request: NextRequest) {
 
   const { data: created, error: insertError } = await dbClient
     .from('workers')
-    .insert(insertPayload)
+    .upsert(insertPayload, { onConflict: 'id' })
     .select()
     .single();
 

@@ -27,6 +27,7 @@ export default function AttendancePage() {
   const { user, isFounder, isSupervisor } = useAuth();
   const { showToast } = useToast();
   const {
+    users,
     workers,
     projects,
     attendance,
@@ -103,6 +104,16 @@ export default function AttendancePage() {
       setSelectedProjectId(accessibleProjects[0].id);
     }
   }, [accessibleProjects, selectedProjectId]);
+
+  // Sync activeTab with ?tab= query parameter (used by Supervisor sidebar & notifications)
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    const params = new URLSearchParams(window.location.search);
+    const tabParam = params.get('tab');
+    if (tabParam === 'history' || tabParam === 'workforce' || tabParam === 'terminal') {
+      setActiveTab(tabParam);
+    }
+  }, []);
 
   // Load existing records for project and date into terminal
   useEffect(() => {
@@ -279,6 +290,69 @@ export default function AttendancePage() {
       return aSup - bSup;
     });
 
+  // Detect any Supervisor profiles (either the signed-in Supervisor or team
+  // Supervisors in `public.users`) that are not yet enrolled on the active
+  // `workers` payroll roster so they can be enrolled with one click.
+  const candidateSupervisors = [
+    ...(isSupervisor && user ? [user] : []),
+    ...users.filter((u) => u.role === 'supervisor'),
+  ].filter(
+    (sup, idx, arr) =>
+      arr.findIndex((item) => item.id === sup.id) === idx &&
+      !workers.some(
+        (w) =>
+          w.active &&
+          (w.id === sup.id || w.name.trim().toLowerCase() === sup.name.trim().toLowerCase())
+      )
+  );
+
+  const handleEnrollSupervisor = async (sup: { id: string; name: string }) => {
+    setIsAddingWorker(true);
+    const created = await createWorker({
+      id: sup.id,
+      name: sup.name,
+      position: 'Site Supervisor',
+      pay_rate: 1200,
+      pay_rate_type: 'daily',
+      contact_number: '—',
+      active: true,
+    });
+    setIsAddingWorker(false);
+    if (created) {
+      showToast('success', `${sup.name} is now enrolled in the Attendance & Payroll roster.`);
+    }
+  };
+
+  // Existing submitted attendance records for the active project & date
+  const existingSiteDateRecords = attendance.filter(
+    (a) => a.project_id === selectedProjectId && a.date === selectedDate
+  );
+
+  // Determine whether the current draft differs from the already-submitted
+  // records for (selectedProjectId, selectedDate). Prevents spam-submitting
+  // identical attendance and makes it clear to Founders that Supervisor-
+  // submitted attendance is already live in the Payroll Engine.
+  const activeWorkersList = workers.filter((w) => w.active);
+  const hasUnsavedChanges =
+    existingSiteDateRecords.length === 0
+      ? activeWorkersList.length > 0
+      : activeWorkersList.some((w) => {
+          const draft = draftAttendance[w.id];
+          const saved = existingSiteDateRecords.find((a) => a.worker_id === w.id);
+          if (!saved || !draft) return true;
+          return (
+            draft.status !== saved.status ||
+            Number(draft.hours_worked) !== Number(saved.hours_worked) ||
+            (draft.notes || '').trim() !== (saved.notes || '').trim()
+          );
+        });
+
+  const latestSubmittedAt = existingSiteDateRecords.reduce<string | null>((latest, rec) => {
+    if (!rec.submitted_at) return latest;
+    if (!latest || rec.submitted_at > latest) return rec.submitted_at;
+    return latest;
+  }, null);
+
   // Attendance summary counts for active date & project
   const presentCount = Object.values(draftAttendance).filter((d) => d.status === 'present').length;
   const halfDayCount = Object.values(draftAttendance).filter((d) => d.status === 'half_day').length;
@@ -373,11 +447,15 @@ export default function AttendancePage() {
                 value={selectedProjectId}
                 onChange={(e) => setSelectedProjectId(e.target.value)}
               >
-                {accessibleProjects.map((p) => (
-                  <option key={p.id} value={p.id}>
-                    {p.name} ({p.location.split(',')[0]})
-                  </option>
-                ))}
+                {accessibleProjects.length === 0 ? (
+                  <option value="">No assigned project sites yet</option>
+                ) : (
+                  accessibleProjects.map((p) => (
+                    <option key={p.id} value={p.id}>
+                      {p.name} ({p.location.split(',')[0]})
+                    </option>
+                  ))
+                )}
               </Select>
             </div>
 
@@ -443,21 +521,63 @@ export default function AttendancePage() {
               </div>
             </div>
 
-            {/* Quick search */}
-            <div className="max-w-md">
-              <Input
-                placeholder="Filter worker by name or craft..."
-                value={searchWorker}
-                onChange={(e) => setSearchWorker(e.target.value)}
-                leftIcon={<Search className="w-4 h-4" />}
-              />
+            {/* Quick search & Unenrolled Supervisor Quick-Enroll */}
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+              <div className="w-full sm:max-w-md">
+                <Input
+                  placeholder="Filter worker by name or craft..."
+                  value={searchWorker}
+                  onChange={(e) => setSearchWorker(e.target.value)}
+                  leftIcon={<Search className="w-4 h-4" />}
+                />
+              </div>
+
+              {candidateSupervisors.length > 0 && (
+                <div className="flex flex-wrap items-center gap-2">
+                  {candidateSupervisors.map((sup) => (
+                    <Button
+                      key={sup.id}
+                      type="button"
+                      variant="secondary"
+                      size="sm"
+                      isLoading={isAddingWorker}
+                      onClick={() => handleEnrollSupervisor(sup)}
+                      leftIcon={<UserPlus className="w-3.5 h-3.5" />}
+                    >
+                      Include {sup.name} (Supervisor) on Roster
+                    </Button>
+                  ))}
+                </div>
+              )}
             </div>
+
+            {/* Already-Synced Status Banner (prevents Founder confusion & Supervisor spam) */}
+            {existingSiteDateRecords.length > 0 && (
+              <div className="p-4 rounded-2xl bg-status-success-bg/80 border border-status-success/25 text-xs flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+                <div className="flex items-start sm:items-center gap-2.5 text-status-success">
+                  <CheckCircle2 className="w-5 h-5 shrink-0 mt-0.5 sm:mt-0" />
+                  <div>
+                    <div className="font-bold text-sm">
+                      Site Attendance Recorded &amp; Synced to Payroll Engine
+                    </div>
+                    <div className="text-ink-secondary">
+                      {existingSiteDateRecords.length} worker record{existingSiteDateRecords.length === 1 ? '' : 's'} saved for {selectedDate}
+                      {latestSubmittedAt ? ` (last updated ${new Date(latestSubmittedAt).toLocaleTimeString('en-PH', { hour: '2-digit', minute: '2-digit' })})` : ''}.
+                      {' '}Automatically included in Payroll runs — no re-submission needed unless you edit a status below.
+                    </div>
+                  </div>
+                </div>
+                <Badge variant={hasUnsavedChanges ? 'warning' : 'success'} size="sm">
+                  {hasUnsavedChanges ? 'Unsaved Edits' : 'Synced to Payroll'}
+                </Badge>
+              </div>
+            )}
 
             {/* Submission Banner */}
             {submissionSuccess && (
               <div className="p-4 rounded-2xl bg-status-success-bg border border-status-success/20 text-status-success text-sm font-semibold flex items-center space-x-2 animate-in fade-in">
                 <CheckCircle2 className="w-5 h-5 text-status-success" />
-                <span>Attendance records successfully saved and synchronized with BALE ledger!</span>
+                <span>Attendance records saved and live in the Payroll Engine!</span>
               </div>
             )}
 
@@ -570,19 +690,43 @@ export default function AttendancePage() {
             </div>
 
             {/* Bottom Submit Sticky Bar */}
-            <div className="sticky bottom-4 z-30 p-4 rounded-2xl bg-white/95 backdrop-blur-md border border-surface-border shadow-2xl flex items-center justify-between">
+            <div className="sticky bottom-4 z-30 p-4 rounded-2xl bg-white/95 backdrop-blur-md border border-surface-border shadow-2xl flex flex-col sm:flex-row sm:items-center justify-between gap-3">
               <div className="text-xs text-ink-secondary">
-                Ready to submit for <span className="font-bold text-navy">{filteredWorkers.length} workers</span> on {selectedDate}.
+                {existingSiteDateRecords.length > 0 && !hasUnsavedChanges ? (
+                  <span>
+                    Attendance for <span className="font-bold text-navy">{selectedDate}</span> is already synced to the Payroll Engine. Change any worker&apos;s status or hours above if you need to update it.
+                  </span>
+                ) : (
+                  <span>
+                    Ready to save <span className="font-bold text-navy">{filteredWorkers.length} workers</span> for {selectedDate}.
+                  </span>
+                )}
               </div>
 
               <Button
                 type="submit"
-                variant="primary"
+                variant={existingSiteDateRecords.length > 0 && !hasUnsavedChanges ? 'secondary' : 'primary'}
                 size="lg"
                 isLoading={isSubmitting}
-                leftIcon={<Save className="w-4 h-4" />}
+                disabled={
+                  isSubmitting ||
+                  !selectedProjectId ||
+                  filteredWorkers.length === 0 ||
+                  (existingSiteDateRecords.length > 0 && !hasUnsavedChanges)
+                }
+                leftIcon={
+                  existingSiteDateRecords.length > 0 && !hasUnsavedChanges ? (
+                    <CheckCircle2 className="w-4 h-4 text-status-success" />
+                  ) : (
+                    <Save className="w-4 h-4" />
+                  )
+                }
               >
-                Submit Site Attendance
+                {existingSiteDateRecords.length > 0
+                  ? hasUnsavedChanges
+                    ? 'Save Attendance Changes'
+                    : 'Synced to Payroll ✓'
+                  : 'Submit Site Attendance'}
               </Button>
             </div>
           </form>

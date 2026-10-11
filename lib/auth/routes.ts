@@ -1,6 +1,11 @@
 export type AppRole = 'founder' | 'supervisor';
 
-/** Routes that are reserved for Founder accounts. Shared by middleware and login redirects. */
+/**
+ * Routes that are reserved for Founder accounts. Shared by middleware and login redirects.
+ * Note: `/settings` is accessible to both Founders (Firm Settings & Integrations) and
+ * Supervisors (Supervisor Profile & Session Sync), with Founder-only integration cards
+ * gated by `isFounder` and server-side `requireFounder` on all admin API routes.
+ */
 export const FOUNDER_ONLY_ROUTES = [
   '/dashboard',
   '/invoices',
@@ -12,7 +17,6 @@ export const FOUNDER_ONLY_ROUTES = [
   '/users',
   '/sms',
   '/reminders',
-  '/settings',
 ] as const;
 
 export function isFounderOnlyPath(pathname: string): boolean {

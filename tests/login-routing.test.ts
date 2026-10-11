@@ -24,13 +24,15 @@ describe('safe redirect_to handling', () => {
 });
 
 describe('role-based path access', () => {
-  it('never allows Supervisors into Founder-only routes', () => {
+  it('never allows Supervisors into Founder-only routes, while allowing /attendance, /projects, and /settings (Supervisor Profile)', () => {
     expect(isFounderOnlyPath('/dashboard')).toBe(true);
     expect(isFounderOnlyPath('/invoices')).toBe(true);
     expect(isFounderOnlyPath('/reminders')).toBe(true);
+    expect(isFounderOnlyPath('/settings')).toBe(false);
     expect(canRoleAccessPath('supervisor', '/dashboard')).toBe(false);
     expect(canRoleAccessPath('supervisor', '/invoices')).toBe(false);
     expect(canRoleAccessPath('supervisor', '/attendance')).toBe(true);
+    expect(canRoleAccessPath('supervisor', '/settings')).toBe(true);
     expect(canRoleAccessPath('founder', '/dashboard')).toBe(true);
     expect(canRoleAccessPath('founder', '/attendance')).toBe(true);
   });
