@@ -198,7 +198,7 @@ export default function FounderDashboard() {
                   Real-time budget consumption, collections, and net margin per site
                 </CardDescription>
               </div>
-              <Link href="/projects" className="text-xs font-semibold text-navy hover:underline inline-flex items-center gap-1">
+              <Link href="/projects" prefetch={false} className="text-xs font-semibold text-navy hover:underline inline-flex items-center gap-1">
                 <span>All Projects</span>
                 <ArrowRight className="w-3.5 h-3.5" />
               </Link>

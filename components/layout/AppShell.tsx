@@ -10,6 +10,7 @@ import { useDataStore } from '@/lib/data/store';
 import { createClient, isSupabaseConfigured } from '@/lib/supabase/client';
 import { PasswordSetupGate } from '@/components/auth/PasswordSetupGate';
 import { AsintaLoader } from '@/components/ui/AsintaLoader';
+import { SkeletonShell } from '@/components/ui/Skeleton';
 import { ShieldAlert, AlertTriangle, RefreshCw, Settings2 } from 'lucide-react';
 import Link from 'next/link';
 import { Button } from '@/components/ui/Button';
@@ -90,11 +91,14 @@ export const AppShell: React.FC<AppShellProps> = ({ children, requireFounder = f
   // 1b. Resolving authentication session
   if (authLoading) {
     return (
-      <AsintaLoader
-        variant="fullscreen"
-        title="Verifying credentials…"
-        subtitle="Authenticating your Asinta workspace access"
-      />
+      <div className="relative">
+        <SkeletonShell />
+        <AsintaLoader
+          variant="fullscreen"
+          title="Verifying credentials & preparing your workspace…"
+          subtitle="Authenticating your Asinta workspace access"
+        />
+      </div>
     );
   }
 
@@ -125,11 +129,14 @@ export const AppShell: React.FC<AppShellProps> = ({ children, requireFounder = f
     }
 
     return (
-      <AsintaLoader
-        variant="fullscreen"
-        title="Synchronizing Asinta studio ledger…"
-        subtitle="Fetching projects, workforce, and financial records"
-      />
+      <div className="relative">
+        <SkeletonShell />
+        <AsintaLoader
+          variant="fullscreen"
+          title="Synchronizing Asinta studio ledger…"
+          subtitle="Fetching projects, workforce, and financial records"
+        />
+      </div>
     );
   }
 

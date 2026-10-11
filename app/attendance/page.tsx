@@ -1483,7 +1483,7 @@ function AttendancePageInner() {
             </div>
 
             {/* Bottom Submit Sticky Bar */}
-            <div className="sticky bottom-4 z-30 p-3.5 rounded-2xl bg-white/95 backdrop-blur-md border border-surface-border shadow-2xl flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+            <div className="sticky bottom-20 lg:bottom-4 z-30 p-3.5 rounded-2xl bg-white/95 backdrop-blur-md border border-surface-border shadow-2xl flex flex-col sm:flex-row sm:items-center justify-between gap-3">
               <div className="text-xs text-ink-secondary">
                 {uncheckedCount > 0 ? (
                   <span>

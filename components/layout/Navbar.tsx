@@ -75,7 +75,7 @@ const FOUNDER_DROPDOWN_GROUPS: NavDropdownGroup[] = [
         icon: FolderKanban,
       },
       {
-        label: 'Tools & Plant',
+        label: 'Tools & Equipment',
         description: 'Site equipment & condition tracking',
         href: '/tools',
         icon: Wrench,
@@ -87,7 +87,7 @@ const FOUNDER_DROPDOWN_GROUPS: NavDropdownGroup[] = [
     label: 'Receivables',
     items: [
       {
-        label: 'Clients',
+        label: 'Client Directory',
         description: 'Client directory & project accounts',
         href: '/clients',
         icon: Users,
@@ -178,7 +178,7 @@ const SUPERVISOR_TOP_LINKS = [
   { label: 'Roll Call', href: '/attendance', tab: 'terminal', icon: UserCheck },
   { label: 'History', href: '/attendance?tab=history', tab: 'history', icon: History },
   { label: 'Workforce', href: '/attendance?tab=workforce', tab: 'workforce', icon: UserPlus },
-  { label: 'Projects', href: '/projects', tab: null, icon: FolderKanban },
+  { label: 'Assigned Projects', href: '/projects', tab: null, icon: FolderKanban },
 ];
 
 export const Navbar: React.FC<NavbarProps> = () => {
@@ -800,7 +800,7 @@ export const Navbar: React.FC<NavbarProps> = () => {
                 aria-label="Account and Sign Out menu"
                 className={`w-10 h-10 rounded-xl border flex items-center justify-center transition-all active:scale-95 relative shadow-[2px_2px_6px_rgba(11,31,58,0.06)] ${
                   isFounder
-                    ? 'bg-navy text-white border-navy-deep hover:bg-navy-light'
+                    ? 'bg-[#1B4978] text-white border-[#14395E] hover:bg-navy'
                     : 'bg-status-warning-bg text-status-warning border-status-warning/30 hover:bg-status-warning/20'
                 }`}
               >

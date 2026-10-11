@@ -95,8 +95,8 @@ export const MobileNav: React.FC<MobileNavProps> = () => {
   const supervisorDockItems = [
     { label: 'Roll Call', href: '/attendance', icon: UserCheck },
     { label: 'History', href: '/attendance?tab=history', icon: History },
-    { label: 'Workforce', href: '/attendance?tab=workforce', icon: UserPlus },
     { label: 'Projects', href: '/projects', icon: FolderKanban },
+    { label: 'Workforce', href: '/attendance?tab=workforce', icon: UserPlus },
   ];
 
   const dockItems = isFounder ? founderDockItems : supervisorDockItems;

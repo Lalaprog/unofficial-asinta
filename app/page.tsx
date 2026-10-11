@@ -75,6 +75,7 @@ export default function LoginPage() {
       requestedPath && canRoleAccessPath(role, requestedPath) ? requestedPath : fallback;
 
     setIsEnteringWorkspace(true);
+    router.refresh();
     router.replace(destination);
   };
 
@@ -152,11 +153,11 @@ export default function LoginPage() {
     }
   };
 
-  if (isEnteringWorkspace) {
+  if (isLoading || isVerifyingMfa || isEnteringWorkspace) {
     return (
       <AsintaLoader
         variant="fullscreen"
-        title="Preparing your Asinta workspace…"
+        title="Verifying credentials & preparing your workspace…"
         subtitle="Synchronizing studio ledger & site records"
       />
     );
@@ -219,16 +220,21 @@ export default function LoginPage() {
               <span className="text-[10px] font-mono text-white/50">EST. 2023</span>
             </div>
 
-            {/* Center Emblem & Brand Story */}
+            {/* Center Emblem, Wordmark & Brand Story */}
             <div className="relative z-10 space-y-5 my-8">
-              <div className="w-16 h-16 rounded-2xl bg-white p-3 shadow-xl flex items-center justify-center">
-                <AsintaEmblem size={42} />
+              <div className="inline-flex items-center gap-3.5 rounded-2xl bg-white px-4 py-3 shadow-xl">
+                <AsintaEmblem size={38} />
+                <div className="h-7 w-px bg-surface-border" />
+                <AsintaWordmark height={22} />
+              </div>
+
+              <div className="flex items-center gap-2 text-[10px] font-mono tracking-widest text-sky-300/90">
+                <span>┼───</span>
+                <span>ASINTADO · CHB ALIGNMENT</span>
+                <span>───┼</span>
               </div>
 
               <div className="space-y-2">
-                <div className="text-[11px] font-bold uppercase tracking-[0.22em] text-sky-300">
-                  Asintado · Precision Alignment
-                </div>
                 <h1 className="text-2xl font-extrabold tracking-tight text-white leading-snug">
                   Architecture curated to your style — built with quality and precision.
                 </h1>
