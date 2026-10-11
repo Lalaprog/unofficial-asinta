@@ -32,6 +32,7 @@ import {
   Settings,
 } from 'lucide-react';
 import { Badge } from '@/components/ui/Badge';
+import { BaleLogo } from '@/components/ui/AsintaLogo';
 import { AsintaLoader } from '@/components/ui/AsintaLoader';
 import { formatPesoCompact } from '@/lib/email/format';
 
@@ -583,15 +584,13 @@ export const Navbar: React.FC<NavbarProps> = () => {
           </div>
         )}
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 h-16 flex items-center justify-between gap-4">
-          {/* Left: Minimalist BALE System Mark (Asinta Corp. logo lives in the global Trademark Footer) */}
+          {/* Left: Official BALE System Mark (Asinta Corp. logo lives in the global Trademark Footer) */}
           <Link
             href={isFounder ? '/dashboard' : '/attendance'}
             onClick={(e) => handleNavClick(e, isFounder ? '/dashboard' : '/attendance')}
             className="flex items-center space-x-2.5 group shrink-0"
           >
-            <div className="px-2.5 py-1 rounded-xl bg-navy text-white font-black text-xs tracking-[0.18em] shadow-sm group-hover:bg-navy-light transition-all">
-              BALE
-            </div>
+            <BaleLogo height={24} />
             <span className="hidden sm:inline text-xs font-semibold text-ink-secondary tracking-tight">
               {isFounder ? 'Studio & Ledger' : 'Field Operations'}
             </span>

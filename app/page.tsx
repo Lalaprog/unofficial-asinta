@@ -15,7 +15,7 @@ import {
 import { Badge } from '@/components/ui/Badge';
 import { Button } from '@/components/ui/Button';
 import { Input } from '@/components/ui/Input';
-import { AsintaEmblem, AsintaWordmark } from '@/components/ui/AsintaLogo';
+import { AsintaEmblem, AsintaWordmark, BaleLogo } from '@/components/ui/AsintaLogo';
 import { AsintaLoader } from '@/components/ui/AsintaLoader';
 
 const MIDDLEWARE_ERRORS: Record<string, string> = {
@@ -158,7 +158,7 @@ export default function LoginPage() {
   }
 
   return (
-    <div className="min-h-screen bg-surface flex flex-col justify-between p-4 sm:p-6 lg:p-10 relative overflow-hidden">
+    <div className="min-h-[100lvh] bg-surface flex flex-col justify-between p-4 sm:p-6 lg:p-10 relative overflow-hidden">
       {/* Ambient Architectural Blueprint Grid & Visible CHB Watermark */}
       <div
         aria-hidden="true"
@@ -190,23 +190,20 @@ export default function LoginPage() {
             >
               <AsintaEmblem size={120} />
             </div>
-            <div className="relative z-10 flex items-center gap-3.5">
-              <div className="w-12 h-12 rounded-xl bg-white p-2 shadow-md flex items-center justify-center shrink-0">
-                <AsintaEmblem size={28} />
-              </div>
-              <div className="min-w-0">
-                <div className="flex items-center gap-2">
-                  <span className="text-xs font-extrabold tracking-widest uppercase text-sky-300">
-                    Asinta Corp.
-                  </span>
-                  <span className="px-1.5 py-0.5 rounded bg-white/15 text-[9px] font-bold uppercase tracking-wider">
-                    BALE
-                  </span>
+            <div className="relative z-10 space-y-3">
+              <div className="flex items-center justify-between gap-2">
+                <div className="inline-flex items-center gap-3 rounded-xl bg-white px-3.5 py-2 shadow-md">
+                  <AsintaEmblem size={28} />
+                  <div className="h-5 w-px bg-surface-border" />
+                  <AsintaWordmark height={18} />
                 </div>
-                <p className="text-xs text-white/85 font-medium leading-snug mt-0.5">
-                  Architecture curated to your style — built with quality and precision.
-                </p>
+                <div className="inline-flex items-center rounded-lg bg-white/95 px-2.5 py-1 shadow-sm">
+                  <BaleLogo height={16} />
+                </div>
               </div>
+              <p className="text-xs text-white/85 font-medium leading-snug">
+                Architecture curated to your style — built with quality and precision.
+              </p>
             </div>
           </div>
 
@@ -233,11 +230,9 @@ export default function LoginPage() {
 
             {/* Top Brand Badge */}
             <div className="relative z-10 flex items-center justify-between">
-              <div className="inline-flex items-center space-x-2 px-3 py-1 rounded-full bg-white/10 border border-white/15 backdrop-blur-xs">
-                <span className="w-2 h-2 rounded-full bg-emerald-400" />
-                <span className="text-[10px] font-extrabold uppercase tracking-[0.16em] text-white/90">
-                  BALE Workspace
-                </span>
+              <div className="inline-flex items-center space-x-2 px-3 py-1.5 rounded-xl bg-white/95 shadow-sm">
+                <span className="w-2 h-2 rounded-full bg-emerald-500" />
+                <BaleLogo height={16} />
               </div>
               <span className="text-[10px] font-mono text-white/50">EST. 2023</span>
             </div>

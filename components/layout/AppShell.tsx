@@ -206,7 +206,7 @@ export const AppShell: React.FC<AppShellProps> = ({ children, requireFounder = f
   }
 
   return (
-    <div className="min-h-screen bg-surface flex flex-col antialiased">
+    <div className="min-h-[100lvh] bg-surface flex flex-col antialiased">
       <Suspense fallback={null}>
         <Navbar />
       </Suspense>
