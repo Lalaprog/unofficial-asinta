@@ -4,7 +4,7 @@ import React, { useEffect, useState } from 'react';
 import { AppShell } from '@/components/layout/AppShell';
 import { useDataStore } from '@/lib/data/store';
 import { useAuth } from '@/lib/auth/authContext';
-import { Building2, Bot, Database, RefreshCw } from 'lucide-react';
+import { Building2, Bot, Database, RefreshCw, HardHat } from 'lucide-react';
 import { Button } from '@/components/ui/Button';
 import { Badge } from '@/components/ui/Badge';
 import { Card, CardHeader, CardTitle, CardDescription, CardContent } from '@/components/ui/Card';
@@ -32,8 +32,17 @@ interface IntegrationStatus {
 }
 
 export default function SettingsPage() {
-  const { isFounder } = useAuth();
-  const { refresh, isLoading, isLoaded } = useDataStore();
+  const { user, isFounder, isSupervisor } = useAuth();
+  const { refresh, isLoading, isLoaded, workers, getProjectsForSupervisor } = useDataStore();
+
+  const assignedProjects = isSupervisor && user ? getProjectsForSupervisor(user.id) : [];
+  const linkedWorker = user
+    ? workers.find(
+        (w) =>
+          w.active &&
+          (w.id === user.id || w.name.trim().toLowerCase() === user.name.trim().toLowerCase())
+      )
+    : undefined;
 
   const [isResyncing, setIsResyncing] = useState(false);
   const [integrationStatus, setIntegrationStatus] = useState<IntegrationStatus | null>(null);
@@ -103,16 +112,88 @@ export default function SettingsPage() {
           <div>
             <div className="flex items-center space-x-2">
               <span className="text-xs font-bold text-navy uppercase tracking-widest">
-                System Configurations
+                {isFounder ? 'System Configurations' : 'Field Terminal Account'}
               </span>
               <span className="text-xs text-ink-muted">·</span>
               <span className="text-xs text-ink-secondary">BALE v1.0 Engine</span>
             </div>
             <h1 className="text-2xl sm:text-3xl font-extrabold text-navy tracking-tight mt-1">
-              Firm Settings & Integrations
+              {isFounder ? 'Firm Settings & Integrations' : 'Supervisor Profile & Settings'}
             </h1>
           </div>
         </div>
+
+        {/* Supervisor Account Profile Card */}
+        {isSupervisor && user && (
+          <Card>
+            <CardHeader>
+              <div className="flex items-center justify-between gap-2">
+                <div className="flex items-center space-x-2.5">
+                  <HardHat className="w-5 h-5 text-status-warning" />
+                  <CardTitle>Supervisor Field Profile</CardTitle>
+                </div>
+                <Badge variant="warning" size="sm">
+                  Site Supervisor
+                </Badge>
+              </div>
+              <CardDescription>
+                Your active BALE field terminal account, assigned project sites, and payroll roster link
+              </CardDescription>
+            </CardHeader>
+            <CardContent className="space-y-4 text-xs">
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                <div>
+                  <label className="font-bold text-navy uppercase text-[11px] block mb-1">Full Name</label>
+                  <div className="p-2.5 rounded-xl bg-surface-inset border border-surface-border font-semibold text-navy">
+                    {user.name}
+                  </div>
+                </div>
+                <div>
+                  <label className="font-bold text-navy uppercase text-[11px] block mb-1">Account Email</label>
+                  <div className="p-2.5 rounded-xl bg-surface-inset border border-surface-border font-semibold text-navy">
+                    {user.email}
+                  </div>
+                </div>
+              </div>
+
+              <div>
+                <label className="font-bold text-navy uppercase text-[11px] block mb-1.5">
+                  Assigned Project Sites ({assignedProjects.length})
+                </label>
+                {assignedProjects.length > 0 ? (
+                  <div className="flex flex-wrap gap-2">
+                    {assignedProjects.map((p) => (
+                      <div
+                        key={p.id}
+                        className="px-3 py-1.5 rounded-xl bg-surface-inset border border-surface-border font-semibold text-navy"
+                      >
+                        {p.name} <span className="text-ink-muted font-normal">({p.location.split(',')[0]})</span>
+                      </div>
+                    ))}
+                  </div>
+                ) : (
+                  <div className="p-3 rounded-xl bg-surface-inset border border-surface-border text-ink-secondary">
+                    No specific project site assigned yet — ask a Founder to assign your site in Team &amp; Permissions.
+                  </div>
+                )}
+              </div>
+
+              <div className="p-3.5 rounded-2xl bg-surface-inset/60 border border-surface-border flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+                <div>
+                  <div className="font-bold text-navy">Daily Attendance &amp; Payroll Inclusion</div>
+                  <div className="text-ink-secondary">
+                    {linkedWorker
+                      ? `Enrolled on the workforce roster as ${linkedWorker.position} (₱${linkedWorker.pay_rate}/${linkedWorker.pay_rate_type === 'hourly' ? 'hr' : 'day'}).`
+                      : 'Not yet enrolled as a worker on the daily roster. You can include yourself directly from the Attendance Terminal.'}
+                  </div>
+                </div>
+                <Badge variant={linkedWorker ? 'success' : 'neutral'} size="sm">
+                  {linkedWorker ? 'Enrolled in Payroll' : 'Account Only'}
+                </Badge>
+              </div>
+            </CardContent>
+          </Card>
+        )}
 
         {/* Firm Profile */}
         <Card>

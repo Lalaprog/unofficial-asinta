@@ -40,7 +40,7 @@ interface DataStoreContextType {
   isLoaded: boolean;
   isLoading: boolean;
   loadError: string | null;
-  refresh: () => Promise<void>;
+  refresh: (options?: { silent?: boolean }) => Promise<void>;
 
   // Project Actions
   createProject: (data: Omit<Project, 'id' | 'created_at'>) => Promise<Project | null>;
@@ -55,7 +55,9 @@ interface DataStoreContextType {
   deleteClient: (id: string) => Promise<boolean>;
 
   // Worker Actions
-  createWorker: (data: Omit<Worker, 'id' | 'created_at'>) => Promise<Worker | null>;
+  createWorker: (
+    data: Omit<Worker, 'id' | 'created_at'> & { id?: string }
+  ) => Promise<Worker | null>;
   updateWorker: (id: string, data: Partial<Worker>) => Promise<Worker | null>;
   toggleWorkerStatus: (id: string) => Promise<boolean>;
 
@@ -232,65 +234,111 @@ export const DataStoreProvider: React.FC<{ children: React.ReactNode }> = ({ chi
   const inFlightRef = useRef(false);
 
   // -------------------------------------------------------------------------
-  // Initial load — every SELECT runs with the authenticated user's JWT so
-  // PostgreSQL RLS policies determine exactly which rows are visible.
+  // Initial & background load — every SELECT runs with the authenticated
+  // user's JWT so PostgreSQL RLS policies determine which rows are visible.
   // -------------------------------------------------------------------------
-  const loadAll = useCallback(async () => {
-    if (inFlightRef.current) return;
-    inFlightRef.current = true;
-    setIsLoading(true);
-
-    try {
-      const results = await Promise.all([
-        supabase.from('projects').select('*').order('created_at', { ascending: false }),
-        supabase.from('invoices').select('*').order('created_at', { ascending: false }),
-        supabase.from('expenses').select('*').order('created_at', { ascending: false }),
-        supabase.from('workers').select('*').order('created_at', { ascending: true }),
-        supabase.from('clients').select('*').order('created_at', { ascending: true }),
-        supabase.from('advances').select('*').order('created_at', { ascending: false }),
-        supabase.from('attendance').select('*').order('date', { ascending: false }),
-        supabase.from('payroll').select('*').order('created_at', { ascending: false }),
-        supabase.from('tools').select('*').order('created_at', { ascending: true }),
-        supabase.from('sms_logs').select('*').order('sent_at', { ascending: false }),
-        supabase.from('project_supervisors').select('*'),
-        supabase.from('users').select('*').order('created_at', { ascending: true }),
-      ]);
-
-      const firstError = results.find((r) => r.error)?.error as PostgrestError | undefined;
-      if (firstError) {
-        console.error('Supabase data load failed:', firstError.message);
-        setLoadError(
-          `Could not load BALE ledger data from Supabase: ${firstError.message}. ` +
-            'Check your connection and Row Level Security policies, then retry.'
-        );
-      } else {
-        setLoadError(null);
+  const loadAll = useCallback(
+    async (options?: { silent?: boolean }) => {
+      if (inFlightRef.current) return;
+      inFlightRef.current = true;
+      if (!options?.silent) {
+        setIsLoading(true);
       }
 
-      setProjects((results[0].data ?? []).map(mapProject));
-      setInvoices((results[1].data ?? []).map(mapInvoice));
-      setExpenses((results[2].data ?? []).map(mapExpense));
-      setWorkers((results[3].data ?? []).map(mapWorker));
-      setClients((results[4].data ?? []).map(mapClient));
-      setAdvances((results[5].data ?? []).map(mapAdvance));
-      setAttendance((results[6].data ?? []).map(mapAttendance));
-      setPayroll((results[7].data ?? []).map(mapPayroll));
-      setTools((results[8].data ?? []).map(mapTool));
-      setSmsLogs((results[9].data ?? []));
-      setProjectSupervisors((results[10].data ?? []));
-      setUsers((results[11].data ?? []));
-      setIsLoaded(true);
-    } catch (e: any) {
-      console.error('Unexpected error while loading BALE data:', e);
-      setLoadError(
-        e?.message ||
-          'Unexpected network error while contacting Supabase. Please check your connection and retry.'
-      );
-    } finally {
-      setIsLoading(false);
-      inFlightRef.current = false;
-    }
-  }, [supabase]);
+      try {
+        const results = await Promise.all([
+          supabase.from('projects').select('*').order('created_at', { ascending: false }),
+          supabase.from('invoices').select('*').order('created_at', { ascending: false }),
+          supabase.from('expenses').select('*').order('created_at', { ascending: false }),
+          supabase.from('workers').select('*').order('created_at', { ascending: true }),
+          supabase.from('clients').select('*').order('created_at', { ascending: true }),
+          supabase.from('advances').select('*').order('created_at', { ascending: false }),
+          supabase.from('attendance').select('*').order('date', { ascending: false }),
+          supabase.from('payroll').select('*').order('created_at', { ascending: false }),
+          supabase.from('tools').select('*').order('created_at', { ascending: true }),
+          supabase.from('sms_logs').select('*').order('sent_at', { ascending: false }),
+          supabase.from('project_supervisors').select('*'),
+          supabase.from('users').select('*').order('created_at', { ascending: true }),
+        ]);
+
+        const firstError = results.find((r) => r.error)?.error as PostgrestError | undefined;
+        if (firstError) {
+          console.error('Supabase data load failed:', firstError.message);
+          if (!options?.silent) {
+            setLoadError(
+              `Could not load BALE ledger data from Supabase: ${firstError.message}. ` +
+                'Check your connection and Row Level Security policies, then retry.'
+            );
+          }
+        } else {
+          setLoadError(null);
+        }
+
+        const nextProjects = (results[0].data ?? []).map(mapProject);
+        const nextInvoices = (results[1].data ?? []).map(mapInvoice);
+        const nextExpenses = (results[2].data ?? []).map(mapExpense);
+        const nextWorkers = (results[3].data ?? []).map(mapWorker);
+        const nextClients = (results[4].data ?? []).map(mapClient);
+        const nextAdvances = (results[5].data ?? []).map(mapAdvance);
+        const nextAttendance = (results[6].data ?? []).map(mapAttendance);
+        const nextPayroll = (results[7].data ?? []).map(mapPayroll);
+        const nextTools = (results[8].data ?? []).map(mapTool);
+        const nextSmsLogs = results[9].data ?? [];
+        const nextProjectSupervisors = results[10].data ?? [];
+        const nextUsers = results[11].data ?? [];
+
+        setProjects(nextProjects);
+        setInvoices(nextInvoices);
+        setExpenses(nextExpenses);
+        setWorkers(nextWorkers);
+        setClients(nextClients);
+        setAdvances(nextAdvances);
+        setAttendance(nextAttendance);
+        setPayroll(nextPayroll);
+        setTools(nextTools);
+        setSmsLogs(nextSmsLogs);
+        setProjectSupervisors(nextProjectSupervisors);
+        setUsers(nextUsers);
+        setIsLoaded(true);
+
+        if (user?.id && typeof window !== 'undefined') {
+          try {
+            window.sessionStorage.setItem(
+              `bale-ledger-cache:${user.id}`,
+              JSON.stringify({
+                projects: nextProjects,
+                invoices: nextInvoices,
+                expenses: nextExpenses,
+                workers: nextWorkers,
+                clients: nextClients,
+                advances: nextAdvances,
+                attendance: nextAttendance,
+                payroll: nextPayroll,
+                tools: nextTools,
+                smsLogs: nextSmsLogs,
+                projectSupervisors: nextProjectSupervisors,
+                users: nextUsers,
+              })
+            );
+          } catch {
+            // Non-fatal if sessionStorage quota is exceeded.
+          }
+        }
+      } catch (e: any) {
+        console.error('Unexpected error while loading BALE data:', e);
+        if (!options?.silent) {
+          setLoadError(
+            e?.message ||
+              'Unexpected network error while contacting Supabase. Please check your connection and retry.'
+          );
+        }
+      } finally {
+        setIsLoading(false);
+        inFlightRef.current = false;
+      }
+    },
+    [supabase, user?.id]
+  );
 
   const clearAll = useCallback(() => {
     setProjects([]);
@@ -309,15 +357,88 @@ export const DataStoreProvider: React.FC<{ children: React.ReactNode }> = ({ chi
     setLoadError(null);
   }, []);
 
-  // Load when a user is authenticated; clear when signed out.
+  // Load when a user is authenticated (with instant sessionStorage cache
+  // hydration + live Supabase Realtime & background sync); clear when signed out.
   useEffect(() => {
     if (authLoading) return;
     if (!user) {
       clearAll();
       return;
     }
+
+    if (typeof window !== 'undefined') {
+      try {
+        const cachedRaw = window.sessionStorage.getItem(`bale-ledger-cache:${user.id}`);
+        if (cachedRaw) {
+          const cached = JSON.parse(cachedRaw);
+          if (cached && Array.isArray(cached.projects)) {
+            setProjects(cached.projects);
+            setInvoices(cached.invoices ?? []);
+            setExpenses(cached.expenses ?? []);
+            setWorkers(cached.workers ?? []);
+            setClients(cached.clients ?? []);
+            setAdvances(cached.advances ?? []);
+            setAttendance(cached.attendance ?? []);
+            setPayroll(cached.payroll ?? []);
+            setTools(cached.tools ?? []);
+            setSmsLogs(cached.smsLogs ?? []);
+            setProjectSupervisors(cached.projectSupervisors ?? []);
+            setUsers(cached.users ?? []);
+            setIsLoaded(true);
+          }
+        }
+      } catch {
+        // Ignore malformed cache.
+      }
+    }
+
     loadAll();
-  }, [user, authLoading, loadAll, clearAll]);
+
+    // Real-time subscription + silent focus/interval sync so Founder and
+    // Supervisor screens stay updated without manual page refreshes.
+    let debounceTimer: number | undefined;
+    const triggerSilentSync = () => {
+      if (typeof window === 'undefined') return;
+      if (debounceTimer) window.clearTimeout(debounceTimer);
+      debounceTimer = window.setTimeout(() => {
+        loadAll({ silent: true });
+      }, 500);
+    };
+
+    const channel =
+      typeof (supabase as any).channel === 'function'
+        ? supabase
+            .channel(`bale-live-${user.id}`)
+            .on('postgres_changes', { event: '*', schema: 'public' }, () => {
+              triggerSilentSync();
+            })
+            .subscribe()
+        : null;
+
+    const handleVisibilityOrFocus = () => {
+      if (document.visibilityState === 'visible') {
+        triggerSilentSync();
+      }
+    };
+
+    window.addEventListener('focus', handleVisibilityOrFocus);
+    document.addEventListener('visibilitychange', handleVisibilityOrFocus);
+    const pollInterval = window.setInterval(() => {
+      if (document.visibilityState === 'visible') {
+        loadAll({ silent: true });
+      }
+    }, 25_000);
+
+    return () => {
+      if (debounceTimer) window.clearTimeout(debounceTimer);
+      window.removeEventListener('focus', handleVisibilityOrFocus);
+      document.removeEventListener('visibilitychange', handleVisibilityOrFocus);
+      window.clearInterval(pollInterval);
+      if (channel && typeof (supabase as any).removeChannel === 'function') {
+        supabase.removeChannel(channel);
+      }
+    };
+  }, [user, authLoading, loadAll, clearAll, supabase]);
 
   const refresh = useCallback(async () => {
     inFlightRef.current = false;
@@ -441,7 +562,9 @@ export const DataStoreProvider: React.FC<{ children: React.ReactNode }> = ({ chi
   };
 
   // --- WORKER ACTIONS ---
-  const createWorker = async (data: Omit<Worker, 'id' | 'created_at'>): Promise<Worker | null> => {
+  const createWorker = async (
+    data: Omit<Worker, 'id' | 'created_at'> & { id?: string }
+  ): Promise<Worker | null> => {
     if (user?.role === 'supervisor') {
       try {
         const response = await fetch('/api/workers', {
@@ -459,7 +582,10 @@ export const DataStoreProvider: React.FC<{ children: React.ReactNode }> = ({ chi
           return null;
         }
         const mapped = mapWorker(result.worker);
-        setWorkers((prev) => [...prev, mapped]);
+        setWorkers((prev) => {
+          const exists = prev.some((w) => w.id === mapped.id);
+          return exists ? prev.map((w) => (w.id === mapped.id ? mapped : w)) : [...prev, mapped];
+        });
         return mapped;
       } catch {
         showToast('error', 'Could not contact the server to register worker.');
@@ -468,10 +594,15 @@ export const DataStoreProvider: React.FC<{ children: React.ReactNode }> = ({ chi
     }
 
     const row = await runMutation('Create worker', (db) =>
-      db.from('workers').insert(data).select().single()
+      db.from('workers').upsert(data, { onConflict: 'id' }).select().single()
     );
     const mapped = row ? mapWorker(row) : null;
-    if (mapped) setWorkers((prev) => [...prev, mapped]);
+    if (mapped) {
+      setWorkers((prev) => {
+        const exists = prev.some((w) => w.id === mapped.id);
+        return exists ? prev.map((w) => (w.id === mapped.id ? mapped : w)) : [...prev, mapped];
+      });
+    }
     return mapped;
   };
 
@@ -799,10 +930,20 @@ export const DataStoreProvider: React.FC<{ children: React.ReactNode }> = ({ chi
     periodEnd: string,
     projectId?: string
   ): Promise<Payroll[] | null> => {
+    if (!periodStart || !periodEnd || periodEnd < periodStart) {
+      showToast('error', 'Period end date must be on or after the period start date.');
+      return null;
+    }
+
     const targetProject =
       projectId && projectId !== 'all' ? projects.find((p) => p.id === projectId) : undefined;
-    // Generate payroll rows for active workers based on attendance in range.
-    const rows: Array<Omit<Payroll, 'id' | 'created_at'>> = [];
+
+    // Separate new vouchers from existing draft vouchers for the exact same
+    // (worker_id, period_start, period_end) so clicking "Generate Payroll Run"
+    // repeatedly NEVER creates duplicate payslips for the same period.
+    const rowsToInsert: Array<Omit<Payroll, 'id' | 'created_at'>> = [];
+    const rowsToUpdate: Array<{ id: string; before: Payroll; patch: Partial<Payroll> }> = [];
+    let skippedFinalizedCount = 0;
 
     workers
       .filter((w) => w.active)
@@ -815,9 +956,9 @@ export const DataStoreProvider: React.FC<{ children: React.ReactNode }> = ({ chi
             (!targetProject || a.project_id === targetProject.id)
         );
 
-        // When computing for a specific project site, skip workers with no
-        // attendance on that project in the selected period.
-        if (targetProject && workerAtt.length === 0) {
+        // Skip workers who logged 0 attendance records in the selected period
+        // so empty ₱0 payslips are not spammed into the ledger.
+        if (workerAtt.length === 0) {
           return;
         }
 
@@ -861,7 +1002,34 @@ export const DataStoreProvider: React.FC<{ children: React.ReactNode }> = ({ chi
             ? ` — Site: ${siteNames.join(', ')}`
             : '';
 
-        rows.push({
+        const existingForPeriod = payroll.find(
+          (p) =>
+            p.worker_id === w.id &&
+            p.period_start === periodStart &&
+            p.period_end === periodEnd
+        );
+
+        if (existingForPeriod) {
+          if (existingForPeriod.status === 'approved' || existingForPeriod.status === 'paid') {
+            skippedFinalizedCount += 1;
+            return;
+          }
+          rowsToUpdate.push({
+            id: existingForPeriod.id,
+            before: existingForPeriod,
+            patch: {
+              gross_pay: Math.round(gross),
+              bale_deduction: suggestedDeduction,
+              net_pay: Math.round(net),
+              days_worked: effectiveDays,
+              hours_worked: hoursTotal,
+              notes: `Auto-computed from ${effectiveDays} days attendance${siteLabel}`,
+            },
+          });
+          return;
+        }
+
+        rowsToInsert.push({
           worker_id: w.id,
           period_start: periodStart,
           period_end: periodEnd,
@@ -876,35 +1044,79 @@ export const DataStoreProvider: React.FC<{ children: React.ReactNode }> = ({ chi
         });
       });
 
-    if (rows.length === 0) {
-      showToast(
-        'error',
-        targetProject
-          ? `No active worker attendance found for ${targetProject.name} in ${periodStart} → ${periodEnd}.`
-          : 'No active workers found to compute payroll.'
-      );
+    if (rowsToInsert.length === 0 && rowsToUpdate.length === 0) {
+      if (skippedFinalizedCount > 0) {
+        showToast(
+          'info',
+          `Payroll for ${periodStart} → ${periodEnd} is already approved/paid (${skippedFinalizedCount} voucher${skippedFinalizedCount === 1 ? '' : 's'}). No duplicate vouchers created.`
+        );
+      } else {
+        showToast(
+          'error',
+          targetProject
+            ? `No submitted attendance found for ${targetProject.name} in ${periodStart} → ${periodEnd}.`
+            : `No submitted attendance found in ${periodStart} → ${periodEnd}. Record site attendance first.`
+        );
+      }
       return null;
     }
 
-    const inserted = await runMutation('Create payroll run', (db) =>
-      db.from('payroll').insert(rows).select()
-    );
-    if (!inserted) return null;
+    const resultingRows: Payroll[] = [];
 
-    const mappedRows = (inserted as any[]).map(mapPayroll).reverse();
-    setPayroll((prev) => [...mappedRows, ...prev]);
-    // One trail entry per payslip: a payroll run is N financial records, and a
-    // single summary row would not identify which payslip was created.
-    for (const payslip of mappedRows) {
-      await recordAudit({
-        action: 'insert',
-        table: 'payroll',
-        recordId: payslip.id,
-        before: null,
-        after: payslip as unknown as Record<string, unknown>,
-      });
+    if (rowsToInsert.length > 0) {
+      const inserted = await runMutation('Create payroll run', (db) =>
+        db.from('payroll').insert(rowsToInsert).select()
+      );
+      if (!inserted) return null;
+      const mappedInserted = (inserted as any[]).map(mapPayroll).reverse();
+      setPayroll((prev) => [...mappedInserted, ...prev]);
+      for (const payslip of mappedInserted) {
+        await recordAudit({
+          action: 'insert',
+          table: 'payroll',
+          recordId: payslip.id,
+          before: null,
+          after: payslip as unknown as Record<string, unknown>,
+        });
+      }
+      resultingRows.push(...mappedInserted);
     }
-    return mappedRows;
+
+    if (rowsToUpdate.length > 0) {
+      for (const item of rowsToUpdate) {
+        const updatedRow = await runMutation('Recalculate draft payroll', (db) =>
+          db.from('payroll').update(item.patch).eq('id', item.id).select().single()
+        );
+        if (updatedRow) {
+          const mappedUpdated = mapPayroll(updatedRow);
+          setPayroll((prev) => prev.map((p) => (p.id === item.id ? mappedUpdated : p)));
+          await recordAudit({
+            action: 'update',
+            table: 'payroll',
+            recordId: item.id,
+            before: item.before as unknown as Record<string, unknown>,
+            after: mappedUpdated as unknown as Record<string, unknown>,
+          });
+          resultingRows.push(mappedUpdated);
+        }
+      }
+    }
+
+    if (rowsToInsert.length > 0 && rowsToUpdate.length > 0) {
+      showToast(
+        'success',
+        `Created ${rowsToInsert.length} new voucher(s) and refreshed ${rowsToUpdate.length} existing draft voucher(s).`
+      );
+    } else if (rowsToUpdate.length > 0) {
+      showToast(
+        'success',
+        `Refreshed ${rowsToUpdate.length} existing draft payroll voucher(s) for ${periodStart} → ${periodEnd} (no duplicates created).`
+      );
+    } else {
+      showToast('success', `Generated ${rowsToInsert.length} payroll voucher(s) for ${periodStart} → ${periodEnd}.`);
+    }
+
+    return resultingRows;
   };
 
   const updatePayrollStatus = async (id: string, status: Payroll['status']): Promise<boolean> => {
