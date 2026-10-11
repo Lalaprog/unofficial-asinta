@@ -87,32 +87,26 @@ export default function ClientsPage() {
     <AppShell requireFounder={true}>
       <div className="space-y-6">
         {/* Header */}
-        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 pb-2 border-b border-surface-border/60">
+        <div className="flex items-center justify-between gap-3 pb-3 border-b border-surface-border/60">
           <div>
-            <div className="flex items-center space-x-2">
-              <span className="text-xs font-bold text-navy uppercase tracking-widest">
-                Client Relations
-              </span>
-              <span className="text-xs text-ink-muted">·</span>
-              <span className="text-xs text-ink-secondary">
-                {clients.length} Registered Accounts
-              </span>
-            </div>
-            <h1 className="text-2xl sm:text-3xl font-extrabold text-navy tracking-tight mt-1">
-              Client Directory & Accounts
+            <h1 className="text-xl sm:text-2xl font-extrabold text-navy tracking-tight">
+              Client Directory
             </h1>
+            <p className="text-xs text-ink-secondary mt-0.5">
+              {clients.length} registered client accounts
+            </p>
           </div>
 
           <Button
             variant="primary"
-            size="md"
+            size="sm"
             onClick={() => {
               setFormData({ name: '', contact_person: '', phone: '', email: '', address: '' });
               setIsAddModalOpen(true);
             }}
             leftIcon={<Plus className="w-4 h-4" />}
           >
-            Add Client Account
+            Add Client
           </Button>
         </div>
 

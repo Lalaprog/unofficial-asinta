@@ -61,11 +61,6 @@ export default function LoginPage() {
     }
   }, []);
 
-  /**
-   * Immediately shows the branded Asinta CHB Loading Screen and routes into
-   * the user's workspace (where AppShell keeps the loader active until the
-   * Supabase ledger finishes pre-fetching into cache).
-   */
   const proceedToWorkspace = (role: AppRole) => {
     const requestedPath = getSafeRedirectPath(
       new URLSearchParams(window.location.search).get('redirect_to')
@@ -134,7 +129,6 @@ export default function LoginPage() {
 
       const role = result.role as AppRole;
 
-      // Check whether this account requires a 6-digit TOTP second factor
       const { data: assurance } = await supabase.auth.mfa.getAuthenticatorAssuranceLevel();
       if (assurance?.nextLevel === 'aal2' && assurance.currentLevel !== 'aal2') {
         const { data: factorData } = await supabase.auth.mfa.listFactors();
@@ -165,7 +159,7 @@ export default function LoginPage() {
 
   return (
     <div className="min-h-screen bg-surface flex flex-col justify-between p-4 sm:p-6 lg:p-10 relative overflow-hidden">
-      {/* Subtle Ambient Architectural Blueprint Grid & Visible CHB Watermark */}
+      {/* Ambient Architectural Blueprint Grid & Visible CHB Watermark */}
       <div
         aria-hidden="true"
         className="pointer-events-none fixed inset-0 overflow-hidden select-none"
@@ -179,21 +173,49 @@ export default function LoginPage() {
           }}
         />
         <div className="absolute -right-12 -bottom-12 opacity-[0.11] hidden lg:block">
-          <AsintaEmblem size={460} />
+          <AsintaEmblem size={440} />
         </div>
-        <div className="absolute -left-16 -top-16 opacity-[0.08] hidden lg:block">
-          <AsintaEmblem size={320} />
+        <div className="absolute -left-16 -top-16 opacity-[0.07] hidden lg:block">
+          <AsintaEmblem size={300} />
         </div>
       </div>
 
       <div className="flex-1 flex items-center justify-center relative z-10 my-auto">
-        <div className="w-full max-w-4xl grid grid-cols-1 lg:grid-cols-12 rounded-3xl bg-white border border-surface-border shadow-[14px_14px_38px_rgba(11,31,58,0.10),-10px_-10px_30px_rgba(255,255,255,0.98)] overflow-hidden animate-page-enter">
+        <div className="w-full max-w-4xl grid grid-cols-1 lg:grid-cols-12 rounded-2xl sm:rounded-3xl bg-white border border-surface-border shadow-[0_20px_50px_rgba(11,31,58,0.10)] overflow-hidden animate-page-enter">
+          {/* Mobile Architectural Showcase Header (Visible on phones & tablets) */}
+          <div className="lg:hidden bg-gradient-to-br from-[#0B1F3A] via-[#132C4E] to-[#1B4978] text-white p-5 relative overflow-hidden">
+            <div
+              aria-hidden="true"
+              className="pointer-events-none absolute -right-6 -bottom-6 opacity-15"
+            >
+              <AsintaEmblem size={120} />
+            </div>
+            <div className="relative z-10 flex items-center gap-3.5">
+              <div className="w-12 h-12 rounded-xl bg-white p-2 shadow-md flex items-center justify-center shrink-0">
+                <AsintaEmblem size={28} />
+              </div>
+              <div className="min-w-0">
+                <div className="flex items-center gap-2">
+                  <span className="text-xs font-extrabold tracking-widest uppercase text-sky-300">
+                    Asinta Corp.
+                  </span>
+                  <span className="px-1.5 py-0.5 rounded bg-white/15 text-[9px] font-bold uppercase tracking-wider">
+                    BALE
+                  </span>
+                </div>
+                <p className="text-xs text-white/85 font-medium leading-snug mt-0.5">
+                  Architecture curated to your style — built with quality and precision.
+                </p>
+              </div>
+            </div>
+          </div>
+
           {/* Left Panel: Desktop Architectural Brand Showcase */}
           <div className="hidden lg:flex lg:col-span-5 bg-gradient-to-br from-[#0B1F3A] via-[#132C4E] to-[#1B4978] text-white p-9 flex-col justify-between relative overflow-hidden">
             {/* Blueprint grid overlay */}
             <div
               aria-hidden="true"
-              className="pointer-events-none absolute inset-0 opacity-[0.08]"
+              className="pointer-events-none absolute inset-0 opacity-[0.07]"
               style={{
                 backgroundImage:
                   'linear-gradient(to right, #FFFFFF 1px, transparent 1px), linear-gradient(to bottom, #FFFFFF 1px, transparent 1px)',
@@ -212,8 +234,8 @@ export default function LoginPage() {
             {/* Top Brand Badge */}
             <div className="relative z-10 flex items-center justify-between">
               <div className="inline-flex items-center space-x-2 px-3 py-1 rounded-full bg-white/10 border border-white/15 backdrop-blur-xs">
-                <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse" />
-                <span className="text-[10px] font-extrabold uppercase tracking-[0.18em] text-white/90">
+                <span className="w-2 h-2 rounded-full bg-emerald-400" />
+                <span className="text-[10px] font-extrabold uppercase tracking-[0.16em] text-white/90">
                   BALE Workspace
                 </span>
               </div>
@@ -228,10 +250,19 @@ export default function LoginPage() {
                 <AsintaWordmark height={22} />
               </div>
 
-              <div className="flex items-center gap-2 text-[10px] font-mono tracking-widest text-sky-300/90">
-                <span>┼───</span>
-                <span>ASINTADO · CHB ALIGNMENT</span>
-                <span>───┼</span>
+              {/* Clean architectural accent rule + discipline pills (replaces ASCII ticks) */}
+              <div className="space-y-2.5">
+                <div className="w-10 h-0.5 bg-sky-400 rounded-full" />
+                <div className="flex items-center gap-1.5 flex-wrap">
+                  {['Design', 'Build', 'Management'].map((tag) => (
+                    <span
+                      key={tag}
+                      className="px-2 py-0.5 rounded-md bg-white/10 border border-white/10 text-[10px] font-semibold uppercase tracking-wider text-sky-200"
+                    >
+                      {tag}
+                    </span>
+                  ))}
+                </div>
               </div>
 
               <div className="space-y-2">
@@ -239,40 +270,37 @@ export default function LoginPage() {
                   Architecture curated to your style — built with quality and precision.
                 </h1>
                 <p className="text-xs text-white/75 leading-relaxed pt-1">
-                  Unified project billing, site expense ledger, daily workforce attendance, and automated payroll for Asinta Corp.
+                  Unified project billing, site expense ledger, daily workforce attendance, and automated payroll.
                 </p>
               </div>
             </div>
 
             {/* Bottom Studio Metadata */}
             <div className="relative z-10 pt-4 border-t border-white/15 flex items-center justify-between text-[11px] text-white/70">
-              <span>Design · Build · Management</span>
+              <span>Asinta Corp. Studio</span>
               <span className="font-mono text-[10px] text-white/60">PH · PHP ₱</span>
             </div>
           </div>
 
           {/* Right Panel: Sign-In / 2FA Form */}
           <div className="lg:col-span-7 p-6 sm:p-10 flex flex-col justify-center bg-white">
-            {/* Mobile & Tablet Brand Header */}
-            <div className="flex flex-col items-center lg:items-start text-center lg:text-left mb-6 space-y-2">
-              <div className="flex items-center gap-3">
-                <div className="w-12 h-12 rounded-2xl bg-surface flex items-center justify-center border border-surface-border shadow-neu-raised-sm lg:hidden">
-                  <AsintaEmblem size={28} />
-                </div>
-                <div>
-                  <AsintaWordmark height={22} />
-                  <p className="text-xs text-ink-secondary mt-1">
-                    Sign in to your BALE Studio or Field Supervisor account
-                  </p>
-                </div>
+            <div className="mb-6">
+              <div className="hidden lg:block mb-2">
+                <AsintaWordmark height={20} />
               </div>
+              <h2 className="text-lg font-extrabold text-navy tracking-tight">
+                Sign in to your account
+              </h2>
+              <p className="text-xs text-ink-secondary mt-0.5">
+                Enter your studio or field supervisor credentials below
+              </p>
             </div>
 
             {/* Session-ended notice */}
             {sessionNotice && (
               <div
                 role="status"
-                className="mb-5 p-3.5 rounded-2xl bg-status-warning-bg border border-status-warning/25 text-status-warning text-xs flex items-start space-x-2.5"
+                className="mb-5 p-3.5 rounded-xl bg-status-warning-bg border border-status-warning/25 text-status-warning text-xs flex items-start space-x-2.5"
               >
                 <Clock className="w-4 h-4 shrink-0 mt-0.5" />
                 <span>{sessionNotice}</span>
@@ -280,7 +308,11 @@ export default function LoginPage() {
             )}
 
             {mfaChallenge ? (
-              <form onSubmit={handleVerifyMfa} className="space-y-5 animate-page-enter">
+              <form
+                onSubmit={handleVerifyMfa}
+                autoComplete="off"
+                className="space-y-5 animate-page-enter"
+              >
                 <div className="flex items-center justify-between">
                   <span className="text-xs font-bold text-navy uppercase tracking-wider">
                     Two-Factor Verification
@@ -291,7 +323,7 @@ export default function LoginPage() {
                 </div>
 
                 <p className="text-xs text-ink-secondary leading-relaxed">
-                  Open your authenticator app and enter the 6-digit code for{' '}
+                  Enter the 6-digit code from your authenticator app for{' '}
                   <span className="font-semibold text-navy">{email}</span>.
                 </p>
 
@@ -306,7 +338,10 @@ export default function LoginPage() {
                   label="6-Digit Authenticator Code"
                   type="text"
                   inputMode="numeric"
-                  autoComplete="one-time-code"
+                  autoComplete="off"
+                  autoCorrect="off"
+                  autoCapitalize="none"
+                  spellCheck={false}
                   placeholder="123 456"
                   maxLength={7}
                   value={mfaCode}
@@ -345,13 +380,17 @@ export default function LoginPage() {
                         Verifying…
                       </span>
                     ) : (
-                      'Verify & Open Workspace'
+                      'Verify & Open'
                     )}
                   </Button>
                 </div>
               </form>
             ) : (
-              <form onSubmit={handleSubmit} className="space-y-4">
+              <form
+                onSubmit={handleSubmit}
+                autoComplete="off"
+                className="space-y-4"
+              >
                 {error && (
                   <div className="p-3.5 rounded-xl bg-status-danger-bg border border-status-danger/20 text-status-danger text-xs flex items-start space-x-2.5">
                     <AlertCircle className="w-4 h-4 shrink-0 mt-0.5" />
@@ -360,8 +399,13 @@ export default function LoginPage() {
                 )}
 
                 <Input
-                  label="Work Email Address"
+                  label="Work Email"
                   type="email"
+                  name="bale_work_email"
+                  autoComplete="off"
+                  autoCorrect="off"
+                  autoCapitalize="none"
+                  spellCheck={false}
                   placeholder="name@asinta.ph"
                   value={email}
                   onChange={(event) => setEmail(event.target.value)}
@@ -373,6 +417,11 @@ export default function LoginPage() {
                   <Input
                     label="Password"
                     type={showPassword ? 'text' : 'password'}
+                    name="bale_work_password"
+                    autoComplete="new-password"
+                    autoCorrect="off"
+                    autoCapitalize="none"
+                    spellCheck={false}
                     placeholder="Enter your password"
                     value={password}
                     onChange={(event) => setPassword(event.target.value)}
@@ -397,14 +446,7 @@ export default function LoginPage() {
                     className="w-full"
                     disabled={isLoading}
                   >
-                    {isLoading ? (
-                      <span className="inline-flex items-center gap-2">
-                        <Loader2 className="w-4 h-4 animate-spin" />
-                        Signing in…
-                      </span>
-                    ) : (
-                      'Sign In to Workspace'
-                    )}
+                    Sign In
                   </Button>
                 </div>
               </form>
@@ -414,10 +456,10 @@ export default function LoginPage() {
       </div>
 
       {/* Bottom Trademark Footer */}
-      <div className="relative z-10 pt-6 flex items-center justify-center gap-2.5 text-xs text-ink-secondary">
-        <AsintaEmblem size={16} />
-        <AsintaWordmark height={13} />
-        <span className="text-[10px] font-bold text-ink-muted">TM</span>
+      <div className="relative z-10 pt-5 flex items-center justify-center gap-2 text-xs text-ink-secondary">
+        <AsintaEmblem size={15} />
+        <AsintaWordmark height={12} />
+        <span className="text-[9px] font-bold text-ink-muted">TM</span>
         <span className="text-surface-border">·</span>
         <span className="text-[11px] text-ink-muted">&copy; {new Date().getFullYear()} All Rights Reserved</span>
       </div>

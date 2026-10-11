@@ -194,37 +194,25 @@ export default function RemindersPage() {
     <AppShell requireFounder={true}>
       <div className="space-y-6">
         {/* Header */}
-        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 pb-2 border-b border-surface-border/60">
+        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pb-3 border-b border-surface-border/60">
           <div>
-            <div className="flex items-center space-x-2">
-              <span className="text-xs font-bold text-navy uppercase tracking-widest">
-                Collections Control
-              </span>
-              <span className="text-xs text-ink-muted">·</span>
-              <span className="text-xs text-ink-secondary">Founder approval required</span>
-            </div>
-            <h1 className="text-2xl sm:text-3xl font-extrabold text-navy tracking-tight mt-1">
-              Reminder Approval Queue
+            <h1 className="text-xl sm:text-2xl font-extrabold text-navy tracking-tight">
+              Reminder Queue
             </h1>
+            <p className="text-xs text-ink-secondary mt-0.5">
+              Upcoming, due, and overdue client billing follow-ups
+            </p>
           </div>
 
           <div className="flex items-center gap-2">
             <Badge variant={status?.automaticRemindersEnabled ? 'success' : 'neutral'} size="sm">
               {status === null
-                ? 'Checking automation…'
+                ? 'Checking…'
                 : status.automaticRemindersEnabled
-                  ? 'Automatic reminders: ENABLED globally'
-                  : 'Automatic reminders: disabled (manual approval only)'}
+                  ? 'Auto Reminders: ON'
+                  : 'Manual Approval Only'}
             </Badge>
           </div>
-        </div>
-
-        <div className="p-4 rounded-2xl bg-surface-inset/60 border border-surface-border text-xs text-ink-secondary leading-relaxed">
-          Invoices approaching their due date, due today, or overdue with an outstanding balance
-          appear here. Paid, cancelled, zero-balance, and paused invoices are excluded. Every
-          message requires Founder approval unless automatic sending is explicitly enabled both
-          globally and per invoice. Automatic sends run Monday–Saturday, 8:00 AM–6:00 PM
-          Asia/Manila only.
         </div>
 
         {/* Queue */}

@@ -706,18 +706,14 @@ export default function ExpensesPage() {
     <AppShell requireFounder={true}>
       <div className="space-y-6">
         {/* Header */}
-        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 pb-2 border-b border-surface-border/60">
+        <div className="flex items-center justify-between gap-3 pb-3 border-b border-surface-border/60">
           <div>
-            <div className="flex items-center space-x-2">
-              <span className="text-xs font-bold text-navy uppercase tracking-widest">
-                Cost Control & AI Ledger
-              </span>
-              <span className="text-xs text-ink-muted">·</span>
-              <span className="text-xs text-ink-secondary">Groq AI Assisted</span>
-            </div>
-            <h1 className="text-2xl sm:text-3xl font-extrabold text-navy tracking-tight mt-1">
-              Project Expenses & Disbursements
+            <h1 className="text-xl sm:text-2xl font-extrabold text-navy tracking-tight">
+              Site Expenses
             </h1>
+            <p className="text-xs text-ink-secondary mt-0.5">
+              Materials, equipment, and operational disbursements
+            </p>
           </div>
 
           <Button

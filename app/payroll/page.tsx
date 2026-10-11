@@ -143,27 +143,23 @@ export default function PayrollPage() {
     <AppShell requireFounder={true}>
       <div className="space-y-6">
         {/* Header */}
-        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 pb-2 border-b border-surface-border/60">
+        <div className="flex items-center justify-between gap-3 pb-3 border-b border-surface-border/60">
           <div>
-            <div className="flex items-center space-x-2">
-              <span className="text-xs font-bold text-navy uppercase tracking-widest">
-                Manpower Compensation
-              </span>
-              <span className="text-xs text-ink-muted">·</span>
-              <span className="text-xs text-ink-secondary">Bale Integrated</span>
-            </div>
-            <h1 className="text-2xl sm:text-3xl font-extrabold text-navy tracking-tight mt-1">
-              Automated Payroll Engine
+            <h1 className="text-xl sm:text-2xl font-extrabold text-navy tracking-tight">
+              Payroll Engine
             </h1>
+            <p className="text-xs text-ink-secondary mt-0.5">
+              Period wage computation, Bale deductions, and worker payslips
+            </p>
           </div>
 
           <Button
             variant="primary"
-            size="md"
+            size="sm"
             onClick={() => setIsGenerateModalOpen(true)}
             leftIcon={<Plus className="w-4 h-4" />}
           >
-            Compute New Period Run
+            New Payroll Run
           </Button>
         </div>
 

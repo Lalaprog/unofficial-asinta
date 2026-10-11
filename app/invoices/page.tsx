@@ -215,23 +215,19 @@ export default function InvoicesPage() {
     <AppShell requireFounder={true}>
       <div className="space-y-6">
         {/* Header */}
-        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 pb-2 border-b border-surface-border/60">
+        <div className="flex items-center justify-between gap-3 pb-3 border-b border-surface-border/60">
           <div>
-            <div className="flex items-center space-x-2">
-              <span className="text-xs font-bold text-navy uppercase tracking-widest">
-                Client Billing Engine
-              </span>
-              <span className="text-xs text-ink-muted">·</span>
-              <span className="text-xs text-ink-secondary">PhilSMS Integrated</span>
-            </div>
-            <h1 className="text-2xl sm:text-3xl font-extrabold text-navy tracking-tight mt-1">
-              Progress Billing & Invoices
+            <h1 className="text-xl sm:text-2xl font-extrabold text-navy tracking-tight">
+              Invoices &amp; Billing
             </h1>
+            <p className="text-xs text-ink-secondary mt-0.5">
+              Client progress billing, collections, and payment reminders
+            </p>
           </div>
 
           <Button
             variant="primary"
-            size="md"
+            size="sm"
             onClick={() => {
               const issueYear = Number(formData.issue_date.slice(0, 4)) || new Date().getFullYear();
               setFormData((current) => ({
@@ -242,7 +238,7 @@ export default function InvoicesPage() {
             }}
             leftIcon={<Plus className="w-4 h-4" />}
           >
-            Create Invoice
+            New Invoice
           </Button>
         </div>
 

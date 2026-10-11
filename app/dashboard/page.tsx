@@ -85,18 +85,14 @@ export default function FounderDashboard() {
     <AppShell requireFounder={true}>
       <div className="space-y-8">
         {/* Top Header */}
-        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 pb-2 border-b border-surface-border/60">
+        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pb-3 border-b border-surface-border/60">
           <div>
-            <div className="flex items-center space-x-2">
-              <span className="text-xs font-bold text-navy uppercase tracking-widest">
-                Executive Management
-              </span>
-              <span className="text-xs text-ink-muted">·</span>
-              <span className="text-xs text-ink-secondary">Batangas Firm Operations</span>
-            </div>
-            <h1 className="text-2xl sm:text-3xl font-extrabold text-navy tracking-tight mt-1">
-              Business Financial Overview
+            <h1 className="text-xl sm:text-2xl font-extrabold text-navy tracking-tight">
+              Financial Overview
             </h1>
+            <p className="text-xs text-ink-secondary mt-0.5">
+              Live receivables, project expenses, and workforce advances
+            </p>
           </div>
 
           {/* Quick Action Buttons */}
