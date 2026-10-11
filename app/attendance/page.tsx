@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useState, useEffect, useMemo } from 'react';
+import React, { useState, useEffect, useMemo, useRef, useCallback } from 'react';
 import { AppShell } from '@/components/layout/AppShell';
 import { useDataStore } from '@/lib/data/store';
 import { useAuth } from '@/lib/auth/authContext';
@@ -12,7 +12,6 @@ import {
   Search,
   UserPlus,
   Settings2,
-  MapPin,
   ShieldAlert,
   ShieldCheck,
   ChevronDown,
@@ -22,6 +21,7 @@ import {
   MessageSquare,
   CheckCheck,
   XCircle,
+  Lock,
 } from 'lucide-react';
 import { Button } from '@/components/ui/Button';
 import { Badge } from '@/components/ui/Badge';
@@ -72,6 +72,19 @@ function getCraftGroup(position: string): CraftGroupKey {
   return 'general';
 }
 
+function statusToHours(status: AttendanceStatus): number {
+  if (status === 'present') return 8;
+  if (status === 'half_day') return 4;
+  return 0;
+}
+
+function formatStatusLabel(status: AttendanceStatus): string {
+  if (status === 'present') return 'Present (Full Day)';
+  if (status === 'half_day') return 'Half Day';
+  if (status === 'absent') return 'Absent';
+  return 'Approved Leave';
+}
+
 export default function AttendancePage() {
   const { user, isFounder, isSupervisor } = useAuth();
   const { showToast } = useToast();
@@ -79,7 +92,9 @@ export default function AttendancePage() {
     users,
     workers,
     projects,
+    projectSupervisors,
     attendance,
+    isLoaded,
     createWorker,
     updateWorker,
     toggleWorkerStatus,
@@ -106,13 +121,12 @@ export default function AttendancePage() {
   const [craftFilter, setCraftFilter] = useState<string>('all');
   const [collapsedGroups, setCollapsedGroups] = useState<Record<string, boolean>>({});
   const [expandedNoteWorkers, setExpandedNoteWorkers] = useState<Record<string, boolean>>({});
-  const [isLocatingGps, setIsLocatingGps] = useState(false);
 
-  // Workforce tab state (add & edit worker)
+  // Quick Add Worker modal + Workforce tab state
+  const [isQuickAddOpen, setIsQuickAddOpen] = useState(false);
   const [workerName, setWorkerName] = useState('');
   const [workerPosition, setWorkerPosition] = useState('Mason');
   const [workerRate, setWorkerRate] = useState('850');
-  const [workerRateType, setWorkerRateType] = useState<'daily' | 'hourly'>('daily');
   const [workerPhone, setWorkerPhone] = useState('');
   const [isAddingWorker, setIsAddingWorker] = useState(false);
   const [workforceSearch, setWorkforceSearch] = useState('');
@@ -126,13 +140,12 @@ export default function AttendancePage() {
   const [editWorkerPhone, setEditWorkerPhone] = useState('');
   const [isSavingWorker, setIsSavingWorker] = useState(false);
 
-  // Terminal active draft attendance records
+  // Terminal active draft attendance records (`status: null` = not checked yet!)
   const [draftAttendance, setDraftAttendance] = useState<
     Record<
       string,
       {
-        status: AttendanceStatus;
-        hours_worked: number;
+        status: AttendanceStatus | null;
         notes: string;
       }
     >
@@ -153,15 +166,66 @@ export default function AttendancePage() {
   const [overrideModalOpen, setOverrideModalOpen] = useState(false);
   const [selectedRecordForOverride, setSelectedRecordForOverride] = useState<Attendance | null>(null);
   const [overrideStatus, setOverrideStatus] = useState<AttendanceStatus>('present');
-  const [overrideHours, setOverrideHours] = useState('8');
   const [overrideNotes, setOverrideNotes] = useState('');
 
-  const isSelfSupervisorWorker = (w: Worker): boolean => {
-    if (!isSupervisor || !user) return false;
-    return (
-      w.id === user.id || w.name.trim().toLowerCase() === user.name.trim().toLowerCase()
-    );
-  };
+  // Automatically ensure every Supervisor account in `users` (and the signed-in
+  // Supervisor) has a linked 1:1 `workers` row so Supervisors never need to be
+  // manually registered as workers.
+  const autoEnrolledSupervisorIdsRef = useRef<Set<string>>(new Set());
+  useEffect(() => {
+    if (!isLoaded) return;
+    const supervisorAccounts = [
+      ...(isSupervisor && user ? [user] : []),
+      ...users.filter((u) => u.role === 'supervisor'),
+    ].filter((sup, idx, arr) => arr.findIndex((item) => item.id === sup.id) === idx);
+
+    supervisorAccounts.forEach((sup) => {
+      if (autoEnrolledSupervisorIdsRef.current.has(sup.id)) return;
+      const alreadyInWorkers = workers.some(
+        (w) =>
+          w.id === sup.id ||
+          w.name.trim().toLowerCase() === sup.name.trim().toLowerCase()
+      );
+      if (!alreadyInWorkers) {
+        autoEnrolledSupervisorIdsRef.current.add(sup.id);
+        void createWorker({
+          id: sup.id,
+          name: sup.name,
+          position: 'Site Supervisor',
+          pay_rate: 1200,
+          pay_rate_type: 'daily',
+          contact_number: '—',
+          active: true,
+        });
+      }
+    });
+  }, [isLoaded, isSupervisor, user, users, workers, createWorker]);
+
+  // Identify whether a worker row belongs to the currently signed-in Supervisor
+  const isSelfSupervisorWorker = useCallback(
+    (w: Worker): boolean => {
+      if (!isSupervisor || !user) return false;
+      return (
+        w.id === user.id || w.name.trim().toLowerCase() === user.name.trim().toLowerCase()
+      );
+    },
+    [isSupervisor, user]
+  );
+
+  // Identify whether a worker row represents a Supervisor account in `users`
+  const findSupervisorAccountForWorker = useCallback(
+    (w: Worker) => {
+      if (isSupervisor && user && isSelfSupervisorWorker(w)) {
+        return user;
+      }
+      return users.find(
+        (u) =>
+          u.role === 'supervisor' &&
+          (u.id === w.id || u.name.trim().toLowerCase() === w.name.trim().toLowerCase())
+      );
+    },
+    [isSupervisor, user, isSelfSupervisorWorker, users]
+  );
 
   // Update selectedProjectId when accessible projects change
   useEffect(() => {
@@ -183,7 +247,80 @@ export default function AttendancePage() {
     }
   }, []);
 
-  // Load existing records for project and date into terminal
+  // Map of workers who are ALREADY marked Present or Half Day on ANOTHER project
+  // site on `selectedDate` (Scenario 5 & 6: prevents double-marking a worker or
+  // supervisor on two sites on the same day).
+  const otherSiteActiveAttendanceByWorker = useMemo(() => {
+    const map = new Map<string, { record: Attendance; projectName: string }>();
+    attendance
+      .filter(
+        (a) =>
+          a.date === selectedDate &&
+          a.project_id !== selectedProjectId &&
+          (a.status === 'present' || a.status === 'half_day')
+      )
+      .forEach((a) => {
+        const projName =
+          projects.find((p) => p.id === a.project_id)?.name || 'Another Site';
+        map.set(a.worker_id, { record: a, projectName: projName });
+      });
+    return map;
+  }, [attendance, selectedDate, selectedProjectId, projects]);
+
+  // Workers visible on the Daily Roster for `selectedProjectId`:
+  // - Regular craftsmen (active)
+  // - Supervisors assigned to `selectedProjectId` (via `project_supervisors`),
+  //   so only the Supervisor(s) supervising the selected project appear on its roster!
+  const siteRosterWorkers = useMemo(() => {
+    const assignedSupervisorIdsForSite = new Set(
+      projectSupervisors
+        .filter((ps) => ps.project_id === selectedProjectId)
+        .map((ps) => ps.supervisor_id)
+    );
+
+    return workers
+      .filter((w) => w.active)
+      .filter((w) => {
+        const linkedSup = findSupervisorAccountForWorker(w);
+        const isSupervisorRow =
+          Boolean(linkedSup) || w.position.toLowerCase().includes('supervisor');
+
+        if (!isSupervisorRow) return true;
+
+        // If this worker is a Supervisor:
+        // 1. Show if they already have an attendance record on this site & date
+        const hasRecordOnSite = attendance.some(
+          (a) =>
+            a.project_id === selectedProjectId &&
+            a.date === selectedDate &&
+            a.worker_id === w.id
+        );
+        if (hasRecordOnSite) return true;
+
+        // 2. If linked to a Supervisor account, check `project_supervisors`
+        if (linkedSup) {
+          const allAssignedForSup = projectSupervisors.filter(
+            (ps) => ps.supervisor_id === linkedSup.id
+          );
+          if (allAssignedForSup.length === 0) return true;
+          return assignedSupervisorIdsForSite.has(linkedSup.id);
+        }
+
+        return true;
+      });
+  }, [
+    workers,
+    projectSupervisors,
+    selectedProjectId,
+    selectedDate,
+    attendance,
+    findSupervisorAccountForWorker,
+  ]);
+
+  // Load existing records for project and date into terminal.
+  // When no attendance has been submitted yet for (selectedProjectId, selectedDate),
+  // all workers start UNCHECKED (`status: null`) — except workers already marked
+  // Present/Half Day on another site today, who default to `absent` on this site.
   useEffect(() => {
     if (!selectedProjectId) return;
     const existing = attendance.filter(
@@ -192,141 +329,78 @@ export default function AttendancePage() {
 
     const initialDraft: Record<
       string,
-      { status: AttendanceStatus; hours_worked: number; notes: string }
+      { status: AttendanceStatus | null; notes: string }
     > = {};
 
-    workers
-      .filter((w) => w.active)
-      .forEach((w) => {
-        const match = existing.find((a) => a.worker_id === w.id);
-        if (match) {
-          initialDraft[w.id] = {
-            status: match.status,
-            hours_worked: match.hours_worked,
-            notes: match.notes || '',
-          };
-        } else if (isSupervisor && user && (w.id === user.id || w.name.trim().toLowerCase() === user.name.trim().toLowerCase())) {
-          // Anti-fraud default: Supervisor's OWN row defaults to Absent (0h)
-          // until they perform an explicit GPS Self Check-In (which still requires
-          // Founder verification before payroll payout).
-          initialDraft[w.id] = {
-            status: 'absent',
-            hours_worked: 0,
-            notes: '',
-          };
-        } else {
-          // Regular field crew defaults to present 8 hours
-          initialDraft[w.id] = {
-            status: 'present',
-            hours_worked: 8,
-            notes: '',
-          };
-        }
-      });
+    siteRosterWorkers.forEach((w) => {
+      const match = existing.find((a) => a.worker_id === w.id);
+      if (match) {
+        initialDraft[w.id] = {
+          status: match.status,
+          notes: match.notes || '',
+        };
+      } else if (otherSiteActiveAttendanceByWorker.has(w.id)) {
+        const otherSite = otherSiteActiveAttendanceByWorker.get(w.id)!;
+        initialDraft[w.id] = {
+          status: 'absent',
+          notes: `[At ${otherSite.projectName}]`,
+        };
+      } else {
+        // Start UNCHECKED so the Supervisor or Founder must explicitly check each worker
+        initialDraft[w.id] = {
+          status: null,
+          notes: '',
+        };
+      }
+    });
 
     setDraftAttendance(initialDraft);
     setSubmissionSuccess(false);
-  }, [selectedProjectId, selectedDate, attendance, workers, isSupervisor, user]);
-
-  // Capture GPS proof when a Supervisor checks themselves in as Present or Half Day
-  const stampSupervisorSelfCheckIn = (workerId: string, status: AttendanceStatus, hours: number) => {
-    const timeLabel = new Date().toLocaleTimeString('en-PH', {
-      hour: '2-digit',
-      minute: '2-digit',
-    });
-
-    if (typeof navigator !== 'undefined' && 'geolocation' in navigator) {
-      setIsLocatingGps(true);
-      navigator.geolocation.getCurrentPosition(
-        (pos) => {
-          setIsLocatingGps(false);
-          const lat = pos.coords.latitude.toFixed(4);
-          const lng = pos.coords.longitude.toFixed(4);
-          const acc = Math.round(pos.coords.accuracy);
-          const stamp = `[SELF-CHECKIN | GPS: ${lat}, ${lng} (±${acc}m) @ ${timeLabel} | Pending Founder Verification]`;
-          setDraftAttendance((prev) => ({
-            ...prev,
-            [workerId]: {
-              status,
-              hours_worked: hours,
-              notes: stamp,
-            },
-          }));
-          showToast(
-            'info',
-            `GPS Check-In stamped (${lat}, ${lng}). A Founder must verify your self-attendance before payroll.`
-          );
-        },
-        () => {
-          setIsLocatingGps(false);
-          const stamp = `[SELF-CHECKIN | NO GPS PROOF (Location Denied/Unavailable) @ ${timeLabel} | Pending Founder Verification]`;
-          setDraftAttendance((prev) => ({
-            ...prev,
-            [workerId]: {
-              status,
-              hours_worked: hours,
-              notes: stamp,
-            },
-          }));
-          showToast(
-            'info',
-            'GPS location was unavailable — self-attendance is flagged as No GPS Proof for Founder review.'
-          );
-        },
-        { enableHighAccuracy: true, timeout: 6000, maximumAge: 60000 }
-      );
-    } else {
-      const stamp = `[SELF-CHECKIN | NO GPS DEVICE @ ${timeLabel} | Pending Founder Verification]`;
-      setDraftAttendance((prev) => ({
-        ...prev,
-        [workerId]: {
-          status,
-          hours_worked: hours,
-          notes: stamp,
-        },
-      }));
-    }
-  };
+  }, [
+    selectedProjectId,
+    selectedDate,
+    attendance,
+    siteRosterWorkers,
+    otherSiteActiveAttendanceByWorker,
+  ]);
 
   const handleStatusChange = (worker: Worker, status: AttendanceStatus) => {
-    const current = draftAttendance[worker.id] || {
-      status: 'present',
-      hours_worked: 8,
-      notes: '',
-    };
-    let hours = 8;
-    if (status === 'half_day') hours = 4;
-    if (status === 'absent' || status === 'leave') hours = 0;
-
-    // If a Supervisor is marking their OWN row Present or Half Day, require GPS stamp
-    if (isSelfSupervisorWorker(worker) && (status === 'present' || status === 'half_day')) {
-      stampSupervisorSelfCheckIn(worker.id, status, hours);
+    // Supervisor cannot manually toggle their own row (auto-logged on crew submit)
+    if (isSelfSupervisorWorker(worker)) {
       return;
     }
+
+    // Warn if trying to mark a worker Present/Half Day when they are already
+    // marked Present on another site today
+    const otherSite = otherSiteActiveAttendanceByWorker.get(worker.id);
+    if (
+      otherSite &&
+      otherSite.record.status === 'present' &&
+      (status === 'present' || status === 'half_day')
+    ) {
+      showToast(
+        'info',
+        `${worker.name} is already marked Present (Full Day) at ${otherSite.projectName} on ${selectedDate}.`
+      );
+      return;
+    }
+
+    const current = draftAttendance[worker.id] || {
+      status: null,
+      notes: '',
+    };
 
     setDraftAttendance({
       ...draftAttendance,
       [worker.id]: {
         ...current,
         status,
-        hours_worked: hours,
-      },
-    });
-  };
-
-  const handleHoursChange = (workerId: string, hours: number) => {
-    const current = draftAttendance[workerId] || { status: 'present', hours_worked: 8, notes: '' };
-    setDraftAttendance({
-      ...draftAttendance,
-      [workerId]: {
-        ...current,
-        hours_worked: hours,
       },
     });
   };
 
   const handleNotesChange = (workerId: string, notes: string) => {
-    const current = draftAttendance[workerId] || { status: 'present', hours_worked: 8, notes: '' };
+    const current = draftAttendance[workerId] || { status: null, notes: '' };
     setDraftAttendance({
       ...draftAttendance,
       [workerId]: {
@@ -336,40 +410,127 @@ export default function AttendancePage() {
     });
   };
 
-  // Bulk mark all regular crew (or a specific craft group) Present 8h
+  // Bulk mark all regular crew (or a specific craft group) Present
   const handleMarkCrewPresent = (targetWorkers: Worker[]) => {
     const updated = { ...draftAttendance };
     targetWorkers.forEach((w) => {
-      // Never bulk-mark a Supervisor's own row without explicit GPS check-in
       if (isSelfSupervisorWorker(w)) return;
+      if (otherSiteActiveAttendanceByWorker.has(w.id)) return;
       updated[w.id] = {
         status: 'present',
-        hours_worked: 8,
         notes: updated[w.id]?.notes || '',
       };
     });
     setDraftAttendance(updated);
   };
 
+  // Existing submitted attendance records for the active project & date
+  const existingSiteDateRecords = attendance.filter(
+    (a) => a.project_id === selectedProjectId && a.date === selectedDate
+  );
+
+  // Workers that the current user must mark before submitting:
+  // - For a Supervisor: all `siteRosterWorkers` EXCEPT their own locked row (`!isSelfSupervisorWorker(w)`)
+  // - For a Founder: all `siteRosterWorkers`
+  const markableWorkers = useMemo(
+    () => siteRosterWorkers.filter((w) => !isSelfSupervisorWorker(w)),
+    [siteRosterWorkers, isSelfSupervisorWorker]
+  );
+
+  const checkedCount = markableWorkers.filter(
+    (w) => draftAttendance[w.id]?.status !== null && draftAttendance[w.id]?.status !== undefined
+  ).length;
+  const uncheckedCount = markableWorkers.length - checkedCount;
+
   const handleBatchSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!selectedProjectId) return;
-    if (!user) return;
+    if (!selectedProjectId || !user) return;
     if (selectedDate > today) {
       showToast('error', 'Attendance cannot be recorded for a future date.');
       return;
     }
+    if (uncheckedCount > 0) {
+      showToast(
+        'error',
+        `Please mark attendance status for the remaining ${uncheckedCount} worker(s) before submitting.`
+      );
+      return;
+    }
 
     setIsSubmitting(true);
-    const batch = Object.entries(draftAttendance).map(([workerId, data]) => ({
-      worker_id: workerId,
-      project_id: selectedProjectId,
-      date: selectedDate,
-      status: data.status,
-      hours_worked: data.hours_worked,
-      notes: data.notes || null,
-      recorded_by: user.id,
-    }));
+
+    const timeLabel = new Date().toLocaleTimeString('en-PH', {
+      hour: '2-digit',
+      minute: '2-digit',
+    });
+
+    const batch: Array<{
+      worker_id: string;
+      project_id: string;
+      date: string;
+      status: AttendanceStatus;
+      hours_worked: number;
+      notes?: string | null;
+      recorded_by: string;
+    }> = [];
+
+    // 1. Add all marked crew rows
+    markableWorkers.forEach((w) => {
+      const d = draftAttendance[w.id];
+      if (!d || !d.status) return;
+      batch.push({
+        worker_id: w.id,
+        project_id: selectedProjectId,
+        date: selectedDate,
+        status: d.status,
+        hours_worked: statusToHours(d.status),
+        notes: d.notes.trim() || null,
+        recorded_by: user.id,
+      });
+    });
+
+    // 2. If a Supervisor is submitting the crew attendance, automatically handle
+    //    their own attendance row:
+    //    - On first submit of the day (if not already Present/Half Day on another site),
+    //      auto-log the Supervisor as `present` (Pending Founder Review).
+    //    - On subsequent updates (e.g. changing a worker to Half Day in the afternoon),
+    //      preserve their existing row without duplicating or resetting Founder approval.
+    if (isSupervisor) {
+      const selfWorker = siteRosterWorkers.find((w) => isSelfSupervisorWorker(w));
+      if (selfWorker) {
+        const existingSelfOnSite = existingSiteDateRecords.find(
+          (a) => a.worker_id === selfWorker.id
+        );
+        const otherSiteSelf = otherSiteActiveAttendanceByWorker.get(selfWorker.id);
+
+        if (existingSelfOnSite) {
+          // Preserve existing status & notes (append update timestamp if still pending)
+          const updatedNote = existingSelfOnSite.is_founder_override
+            ? existingSelfOnSite.notes
+            : `[Auto-logged on site attendance submission · Updated ${timeLabel} · Pending Founder Review]`;
+          batch.push({
+            worker_id: selfWorker.id,
+            project_id: selectedProjectId,
+            date: selectedDate,
+            status: existingSelfOnSite.status,
+            hours_worked: statusToHours(existingSelfOnSite.status),
+            notes: updatedNote,
+            recorded_by: existingSelfOnSite.recorded_by || user.id,
+          });
+        } else if (!otherSiteSelf) {
+          // First submission of the day for this Supervisor
+          batch.push({
+            worker_id: selfWorker.id,
+            project_id: selectedProjectId,
+            date: selectedDate,
+            status: 'present',
+            hours_worked: 8,
+            notes: `[Auto-logged on site attendance submission @ ${timeLabel} · Pending Founder Review]`,
+            recorded_by: user.id,
+          });
+        }
+      }
+    }
 
     const success = await recordAttendanceBatch(batch);
     setIsSubmitting(false);
@@ -379,38 +540,31 @@ export default function AttendancePage() {
     }
   };
 
-  // 1-Click Founder Verification or Rejection of Supervisor Self-Attendance
-  const handleQuickVerifySelfAttendance = async (rec: Attendance, approve: boolean) => {
-    const cleanExistingNotes = (rec.notes || '').replace(
-      /\s*\|\s*Pending Founder Verification\]?/gi,
-      ']'
+  // 1-Click Founder Review of Supervisor Attendance: Full Day, Half Day, or Absent
+  const handleFounderSupervisorReview = async (
+    rec: Attendance,
+    decision: 'present' | 'half_day' | 'absent'
+  ) => {
+    const label =
+      decision === 'present'
+        ? 'Approved Full Day'
+        : decision === 'half_day'
+          ? 'Approved Half Day'
+          : 'Marked Absent';
+    const ok = await updateAttendanceRecord(
+      rec.id,
+      {
+        status: decision,
+        hours_worked: statusToHours(decision),
+        notes: `[Founder Review: ${label} by ${user?.name || 'Founder'}]`,
+      },
+      true
     );
-    if (approve) {
-      const ok = await updateAttendanceRecord(
-        rec.id,
-        {
-          status: rec.status,
-          hours_worked: rec.hours_worked,
-          notes: `${cleanExistingNotes} [Founder Verified On-Site by ${user?.name || 'Founder'}]`.trim(),
-        },
-        true
+    if (ok) {
+      showToast(
+        'success',
+        `Supervisor attendance ${label.toLowerCase()} and synced to Payroll Engine.`
       );
-      if (ok) {
-        showToast('success', 'Supervisor self-attendance verified and unlocked for Payroll.');
-      }
-    } else {
-      const ok = await updateAttendanceRecord(
-        rec.id,
-        {
-          status: 'absent',
-          hours_worked: 0,
-          notes: `[Founder Rejected Self-Check-In → Marked Absent by ${user?.name || 'Founder'}] ${cleanExistingNotes}`.trim(),
-        },
-        true
-      );
-      if (ok) {
-        showToast('info', 'Supervisor self-check-in rejected and marked Absent (0h).');
-      }
     }
   };
 
@@ -422,7 +576,7 @@ export default function AttendancePage() {
       selectedRecordForOverride.id,
       {
         status: overrideStatus,
-        hours_worked: parseFloat(overrideHours),
+        hours_worked: statusToHours(overrideStatus),
         notes: overrideNotes
           ? `[Founder Override]: ${overrideNotes}`
           : `[Founder Override by ${user?.name || 'Founder'}]`,
@@ -443,7 +597,7 @@ export default function AttendancePage() {
       name: workerName.trim(),
       position: workerPosition.trim() || 'Mason',
       pay_rate: parseFloat(workerRate) || 0,
-      pay_rate_type: workerRateType,
+      pay_rate_type: 'daily',
       contact_number: workerPhone.trim() || '—',
       active: true,
     });
@@ -451,7 +605,11 @@ export default function AttendancePage() {
     if (created) {
       setWorkerName('');
       setWorkerPhone('');
-      showToast('success', `Added ${created.name} (${created.position}) to the workforce roster.`);
+      setIsQuickAddOpen(false);
+      showToast(
+        'success',
+        `Added ${created.name} (${created.position}) to the workforce roster.`
+      );
     }
   };
 
@@ -482,10 +640,9 @@ export default function AttendancePage() {
     }
   };
 
-  // Filtered workers (Supervisors placed at the top of the daily roster)
+  // Filtered workers on the Daily Roster (Supervisors placed at the top)
   const filteredWorkers = useMemo(() => {
-    return workers
-      .filter((w) => w.active)
+    return siteRosterWorkers
       .filter((w) => {
         if (craftFilter !== 'all' && getCraftGroup(w.position) !== craftFilter) {
           return false;
@@ -502,7 +659,7 @@ export default function AttendancePage() {
         if (aSup !== bSup) return aSup - bSup;
         return a.name.localeCompare(b.name);
       });
-  }, [workers, craftFilter, searchWorker]);
+  }, [siteRosterWorkers, craftFilter, searchWorker]);
 
   // Group filteredWorkers by CraftGroupKey for compact collapsible display
   const groupedRosterWorkers = useMemo(() => {
@@ -518,42 +675,6 @@ export default function AttendancePage() {
     );
   }, [filteredWorkers]);
 
-  // Detect any Supervisor profiles not yet enrolled on the active `workers` roster
-  const candidateSupervisors = [
-    ...(isSupervisor && user ? [user] : []),
-    ...users.filter((u) => u.role === 'supervisor'),
-  ].filter(
-    (sup, idx, arr) =>
-      arr.findIndex((item) => item.id === sup.id) === idx &&
-      !workers.some(
-        (w) =>
-          w.active &&
-          (w.id === sup.id || w.name.trim().toLowerCase() === sup.name.trim().toLowerCase())
-      )
-  );
-
-  const handleEnrollSupervisor = async (sup: { id: string; name: string }) => {
-    setIsAddingWorker(true);
-    const created = await createWorker({
-      id: sup.id,
-      name: sup.name,
-      position: 'Site Supervisor',
-      pay_rate: 1200,
-      pay_rate_type: 'daily',
-      contact_number: '—',
-      active: true,
-    });
-    setIsAddingWorker(false);
-    if (created) {
-      showToast('success', `${sup.name} is now enrolled in the Attendance & Payroll roster.`);
-    }
-  };
-
-  // Existing submitted attendance records for the active project & date
-  const existingSiteDateRecords = attendance.filter(
-    (a) => a.project_id === selectedProjectId && a.date === selectedDate
-  );
-
   // Unverified Supervisor self-attendance logs across the ledger
   const unverifiedSelfLogs = attendance.filter(
     (a) =>
@@ -562,17 +683,16 @@ export default function AttendancePage() {
       (a.status === 'present' || a.status === 'half_day')
   );
 
-  const activeWorkersList = workers.filter((w) => w.active);
+  // Determine whether the current draft has unsaved changes compared to saved records
   const hasUnsavedChanges =
     existingSiteDateRecords.length === 0
-      ? activeWorkersList.length > 0
-      : activeWorkersList.some((w) => {
+      ? uncheckedCount === 0 && markableWorkers.length > 0
+      : markableWorkers.some((w) => {
           const draft = draftAttendance[w.id];
           const saved = existingSiteDateRecords.find((a) => a.worker_id === w.id);
-          if (!saved || !draft) return true;
+          if (!saved || !draft || !draft.status) return true;
           return (
             draft.status !== saved.status ||
-            Number(draft.hours_worked) !== Number(saved.hours_worked) ||
             (draft.notes || '').trim() !== (saved.notes || '').trim()
           );
         });
@@ -584,10 +704,18 @@ export default function AttendancePage() {
   }, null);
 
   // Attendance summary counts for active date & project
-  const presentCount = Object.values(draftAttendance).filter((d) => d.status === 'present').length;
-  const halfDayCount = Object.values(draftAttendance).filter((d) => d.status === 'half_day').length;
-  const absentCount = Object.values(draftAttendance).filter((d) => d.status === 'absent').length;
-  const leaveCount = Object.values(draftAttendance).filter((d) => d.status === 'leave').length;
+  const presentCount = Object.values(draftAttendance).filter(
+    (d) => d.status === 'present'
+  ).length;
+  const halfDayCount = Object.values(draftAttendance).filter(
+    (d) => d.status === 'half_day'
+  ).length;
+  const absentCount = Object.values(draftAttendance).filter(
+    (d) => d.status === 'absent'
+  ).length;
+  const leaveCount = Object.values(draftAttendance).filter(
+    (d) => d.status === 'leave'
+  ).length;
 
   const accessibleProjectIdSet = new Set(accessibleProjects.map((p) => p.id));
   const filteredHistoryAttendance = attendance.filter((rec) => {
@@ -684,7 +812,7 @@ export default function AttendancePage() {
               </span>
               <span className="text-xs text-ink-muted">·</span>
               <span className="text-xs text-ink-secondary">
-                {isFounder ? 'Founder Verification & Override' : 'GPS Self-Check-In Protected'}
+                {isFounder ? 'Founder Review & Override' : 'Daily Roll Call'}
               </span>
             </div>
             <h1 className="text-2xl sm:text-3xl font-extrabold text-navy tracking-tight mt-1">
@@ -725,7 +853,7 @@ export default function AttendancePage() {
           </div>
         </div>
 
-        {/* Founder Anti-Fraud Alert: Unverified Supervisor Self-Attendance */}
+        {/* Founder Review Banner: Supervisor Attendance Submitted with Crew Report */}
         {isFounder && unverifiedSelfLogs.length > 0 && (
           <div className="p-4 rounded-2xl bg-status-warning-bg/80 border border-status-warning/40 space-y-3 text-xs">
             <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
@@ -733,15 +861,15 @@ export default function AttendancePage() {
                 <ShieldAlert className="w-5 h-5 text-status-warning shrink-0 mt-0.5 sm:mt-0" />
                 <div>
                   <div className="font-bold text-navy text-sm">
-                    Supervisor Self-Attendance Requires Founder Verification ({unverifiedSelfLogs.length})
+                    Supervisor Attendance Pending Founder Approval ({unverifiedSelfLogs.length})
                   </div>
                   <div className="text-ink-secondary">
-                    To prevent a Supervisor from marking themselves Present while absent, self-logged Supervisor hours are held back from Payroll until you verify or reject them below.
+                    Supervisors are automatically logged when they submit their site&apos;s crew attendance and held back from Payroll until you approve them below.
                   </div>
                 </div>
               </div>
               <Badge variant="warning" size="sm">
-                Held from Payroll
+                Awaiting Founder Approval
               </Badge>
             </div>
 
@@ -758,35 +886,43 @@ export default function AttendancePage() {
                       <div className="flex items-center gap-2 flex-wrap">
                         <span className="font-bold text-navy">{supWorker?.name || 'Supervisor'}</span>
                         <Badge variant="warning" size="sm">
-                          {rec.status.replace('_', ' ')} ({rec.hours_worked}h)
+                          Site Supervisor
                         </Badge>
                         <span className="text-ink-secondary">
-                          · {proj?.name} · {rec.date}
+                          · Submitted crew attendance for <strong className="text-navy">{proj?.name}</strong> on <strong>{rec.date}</strong>
                         </span>
                       </div>
                       {rec.notes && (
-                        <div className="text-[11px] text-ink-muted font-mono">{rec.notes}</div>
+                        <div className="text-[11px] text-ink-muted">{rec.notes}</div>
                       )}
                     </div>
 
-                    <div className="flex items-center gap-2 shrink-0">
+                    <div className="flex items-center flex-wrap gap-1.5 shrink-0">
                       <Button
                         type="button"
                         variant="primary"
                         size="sm"
-                        onClick={() => handleQuickVerifySelfAttendance(rec, true)}
+                        onClick={() => handleFounderSupervisorReview(rec, 'present')}
                         leftIcon={<ShieldCheck className="w-3.5 h-3.5" />}
                       >
-                        Verify On-Site
+                        Approve Full Day
+                      </Button>
+                      <Button
+                        type="button"
+                        variant="secondary"
+                        size="sm"
+                        onClick={() => handleFounderSupervisorReview(rec, 'half_day')}
+                      >
+                        Half Day
                       </Button>
                       <Button
                         type="button"
                         variant="danger"
                         size="sm"
-                        onClick={() => handleQuickVerifySelfAttendance(rec, false)}
+                        onClick={() => handleFounderSupervisorReview(rec, 'absent')}
                         leftIcon={<XCircle className="w-3.5 h-3.5" />}
                       >
-                        Reject (Absent)
+                        Mark Absent
                       </Button>
                     </div>
                   </div>
@@ -858,22 +994,30 @@ export default function AttendancePage() {
         {activeTab === 'terminal' && (
           <form onSubmit={handleBatchSubmit} className="space-y-4">
             {/* Compact Live Count Summary Bar */}
-            <div className="grid grid-cols-4 gap-2.5">
+            <div className="grid grid-cols-2 sm:grid-cols-5 gap-2.5">
+              <div className="p-2.5 rounded-xl bg-surface-inset border border-surface-border text-navy text-center">
+                <div className="text-lg font-extrabold leading-tight">
+                  {checkedCount}/{markableWorkers.length}
+                </div>
+                <div className="text-[10px] font-bold uppercase tracking-wider text-ink-secondary">
+                  Crew Checked
+                </div>
+              </div>
               <div className="p-2.5 rounded-xl bg-status-success-bg/70 border border-status-success/20 text-status-success text-center">
                 <div className="text-lg font-extrabold leading-tight">{presentCount}</div>
-                <div className="text-[10px] font-bold uppercase tracking-wider">Present (8h)</div>
+                <div className="text-[10px] font-bold uppercase tracking-wider">Present</div>
               </div>
               <div className="p-2.5 rounded-xl bg-status-warning-bg/70 border border-status-warning/20 text-status-warning text-center">
                 <div className="text-lg font-extrabold leading-tight">{halfDayCount}</div>
-                <div className="text-[10px] font-bold uppercase tracking-wider">Half Day (4h)</div>
+                <div className="text-[10px] font-bold uppercase tracking-wider">Half Day</div>
               </div>
               <div className="p-2.5 rounded-xl bg-status-danger-bg/70 border border-status-danger/20 text-status-danger text-center">
                 <div className="text-lg font-extrabold leading-tight">{absentCount}</div>
-                <div className="text-[10px] font-bold uppercase tracking-wider">Absent (0h)</div>
+                <div className="text-[10px] font-bold uppercase tracking-wider">Absent</div>
               </div>
-              <div className="p-2.5 rounded-xl bg-status-info-bg/70 border border-status-info/20 text-status-info text-center">
+              <div className="p-2.5 rounded-xl bg-status-info-bg/70 border border-status-info/20 text-status-info text-center col-span-2 sm:col-span-1">
                 <div className="text-lg font-extrabold leading-tight">{leaveCount}</div>
-                <div className="text-[10px] font-bold uppercase tracking-wider">Leave (0h)</div>
+                <div className="text-[10px] font-bold uppercase tracking-wider">Leave</div>
               </div>
             </div>
 
@@ -891,7 +1035,7 @@ export default function AttendancePage() {
                       {latestSubmittedAt
                         ? ` (${new Date(latestSubmittedAt).toLocaleTimeString('en-PH', { hour: '2-digit', minute: '2-digit' })})`
                         : ''}
-                      . No Founder re-submission needed unless editing below.
+                      . You can update any worker to Half Day or Absent below if needed.
                     </span>
                   </div>
                 </div>
@@ -901,10 +1045,10 @@ export default function AttendancePage() {
               </div>
             )}
 
-            {/* Filter, Group & Bulk-Action Toolbar */}
+            {/* Filter, Group, Quick-Add & Bulk-Action Toolbar */}
             <div className="p-3 rounded-2xl bg-white border border-surface-border shadow-sm flex flex-col lg:flex-row lg:items-center justify-between gap-2.5">
               <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-2 flex-1">
-                <div className="w-full sm:w-64">
+                <div className="w-full sm:w-60">
                   <Input
                     placeholder="Filter worker or craft..."
                     value={searchWorker}
@@ -927,23 +1071,19 @@ export default function AttendancePage() {
                     ]}
                   />
                 </div>
-
-                {candidateSupervisors.map((sup) => (
-                  <Button
-                    key={sup.id}
-                    type="button"
-                    variant="secondary"
-                    size="sm"
-                    isLoading={isAddingWorker}
-                    onClick={() => handleEnrollSupervisor(sup)}
-                    leftIcon={<UserPlus className="w-3.5 h-3.5" />}
-                  >
-                    Include {sup.name} on Roster
-                  </Button>
-                ))}
               </div>
 
-              <div className="flex items-center justify-between sm:justify-end gap-2">
+              <div className="flex items-center flex-wrap justify-between sm:justify-end gap-2">
+                <Button
+                  type="button"
+                  variant="secondary"
+                  size="sm"
+                  onClick={() => setIsQuickAddOpen(true)}
+                  leftIcon={<UserPlus className="w-3.5 h-3.5" />}
+                >
+                  + Add Worker
+                </Button>
+
                 <Button
                   type="button"
                   variant="secondary"
@@ -951,7 +1091,7 @@ export default function AttendancePage() {
                   onClick={() => handleMarkCrewPresent(filteredWorkers)}
                   leftIcon={<CheckCheck className="w-3.5 h-3.5" />}
                 >
-                  Mark Crew Present (8h)
+                  Mark Crew Present
                 </Button>
 
                 <div className="inline-flex rounded-xl border border-surface-border bg-surface-inset p-0.5">
@@ -997,7 +1137,7 @@ export default function AttendancePage() {
               {groupedRosterWorkers.map(([groupKey, groupWorkers]) => {
                 const isCollapsed = Boolean(collapsedGroups[groupKey]);
                 const groupPresent = groupWorkers.filter(
-                  (w) => (draftAttendance[w.id]?.status || 'present') === 'present'
+                  (w) => draftAttendance[w.id]?.status === 'present'
                 ).length;
                 const groupHalf = groupWorkers.filter(
                   (w) => draftAttendance[w.id]?.status === 'half_day'
@@ -1006,6 +1146,9 @@ export default function AttendancePage() {
                   (w) =>
                     draftAttendance[w.id]?.status === 'absent' ||
                     draftAttendance[w.id]?.status === 'leave'
+                ).length;
+                const groupUnchecked = groupWorkers.filter(
+                  (w) => !isSelfSupervisorWorker(w) && !draftAttendance[w.id]?.status
                 ).length;
 
                 return (
@@ -1029,6 +1172,11 @@ export default function AttendancePage() {
                         <Badge variant="neutral" size="sm">
                           {groupWorkers.length}
                         </Badge>
+                        {groupUnchecked > 0 && (
+                          <Badge variant="warning" size="sm">
+                            {groupUnchecked} unchecked
+                          </Badge>
+                        )}
                       </button>
 
                       <div className="flex items-center gap-2 text-[11px]">
@@ -1038,13 +1186,15 @@ export default function AttendancePage() {
                         <span className="text-ink-muted">·</span>
                         <span className="text-status-danger font-bold">{groupAbsent}A</span>
 
-                        <button
-                          type="button"
-                          onClick={() => handleMarkCrewPresent(groupWorkers)}
-                          className="ml-2 px-2 py-0.5 rounded-lg bg-white border border-surface-border text-[11px] font-semibold text-navy hover:bg-surface-inset transition-colors"
-                        >
-                          All Present
-                        </button>
+                        {groupWorkers.some((w) => !isSelfSupervisorWorker(w)) && (
+                          <button
+                            type="button"
+                            onClick={() => handleMarkCrewPresent(groupWorkers)}
+                            className="ml-2 px-2 py-0.5 rounded-lg bg-white border border-surface-border text-[11px] font-semibold text-navy hover:bg-surface-inset transition-colors"
+                          >
+                            All Present
+                          </button>
+                        )}
                       </div>
                     </div>
 
@@ -1052,24 +1202,30 @@ export default function AttendancePage() {
                       <div className="divide-y divide-surface-border/60">
                         {groupWorkers.map((worker) => {
                           const currentDraft = draftAttendance[worker.id] || {
-                            status: 'present',
-                            hours_worked: 8,
+                            status: null,
                             notes: '',
                           };
                           const isSelfSup = isSelfSupervisorWorker(worker);
                           const savedRec = existingSiteDateRecords.find(
                             (a) => a.worker_id === worker.id
                           );
+                          const otherSiteInfo = otherSiteActiveAttendanceByWorker.get(
+                            worker.id
+                          );
                           const isVerifiedByFounder = Boolean(savedRec?.is_founder_override);
                           const showNoteBox =
                             Boolean(expandedNoteWorkers[worker.id]) ||
-                            Boolean(currentDraft.notes);
+                            Boolean(currentDraft.notes && !isSelfSup);
 
                           return (
                             <div
                               key={worker.id}
                               className={`px-4 py-2.5 text-xs transition-colors ${
-                                isSelfSup ? 'bg-amber-50/40' : 'hover:bg-slate-50/80'
+                                isSelfSup
+                                  ? 'bg-amber-50/40'
+                                  : !currentDraft.status
+                                    ? 'bg-amber-50/15 hover:bg-slate-50/80'
+                                    : 'hover:bg-slate-50/80'
                               }`}
                             >
                               <div className="flex flex-col md:flex-row md:items-center justify-between gap-2">
@@ -1080,135 +1236,133 @@ export default function AttendancePage() {
                                       {worker.name}
                                     </span>
                                     <span className="text-ink-secondary text-[11px]">
-                                      {worker.position} · ₱{worker.pay_rate}/
-                                      {worker.pay_rate_type === 'hourly' ? 'hr' : 'd'}
+                                      {worker.position} · ₱{worker.pay_rate}/day
                                     </span>
                                     {worker.position.toLowerCase().includes('supervisor') && (
                                       <Badge variant="warning" size="sm">
                                         Supervisor
                                       </Badge>
                                     )}
-                                    {isSelfSup && (
-                                      <Badge
-                                        variant={isVerifiedByFounder ? 'success' : 'warning'}
-                                        size="sm"
-                                      >
-                                        {isVerifiedByFounder
-                                          ? 'Founder Verified ✓'
-                                          : 'Your Row · GPS + Founder Approval Required'}
+                                    {otherSiteInfo && (
+                                      <Badge variant="info" size="sm">
+                                        Already at {otherSiteInfo.projectName} (
+                                        {otherSiteInfo.record.status === 'present'
+                                          ? 'Present'
+                                          : 'Half Day'}
+                                        )
+                                      </Badge>
+                                    )}
+                                    {!isSelfSup && !currentDraft.status && (
+                                      <Badge variant="neutral" size="sm">
+                                        Not checked yet
                                       </Badge>
                                     )}
                                   </div>
                                 </div>
 
-                                {/* Right: Segmented 1-Tap Status Pills + Hours + Note Toggle */}
-                                <div className="flex items-center flex-wrap gap-1.5">
-                                  {isSelfSup && (
+                                {/* Right: Status Controls (or Locked Auto-Status for Supervisor's Own Row) */}
+                                {isSelfSup ? (
+                                  <div className="flex items-center gap-2">
+                                    <div className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-white border border-surface-border text-[11px] font-semibold text-navy">
+                                      <Lock className="w-3.5 h-3.5 text-status-warning" />
+                                      {otherSiteInfo ? (
+                                        <span>
+                                          Logged via {otherSiteInfo.projectName} ({selectedDate})
+                                        </span>
+                                      ) : savedRec ? (
+                                        isVerifiedByFounder ? (
+                                          <span className="text-status-success font-bold">
+                                            Founder Approved ({formatStatusLabel(savedRec.status)}) ✓
+                                          </span>
+                                        ) : (
+                                          <span>
+                                            Submitted as Present · Pending Founder Approval
+                                          </span>
+                                        )
+                                      ) : (
+                                        <span>
+                                          Auto-logged as Present when you submit crew attendance · Founder Approval
+                                        </span>
+                                      )}
+                                    </div>
+                                  </div>
+                                ) : (
+                                  <div className="flex items-center flex-wrap gap-1.5">
+                                    <div className="inline-flex rounded-xl bg-surface-inset p-0.5 border border-surface-border">
+                                      {[
+                                        {
+                                          id: 'present',
+                                          label: 'Present',
+                                          activeClass:
+                                            'bg-status-success text-white font-bold shadow-sm',
+                                        },
+                                        {
+                                          id: 'half_day',
+                                          label: 'Half Day',
+                                          activeClass:
+                                            'bg-status-warning text-white font-bold shadow-sm',
+                                        },
+                                        {
+                                          id: 'absent',
+                                          label: 'Absent',
+                                          activeClass:
+                                            'bg-status-danger text-white font-bold shadow-sm',
+                                        },
+                                        {
+                                          id: 'leave',
+                                          label: 'Leave',
+                                          activeClass:
+                                            'bg-status-info text-white font-bold shadow-sm',
+                                        },
+                                      ].map((st) => {
+                                        const active = currentDraft.status === st.id;
+                                        return (
+                                          <button
+                                            key={st.id}
+                                            type="button"
+                                            onClick={() =>
+                                              handleStatusChange(
+                                                worker,
+                                                st.id as AttendanceStatus
+                                              )
+                                            }
+                                            className={`px-3 py-1 rounded-lg text-[11px] transition-all ${
+                                              active
+                                                ? st.activeClass
+                                                : 'text-ink-secondary hover:text-navy font-medium'
+                                            }`}
+                                          >
+                                            {st.label}
+                                          </button>
+                                        );
+                                      })}
+                                    </div>
+
                                     <button
                                       type="button"
-                                      disabled={isLocatingGps}
-                                      onClick={() =>
-                                        stampSupervisorSelfCheckIn(worker.id, 'present', 8)
-                                      }
-                                      className="px-2.5 py-1 rounded-lg bg-navy text-white text-[11px] font-bold flex items-center gap-1 hover:bg-navy-deep transition-colors"
-                                      title="Capture live GPS coordinates for your self check-in"
+                                      onClick={() => toggleNoteInput(worker.id)}
+                                      className={`p-1.5 rounded-lg border transition-colors ${
+                                        currentDraft.notes
+                                          ? 'border-navy/30 bg-navy/5 text-navy'
+                                          : 'border-transparent text-ink-muted hover:text-navy hover:bg-surface-inset'
+                                      }`}
+                                      title="Add or view activity note"
+                                      aria-label={`Toggle note for ${worker.name}`}
                                     >
-                                      <MapPin className="w-3 h-3" />
-                                      <span>{isLocatingGps ? 'Locating…' : 'GPS Check-In'}</span>
+                                      <MessageSquare className="w-3.5 h-3.5" />
                                     </button>
-                                  )}
-
-                                  <div className="inline-flex rounded-xl bg-surface-inset p-0.5 border border-surface-border">
-                                    {[
-                                      {
-                                        id: 'present',
-                                        short: 'Present',
-                                        activeClass:
-                                          'bg-status-success text-white font-bold shadow-sm',
-                                      },
-                                      {
-                                        id: 'half_day',
-                                        short: 'Half',
-                                        activeClass:
-                                          'bg-status-warning text-white font-bold shadow-sm',
-                                      },
-                                      {
-                                        id: 'absent',
-                                        short: 'Absent',
-                                        activeClass:
-                                          'bg-status-danger text-white font-bold shadow-sm',
-                                      },
-                                      {
-                                        id: 'leave',
-                                        short: 'Leave',
-                                        activeClass:
-                                          'bg-status-info text-white font-bold shadow-sm',
-                                      },
-                                    ].map((st) => {
-                                      const active = currentDraft.status === st.id;
-                                      return (
-                                        <button
-                                          key={st.id}
-                                          type="button"
-                                          onClick={() =>
-                                            handleStatusChange(worker, st.id as AttendanceStatus)
-                                          }
-                                          className={`px-2.5 py-1 rounded-lg text-[11px] transition-all ${
-                                            active
-                                              ? st.activeClass
-                                              : 'text-ink-secondary hover:text-navy font-medium'
-                                          }`}
-                                        >
-                                          {st.short}
-                                        </button>
-                                      );
-                                    })}
                                   </div>
-
-                                  <div className="flex items-center gap-1">
-                                    <input
-                                      type="number"
-                                      step="0.5"
-                                      min="0"
-                                      max="24"
-                                      value={currentDraft.hours_worked}
-                                      onChange={(e) =>
-                                        handleHoursChange(
-                                          worker.id,
-                                          parseFloat(e.target.value) || 0
-                                        )
-                                      }
-                                      aria-label={`Hours worked for ${worker.name}`}
-                                      className="w-14 py-1 px-1.5 text-center text-xs font-bold text-navy bg-surface-inset border border-surface-border rounded-lg focus:bg-white focus:outline-none"
-                                    />
-                                    <span className="text-[10px] text-ink-muted">h</span>
-                                  </div>
-
-                                  <button
-                                    type="button"
-                                    onClick={() => toggleNoteInput(worker.id)}
-                                    className={`p-1.5 rounded-lg border transition-colors ${
-                                      currentDraft.notes
-                                        ? 'border-navy/30 bg-navy/5 text-navy'
-                                        : 'border-transparent text-ink-muted hover:text-navy hover:bg-surface-inset'
-                                    }`}
-                                    title="Add or view activity note"
-                                    aria-label={`Toggle note for ${worker.name}`}
-                                  >
-                                    <MessageSquare className="w-3.5 h-3.5" />
-                                  </button>
-                                </div>
+                                )}
                               </div>
 
-                              {showNoteBox && (
+                              {showNoteBox && !isSelfSup && (
                                 <div className="mt-2">
                                   <Input
-                                    placeholder="Activity note (e.g. 2F slab rebar, concrete pouring)..."
+                                    placeholder="Activity note (e.g. 2F slab rebar, went home at noon)..."
                                     value={currentDraft.notes}
                                     onChange={(e) =>
                                       handleNotesChange(worker.id, e.target.value)
                                     }
-                                    disabled={isSelfSup && currentDraft.notes.startsWith('[SELF-CHECKIN')}
                                     className="text-xs py-1.5"
                                   />
                                 </div>
@@ -1223,11 +1377,13 @@ export default function AttendancePage() {
                       <div className="p-4 grid grid-cols-1 md:grid-cols-2 gap-3">
                         {groupWorkers.map((worker) => {
                           const currentDraft = draftAttendance[worker.id] || {
-                            status: 'present',
-                            hours_worked: 8,
+                            status: null,
                             notes: '',
                           };
                           const isSelfSup = isSelfSupervisorWorker(worker);
+                          const savedRec = existingSiteDateRecords.find(
+                            (a) => a.worker_id === worker.id
+                          );
 
                           return (
                             <div
@@ -1247,64 +1403,69 @@ export default function AttendancePage() {
                                     )}
                                   </div>
                                   <div className="text-[11px] text-ink-secondary">
-                                    {worker.position} · ₱{worker.pay_rate}/
-                                    {worker.pay_rate_type === 'hourly' ? 'hr' : 'day'}
+                                    {worker.position} · ₱{worker.pay_rate}/day
                                   </div>
                                 </div>
+                                {!isSelfSup && !currentDraft.status && (
+                                  <Badge variant="warning" size="sm">
+                                    Unchecked
+                                  </Badge>
+                                )}
+                              </div>
 
-                                <div className="flex items-center space-x-1.5">
-                                  <span className="text-[11px] text-ink-secondary">Hrs:</span>
-                                  <input
-                                    type="number"
-                                    step="0.5"
-                                    min="0"
-                                    max="24"
-                                    value={currentDraft.hours_worked}
-                                    onChange={(e) =>
-                                      handleHoursChange(
-                                        worker.id,
-                                        parseFloat(e.target.value) || 0
-                                      )
-                                    }
-                                    className="w-14 p-1 text-center text-xs font-bold text-navy bg-white border border-surface-border rounded-lg"
-                                  />
+                              {isSelfSup ? (
+                                <div className="p-2.5 rounded-xl bg-white border border-surface-border text-[11px] font-semibold text-navy flex items-center gap-2">
+                                  <Lock className="w-3.5 h-3.5 text-status-warning shrink-0" />
+                                  <span>
+                                    {savedRec
+                                      ? savedRec.is_founder_override
+                                        ? `Founder Approved (${formatStatusLabel(savedRec.status)}) ✓`
+                                        : 'Submitted as Present · Pending Founder Approval'
+                                      : 'Auto-logged as Present when you submit crew attendance'}
+                                  </span>
                                 </div>
-                              </div>
+                              ) : (
+                                <>
+                                  <div className="grid grid-cols-4 gap-1.5">
+                                    {[
+                                      { id: 'present', label: 'Present' },
+                                      { id: 'half_day', label: 'Half Day' },
+                                      { id: 'absent', label: 'Absent' },
+                                      { id: 'leave', label: 'Leave' },
+                                    ].map((item) => {
+                                      const isSelected = currentDraft.status === item.id;
+                                      return (
+                                        <button
+                                          key={item.id}
+                                          type="button"
+                                          onClick={() =>
+                                            handleStatusChange(
+                                              worker,
+                                              item.id as AttendanceStatus
+                                            )
+                                          }
+                                          className={`py-2 px-2 rounded-xl border text-[11px] font-bold transition-all ${
+                                            isSelected
+                                              ? 'bg-navy text-white border-navy'
+                                              : 'bg-white border-surface-border text-ink-secondary hover:bg-surface-inset'
+                                          }`}
+                                        >
+                                          {item.label}
+                                        </button>
+                                      );
+                                    })}
+                                  </div>
 
-                              <div className="grid grid-cols-4 gap-1.5">
-                                {[
-                                  { id: 'present', label: 'Present' },
-                                  { id: 'half_day', label: 'Half Day' },
-                                  { id: 'absent', label: 'Absent' },
-                                  { id: 'leave', label: 'Leave' },
-                                ].map((item) => {
-                                  const isSelected = currentDraft.status === item.id;
-                                  return (
-                                    <button
-                                      key={item.id}
-                                      type="button"
-                                      onClick={() =>
-                                        handleStatusChange(worker, item.id as AttendanceStatus)
-                                      }
-                                      className={`py-2 px-2 rounded-xl border text-[11px] font-bold transition-all ${
-                                        isSelected
-                                          ? 'bg-navy text-white border-navy'
-                                          : 'bg-white border-surface-border text-ink-secondary hover:bg-surface-inset'
-                                      }`}
-                                    >
-                                      {item.label}
-                                    </button>
-                                  );
-                                })}
-                              </div>
-
-                              <Input
-                                placeholder="Activity notes..."
-                                value={currentDraft.notes}
-                                onChange={(e) => handleNotesChange(worker.id, e.target.value)}
-                                disabled={isSelfSup && currentDraft.notes.startsWith('[SELF-CHECKIN')}
-                                className="text-xs py-1.5"
-                              />
+                                  <Input
+                                    placeholder="Activity notes (optional)..."
+                                    value={currentDraft.notes}
+                                    onChange={(e) =>
+                                      handleNotesChange(worker.id, e.target.value)
+                                    }
+                                    className="text-xs py-1.5"
+                                  />
+                                </>
+                              )}
                             </div>
                           );
                         })}
@@ -1320,7 +1481,7 @@ export default function AttendancePage() {
                     title="No workers on this site"
                     description={
                       workers.length === 0
-                        ? 'Register workers in the Workforce tab first — they will appear here grouped by craft.'
+                        ? 'Click "+ Add Worker" above to register craftsmen — they will appear here grouped by craft.'
                         : 'No worker matches the current filter.'
                     }
                   />
@@ -1331,13 +1492,17 @@ export default function AttendancePage() {
             {/* Bottom Submit Sticky Bar */}
             <div className="sticky bottom-4 z-30 p-3.5 rounded-2xl bg-white/95 backdrop-blur-md border border-surface-border shadow-2xl flex flex-col sm:flex-row sm:items-center justify-between gap-3">
               <div className="text-xs text-ink-secondary">
-                {existingSiteDateRecords.length > 0 && !hasUnsavedChanges ? (
+                {uncheckedCount > 0 ? (
                   <span>
-                    Attendance for <span className="font-bold text-navy">{selectedDate}</span> is already synced to the Payroll Engine. Change any worker&apos;s status or hours above if you need to update it.
+                    Checked <span className="font-bold text-navy">{checkedCount} of {markableWorkers.length}</span> crew members. Mark the remaining <span className="font-bold text-status-warning">{uncheckedCount}</span> worker{uncheckedCount === 1 ? '' : 's'} to submit.
+                  </span>
+                ) : existingSiteDateRecords.length > 0 && !hasUnsavedChanges ? (
+                  <span>
+                    Attendance for <span className="font-bold text-navy">{selectedDate}</span> is synced to the Payroll Engine. Change any worker&apos;s status above if you need to update it (e.g. Half Day).
                   </span>
                 ) : (
                   <span>
-                    Ready to save <span className="font-bold text-navy">{filteredWorkers.length} workers</span> ({presentCount} Present, {halfDayCount} Half Day, {absentCount} Absent) for {selectedDate}.
+                    All <span className="font-bold text-navy">{markableWorkers.length} crew members</span> checked ({presentCount} Present, {halfDayCount} Half Day, {absentCount} Absent, {leaveCount} Leave) for {selectedDate}.
                   </span>
                 )}
               </div>
@@ -1354,7 +1519,8 @@ export default function AttendancePage() {
                 disabled={
                   isSubmitting ||
                   !selectedProjectId ||
-                  filteredWorkers.length === 0 ||
+                  markableWorkers.length === 0 ||
+                  uncheckedCount > 0 ||
                   (existingSiteDateRecords.length > 0 && !hasUnsavedChanges)
                 }
                 leftIcon={
@@ -1365,11 +1531,13 @@ export default function AttendancePage() {
                   )
                 }
               >
-                {existingSiteDateRecords.length > 0
-                  ? hasUnsavedChanges
-                    ? 'Save Attendance Changes'
-                    : 'Synced to Payroll ✓'
-                  : 'Submit Site Attendance'}
+                {uncheckedCount > 0
+                  ? `Check Remaining (${uncheckedCount}) to Submit`
+                  : existingSiteDateRecords.length > 0
+                    ? hasUnsavedChanges
+                      ? 'Save Attendance Changes'
+                      : 'Synced to Payroll ✓'
+                    : 'Submit Site Attendance'}
               </Button>
             </div>
           </form>
@@ -1489,7 +1657,7 @@ export default function AttendancePage() {
                       <div className="flex items-center gap-2 text-[11px]">
                         <span className="text-status-success font-bold">{pCount} Present</span>
                         <span className="text-ink-muted">·</span>
-                        <span className="text-status-warning font-bold">{hCount} Half</span>
+                        <span className="text-status-warning font-bold">{hCount} Half Day</span>
                         <span className="text-ink-muted">·</span>
                         <span className="text-status-danger font-bold">{aCount} Absent/Leave</span>
                       </div>
@@ -1518,12 +1686,12 @@ export default function AttendancePage() {
                                   </span>
                                   {isUnverifiedSelf && (
                                     <Badge variant="warning" size="sm">
-                                      Unverified Supervisor Self-Log (Held from Payroll)
+                                      Pending Founder Approval (Held from Payroll)
                                     </Badge>
                                   )}
                                   {isSelfLog && rec.is_founder_override && (
                                     <Badge variant="success" size="sm">
-                                      Founder Verified Self-Log ✓
+                                      Founder Approved ✓
                                     </Badge>
                                   )}
                                   {!isSelfLog && rec.is_founder_override && (
@@ -1539,20 +1707,20 @@ export default function AttendancePage() {
                                 )}
                               </div>
 
-                              <div className="flex items-center gap-2 shrink-0">
-                                <span className="font-bold text-navy">{rec.hours_worked}h</span>
+                              <div className="flex items-center flex-wrap gap-1.5 shrink-0">
                                 <Badge
                                   variant={
                                     rec.status === 'present'
                                       ? 'success'
                                       : rec.status === 'half_day'
                                         ? 'warning'
-                                        : 'danger'
+                                        : rec.status === 'leave'
+                                          ? 'info'
+                                          : 'danger'
                                   }
                                   size="sm"
-                                  className="capitalize"
                                 >
-                                  {rec.status.replace('_', ' ')}
+                                  {formatStatusLabel(rec.status)}
                                 </Badge>
 
                                 {isFounder && isUnverifiedSelf && (
@@ -1561,17 +1729,31 @@ export default function AttendancePage() {
                                       type="button"
                                       variant="primary"
                                       size="sm"
-                                      onClick={() => handleQuickVerifySelfAttendance(rec, true)}
+                                      onClick={() =>
+                                        handleFounderSupervisorReview(rec, 'present')
+                                      }
                                     >
-                                      Verify
+                                      Full Day
+                                    </Button>
+                                    <Button
+                                      type="button"
+                                      variant="secondary"
+                                      size="sm"
+                                      onClick={() =>
+                                        handleFounderSupervisorReview(rec, 'half_day')
+                                      }
+                                    >
+                                      Half Day
                                     </Button>
                                     <Button
                                       type="button"
                                       variant="danger"
                                       size="sm"
-                                      onClick={() => handleQuickVerifySelfAttendance(rec, false)}
+                                      onClick={() =>
+                                        handleFounderSupervisorReview(rec, 'absent')
+                                      }
                                     >
-                                      Reject
+                                      Absent
                                     </Button>
                                   </>
                                 )}
@@ -1583,7 +1765,6 @@ export default function AttendancePage() {
                                     onClick={() => {
                                       setSelectedRecordForOverride(rec);
                                       setOverrideStatus(rec.status);
-                                      setOverrideHours(String(rec.hours_worked));
                                       setOverrideNotes(rec.notes || '');
                                       setOverrideModalOpen(true);
                                     }}
@@ -1629,7 +1810,7 @@ export default function AttendancePage() {
                 <div>
                   <h3 className="font-bold text-navy text-sm">Register Site Worker</h3>
                   <p className="text-xs text-ink-secondary">
-                    Newly registered workers are automatically grouped by craft on the Daily Roster and Payroll Engine.
+                    Newly registered workers are automatically grouped by craft on the Daily Roster and Payroll Engine. (Supervisors are synced automatically from Team Accounts.)
                   </p>
                 </div>
               </div>
@@ -1660,7 +1841,6 @@ export default function AttendancePage() {
                       { label: 'Welder / Tinsmith', value: 'Welder' },
                       { label: 'Painter / Finisher', value: 'Painter' },
                       { label: 'Skilled Laborer', value: 'Laborer' },
-                      { label: 'Site Supervisor', value: 'Site Supervisor' },
                     ]}
                   />
                 </div>
@@ -1672,10 +1852,7 @@ export default function AttendancePage() {
                     min="0"
                     step="50"
                     value={workerRate}
-                    onChange={(e) => {
-                      setWorkerRate(e.target.value);
-                      setWorkerRateType('daily');
-                    }}
+                    onChange={(e) => setWorkerRate(e.target.value)}
                     required
                   />
                 </div>
@@ -1751,43 +1928,62 @@ export default function AttendancePage() {
                   </div>
 
                   <div className="divide-y divide-surface-border/60">
-                    {groupWorkers.map((w) => (
-                      <div
-                        key={w.id}
-                        className="px-4 py-2.5 flex items-center justify-between gap-3 text-xs hover:bg-slate-50 transition-colors"
-                      >
-                        <div className="flex items-center flex-wrap gap-2 min-w-0">
-                          <span className="font-bold text-navy text-sm">{w.name}</span>
-                          <span className="text-ink-secondary">
-                            {w.position} · ₱{w.pay_rate}/
-                            {w.pay_rate_type === 'hourly' ? 'hr' : 'day'}
-                            {w.contact_number && w.contact_number !== '—'
-                              ? ` · ${w.contact_number}`
-                              : ''}
-                          </span>
-                          <Badge variant={w.active ? 'success' : 'neutral'} size="sm">
-                            {w.active ? 'Active' : 'Inactive'}
-                          </Badge>
-                          {w.position.toLowerCase().includes('supervisor') && (
-                            <Badge variant="warning" size="sm">
-                              Supervisor
+                    {groupWorkers.map((w) => {
+                      const linkedSup = findSupervisorAccountForWorker(w);
+                      const supProjectIds = linkedSup
+                        ? projectSupervisors
+                            .filter((ps) => ps.supervisor_id === linkedSup.id)
+                            .map((ps) => ps.project_id)
+                        : [];
+                      const supProjects = projects.filter((p) =>
+                        supProjectIds.includes(p.id)
+                      );
+
+                      return (
+                        <div
+                          key={w.id}
+                          className="px-4 py-2.5 flex items-center justify-between gap-3 text-xs hover:bg-slate-50 transition-colors"
+                        >
+                          <div className="flex items-center flex-wrap gap-2 min-w-0">
+                            <span className="font-bold text-navy text-sm">{w.name}</span>
+                            <span className="text-ink-secondary">
+                              {w.position} · ₱{w.pay_rate}/day
+                              {w.contact_number && w.contact_number !== '—'
+                                ? ` · ${w.contact_number}`
+                                : ''}
+                            </span>
+                            <Badge variant={w.active ? 'success' : 'neutral'} size="sm">
+                              {w.active ? 'Active' : 'Inactive'}
                             </Badge>
+                            {w.position.toLowerCase().includes('supervisor') && (
+                              <Badge variant="warning" size="sm">
+                                Supervisor
+                              </Badge>
+                            )}
+                            {supProjects.map((sp) => (
+                              <span
+                                key={sp.id}
+                                className="px-2 py-0.5 rounded-lg bg-surface-inset border border-surface-border text-[11px] font-medium text-navy"
+                              >
+                                {sp.name}
+                              </span>
+                            ))}
+                          </div>
+
+                          {isFounder && (
+                            <Button
+                              type="button"
+                              variant="secondary"
+                              size="sm"
+                              onClick={() => openEditWorkerModal(w)}
+                              leftIcon={<Settings2 className="w-3.5 h-3.5" />}
+                            >
+                              Manage
+                            </Button>
                           )}
                         </div>
-
-                        {isFounder && (
-                          <Button
-                            type="button"
-                            variant="secondary"
-                            size="sm"
-                            onClick={() => openEditWorkerModal(w)}
-                            leftIcon={<Settings2 className="w-3.5 h-3.5" />}
-                          >
-                            Manage
-                          </Button>
-                        )}
-                      </div>
-                    ))}
+                      );
+                    })}
                   </div>
                 </div>
               ))}
@@ -1805,12 +2001,79 @@ export default function AttendancePage() {
         )}
       </div>
 
+      {/* QUICK ADD WORKER MODAL (Accessible directly from Daily Roster) */}
+      <Modal
+        isOpen={isQuickAddOpen}
+        onClose={() => setIsQuickAddOpen(false)}
+        title="Quick Add Site Worker"
+        description="Add a craftsman directly to the workforce roster without leaving your attendance sheet."
+      >
+        <form onSubmit={handleAddWorkerSubmit} className="space-y-4 text-xs">
+          <Input
+            label="Worker Full Name"
+            placeholder="e.g. Danilo Santos"
+            value={workerName}
+            onChange={(e) => setWorkerName(e.target.value)}
+            required
+          />
+
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+            <Select
+              label="Craft / Position"
+              value={workerPosition}
+              onChange={(e) => setWorkerPosition(e.target.value)}
+              options={[
+                { label: 'Foreman', value: 'Foreman' },
+                { label: 'Mason', value: 'Mason' },
+                { label: 'Carpenter', value: 'Carpenter' },
+                { label: 'Steelman', value: 'Steelman' },
+                { label: 'Electrician', value: 'Electrician' },
+                { label: 'Plumber', value: 'Plumber' },
+                { label: 'Welder / Tinsmith', value: 'Welder' },
+                { label: 'Painter / Finisher', value: 'Painter' },
+                { label: 'Skilled Laborer', value: 'Laborer' },
+              ]}
+            />
+
+            <Input
+              label="Daily Rate (PHP ₱)"
+              type="number"
+              min="0"
+              step="50"
+              value={workerRate}
+              onChange={(e) => setWorkerRate(e.target.value)}
+              required
+            />
+          </div>
+
+          <Input
+            label="Contact Number (Optional)"
+            placeholder="0917XXXXXXX"
+            value={workerPhone}
+            onChange={(e) => setWorkerPhone(e.target.value)}
+          />
+
+          <div className="pt-2 flex justify-end space-x-2">
+            <Button
+              type="button"
+              variant="secondary"
+              onClick={() => setIsQuickAddOpen(false)}
+            >
+              Cancel
+            </Button>
+            <Button type="submit" variant="primary" isLoading={isAddingWorker}>
+              Add Worker to Roster
+            </Button>
+          </div>
+        </form>
+      </Modal>
+
       {/* EDIT WORKER MODAL (Founder only) */}
       <Modal
         isOpen={Boolean(editingWorker)}
         onClose={() => setEditingWorker(null)}
         title="Manage Worker Profile"
-        description="Update craft, daily/hourly wage rate, contact number, or active roster status."
+        description="Update craft, daily wage rate, contact number, or active roster status."
       >
         {editingWorker && (
           <form onSubmit={handleEditWorkerSubmit} className="space-y-4 text-xs">
@@ -1837,27 +2100,18 @@ export default function AttendancePage() {
               />
             </div>
 
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-              <Input
-                label="Wage Rate (PHP ₱)"
-                type="number"
-                min="0"
-                step="50"
-                value={editWorkerRate}
-                onChange={(e) => setEditWorkerRate(e.target.value)}
-                required
-              />
-
-              <Select
-                label="Rate Type"
-                value={editWorkerRateType}
-                onChange={(e) => setEditWorkerRateType(e.target.value as 'daily' | 'hourly')}
-                options={[
-                  { label: 'Daily Rate (₱ / day)', value: 'daily' },
-                  { label: 'Hourly Rate (₱ / hour)', value: 'hourly' },
-                ]}
-              />
-            </div>
+            <Input
+              label="Daily Wage Rate (PHP ₱ / day)"
+              type="number"
+              min="0"
+              step="50"
+              value={editWorkerRate}
+              onChange={(e) => {
+                setEditWorkerRate(e.target.value);
+                setEditWorkerRateType('daily');
+              }}
+              required
+            />
 
             <div className="pt-2 border-t border-surface-border flex items-center justify-between">
               <div className="space-y-0.5">
@@ -1895,12 +2149,12 @@ export default function AttendancePage() {
         )}
       </Modal>
 
-      {/* FOUNDER OVERRIDE MODAL */}
+      {/* FOUNDER OVERRIDE MODAL (Status only — no manual hours box) */}
       <Modal
         isOpen={overrideModalOpen}
         onClose={() => setOverrideModalOpen(false)}
         title="Founder Attendance Override"
-        description="Correct or adjust site attendance records. An audit flag will be attached."
+        description="Update site attendance status. An audit flag will be attached."
       >
         {selectedRecordForOverride && (
           <form onSubmit={handleFounderOverrideSubmit} className="space-y-4 text-xs">
@@ -1909,33 +2163,24 @@ export default function AttendancePage() {
                 Worker: {workers.find((w) => w.id === selectedRecordForOverride.worker_id)?.name}
               </div>
               <div className="text-ink-secondary">
-                Original Date: {selectedRecordForOverride.date}
+                Date: {selectedRecordForOverride.date}
               </div>
             </div>
 
             <Select
-              label="Corrected Status"
+              label="Attendance Status"
               value={overrideStatus}
               onChange={(e) => setOverrideStatus(e.target.value as AttendanceStatus)}
             >
-              <option value="present">Present</option>
+              <option value="present">Present (Full Day)</option>
               <option value="half_day">Half Day</option>
               <option value="absent">Absent</option>
               <option value="leave">Approved Leave</option>
             </Select>
 
             <Input
-              label="Hours Worked"
-              type="number"
-              step="0.5"
-              value={overrideHours}
-              onChange={(e) => setOverrideHours(e.target.value)}
-              required
-            />
-
-            <Input
-              label="Reason for Override"
-              placeholder="e.g. Approved medical leave with barangay certificate"
+              label="Reason / Note (Optional)"
+              placeholder="e.g. Went home at noon / Approved leave"
               value={overrideNotes}
               onChange={(e) => setOverrideNotes(e.target.value)}
             />
@@ -1945,7 +2190,7 @@ export default function AttendancePage() {
                 Cancel
               </Button>
               <Button variant="primary" type="submit">
-                Apply Founder Override
+                Save Override
               </Button>
             </div>
           </form>

@@ -978,10 +978,20 @@ export const DataStoreProvider: React.FC<{ children: React.ReactNode }> = ({ chi
           return;
         }
 
-        const daysPresent = workerAtt.filter((a) => a.status === 'present').length;
-        const halfDays = workerAtt.filter((a) => a.status === 'half_day').length;
-        const effectiveDays = daysPresent + halfDays * 0.5;
-        const hoursTotal = workerAtt.reduce((sum, a) => sum + (a.hours_worked || 0), 0);
+        // Cap each calendar date at max 1.0 effective day (8 hours) so a
+        // Supervisor or worker assigned to two sites on the same day is never
+        // double-paid for a single calendar date.
+        const dayCreditsByDate = new Map<string, number>();
+        workerAtt.forEach((a) => {
+          const prev = dayCreditsByDate.get(a.date) || 0;
+          const credit = a.status === 'present' ? 1 : a.status === 'half_day' ? 0.5 : 0;
+          dayCreditsByDate.set(a.date, Math.min(1, prev + credit));
+        });
+        const effectiveDays = Array.from(dayCreditsByDate.values()).reduce(
+          (sum, val) => sum + val,
+          0
+        );
+        const hoursTotal = effectiveDays * 8;
 
         const gross = w.pay_rate_type === 'daily' ? effectiveDays * w.pay_rate : hoursTotal * w.pay_rate;
 

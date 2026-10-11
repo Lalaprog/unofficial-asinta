@@ -336,13 +336,13 @@ export async function createTeamAccount(params: {
     await adminClient.from('project_supervisors').insert(supervisorRows);
   }
 
-  // 4b. If `includeInPayroll` is enabled for this Supervisor, provision a
-  //     1:1 linked `public.workers` row (sharing `id = newUserId`) so their
-  //     attendance, bale advances, and salary are computed in the Payroll Engine.
-  const includeInPayroll = role === 'supervisor' && Boolean(input.includeInPayroll);
+  // 4b. Automatically provision a 1:1 linked `public.workers` row for every
+  //     Supervisor (unless explicitly disabled via `includeInPayroll: false`)
+  //     so they are automatically on the roster of the project sites they supervise.
+  const includeInPayroll = role === 'supervisor' && input.includeInPayroll !== false;
   if (includeInPayroll) {
     const parsedRate = Number(input.payRate);
-    const payRate = Number.isFinite(parsedRate) && parsedRate >= 0 ? parsedRate : 1000;
+    const payRate = Number.isFinite(parsedRate) && parsedRate > 0 ? parsedRate : 1200;
     const payRateType = input.payRateType === 'hourly' ? 'hourly' : 'daily';
     const contactNumber =
       typeof input.contactNumber === 'string' && input.contactNumber.trim()
@@ -535,35 +535,32 @@ export async function updateTeamAccount(params: {
   }
 
   // Sync 1:1 linked `public.workers` profile for Supervisor attendance & payroll.
-  if (typeof input.includeInPayroll === 'boolean' || nextRole === 'founder') {
-    const shouldInclude = nextRole === 'supervisor' && input.includeInPayroll === true;
-    if (shouldInclude) {
-      const parsedRate = Number(input.payRate);
-      const payRate = Number.isFinite(parsedRate) && parsedRate >= 0 ? parsedRate : 1000;
-      const payRateType = input.payRateType === 'hourly' ? 'hourly' : 'daily';
-      const contactNumber =
-        typeof input.contactNumber === 'string' && input.contactNumber.trim()
-          ? input.contactNumber.trim()
-          : '—';
+  if (nextRole === 'supervisor' && input.includeInPayroll !== false) {
+    const parsedRate = Number(input.payRate);
+    const payRate = Number.isFinite(parsedRate) && parsedRate > 0 ? parsedRate : 1200;
+    const payRateType = input.payRateType === 'hourly' ? 'hourly' : 'daily';
+    const contactNumber =
+      typeof input.contactNumber === 'string' && input.contactNumber.trim()
+        ? input.contactNumber.trim()
+        : '—';
 
-      await adminClient.from('workers').upsert(
-        {
-          id: targetUserId,
-          name: nextName,
-          contact_number: contactNumber,
-          position: 'Site Supervisor',
-          pay_rate: payRate,
-          pay_rate_type: payRateType,
-          active: true,
-        },
-        { onConflict: 'id' }
-      );
-    } else {
-      await adminClient
-        .from('workers')
-        .update({ active: false })
-        .eq('id', targetUserId);
-    }
+    await adminClient.from('workers').upsert(
+      {
+        id: targetUserId,
+        name: nextName,
+        contact_number: contactNumber,
+        position: 'Site Supervisor',
+        pay_rate: payRate,
+        pay_rate_type: payRateType,
+        active: true,
+      },
+      { onConflict: 'id' }
+    );
+  } else if (nextRole === 'founder' || input.includeInPayroll === false) {
+    await adminClient
+      .from('workers')
+      .update({ active: false })
+      .eq('id', targetUserId);
   }
 
   await writeUserAuditEntry(adminClient, {

@@ -163,7 +163,7 @@ export default function UsersPage() {
     setEditName(u.name);
     setEditRole(u.role);
     setEditAssignedProjects(currentAssigned);
-    setEditIncludeInPayroll(Boolean(linkedWorker && linkedWorker.active));
+    setEditIncludeInPayroll(linkedWorker ? Boolean(linkedWorker.active) : true);
     setEditPayRate(String(linkedWorker?.pay_rate ?? 1200));
     setEditContactNumber(
       linkedWorker?.contact_number && linkedWorker.contact_number !== '—'
