@@ -244,7 +244,7 @@ export default function ProjectsPage() {
 
                 {/* Footer action */}
                 <div className="mt-6 pt-4 border-t border-surface-border/60 flex items-center justify-between">
-                  <Link href={`/projects/${proj.id}`} className="w-full">
+                  <Link href={`/projects/${proj.id}`} prefetch={false} className="w-full">
                     <Button variant="secondary" size="sm" className="w-full justify-between">
                       <span>{isFounder ? 'View Project Ledger & Site Details' : 'View Site Roster & Details'}</span>
                       <ArrowRight className="w-3.5 h-3.5" />
