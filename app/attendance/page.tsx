@@ -494,12 +494,17 @@ function AttendancePageInner() {
       hours_worked: number;
       notes?: string | null;
       recorded_by: string;
+      is_founder_override?: boolean;
     }> = [];
 
     // 1. Add all marked crew rows
     markableWorkers.forEach((w) => {
       const d = draftAttendance[w.id];
       if (!d || !d.status) return;
+      const isSupRow =
+        Boolean(findSupervisorAccountForWorker(w)) ||
+        w.position.toLowerCase().includes('supervisor');
+      const existingRec = existingSiteDateRecords.find((a) => a.worker_id === w.id);
       batch.push({
         worker_id: w.id,
         project_id: selectedProjectId,
@@ -508,6 +513,9 @@ function AttendancePageInner() {
         hours_worked: statusToHours(d.status),
         notes: d.notes.trim() || null,
         recorded_by: user.id,
+        is_founder_override: isFounder
+          ? Boolean(isSupRow || existingRec?.is_founder_override)
+          : Boolean(existingRec?.is_founder_override),
       });
     });
 
@@ -538,6 +546,7 @@ function AttendancePageInner() {
             hours_worked: statusToHours(existingSelfOnSite.status),
             notes: updatedNote,
             recorded_by: existingSelfOnSite.recorded_by || user.id,
+            is_founder_override: Boolean(existingSelfOnSite.is_founder_override),
           });
         } else if (!otherSiteSelf) {
           // First submission of the day for this Supervisor
@@ -549,6 +558,7 @@ function AttendancePageInner() {
             hours_worked: 8,
             notes: `[Auto-logged on site attendance submission @ ${timeLabel} · Pending Founder Review]`,
             recorded_by: user.id,
+            is_founder_override: false,
           });
         }
       }
@@ -697,12 +707,34 @@ function AttendancePageInner() {
     );
   }, [filteredWorkers]);
 
-  // Unverified Supervisor self-attendance logs across the ledger
-  const unverifiedSelfLogs = attendance.filter(
-    (a) =>
-      a.worker_id === a.recorded_by &&
-      !a.is_founder_override &&
-      (a.status === 'present' || a.status === 'half_day')
+  // Identify whether an attendance record belongs to a Site Supervisor
+  const isSupervisorAttendanceRecord = useCallback(
+    (rec: Attendance): boolean => {
+      if (rec.worker_id === rec.recorded_by) return true;
+      const notes = rec.notes || '';
+      if (notes.includes('Pending Founder Review') || notes.includes('Founder Review:')) {
+        return true;
+      }
+      const w = workers.find((item) => item.id === rec.worker_id);
+      if (!w) return false;
+      return (
+        Boolean(findSupervisorAccountForWorker(w)) ||
+        w.position.toLowerCase().includes('supervisor')
+      );
+    },
+    [workers, findSupervisorAccountForWorker]
+  );
+
+  // Unverified Supervisor attendance logs across the ledger awaiting Founder sign-off
+  const unverifiedSelfLogs = useMemo(
+    () =>
+      attendance.filter(
+        (a) =>
+          isSupervisorAttendanceRecord(a) &&
+          !a.is_founder_override &&
+          (a.status === 'present' || a.status === 'half_day')
+      ),
+    [attendance, isSupervisorAttendanceRecord]
   );
 
   // Determine whether the current draft has unsaved changes compared to saved records
@@ -1226,6 +1258,9 @@ function AttendancePageInner() {
                             notes: '',
                           };
                           const isSelfSup = isSelfSupervisorWorker(worker);
+                          const isAnySupRow =
+                            Boolean(findSupervisorAccountForWorker(worker)) ||
+                            worker.position.toLowerCase().includes('supervisor');
                           const savedRec = existingSiteDateRecords.find(
                             (a) => a.worker_id === worker.id
                           );
@@ -1233,6 +1268,11 @@ function AttendancePageInner() {
                             worker.id
                           );
                           const isVerifiedByFounder = Boolean(savedRec?.is_founder_override);
+                          const isPendingFounderApprovalOnRow =
+                            isAnySupRow &&
+                            Boolean(savedRec) &&
+                            !isVerifiedByFounder &&
+                            (savedRec?.status === 'present' || savedRec?.status === 'half_day');
                           const showNoteBox =
                             Boolean(expandedNoteWorkers[worker.id]) ||
                             Boolean(currentDraft.notes && !isSelfSup);
@@ -1241,7 +1281,7 @@ function AttendancePageInner() {
                             <div
                               key={worker.id}
                               className={`px-4 py-2.5 text-xs transition-colors ${
-                                isSelfSup
+                                isSelfSup || isPendingFounderApprovalOnRow
                                   ? 'bg-amber-50/40'
                                   : !currentDraft.status
                                     ? 'bg-amber-50/15 hover:bg-slate-50/80'
@@ -1258,9 +1298,19 @@ function AttendancePageInner() {
                                     <span className="text-ink-secondary text-[11px]">
                                       {worker.position} · ₱{worker.pay_rate}/day
                                     </span>
-                                    {worker.position.toLowerCase().includes('supervisor') && (
+                                    {isAnySupRow && (
                                       <Badge variant="warning" size="sm">
                                         Supervisor
+                                      </Badge>
+                                    )}
+                                    {isFounder && isPendingFounderApprovalOnRow && (
+                                      <Badge variant="warning" size="sm">
+                                        Pending Founder Approval
+                                      </Badge>
+                                    )}
+                                    {isFounder && isAnySupRow && savedRec && isVerifiedByFounder && (
+                                      <Badge variant="success" size="sm">
+                                        Founder Approved ✓
                                       </Badge>
                                     )}
                                     {otherSiteInfo && (
@@ -1308,6 +1358,19 @@ function AttendancePageInner() {
                                   </div>
                                 ) : (
                                   <div className="flex items-center flex-wrap gap-1.5">
+                                    {isFounder && isPendingFounderApprovalOnRow && savedRec && (
+                                      <Button
+                                        type="button"
+                                        variant="primary"
+                                        size="sm"
+                                        onClick={() =>
+                                          handleFounderSupervisorReview(savedRec, 'present')
+                                        }
+                                        leftIcon={<ShieldCheck className="w-3.5 h-3.5" />}
+                                      >
+                                        Approve ✓
+                                      </Button>
+                                    )}
                                     <div className="inline-flex rounded-xl bg-surface-inset p-0.5 border border-surface-border">
                                       {[
                                         {
@@ -1690,7 +1753,7 @@ function AttendancePageInner() {
                       <div className="divide-y divide-surface-border/60">
                         {sheet.records.map((rec) => {
                           const worker = workers.find((w) => w.id === rec.worker_id);
-                          const isSelfLog = rec.worker_id === rec.recorded_by;
+                          const isSelfLog = isSupervisorAttendanceRecord(rec);
                           const isUnverifiedSelf =
                             isSelfLog &&
                             !rec.is_founder_override &&

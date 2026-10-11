@@ -88,6 +88,7 @@ interface DataStoreContextType {
     hours_worked: number;
     notes?: string | null;
     recorded_by: string;
+    is_founder_override?: boolean;
   }>) => Promise<boolean>;
   updateAttendanceRecord: (
     id: string,
@@ -861,6 +862,7 @@ export const DataStoreProvider: React.FC<{ children: React.ReactNode }> = ({ chi
       hours_worked: number;
       notes?: string | null;
       recorded_by: string;
+      is_founder_override?: boolean;
     }>
   ): Promise<boolean> => {
     const now = new Date().toISOString();
@@ -873,6 +875,9 @@ export const DataStoreProvider: React.FC<{ children: React.ReactNode }> = ({ chi
       notes: rec.notes || null,
       recorded_by: rec.recorded_by,
       submitted_at: now,
+      ...(typeof rec.is_founder_override === 'boolean'
+        ? { is_founder_override: rec.is_founder_override }
+        : {}),
     }));
 
     // Upsert keyed on the UNIQUE(worker_id, project_id, date) constraint so
@@ -957,12 +962,25 @@ export const DataStoreProvider: React.FC<{ children: React.ReactNode }> = ({ chi
             (!targetProject || a.project_id === targetProject.id)
         );
 
-        // Anti-fraud control: Supervisor self-attendance (worker_id === recorded_by)
-        // for Present/Half-Day must be verified by a Founder (is_founder_override === true)
-        // before it counts toward payroll disbursement.
+        // Anti-fraud control: Supervisor attendance for Present/Half-Day must be
+        // verified by a Founder (is_founder_override === true) before it counts
+        // toward payroll disbursement.
+        const isSupervisorWorker =
+          w.position.toLowerCase().includes('supervisor') ||
+          users.some(
+            (u) =>
+              u.role === 'supervisor' &&
+              (u.id === w.id ||
+                u.name.trim().toLowerCase() === w.name.trim().toLowerCase())
+          );
+
         const workerAtt = rawWorkerAtt.filter((a) => {
+          const isSupRecord =
+            a.worker_id === a.recorded_by ||
+            (a.notes || '').includes('Pending Founder Review') ||
+            isSupervisorWorker;
           const isUnverifiedSelfLog =
-            a.worker_id === a.recorded_by &&
+            isSupRecord &&
             !a.is_founder_override &&
             (a.status === 'present' || a.status === 'half_day');
           if (isUnverifiedSelfLog) {
