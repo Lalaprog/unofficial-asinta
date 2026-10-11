@@ -70,6 +70,7 @@ export const MobileNav: React.FC<MobileNavProps> = () => {
   const [isSheetOpen, setIsSheetOpen] = useState(false);
   const [localAttendanceTab, setLocalAttendanceTab] = useState<string>(urlTab);
   const [pendingHref, setPendingHref] = useState<string | null>(null);
+  const [isKeyboardOpen, setIsKeyboardOpen] = useState(false);
 
   useEffect(() => {
     setLocalAttendanceTab(urlTab);
@@ -85,8 +86,15 @@ export const MobileNav: React.FC<MobileNavProps> = () => {
         setPendingHref(null);
       }
     };
+    const onKeyboardEvent = (e: Event) => {
+      setIsKeyboardOpen(Boolean((e as CustomEvent<boolean>).detail));
+    };
     window.addEventListener('bale:attendance-tab', onTabEvent);
-    return () => window.removeEventListener('bale:attendance-tab', onTabEvent);
+    window.addEventListener('bale:keyboard-state', onKeyboardEvent);
+    return () => {
+      window.removeEventListener('bale:attendance-tab', onTabEvent);
+      window.removeEventListener('bale:keyboard-state', onKeyboardEvent);
+    };
   }, []);
 
   const isHrefActive = (href: string) => {
@@ -147,10 +155,12 @@ export const MobileNav: React.FC<MobileNavProps> = () => {
         </div>
       )}
 
-      {/* Fixed Mobile Bottom Navigation Bar */}
+      {/* Fixed Mobile Bottom Navigation Bar (Auto-hides while mobile keyboard is open) */}
       <nav
         aria-label="Mobile Bottom Navigation"
-        className="fixed bottom-0 inset-x-0 z-40 lg:hidden bg-white/95 backdrop-blur-md border-t border-surface-border/90 shadow-[0_-4px_20px_rgba(11,31,58,0.07)] px-2 py-1.5"
+        className={`fixed bottom-0 inset-x-0 z-40 lg:hidden bg-white/95 backdrop-blur-md border-t border-surface-border/90 shadow-[0_-4px_20px_rgba(11,31,58,0.07)] px-2 py-1.5 transition-transform duration-200 ${
+          isKeyboardOpen ? 'translate-y-full pointer-events-none' : 'translate-y-0'
+        }`}
       >
         <div
           className={`grid ${

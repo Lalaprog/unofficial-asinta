@@ -147,7 +147,7 @@ export const Modal: React.FC<ModalProps> = ({
   };
 
   return (
-    <div className="fixed inset-0 z-50 flex items-end sm:items-center justify-center p-0 sm:p-4 overflow-y-auto">
+    <div className="fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-4 overflow-y-auto">
       {/* Backdrop */}
       <div
         className="fixed inset-0 bg-navy/40 backdrop-blur-sm transition-opacity animate-in fade-in"
@@ -155,14 +155,14 @@ export const Modal: React.FC<ModalProps> = ({
         aria-hidden="true"
       />
 
-      {/* Modal / Bottom sheet */}
+      {/* Modal / Centered Dialog */}
       <div
         ref={panelRef}
         tabIndex={-1}
         className={twMerge(
           clsx(
-            'relative w-full bg-white rounded-t-3xl sm:rounded-2xl border border-surface-border shadow-2xl z-10 transition-all max-h-[92vh] flex flex-col',
-            'animate-in slide-in-from-bottom sm:zoom-in-95 duration-200',
+            'relative w-full bg-white rounded-2xl border border-surface-border shadow-2xl z-10 transition-all max-h-[86dvh] flex flex-col my-auto',
+            'animate-in zoom-in-95 duration-150',
             'focus:outline-none',
             maxWidthClasses[maxWidth]
           )
@@ -172,11 +172,8 @@ export const Modal: React.FC<ModalProps> = ({
         aria-labelledby={titleId}
         aria-describedby={description ? descriptionId : undefined}
       >
-        {/* Mobile handle indicator */}
-        <div className="w-12 h-1.5 bg-slate-300 rounded-full mx-auto mt-3 sm:hidden" />
-
         {/* Header */}
-        <div className="flex items-center justify-between px-6 py-4 border-b border-surface-border/80">
+        <div className="flex items-center justify-between px-5 sm:px-6 py-4 border-b border-surface-border/80 shrink-0">
           <div>
             <h3 id={titleId} className="text-base sm:text-lg font-bold text-navy tracking-tight">
               {title}
@@ -200,7 +197,12 @@ export const Modal: React.FC<ModalProps> = ({
         </div>
 
         {/* Content */}
-        <div className="p-6 overflow-y-auto flex-1">{children}</div>
+        <div
+          data-modal-scroll-body="true"
+          className="p-5 sm:p-6 overflow-y-auto flex-1 overscroll-contain"
+        >
+          {children}
+        </div>
       </div>
     </div>
   );
