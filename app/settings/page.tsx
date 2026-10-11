@@ -4,19 +4,26 @@ import React, { useEffect, useState } from 'react';
 import { AppShell } from '@/components/layout/AppShell';
 import { useDataStore } from '@/lib/data/store';
 import { useAuth } from '@/lib/auth/authContext';
-import { Building2, Bot, Database, RefreshCw } from 'lucide-react';
+import { Building2, Bot, Database, Download, RefreshCw } from 'lucide-react';
 import { Button } from '@/components/ui/Button';
 import { Badge } from '@/components/ui/Badge';
 import { Card, CardHeader, CardTitle, CardDescription, CardContent } from '@/components/ui/Card';
 import { TemplateEditorCard } from '@/components/email/TemplateEditorCard';
 import { TestEmailCard } from '@/components/email/TestEmailCard';
 import { MfaCard } from '@/components/auth/MfaCard';
+import { EXPORTABLE_TABLES, type ExportableTable } from '@/lib/export/csv';
 
 interface IntegrationStatus {
   groqModel?: string;
   groqVisionModel?: string;
   groqTranscriptionModel?: string;
   mfaEnforcedForFounders?: boolean;
+  sessionPolicy?: {
+    idleMinutes: number;
+    absoluteHours: number;
+    warningSeconds: number;
+    appliesToRoles: string[];
+  };
   groqConfigured: boolean;
   philsmsConfigured: boolean;
   philsmsSenderId?: string;
@@ -24,6 +31,18 @@ interface IntegrationStatus {
   smtpConfigured: boolean;
   automaticRemindersEnabled: boolean;
 }
+
+const EXPORT_TABLE_LABELS: Record<ExportableTable, string> = {
+  invoices: 'Invoices (billing & payment status)',
+  expenses: 'Expenses (project costs & receipt paths)',
+  payroll: 'Payroll (worker wages & deductions — RA 10173)',
+  advances: 'Advances / BALE (worker cash advances — RA 10173)',
+  attendance: 'Attendance (daily logs & hours — RA 10173)',
+  projects: 'Projects (locations, budgets & status)',
+  clients: 'Clients (contact persons, phones & emails — RA 10173)',
+  workers: 'Workers (names, phone numbers & pay rates — RA 10173)',
+  audit_log: 'Audit Log (append-only financial & export trail)',
+};
 
 export default function SettingsPage() {
   const { isFounder } = useAuth();
@@ -34,6 +53,9 @@ export default function SettingsPage() {
   const [testPhone, setTestPhone] = useState('');
   const [isTestingSms, setIsTestingSms] = useState(false);
   const [smsTestResult, setSmsTestResult] = useState<{ accepted?: boolean; error?: string; note?: string; providerMessageId?: string | null } | null>(null);
+  const [selectedExportTable, setSelectedExportTable] = useState<ExportableTable>('expenses');
+  const [isExportingCsv, setIsExportingCsv] = useState(false);
+  const [exportStatus, setExportStatus] = useState<{ ok: boolean; message: string } | null>(null);
 
   useEffect(() => {
     let active = true;
@@ -87,6 +109,55 @@ export default function SettingsPage() {
     setIsResyncing(true);
     await refresh();
     setIsResyncing(false);
+  };
+
+  const handleExportCsv = async () => {
+    if (isExportingCsv) return;
+    setIsExportingCsv(true);
+    setExportStatus(null);
+    try {
+      const response = await fetch(
+        `/api/export?table=${encodeURIComponent(selectedExportTable)}`,
+        { method: 'GET', cache: 'no-store' }
+      );
+      if (!response.ok) {
+        const body = (await response.json().catch(() => ({}))) as { error?: string };
+        setExportStatus({
+          ok: false,
+          message: body.error || `Export failed (HTTP ${response.status}).`,
+        });
+        return;
+      }
+
+      const csvText = await response.text();
+      const disposition = response.headers.get('Content-Disposition') || '';
+      const filenameMatch = disposition.match(/filename="([^"]+)"/);
+      const filename =
+        filenameMatch?.[1] ||
+        `bale-${selectedExportTable}-${new Date().toISOString().slice(0, 10)}.csv`;
+
+      const blob = new Blob([csvText], { type: 'text/csv;charset=utf-8;' });
+      const url = window.URL.createObjectURL(blob);
+      const anchor = document.createElement('a');
+      anchor.href = url;
+      anchor.download = filename;
+      document.body.appendChild(anchor);
+      anchor.click();
+      document.body.removeChild(anchor);
+      window.URL.revokeObjectURL(url);
+
+      setExportStatus({
+        ok: true,
+        message: `Downloaded ${filename} and recorded the export in public.audit_log.`,
+      });
+    } catch {
+      setExportStatus({
+        ok: false,
+        message: 'Could not contact the BALE server to download the CSV export.',
+      });
+    } finally {
+      setIsExportingCsv(false);
+    }
   };
 
   return (
@@ -385,6 +456,101 @@ export default function SettingsPage() {
                 Resync Now
               </Button>
             </div>
+
+            <div className="p-4 rounded-2xl bg-slate-50 border border-slate-200 space-y-1.5">
+              <div className="font-bold text-navy">Session Timeouts &amp; Sign-in Rate Limits</div>
+              <div className="text-ink-secondary">
+                Active client policy:{' '}
+                <span className="font-mono font-semibold text-navy">
+                  {integrationStatus?.sessionPolicy?.idleMinutes ?? 20} min idle
+                </span>
+                {' · '}
+                <span className="font-mono font-semibold text-navy">
+                  {integrationStatus?.sessionPolicy?.absoluteHours ?? 8} h absolute
+                </span>
+                {' · '}
+                <span className="font-mono font-semibold text-navy">
+                  {integrationStatus?.sessionPolicy?.warningSeconds ?? 120} s warning
+                </span>{' '}
+                (applies to all roles: Founder and Supervisor).
+              </div>
+              <div className="text-[11px] text-ink-muted">
+                Must match Supabase Dashboard → Authentication → Sessions (inactivity 20 min,
+                time-box 8 h). Because <span className="font-mono">NEXT_PUBLIC_SESSION_*</span>{' '}
+                values are baked in at build time, changing them in Vercel requires a rebuild, not a
+                redeploy. Sign-in is rate-limited per IP (10 per 5 min, never per-account lockout).
+              </div>
+            </div>
+
+            {isFounder && (
+              <div className="p-4 rounded-2xl bg-slate-50 border border-slate-200 space-y-3">
+                <div className="space-y-1">
+                  <div className="font-bold text-navy">
+                    Export Ledger Table to CSV (Excel) — Secondary Convenience
+                  </div>
+                  <div className="text-ink-secondary">
+                    Downloads a UTF-8 CSV formatted for Excel. Enforced server-side via{' '}
+                    <span className="font-mono">requireFounder()</span>, rate-limited via{' '}
+                    <span className="font-mono">lib/rateLimit.ts</span>, and recorded in{' '}
+                    <span className="font-mono">public.audit_log</span>.
+                  </div>
+                  <div className="text-[11px] text-ink-muted">
+                    <strong>Not a backup strategy:</strong> automated restorable backups run via{' '}
+                    <span className="font-mono">.github/workflows/backup.yml</span> (weekly{' '}
+                    <span className="font-mono">pg_dump</span>).{' '}
+                    <strong>Storage gap:</strong> neither <span className="font-mono">pg_dump</span>{' '}
+                    nor this CSV export includes receipt photos in the{' '}
+                    <span className="font-mono">receipts</span> Storage bucket — copy those
+                    separately from Supabase Storage.{' '}
+                    <strong>RA 10173:</strong> exported worker and client tables contain personal
+                    data (names, contact numbers, wages); handle downloaded files accordingly.
+                  </div>
+                </div>
+
+                <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-2">
+                  <label htmlFor="ledger-export-table" className="sr-only">
+                    Ledger table to export as CSV
+                  </label>
+                  <select
+                    id="ledger-export-table"
+                    value={selectedExportTable}
+                    onChange={(event) =>
+                      setSelectedExportTable(event.target.value as ExportableTable)
+                    }
+                    className="min-w-0 flex-1 rounded-xl border border-surface-border bg-white px-3 py-2 text-xs text-navy font-medium"
+                  >
+                    {(Object.keys(EXPORTABLE_TABLES) as ExportableTable[]).map((table) => (
+                      <option key={table} value={table}>
+                        {EXPORT_TABLE_LABELS[table]}
+                      </option>
+                    ))}
+                  </select>
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="sm"
+                    onClick={handleExportCsv}
+                    isLoading={isExportingCsv}
+                    leftIcon={<Download className="w-3.5 h-3.5" />}
+                  >
+                    Download CSV
+                  </Button>
+                </div>
+
+                {exportStatus && (
+                  <div
+                    role="status"
+                    className={`rounded-lg border p-3 text-[11px] ${
+                      exportStatus.ok
+                        ? 'border-status-success/20 bg-status-success-bg text-status-success'
+                        : 'border-status-danger/20 bg-status-danger-bg text-status-danger'
+                    }`}
+                  >
+                    {exportStatus.message}
+                  </div>
+                )}
+              </div>
+            )}
           </CardContent>
         </Card>
       </div>

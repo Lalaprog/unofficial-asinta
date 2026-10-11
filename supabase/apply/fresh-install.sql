@@ -8,7 +8,7 @@
 -- will fail. Check with verify-live.sql before running.
 --
 -- GENERATED FILE — do not edit. Regenerate with `npm run build:apply-sql`.
--- Generated: 2026-10-06T04:33:48.691Z
+-- Generated: 2026-10-11T05:10:41.603Z
 --
 -- Source files (in execution order) and their SHA-256:
 --   20260913000000_bale_schema.sql  df054d9d265045b9…

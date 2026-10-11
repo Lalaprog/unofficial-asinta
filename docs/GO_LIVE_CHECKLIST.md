@@ -132,16 +132,18 @@ A FAIL row names the problem and the migration that fixes it.
 
 ---
 
-## Step 6 — Dashboard settings (not in any migration)
+## Step 6 — Dashboard & Vercel settings (not in any migration)
 
 These live outside the code and will silently disagree with the app if skipped.
 
-| Where | Setting | Value |
-| --- | --- | --- |
-| Authentication → Sessions | Inactivity timeout | `20` minutes |
-| Authentication → Sessions | Time-box | `8` hours |
-| Authentication → Rate Limits | tighten sign-in / token refresh | your call — the app's limiter never sees login traffic ([`SECURITY.md` §7](./SECURITY.md)) |
-| Database → Backups | PITR | on |
+| Where | Setting | Value | Why |
+| --- | --- | --- | --- |
+| Supabase → Authentication → Sessions | Inactivity timeout | `20` minutes | Project-wide across **all roles** (`founder` and `supervisor`) |
+| Supabase → Authentication → Sessions | Time-box | `8` hours | Absolute session cap; matches `SessionWatcher` |
+| Vercel → Environment Variables | `NEXT_PUBLIC_SESSION_IDLE_TIMEOUT_MINUTES=20`<br>`NEXT_PUBLIC_SESSION_ABSOLUTE_TIMEOUT_HOURS=8`<br>`NEXT_PUBLIC_SESSION_WARNING_SECONDS=120` | **Rebuild** after setting | `NEXT_PUBLIC_*` is baked in at build time — redeploying an old build artifact is not enough. Verify by leaving a tab idle and confirming the warning dialog appears at ~18 min |
+| Supabase → Authentication → Rate Limits | `sign_in_sign_ups` | `30 → 10` per 5 min per IP | No account lockout (DoS vector against the firm). `/api/auth/login` also enforces 10/5m per IP via `lib/rateLimit.ts` (mitigating Supabase issue #41947) |
+| Supabase → Authentication → Attack Protection | CAPTCHA on sign-in | hCaptcha or Cloudflare Turnstile | Stops distributed credential stuffing across multiple IPs |
+| GitHub Actions → `Automated database backup` | `.github/workflows/backup.yml` | Weekly cron + manual run | Supabase Free has no PITR. Run the workflow, download the `pg_dump` artifact, and test-restore into a throwaway project ([`SECURITY.md` §10](./SECURITY.md)). Copy `receipts` Storage photos separately |
 
 ---
 

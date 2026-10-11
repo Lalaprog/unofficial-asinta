@@ -13,12 +13,12 @@ Last updated: 2026-10-06.
 
 | Layer | Mechanism | Notes |
 | --- | --- | --- |
-| Route access | `middleware.ts` + `requireFounder()` in every `/api/*` route | Server-side. A page redirect is not a control; the API check is. |
-| Data access | PostgreSQL RLS on every table, `to authenticated` policies | Verified by `tests/rls-migration.test.ts`. |
-| Session lifetime | Supabase Auth `auth.sessions.inactivity_timeout` / `timebox` | Project-wide, enforced at token refresh. The app warns before it lands. |
+| Route access | `middleware.ts` + `requireFounder()` in every Founder `/api/*` route | Server-side. A page redirect is not a control; the API check is. |
+| Data access | PostgreSQL RLS on every table, `to authenticated` policies | Verified by `tests/rls-migration.test.ts` and `tests/migrations-parse.test.ts`. |
+| Session lifetime | Supabase Auth `auth.sessions.inactivity_timeout` (`20m`) / `timebox` (`8h`) + `SessionWatcher` | Project-wide across **all roles** (`founder` and `supervisor`). `NEXT_PUBLIC_SESSION_*` is baked in at build time (rebuild required when changed). |
 | MFA | Supabase TOTP, opt-in enforcement (`MFA_ENFORCE_FOUNDERS`) | See §5. |
-| Cost abuse | `lib/rateLimit.ts` per-route limits | Single-instance only — see §7. |
-| Trail | `public.audit_log` (append-only) | No UPDATE/DELETE policy exists, by design. |
+| Sign-in & cost abuse | `lib/rateLimit.ts` per-route limits (including `/api/auth/login` and `/api/export`) | Single-instance; per-IP on login (no account lockout), per-Founder on authenticated routes — see §7. |
+| Trail | `public.audit_log` (append-only) | Covers money-moving mutations AND Founder CSV exports (RA 10173). No UPDATE/DELETE policy exists. |
 
 **Not** a control: anything rendered in the browser. The UI states what the
 server decided; it never decides.
@@ -147,26 +147,50 @@ send fails instead of downgrading.
 
 ---
 
-## 7. Rate limiting (finding #4) — and what it does not cover
+## 7. Rate limiting and login brute-force defence (finding #4)
 
 `lib/rateLimit.ts` implements a sliding-window limiter; `RATE_LIMITS` names the
-per-route budgets (SMS 15/10 min, SMTP test 5/hour, AI extract 12/min, …). Every
-cost-bearing route calls `enforceRateLimit()` **after** authentication, so the
-key is the Founder's user id rather than a spoofable header. Limits return 429
-with `Retry-After` and a message stating the limit and the wait.
+per-route budgets (SMS 15/10 min, SMTP test 5/hour, AI extract 12/min, login
+10/5 min per IP, CSV export 10/hour per Founder, …). Authenticated routes call
+`enforceRateLimit()` **after** authentication so the key is the Founder's user
+id rather than a spoofable header. Limits return 429 with `Retry-After` and a
+message stating the limit and the wait.
+
+### Login rate limiting and why there is no account lockout
+
+- **Decision: no per-account lockout.** Locking an account after N failed
+  password attempts is a denial-of-service vector against the firm: anyone who
+  knows `junel@asinta.ph` or `rei@asinta.ph` could intentionally fail N sign-ins
+  and lock the Founders out of the books. NIST SP 800-63B advises against
+  account lockout for this reason. **TOTP MFA (§5) is the real control**: a
+  guessed password cannot open a Founder session without the 6-digit code.
+- **Server-side login (`/api/auth/login`).** `AuthProvider.login()` routes
+  sign-in through `POST /api/auth/login` before calling Supabase Auth. That puts
+  `RATE_LIMITS.authLogin` (**10 attempts per 5 minutes per IP**, keyed by IP
+  only via `getLoginRateLimitIdentity()`) in front of GoTrue.
+- **Generic errors only.** `sanitizeLoginError()` (`lib/auth/login.ts`)
+  collapses `Invalid login credentials`, `Email not confirmed`, `User not
+  found`, `User banned`, and missing `public.users` profile rows into the single
+  generic 401 message:
+  `Invalid email or password. Please check your credentials and try again.`
+  Sign-in never reveals whether an email address has an account in BALE.
+- **Supabase dashboard settings (still required):**
+  1. **Authentication → Rate Limits:** tighten `sign_in_sign_ups` from `30` to
+     `10` per 5 minutes per IP. (Note: Supabase issue #41947 in Jan 2026
+     reported under-enforcement of this limit in GoTrue — treat the dashboard
+     setting as best-effort, which is why `/api/auth/login` also enforces 10/5m
+     per IP in the app.)
+  2. **Authentication → Attack Protection (CAPTCHA):** enable hCaptcha or
+     Cloudflare Turnstile on sign-in. `/api/auth/login` forwards an optional
+     `captchaToken` to `supabase.auth.signInWithPassword`.
 
 Honest limitations:
 
 - **Single instance.** Counters live in process memory. On a horizontally scaled
   serverless platform the effective limit is `limit × instanceCount`. It reliably
-  stops stuck tabs, double submits and casual abuse; it is not a defence against a
-  distributed attacker. The production upgrade is a shared store (Upstash Redis or
-  a Supabase table) behind the same `checkRateLimit` interface.
-- **Login brute force is not covered here.** The browser calls Supabase Auth
-  directly (`signInWithPassword`), so those requests never reach this process.
-  Supabase Auth applies its own per-IP limits — configure them in
-  Authentication → Rate Limits, and consider enabling CAPTCHA (hCaptcha /
-  Cloudflare Turnstile) if credential-stuffing is observed.
+  stops stuck tabs, double submits and casual single-IP abuse; a distributed
+  botnet requires CAPTCHA at the Supabase edge plus a shared store (Upstash
+  Redis or a Supabase table) behind the same `checkRateLimit` interface.
 
 ---
 
@@ -217,23 +241,71 @@ where email = 'junel@asinta.ph';
 
 ---
 
-## 10. Backups and PITR (finding #11) — **NOT VERIFIED**
+## 10. Backups vs. CSV Exports (finding #11) — **RESTORE TEST REQUIRED**
 
-Not verifiable from this sandbox: it requires the production Supabase project.
+The live project is on **Supabase Free**, which does **not** include PITR or
+automated platform backups. Keep the two mechanisms distinct:
 
-Runbook:
+- **Backup** = restorable `pg_dump` SQL archive (`.github/workflows/backup.yml`).
+- **Export** = readable CSV for opening in Excel (`GET /api/export?table=<name>`).
+  A manual button is never a backup strategy because people forget to press it.
 
-1. Supabase Dashboard → Database → Backups: confirm the plan includes daily
-   backups and enable **PITR** (retention by plan tier).
-2. Note the retention window in this file once known.
-3. **Test a restore**, do not assume: create a branch/throwaway project, restore
-   to a chosen timestamp, then verify (a) row counts for `invoices`, `expenses`,
-   `payroll`, (b) that `audit_log` is present through the restore point, (c) that
-   `storage.objects` for the `receipts` bucket still resolve — Storage objects
-   are backed up separately from the database.
-4. Record the date and result below. An untested restore is not a backup.
+### 10a. Automated database backup (primary)
 
-| Restore test date | Performed by | Result | Retention window |
+`.github/workflows/backup.yml` runs weekly (`cron: '0 22 * * 6'`, Sunday 06:00
+Asia/Manila) and on manual `workflow_dispatch`:
+
+- Reuses the `SUPABASE_DB_URL` repository secret and the exact project-ref guard
+  from `.github/workflows/apply-migrations.yml` (refuses to run unless the URL
+  contains `mchkdkjntnbwrgmyobpd`).
+- Runs `pg_dump --schema=public --clean --if-exists --no-owner --no-privileges`,
+  verifies the dump completed (`PostgreSQL database dump complete`), writes a
+  `.sha256` checksum, and uploads both as a GitHub Actions artifact.
+
+**Restore test runbook (an untested dump is not a backup):**
+
+1. Trigger **Actions → Automated database backup → Run workflow**.
+2. Download the `bale-pg-dump-<run_id>` artifact and verify its `.sha256`.
+3. Create a throwaway Supabase project (or local Postgres instance) and restore:
+   `psql "$THROWAWAY_DB_URL" -v ON_ERROR_STOP=1 -f bale-backup-*.sql`
+4. Verify (a) row counts for `invoices`, `expenses`, `payroll`, and `workers`,
+   and (b) that `audit_log` rows are present through the backup timestamp.
+5. Record the date and result below.
+
+### 10b. Founder CSV export (secondary convenience)
+
+`GET /api/export?table=<name>` (`lib/export/csv.ts`, surfaced in **Settings →
+Export Ledger Table to CSV**):
+
+- **Founder-only enforced server-side** with `requireFounder()` (including MFA
+  assurance when `MFA_ENFORCE_FOUNDERS=true`), never a hidden UI button.
+- **Rate-limited** via `lib/rateLimit.ts` (`RATE_LIMITS.ledgerExport`: 10 per
+  hour per Founder).
+- **Logged in `public.audit_log`** (`table_name = 'export:<tableName>'`, with
+  actor, row count, and timestamp). If the audit write fails, the route **fails
+  closed** and refuses to stream the CSV.
+- **Excel-safe CSV, never JSON:** UTF-8 BOM (`\uFEFF`) so Filipino characters
+  (`Ñ`/`ñ`, `₱`) open cleanly in Excel, RFC 4180 quoting, and formula-injection
+  neutralisation (`=`, `+`, `-`, `@`).
+- **Strict allowlist:** only the 9 public ledger tables (`invoices`, `expenses`,
+  `payroll`, `advances`, `attendance`, `projects`, `clients`, `workers`,
+  `audit_log`) can be exported. `auth.*` tables, `public.users`, and password
+  hashes/tokens can never be exported.
+- **RA 10173:** exporting `workers`, `clients`, `attendance`, `payroll`, or
+  `advances` downloads personal data (worker names, contact numbers, wages) —
+  which is why every download is restricted to Founders and recorded in
+  `audit_log`.
+
+### 10c. Storage gap (receipt photos)
+
+**Neither `pg_dump` nor the CSV table export includes the receipt photos in the
+`receipts` Supabase Storage bucket.** `public.expenses.receipt_url` stores only
+the bare storage path; the image bytes live in Supabase Storage (`storage.objects`
++ S3-backed object storage). Copy receipt files separately from **Supabase
+Dashboard → Storage → `receipts`** (or via the Storage API) alongside your
+database backup schedule.
+
+| Restore test date | Performed by | Result | Artifact / retention window |
 | --- | --- | --- | --- |
 | *(not yet performed)* | | | |
 
