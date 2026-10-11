@@ -92,6 +92,10 @@ export interface CreateTeamAccountInput {
   temporaryPassword?: unknown;
   assignedProjectIds?: unknown;
   sendWelcomeEmail?: unknown;
+  includeInPayroll?: unknown;
+  payRate?: unknown;
+  payRateType?: unknown;
+  contactNumber?: unknown;
 }
 
 export interface UpdateTeamAccountInput {
@@ -100,6 +104,10 @@ export interface UpdateTeamAccountInput {
   role?: unknown;
   assignedProjectIds?: unknown;
   resetTemporaryPassword?: unknown;
+  includeInPayroll?: unknown;
+  payRate?: unknown;
+  payRateType?: unknown;
+  contactNumber?: unknown;
 }
 
 export interface AdminActionOutcome<T = Record<string, unknown>> {
@@ -328,6 +336,33 @@ export async function createTeamAccount(params: {
     await adminClient.from('project_supervisors').insert(supervisorRows);
   }
 
+  // 4b. If `includeInPayroll` is enabled for this Supervisor, provision a
+  //     1:1 linked `public.workers` row (sharing `id = newUserId`) so their
+  //     attendance, bale advances, and salary are computed in the Payroll Engine.
+  const includeInPayroll = role === 'supervisor' && Boolean(input.includeInPayroll);
+  if (includeInPayroll) {
+    const parsedRate = Number(input.payRate);
+    const payRate = Number.isFinite(parsedRate) && parsedRate >= 0 ? parsedRate : 1000;
+    const payRateType = input.payRateType === 'hourly' ? 'hourly' : 'daily';
+    const contactNumber =
+      typeof input.contactNumber === 'string' && input.contactNumber.trim()
+        ? input.contactNumber.trim()
+        : '—';
+
+    await adminClient.from('workers').upsert(
+      {
+        id: newUserId,
+        name,
+        contact_number: contactNumber,
+        position: 'Site Supervisor',
+        pay_rate: payRate,
+        pay_rate_type: payRateType,
+        active: true,
+      },
+      { onConflict: 'id' }
+    );
+  }
+
   // 5. Write audit trail (never log the temporary password).
   const auditRes = await writeUserAuditEntry(adminClient, {
     actorId: callerId,
@@ -499,6 +534,38 @@ export async function updateTeamAccount(params: {
     }
   }
 
+  // Sync 1:1 linked `public.workers` profile for Supervisor attendance & payroll.
+  if (typeof input.includeInPayroll === 'boolean' || nextRole === 'founder') {
+    const shouldInclude = nextRole === 'supervisor' && input.includeInPayroll === true;
+    if (shouldInclude) {
+      const parsedRate = Number(input.payRate);
+      const payRate = Number.isFinite(parsedRate) && parsedRate >= 0 ? parsedRate : 1000;
+      const payRateType = input.payRateType === 'hourly' ? 'hourly' : 'daily';
+      const contactNumber =
+        typeof input.contactNumber === 'string' && input.contactNumber.trim()
+          ? input.contactNumber.trim()
+          : '—';
+
+      await adminClient.from('workers').upsert(
+        {
+          id: targetUserId,
+          name: nextName,
+          contact_number: contactNumber,
+          position: 'Site Supervisor',
+          pay_rate: payRate,
+          pay_rate_type: payRateType,
+          active: true,
+        },
+        { onConflict: 'id' }
+      );
+    } else {
+      await adminClient
+        .from('workers')
+        .update({ active: false })
+        .eq('id', targetUserId);
+    }
+  }
+
   await writeUserAuditEntry(adminClient, {
     actorId: callerId,
     actorEmail: callerEmail ?? null,
@@ -604,6 +671,12 @@ export async function deleteTeamAccount(params: {
     .from('project_supervisors')
     .delete()
     .eq('supervisor_id', cleanTargetId);
+  // If this user had a 1:1 linked `public.workers` payroll profile, mark it
+  // inactive so historical attendance and payroll records remain intact.
+  await adminClient
+    .from('workers')
+    .update({ active: false })
+    .eq('id', cleanTargetId);
 
   const { error: deleteProfileError } = await adminClient
     .from('users')

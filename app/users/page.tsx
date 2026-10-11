@@ -29,7 +29,7 @@ import { generateTemporaryPassword } from '@/lib/users/admin';
 
 export default function UsersPage() {
   const { user: currentUser } = useAuth();
-  const { users, projects, projectSupervisors, refresh } = useDataStore();
+  const { users, workers, projects, projectSupervisors, refresh } = useDataStore();
   const { showToast } = useToast();
 
   const [searchQuery, setSearchQuery] = useState('');
@@ -42,6 +42,9 @@ export default function UsersPage() {
   const [newRole, setNewRole] = useState<UserRole>('supervisor');
   const [newTempPassword, setNewTempPassword] = useState(() => generateTemporaryPassword());
   const [newAssignedProjects, setNewAssignedProjects] = useState<string[]>([]);
+  const [newIncludeInPayroll, setNewIncludeInPayroll] = useState(true);
+  const [newPayRate, setNewPayRate] = useState('1200');
+  const [newContactNumber, setNewContactNumber] = useState('');
   const [sendWelcomeEmail, setSendWelcomeEmail] = useState(true);
   const [isCreating, setIsCreating] = useState(false);
 
@@ -56,16 +59,17 @@ export default function UsersPage() {
   } | null>(null);
   const [copiedCreds, setCopiedCreds] = useState(false);
 
-  // Edit Account Modal State
+  // Edit / Manage Account Modal State (handles role, sites, payroll link, temp password & delete in one modal)
   const [editingUser, setEditingUser] = useState<User | null>(null);
   const [editName, setEditName] = useState('');
   const [editRole, setEditRole] = useState<UserRole>('supervisor');
   const [editAssignedProjects, setEditAssignedProjects] = useState<string[]>([]);
+  const [editIncludeInPayroll, setEditIncludeInPayroll] = useState(false);
+  const [editPayRate, setEditPayRate] = useState('1200');
+  const [editContactNumber, setEditContactNumber] = useState('');
   const [editResetPassword, setEditResetPassword] = useState('');
   const [isUpdating, setIsUpdating] = useState(false);
-
-  // Delete Account Modal State
-  const [deletingUser, setDeletingUser] = useState<User | null>(null);
+  const [confirmingDeleteInModal, setConfirmingDeleteInModal] = useState(false);
   const [isDeleting, setIsDeleting] = useState(false);
 
   const filteredUsers = users.filter((u) => {
@@ -96,6 +100,9 @@ export default function UsersPage() {
     setNewRole('supervisor');
     setNewTempPassword(generateTemporaryPassword());
     setNewAssignedProjects([]);
+    setNewIncludeInPayroll(true);
+    setNewPayRate('1200');
+    setNewContactNumber('');
     setSendWelcomeEmail(true);
     setIsCreateOpen(true);
   };
@@ -114,6 +121,10 @@ export default function UsersPage() {
           role: newRole,
           temporaryPassword: newTempPassword,
           assignedProjectIds: newRole === 'supervisor' ? newAssignedProjects : [],
+          includeInPayroll: newRole === 'supervisor' && newIncludeInPayroll,
+          payRate: parseFloat(newPayRate) || 1200,
+          payRateType: 'daily',
+          contactNumber: newContactNumber,
           sendWelcomeEmail,
         }),
       });
@@ -146,11 +157,21 @@ export default function UsersPage() {
     const currentAssigned = projectSupervisors
       .filter((ps) => ps.supervisor_id === u.id)
       .map((ps) => ps.project_id);
+    const linkedWorker = workers.find((w) => w.id === u.id);
+
     setEditingUser(u);
     setEditName(u.name);
     setEditRole(u.role);
     setEditAssignedProjects(currentAssigned);
+    setEditIncludeInPayroll(Boolean(linkedWorker && linkedWorker.active));
+    setEditPayRate(String(linkedWorker?.pay_rate ?? 1200));
+    setEditContactNumber(
+      linkedWorker?.contact_number && linkedWorker.contact_number !== '—'
+        ? linkedWorker.contact_number
+        : ''
+    );
     setEditResetPassword('');
+    setConfirmingDeleteInModal(false);
   };
 
   const handleEditSubmit = async (e: React.FormEvent) => {
@@ -166,6 +187,10 @@ export default function UsersPage() {
           name: editName,
           role: editRole,
           assignedProjectIds: editRole === 'supervisor' ? editAssignedProjects : [],
+          includeInPayroll: editRole === 'supervisor' && editIncludeInPayroll,
+          payRate: parseFloat(editPayRate) || 1200,
+          payRateType: 'daily',
+          contactNumber: editContactNumber,
           ...(editResetPassword.trim() ? { resetTemporaryPassword: editResetPassword.trim() } : {}),
         }),
       });
@@ -197,10 +222,10 @@ export default function UsersPage() {
   };
 
   const handleDeleteConfirm = async () => {
-    if (!deletingUser || isDeleting) return;
+    if (!editingUser || isDeleting) return;
     setIsDeleting(true);
     try {
-      const response = await fetch(`/api/users?id=${encodeURIComponent(deletingUser.id)}`, {
+      const response = await fetch(`/api/users?id=${encodeURIComponent(editingUser.id)}`, {
         method: 'DELETE',
       });
       const result = await response.json();
@@ -209,8 +234,9 @@ export default function UsersPage() {
         return;
       }
 
-      showToast('success', `Deleted account ${deletingUser.name} (${deletingUser.email}).`);
-      setDeletingUser(null);
+      showToast('success', `Deleted account ${editingUser.name} (${editingUser.email}).`);
+      setEditingUser(null);
+      setConfirmingDeleteInModal(false);
       await refresh();
     } catch {
       showToast('error', 'Could not contact the BALE server to delete the account.');
@@ -329,7 +355,7 @@ export default function UsersPage() {
           <div className="space-y-1">
             <h3 className="text-sm font-bold text-navy">Asinta Architects Security Source of Truth</h3>
             <p className="text-xs text-ink-secondary leading-relaxed max-w-3xl">
-              Founders can provision accounts with a temporary password, assign roles and project sites, and remove departed team members. New accounts must set their own personal password upon first sign-in, and all permissions are enforced at the PostgreSQL Row Level Security (RLS) layer.
+              Founders can provision accounts with a temporary password, assign roles and project sites, and optionally include Supervisors in daily attendance and payroll calculations.
             </p>
           </div>
           <Badge variant="navy" size="md" className="shrink-0">
@@ -368,8 +394,8 @@ export default function UsersPage() {
               .filter((ps) => ps.supervisor_id === u.id)
               .map((ps) => ps.project_id);
             const assignedProjects = projects.filter((p) => assignedProjectIds.includes(p.id));
+            const linkedWorker = workers.find((w) => w.id === u.id && w.active);
             const isSelf = currentUser?.id === u.id;
-            const isLastFounder = u.role === 'founder' && founderCount <= 1;
 
             return (
               <div
@@ -409,8 +435,15 @@ export default function UsersPage() {
 
                   {/* Permissions Description */}
                   <div className="p-3.5 rounded-2xl bg-surface-inset/50 border border-surface-border/70 text-xs space-y-2">
-                    <div className="text-[10px] font-bold uppercase tracking-wider text-ink-secondary">
-                      Authorized Scope
+                    <div className="flex items-center justify-between gap-2">
+                      <span className="text-[10px] font-bold uppercase tracking-wider text-ink-secondary">
+                        Authorized Scope
+                      </span>
+                      {linkedWorker && (
+                        <Badge variant="success" size="sm">
+                          Payroll Roster · ₱{linkedWorker.pay_rate}/day
+                        </Badge>
+                      )}
                     </div>
                     {u.role === 'founder' ? (
                       <div className="text-ink-secondary">
@@ -443,32 +476,19 @@ export default function UsersPage() {
                   </div>
                 </div>
 
-                <div className="pt-3 border-t border-surface-border/60 flex flex-wrap items-center justify-between gap-2 text-[11px] text-ink-muted">
+                {/* Single clean action button per card */}
+                <div className="pt-3 border-t border-surface-border/60 flex items-center justify-between gap-2 text-[11px] text-ink-muted">
                   <span>Registered: {new Date(u.created_at).toLocaleDateString()}</span>
 
-                  <div className="flex items-center gap-2">
-                    <Button
-                      type="button"
-                      variant="secondary"
-                      size="sm"
-                      onClick={() => openEditModal(u)}
-                      leftIcon={<Settings2 className="w-3.5 h-3.5" />}
-                    >
-                      Manage Role &amp; Sites
-                    </Button>
-
-                    {!isSelf && !isLastFounder && (
-                      <Button
-                        type="button"
-                        variant="outline"
-                        size="sm"
-                        onClick={() => setDeletingUser(u)}
-                        leftIcon={<Trash2 className="w-3.5 h-3.5 text-status-danger" />}
-                      >
-                        Delete
-                      </Button>
-                    )}
-                  </div>
+                  <Button
+                    type="button"
+                    variant="secondary"
+                    size="sm"
+                    onClick={() => openEditModal(u)}
+                    leftIcon={<Settings2 className="w-3.5 h-3.5" />}
+                  >
+                    Manage
+                  </Button>
                 </div>
               </div>
             );
@@ -527,37 +547,78 @@ export default function UsersPage() {
           </Select>
 
           {newRole === 'supervisor' && (
-            <div className="space-y-2">
-              <label className="block text-[11px] font-bold uppercase tracking-wider text-navy">
-                Assign Project Sites ({newAssignedProjects.length} selected)
-              </label>
-              <div className="max-h-40 overflow-y-auto p-3 rounded-2xl bg-surface-inset border border-surface-border space-y-2">
-                {projects.length === 0 ? (
-                  <div className="text-ink-muted italic">No projects created yet.</div>
-                ) : (
-                  projects.map((proj) => {
-                    const checked = newAssignedProjects.includes(proj.id);
-                    return (
-                      <label
-                        key={proj.id}
-                        className="flex items-center space-x-2.5 cursor-pointer text-xs text-navy font-medium"
-                      >
-                        <input
-                          type="checkbox"
-                          checked={checked}
-                          onChange={() =>
-                            toggleProjectSelection(proj.id, newAssignedProjects, setNewAssignedProjects)
-                          }
-                          className="rounded border-surface-border text-navy focus:ring-navy"
-                        />
-                        <span>{proj.name}</span>
-                        <span className="text-[11px] text-ink-muted">({proj.location.split(',')[0]})</span>
-                      </label>
-                    );
-                  })
+            <>
+              <div className="space-y-2">
+                <label className="block text-[11px] font-bold uppercase tracking-wider text-navy">
+                  Assign Project Sites ({newAssignedProjects.length} selected)
+                </label>
+                <div className="max-h-36 overflow-y-auto p-3 rounded-2xl bg-surface-inset border border-surface-border space-y-2">
+                  {projects.length === 0 ? (
+                    <div className="text-ink-muted italic">No projects created yet.</div>
+                  ) : (
+                    projects.map((proj) => {
+                      const checked = newAssignedProjects.includes(proj.id);
+                      return (
+                        <label
+                          key={proj.id}
+                          className="flex items-center space-x-2.5 cursor-pointer text-xs text-navy font-medium"
+                        >
+                          <input
+                            type="checkbox"
+                            checked={checked}
+                            onChange={() =>
+                              toggleProjectSelection(proj.id, newAssignedProjects, setNewAssignedProjects)
+                            }
+                            className="rounded border-surface-border text-navy focus:ring-navy"
+                          />
+                          <span>{proj.name}</span>
+                          <span className="text-[11px] text-ink-muted">({proj.location.split(',')[0]})</span>
+                        </label>
+                      );
+                    })
+                  )}
+                </div>
+              </div>
+
+              <div className="p-3.5 rounded-2xl bg-surface-inset/60 border border-surface-border space-y-3">
+                <label className="flex items-start space-x-2.5 cursor-pointer">
+                  <input
+                    type="checkbox"
+                    checked={newIncludeInPayroll}
+                    onChange={(e) => setNewIncludeInPayroll(e.target.checked)}
+                    className="mt-0.5 rounded border-surface-border text-navy focus:ring-navy"
+                  />
+                  <div className="space-y-0.5">
+                    <div className="font-bold text-navy">
+                      Include Supervisor in Daily Attendance &amp; Payroll Engine
+                    </div>
+                    <div className="text-[11px] text-ink-secondary">
+                      Automatically adds this Supervisor to the site workforce roster so their daily attendance, cash advances (bale), and salary are computed in payroll runs.
+                    </div>
+                  </div>
+                </label>
+
+                {newIncludeInPayroll && (
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 pt-1">
+                    <Input
+                      label="Daily Rate (PHP ₱)"
+                      type="number"
+                      min="0"
+                      step="50"
+                      value={newPayRate}
+                      onChange={(e) => setNewPayRate(e.target.value)}
+                      required
+                    />
+                    <Input
+                      label="Contact Number"
+                      placeholder="0917XXXXXXX"
+                      value={newContactNumber}
+                      onChange={(e) => setNewContactNumber(e.target.value)}
+                    />
+                  </div>
                 )}
               </div>
-            </div>
+            </>
           )}
 
           <div className="space-y-1.5">
@@ -611,148 +672,213 @@ export default function UsersPage() {
         </form>
       </Modal>
 
-      {/* EDIT ACCOUNT / ROLE / SITES MODAL */}
+      {/* MANAGE ACCOUNT MODAL (Role, Sites, Payroll Inclusion, Temp Password & Delete in one place) */}
       <Modal
         isOpen={Boolean(editingUser)}
-        onClose={() => setEditingUser(null)}
-        title="Manage Team Account & Role"
-        description="Update role permissions, assigned project sites, or issue a new temporary password."
+        onClose={() => {
+          setEditingUser(null);
+          setConfirmingDeleteInModal(false);
+        }}
+        title="Manage Team Account"
+        description="Update role permissions, assigned project sites, payroll inclusion, or account access."
         maxWidth="lg"
       >
-        {editingUser && (
-          <form onSubmit={handleEditSubmit} className="space-y-4 text-xs">
-            <div className="p-3 rounded-xl bg-surface-inset border border-surface-border flex items-center justify-between">
-              <div>
-                <div className="font-bold text-navy">{editingUser.email}</div>
-                <div className="text-[11px] text-ink-secondary">Account ID: {editingUser.id}</div>
-              </div>
-              <Badge variant={editingUser.role === 'founder' ? 'navy' : 'warning'} size="sm">
-                Current: {editingUser.role}
-              </Badge>
-            </div>
+        {editingUser && (() => {
+          const isSelf = currentUser?.id === editingUser.id;
+          const isLastFounder = editingUser.role === 'founder' && founderCount <= 1;
 
-            <Input
-              label="Full Name"
-              value={editName}
-              onChange={(e) => setEditName(e.target.value)}
-              required
-            />
-
-            <Select
-              label="System Role"
-              value={editRole}
-              onChange={(e) => setEditRole(e.target.value as UserRole)}
-              disabled={currentUser?.id === editingUser.id}
-            >
-              <option value="supervisor">Site Supervisor (Field Attendance &amp; Assigned Sites Only)</option>
-              <option value="founder">Founder / Super Admin (Full Studio &amp; Financial Ledger)</option>
-            </Select>
-            {currentUser?.id === editingUser.id && (
-              <p className="text-[11px] text-ink-muted">
-                You cannot demote your own active Founder session.
-              </p>
-            )}
-
-            {editRole === 'supervisor' && (
-              <div className="space-y-2">
-                <label className="block text-[11px] font-bold uppercase tracking-wider text-navy">
-                  Assigned Project Sites ({editAssignedProjects.length} selected)
-                </label>
-                <div className="max-h-40 overflow-y-auto p-3 rounded-2xl bg-surface-inset border border-surface-border space-y-2">
-                  {projects.map((proj) => {
-                    const checked = editAssignedProjects.includes(proj.id);
-                    return (
-                      <label
-                        key={proj.id}
-                        className="flex items-center space-x-2.5 cursor-pointer text-xs text-navy font-medium"
-                      >
-                        <input
-                          type="checkbox"
-                          checked={checked}
-                          onChange={() =>
-                            toggleProjectSelection(proj.id, editAssignedProjects, setEditAssignedProjects)
-                          }
-                          className="rounded border-surface-border text-navy focus:ring-navy"
-                        />
-                        <span>{proj.name}</span>
-                        <span className="text-[11px] text-ink-muted">({proj.location.split(',')[0]})</span>
-                      </label>
-                    );
-                  })}
+          return (
+            <form onSubmit={handleEditSubmit} className="space-y-4 text-xs">
+              <div className="p-3 rounded-xl bg-surface-inset border border-surface-border flex items-center justify-between">
+                <div>
+                  <div className="font-bold text-navy">{editingUser.email}</div>
+                  <div className="text-[11px] text-ink-secondary">Registered: {new Date(editingUser.created_at).toLocaleDateString()}</div>
                 </div>
+                <Badge variant={editingUser.role === 'founder' ? 'navy' : 'warning'} size="sm">
+                  {editingUser.role}
+                </Badge>
               </div>
-            )}
 
-            <div className="space-y-1.5 pt-2 border-t border-surface-border">
-              <label className="block text-[11px] font-bold uppercase tracking-wider text-navy">
-                Reset to Temporary Password (Optional)
-              </label>
-              <div className="flex items-center gap-2">
-                <Input
-                  placeholder="Leave blank to keep current password"
-                  value={editResetPassword}
-                  onChange={(e) => setEditResetPassword(e.target.value)}
-                />
+              <Input
+                label="Full Name"
+                value={editName}
+                onChange={(e) => setEditName(e.target.value)}
+                required
+              />
+
+              <Select
+                label="System Role"
+                value={editRole}
+                onChange={(e) => setEditRole(e.target.value as UserRole)}
+                disabled={isSelf}
+              >
+                <option value="supervisor">Site Supervisor (Field Attendance &amp; Assigned Sites Only)</option>
+                <option value="founder">Founder / Super Admin (Full Studio &amp; Financial Ledger)</option>
+              </Select>
+              {isSelf && (
+                <p className="text-[11px] text-ink-muted">
+                  You cannot demote your own active Founder session.
+                </p>
+              )}
+
+              {editRole === 'supervisor' && (
+                <>
+                  <div className="space-y-2">
+                    <label className="block text-[11px] font-bold uppercase tracking-wider text-navy">
+                      Assigned Project Sites ({editAssignedProjects.length} selected)
+                    </label>
+                    <div className="max-h-36 overflow-y-auto p-3 rounded-2xl bg-surface-inset border border-surface-border space-y-2">
+                      {projects.map((proj) => {
+                        const checked = editAssignedProjects.includes(proj.id);
+                        return (
+                          <label
+                            key={proj.id}
+                            className="flex items-center space-x-2.5 cursor-pointer text-xs text-navy font-medium"
+                          >
+                            <input
+                              type="checkbox"
+                              checked={checked}
+                              onChange={() =>
+                                toggleProjectSelection(proj.id, editAssignedProjects, setEditAssignedProjects)
+                              }
+                              className="rounded border-surface-border text-navy focus:ring-navy"
+                            />
+                            <span>{proj.name}</span>
+                            <span className="text-[11px] text-ink-muted">({proj.location.split(',')[0]})</span>
+                          </label>
+                        );
+                      })}
+                    </div>
+                  </div>
+
+                  <div className="p-3.5 rounded-2xl bg-surface-inset/60 border border-surface-border space-y-3">
+                    <label className="flex items-start space-x-2.5 cursor-pointer">
+                      <input
+                        type="checkbox"
+                        checked={editIncludeInPayroll}
+                        onChange={(e) => setEditIncludeInPayroll(e.target.checked)}
+                        className="mt-0.5 rounded border-surface-border text-navy focus:ring-navy"
+                      />
+                      <div className="space-y-0.5">
+                        <div className="font-bold text-navy">
+                          Include Supervisor in Daily Attendance &amp; Payroll Engine
+                        </div>
+                        <div className="text-[11px] text-ink-secondary">
+                          Keeps a linked Site Supervisor entry in the workforce roster so their daily attendance, cash advances (bale), and salary are computed in payroll runs.
+                        </div>
+                      </div>
+                    </label>
+
+                    {editIncludeInPayroll && (
+                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 pt-1">
+                        <Input
+                          label="Daily Rate (PHP ₱)"
+                          type="number"
+                          min="0"
+                          step="50"
+                          value={editPayRate}
+                          onChange={(e) => setEditPayRate(e.target.value)}
+                          required
+                        />
+                        <Input
+                          label="Contact Number"
+                          placeholder="0917XXXXXXX"
+                          value={editContactNumber}
+                          onChange={(e) => setEditContactNumber(e.target.value)}
+                        />
+                      </div>
+                    )}
+                  </div>
+                </>
+              )}
+
+              <div className="space-y-1.5 pt-2 border-t border-surface-border">
+                <label className="block text-[11px] font-bold uppercase tracking-wider text-navy">
+                  Reset to Temporary Password (Optional)
+                </label>
+                <div className="flex items-center gap-2">
+                  <Input
+                    placeholder="Leave blank to keep current password"
+                    value={editResetPassword}
+                    onChange={(e) => setEditResetPassword(e.target.value)}
+                  />
+                  <Button
+                    type="button"
+                    variant="secondary"
+                    size="sm"
+                    onClick={() => setEditResetPassword(generateTemporaryPassword())}
+                    leftIcon={<KeyRound className="w-3.5 h-3.5" />}
+                  >
+                    Generate Temp
+                  </Button>
+                </div>
+                <p className="text-[11px] text-ink-muted">
+                  If set, the user&apos;s password is replaced with this temporary password and they will be prompted to set a new personal password on next sign-in.
+                </p>
+              </div>
+
+              {/* Clean inline account removal section (only for non-self accounts) */}
+              {!isSelf && !isLastFounder && (
+                <div className="pt-3 border-t border-surface-border">
+                  {!confirmingDeleteInModal ? (
+                    <button
+                      type="button"
+                      onClick={() => setConfirmingDeleteInModal(true)}
+                      className="text-xs font-semibold text-status-danger hover:underline flex items-center gap-1.5"
+                    >
+                      <Trash2 className="w-3.5 h-3.5" />
+                      <span>Remove this team account…</span>
+                    </button>
+                  ) : (
+                    <div className="p-3.5 rounded-2xl bg-status-danger-bg border border-status-danger/20 text-status-danger space-y-2.5">
+                      <div className="font-bold">
+                        Permanently remove {editingUser.name} ({editingUser.email})?
+                      </div>
+                      <div className="text-[11px]">
+                        Revokes login access immediately. Historical attendance logs, payroll, and expenses remain preserved in the ledger.
+                      </div>
+                      <div className="flex items-center gap-2">
+                        <Button
+                          type="button"
+                          variant="primary"
+                          size="sm"
+                          isLoading={isDeleting}
+                          onClick={handleDeleteConfirm}
+                        >
+                          Confirm Remove
+                        </Button>
+                        <Button
+                          type="button"
+                          variant="secondary"
+                          size="sm"
+                          onClick={() => setConfirmingDeleteInModal(false)}
+                        >
+                          Keep Account
+                        </Button>
+                      </div>
+                    </div>
+                  )}
+                </div>
+              )}
+
+              <div className="pt-3 flex justify-end space-x-2">
                 <Button
                   type="button"
                   variant="secondary"
-                  size="sm"
-                  onClick={() => setEditResetPassword(generateTemporaryPassword())}
-                  leftIcon={<KeyRound className="w-3.5 h-3.5" />}
+                  onClick={() => {
+                    setEditingUser(null);
+                    setConfirmingDeleteInModal(false);
+                  }}
                 >
-                  Generate Temp
+                  Cancel
+                </Button>
+                <Button type="submit" variant="primary" isLoading={isUpdating}>
+                  Save Changes
                 </Button>
               </div>
-              <p className="text-[11px] text-ink-muted">
-                If set, the user&apos;s password is replaced with this temporary password and they will be prompted to set a new personal password on next sign-in.
-              </p>
-            </div>
-
-            <div className="pt-3 flex justify-end space-x-2">
-              <Button type="button" variant="secondary" onClick={() => setEditingUser(null)}>
-                Cancel
-              </Button>
-              <Button type="submit" variant="primary" isLoading={isUpdating}>
-                Save Changes
-              </Button>
-            </div>
-          </form>
-        )}
-      </Modal>
-
-      {/* DELETE CONFIRMATION MODAL */}
-      <Modal
-        isOpen={Boolean(deletingUser)}
-        onClose={() => setDeletingUser(null)}
-        title="Delete Team Account"
-        description="Permanently revoke this user's access to BALE."
-      >
-        {deletingUser && (
-          <div className="space-y-4 text-xs">
-            <div className="p-4 rounded-2xl bg-status-danger-bg border border-status-danger/20 text-status-danger space-y-1">
-              <div className="font-bold text-sm">
-                Delete {deletingUser.name} ({deletingUser.email})?
-              </div>
-              <div>
-                This immediately removes their login from Supabase Auth and revokes all access to BALE. Historical attendance logs and expenses they recorded will be preserved in the ledger.
-              </div>
-            </div>
-
-            <div className="pt-2 flex justify-end space-x-2">
-              <Button type="button" variant="secondary" onClick={() => setDeletingUser(null)}>
-                Cancel
-              </Button>
-              <Button
-                type="button"
-                variant="primary"
-                isLoading={isDeleting}
-                onClick={handleDeleteConfirm}
-              >
-                Confirm Delete Account
-              </Button>
-            </div>
-          </div>
-        )}
+            </form>
+          );
+        })()}
       </Modal>
     </AppShell>
   );
