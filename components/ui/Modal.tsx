@@ -54,8 +54,15 @@ export const Modal: React.FC<ModalProps> = ({
 }) => {
   const panelRef = useRef<HTMLDivElement>(null);
   const previouslyFocusedRef = useRef<HTMLElement | null>(null);
+  const onCloseRef = useRef(onClose);
+  const dismissOnEscapeRef = useRef(dismissOnEscape);
   const titleId = useId();
   const descriptionId = useId();
+
+  useEffect(() => {
+    onCloseRef.current = onClose;
+    dismissOnEscapeRef.current = dismissOnEscape;
+  }, [onClose, dismissOnEscape]);
 
   useEffect(() => {
     if (!isOpen) return;
@@ -63,18 +70,29 @@ export const Modal: React.FC<ModalProps> = ({
     previouslyFocusedRef.current = (document.activeElement as HTMLElement) || null;
     document.body.style.overflow = 'hidden';
 
-    // Move focus into the dialog so keyboard and screen-reader users are not
-    // left behind on the page underneath.
+    // Move focus into the dialog ONLY when it first opens (not on every parent
+    // re-render while the user is typing in an input inside the modal).
     const frame = window.requestAnimationFrame(() => {
       const panel = panelRef.current;
       if (!panel) return;
+      const active = document.activeElement as HTMLElement | null;
+      if (active && panel.contains(active)) return;
+
+      const firstInput = panel.querySelector<HTMLElement>(
+        'input:not([disabled]):not([type="hidden"]), select:not([disabled]), textarea:not([disabled])'
+      );
+      if (firstInput && firstInput.offsetParent !== null) {
+        firstInput.focus();
+        return;
+      }
+
       const focusable = getFocusable(panel);
       (focusable[0] || panel).focus();
     });
 
     const handleKeyDown = (event: KeyboardEvent) => {
       if (event.key === 'Escape') {
-        if (dismissOnEscape) onClose();
+        if (dismissOnEscapeRef.current) onCloseRef.current();
         // Otherwise swallow the key entirely: leaving it unhandled would let a
         // keydown listener further up the tree act on it.
         event.preventDefault();
@@ -115,7 +133,7 @@ export const Modal: React.FC<ModalProps> = ({
       // Return focus to whatever opened the dialog.
       previouslyFocusedRef.current?.focus?.();
     };
-  }, [isOpen, onClose, dismissOnEscape]);
+  }, [isOpen]);
 
   if (!isOpen) return null;
 
