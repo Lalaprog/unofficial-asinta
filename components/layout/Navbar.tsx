@@ -189,6 +189,8 @@ export const Navbar: React.FC<NavbarProps> = () => {
     attendance,
     payroll,
     projects,
+    workers,
+    users,
     getProjectsForSupervisor,
     refresh,
   } = useDataStore();
@@ -294,6 +296,14 @@ export const Navbar: React.FC<NavbarProps> = () => {
       dismissNotification(item.signature);
     }
     setShowNotifications(false);
+    const [basePath, query] = item.href.split('?');
+    if (basePath === '/attendance' && pathname === '/attendance') {
+      const targetTab = new URLSearchParams(query || '').get('tab') || 'terminal';
+      setLocalAttendanceTab(targetTab);
+      window.history.replaceState(null, '', item.href);
+      window.dispatchEvent(new CustomEvent('bale:attendance-tab', { detail: targetTab }));
+      return;
+    }
     router.push(item.href);
   };
 
@@ -351,12 +361,25 @@ export const Navbar: React.FC<NavbarProps> = () => {
   const allNotifications: ActionNotification[] = [];
 
   if (isFounder) {
-    const unverifiedSelfLogs = attendance.filter(
-      (a) =>
-        a.worker_id === a.recorded_by &&
-        !a.is_founder_override &&
-        (a.status === 'present' || a.status === 'half_day')
-    );
+    const unverifiedSelfLogs = attendance.filter((a) => {
+      if (a.is_founder_override) return false;
+      if (a.status !== 'present' && a.status !== 'half_day') return false;
+      if (a.worker_id === a.recorded_by) return true;
+      const notes = a.notes || '';
+      if (notes.includes('Pending Founder Review') || notes.includes('Founder Review:')) {
+        return true;
+      }
+      const w = workers.find((item) => item.id === a.worker_id);
+      if (!w) return false;
+      return (
+        w.position.toLowerCase().includes('supervisor') ||
+        users.some(
+          (u) =>
+            u.role === 'supervisor' &&
+            (u.id === w.id || u.name.trim().toLowerCase() === w.name.trim().toLowerCase())
+        )
+      );
+    });
     if (unverifiedSelfLogs.length > 0) {
       const sigIds = unverifiedSelfLogs.map((a) => `${a.id}:${a.status}`).sort().join('|');
       allNotifications.push({
