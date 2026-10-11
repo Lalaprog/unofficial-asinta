@@ -25,6 +25,8 @@ function makeMockAdminClient(options?: {
   const deleteUserSpy = vi.fn(async () => ({ data: {}, error: null }));
   const auditInsertSpy = vi.fn(async () => ({ error: null }));
   const supervisorInsertSpy = vi.fn(async () => ({ error: null }));
+  const workerUpsertSpy = vi.fn(async () => ({ error: null }));
+  const workerDeactivateSpy = vi.fn(async () => ({ error: null }));
   const attendanceNullSpy = vi.fn(async () => ({ error: null }));
   const expensesNullSpy = vi.fn(async () => ({ error: null }));
 
@@ -57,6 +59,12 @@ function makeMockAdminClient(options?: {
         return {
           insert: supervisorInsertSpy,
           delete: () => ({ eq: async () => ({ error: null }) }),
+        };
+      }
+      if (table === 'workers') {
+        return {
+          upsert: workerUpsertSpy,
+          update: () => ({ eq: workerDeactivateSpy }),
         };
       }
       if (table === 'attendance') {
@@ -133,6 +141,8 @@ function makeMockAdminClient(options?: {
     deleteUserSpy,
     auditInsertSpy,
     supervisorInsertSpy,
+    workerUpsertSpy,
+    workerDeactivateSpy,
     attendanceNullSpy,
     expensesNullSpy,
   };
@@ -239,6 +249,39 @@ describe('createTeamAccount', () => {
     expect(res.status).toBe(409);
     expect(createUserSpy).not.toHaveBeenCalled();
   });
+
+  it('provisions a 1:1 linked Site Supervisor worker row when includeInPayroll is true', async () => {
+    const { client, workerUpsertSpy } = makeMockAdminClient();
+
+    const res = await createTeamAccount({
+      callerId: 'founder-1',
+      input: {
+        name: 'Engr. Marco Reyes',
+        email: 'marco@asinta.ph',
+        role: 'supervisor',
+        temporaryPassword: 'TempPassword2026!',
+        includeInPayroll: true,
+        payRate: 1250,
+        payRateType: 'daily',
+        contactNumber: '09171234567',
+      },
+      adminClient: client,
+    });
+
+    expect(res.status).toBe(201);
+    expect(workerUpsertSpy).toHaveBeenCalledWith(
+      {
+        id: 'new-user-1',
+        name: 'Engr. Marco Reyes',
+        contact_number: '09171234567',
+        position: 'Site Supervisor',
+        pay_rate: 1250,
+        pay_rate_type: 'daily',
+        active: true,
+      },
+      { onConflict: 'id' }
+    );
+  });
 });
 
 describe('updateTeamAccount & deleteTeamAccount safety guards', () => {
@@ -292,7 +335,7 @@ describe('updateTeamAccount & deleteTeamAccount safety guards', () => {
   });
 
   it('detaches attendance.recorded_by and expenses.created_by before deleting a team account', async () => {
-    const { client, attendanceNullSpy, expensesNullSpy, deleteUserSpy, auditInsertSpy } =
+    const { client, attendanceNullSpy, expensesNullSpy, workerDeactivateSpy, deleteUserSpy, auditInsertSpy } =
       makeMockAdminClient();
 
     const res = await deleteTeamAccount({
@@ -306,6 +349,7 @@ describe('updateTeamAccount & deleteTeamAccount safety guards', () => {
     expect(res.body.ok).toBe(true);
     expect(attendanceNullSpy).toHaveBeenCalledWith('recorded_by', 'sup-1');
     expect(expensesNullSpy).toHaveBeenCalledWith('created_by', 'sup-1');
+    expect(workerDeactivateSpy).toHaveBeenCalledWith('id', 'sup-1');
     expect(deleteUserSpy).toHaveBeenCalledWith('sup-1');
     expect(auditInsertSpy).toHaveBeenCalledTimes(1);
   });

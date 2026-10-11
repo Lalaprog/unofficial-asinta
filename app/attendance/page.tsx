@@ -4,13 +4,16 @@ import React, { useState, useEffect } from 'react';
 import { AppShell } from '@/components/layout/AppShell';
 import { useDataStore } from '@/lib/data/store';
 import { useAuth } from '@/lib/auth/authContext';
-import { AttendanceStatus } from '@/types';
+import { AttendanceStatus, Worker } from '@/types';
 import {
   UserCheck,
   CheckCircle2,
   Search,
   History,
   Save,
+  HardHat,
+  UserPlus,
+  Settings2,
 } from 'lucide-react';
 import { Button } from '@/components/ui/Button';
 import { Badge } from '@/components/ui/Badge';
@@ -27,6 +30,9 @@ export default function AttendancePage() {
     workers,
     projects,
     attendance,
+    createWorker,
+    updateWorker,
+    toggleWorkerStatus,
     recordAttendanceBatch,
     updateAttendanceRecord,
     getProjectsForSupervisor,
@@ -44,7 +50,23 @@ export default function AttendancePage() {
     accessibleProjects[0]?.id || projects[0]?.id || ''
   );
   const [selectedDate, setSelectedDate] = useState<string>(today);
-  const [activeTab, setActiveTab] = useState<'terminal' | 'history'>('terminal');
+  const [activeTab, setActiveTab] = useState<'terminal' | 'history' | 'workforce'>('terminal');
+
+  // Workforce tab state (add & edit worker)
+  const [workerName, setWorkerName] = useState('');
+  const [workerPosition, setWorkerPosition] = useState('Mason');
+  const [workerRate, setWorkerRate] = useState('850');
+  const [workerRateType, setWorkerRateType] = useState<'daily' | 'hourly'>('daily');
+  const [workerPhone, setWorkerPhone] = useState('');
+  const [isAddingWorker, setIsAddingWorker] = useState(false);
+
+  const [editingWorker, setEditingWorker] = useState<Worker | null>(null);
+  const [editWorkerName, setEditWorkerName] = useState('');
+  const [editWorkerPosition, setEditWorkerPosition] = useState('');
+  const [editWorkerRate, setEditWorkerRate] = useState('');
+  const [editWorkerRateType, setEditWorkerRateType] = useState<'daily' | 'hourly'>('daily');
+  const [editWorkerPhone, setEditWorkerPhone] = useState('');
+  const [isSavingWorker, setIsSavingWorker] = useState(false);
 
   // Terminal active draft attendance records
   const [draftAttendance, setDraftAttendance] = useState<
@@ -200,10 +222,62 @@ export default function AttendancePage() {
     }
   };
 
-  // Filtered workers
+  const handleAddWorkerSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!workerName.trim() || isAddingWorker) return;
+    setIsAddingWorker(true);
+    const created = await createWorker({
+      name: workerName.trim(),
+      position: workerPosition.trim() || 'Mason',
+      pay_rate: parseFloat(workerRate) || 0,
+      pay_rate_type: workerRateType,
+      contact_number: workerPhone.trim() || '—',
+      active: true,
+    });
+    setIsAddingWorker(false);
+    if (created) {
+      setWorkerName('');
+      setWorkerPhone('');
+      showToast('success', `Added ${created.name} (${created.position}) to the workforce roster.`);
+    }
+  };
+
+  const openEditWorkerModal = (w: Worker) => {
+    setEditingWorker(w);
+    setEditWorkerName(w.name);
+    setEditWorkerPosition(w.position);
+    setEditWorkerRate(String(w.pay_rate));
+    setEditWorkerRateType(w.pay_rate_type);
+    setEditWorkerPhone(w.contact_number === '—' ? '' : w.contact_number);
+  };
+
+  const handleEditWorkerSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!editingWorker || isSavingWorker) return;
+    setIsSavingWorker(true);
+    const updated = await updateWorker(editingWorker.id, {
+      name: editWorkerName.trim(),
+      position: editWorkerPosition.trim(),
+      pay_rate: parseFloat(editWorkerRate) || 0,
+      pay_rate_type: editWorkerRateType,
+      contact_number: editWorkerPhone.trim() || '—',
+    });
+    setIsSavingWorker(false);
+    if (updated) {
+      setEditingWorker(null);
+      showToast('success', `Updated ${updated.name}.`);
+    }
+  };
+
+  // Filtered workers (Supervisors placed at the top of the daily roster)
   const filteredWorkers = workers
     .filter((w) => w.active)
-    .filter((w) => w.name.toLowerCase().includes(searchWorker.toLowerCase()) || w.position.toLowerCase().includes(searchWorker.toLowerCase()));
+    .filter((w) => w.name.toLowerCase().includes(searchWorker.toLowerCase()) || w.position.toLowerCase().includes(searchWorker.toLowerCase()))
+    .sort((a, b) => {
+      const aSup = a.position.toLowerCase().includes('supervisor') ? 0 : 1;
+      const bSup = b.position.toLowerCase().includes('supervisor') ? 0 : 1;
+      return aSup - bSup;
+    });
 
   // Attendance summary counts for active date & project
   const presentCount = Object.values(draftAttendance).filter((d) => d.status === 'present').length;
@@ -275,66 +349,76 @@ export default function AttendancePage() {
               onClick={() => setActiveTab('history')}
               leftIcon={<History className="w-3.5 h-3.5" />}
             >
-              Logs & History
+              Logs &amp; History
+            </Button>
+            <Button
+              variant={activeTab === 'workforce' ? 'primary' : 'secondary'}
+              size="sm"
+              onClick={() => setActiveTab('workforce')}
+              leftIcon={<HardHat className="w-3.5 h-3.5" />}
+            >
+              Workforce ({workers.filter((w) => w.active).length})
             </Button>
           </div>
         </div>
 
-        {/* WORKFLOW BAR: STEP 1 (PROJECT) & STEP 2 (DATE) */}
-        <div className="p-4 sm:p-5 rounded-3xl bg-white border border-surface-border shadow-[6px_6px_18px_rgba(11,31,58,0.06),-6px_-6px_18px_rgba(255,255,255,0.95)] grid grid-cols-1 sm:grid-cols-2 gap-4 items-center">
-          <div>
-            <label className="text-[11px] font-bold text-navy uppercase tracking-wider block mb-1.5">
-              1. Project Site
-            </label>
-            <Select
-              value={selectedProjectId}
-              onChange={(e) => setSelectedProjectId(e.target.value)}
-            >
-              {accessibleProjects.map((p) => (
-                <option key={p.id} value={p.id}>
-                  {p.name} ({p.location.split(',')[0]})
-                </option>
-              ))}
-            </Select>
-          </div>
+        {/* WORKFLOW BAR: STEP 1 (PROJECT) & STEP 2 (DATE) — shown only on Daily Roster */}
+        {activeTab === 'terminal' && (
+          <div className="p-4 sm:p-5 rounded-3xl bg-white border border-surface-border shadow-[6px_6px_18px_rgba(11,31,58,0.06),-6px_-6px_18px_rgba(255,255,255,0.95)] grid grid-cols-1 sm:grid-cols-2 gap-4 items-center">
+            <div>
+              <label className="text-[11px] font-bold text-navy uppercase tracking-wider block mb-1.5">
+                1. Project Site
+              </label>
+              <Select
+                value={selectedProjectId}
+                onChange={(e) => setSelectedProjectId(e.target.value)}
+              >
+                {accessibleProjects.map((p) => (
+                  <option key={p.id} value={p.id}>
+                    {p.name} ({p.location.split(',')[0]})
+                  </option>
+                ))}
+              </Select>
+            </div>
 
-          <div>
-            <label className="text-[11px] font-bold text-navy uppercase tracking-wider block mb-1.5">
-              2. Attendance Date
-            </label>
-            <div className="grid grid-cols-3 gap-2">
-              <button
-                type="button"
-                onClick={() => setSelectedDate(today)}
-                className={`py-2 px-3 text-xs font-semibold rounded-xl border transition-all ${
-                  selectedDate === today
-                    ? 'bg-navy text-white border-navy shadow-sm'
-                    : 'bg-surface-inset text-navy border-surface-border hover:bg-slate-200'
-                }`}
-              >
-                Today
-              </button>
-              <button
-                type="button"
-                onClick={() => setSelectedDate(yesterday)}
-                className={`py-2 px-3 text-xs font-semibold rounded-xl border transition-all ${
-                  selectedDate === yesterday
-                    ? 'bg-navy text-white border-navy shadow-sm'
-                    : 'bg-surface-inset text-navy border-surface-border hover:bg-slate-200'
-                }`}
-              >
-                Yesterday
-              </button>
-              <Input
-                type="date"
-                value={selectedDate}
-                max={today}
-                onChange={(e) => setSelectedDate(e.target.value)}
-                className="py-1.5 text-xs"
-              />
+            <div>
+              <label className="text-[11px] font-bold text-navy uppercase tracking-wider block mb-1.5">
+                2. Attendance Date
+              </label>
+              <div className="grid grid-cols-3 gap-2">
+                <button
+                  type="button"
+                  onClick={() => setSelectedDate(today)}
+                  className={`py-2 px-3 text-xs font-semibold rounded-xl border transition-all ${
+                    selectedDate === today
+                      ? 'bg-navy text-white border-navy shadow-sm'
+                      : 'bg-surface-inset text-navy border-surface-border hover:bg-slate-200'
+                  }`}
+                >
+                  Today
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setSelectedDate(yesterday)}
+                  className={`py-2 px-3 text-xs font-semibold rounded-xl border transition-all ${
+                    selectedDate === yesterday
+                      ? 'bg-navy text-white border-navy shadow-sm'
+                      : 'bg-surface-inset text-navy border-surface-border hover:bg-slate-200'
+                  }`}
+                >
+                  Yesterday
+                </button>
+                <Input
+                  type="date"
+                  value={selectedDate}
+                  max={today}
+                  onChange={(e) => setSelectedDate(e.target.value)}
+                  className="py-1.5 text-xs"
+                />
+              </div>
             </div>
           </div>
-        </div>
+        )}
 
         {/* TAB 1: TERMINAL / DAILY ROSTER */}
         {activeTab === 'terminal' && (
@@ -394,11 +478,20 @@ export default function AttendancePage() {
                     {/* Top worker line */}
                     <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
                       <div>
-                        <div className="text-base font-bold text-navy">{worker.name}</div>
+                        <div className="flex items-center gap-2">
+                          <span className="text-base font-bold text-navy">{worker.name}</span>
+                          {worker.position.toLowerCase().includes('supervisor') && (
+                            <Badge variant="warning" size="sm">
+                              Supervisor
+                            </Badge>
+                          )}
+                        </div>
                         <div className="text-xs text-ink-secondary flex items-center gap-2">
                           <span>{worker.position}</span>
                           <span>·</span>
-                          <span>Daily Rate: ₱{worker.pay_rate}</span>
+                          <span>
+                            {worker.pay_rate_type === 'hourly' ? 'Hourly' : 'Daily'} Rate: ₱{worker.pay_rate}
+                          </span>
                         </div>
                       </div>
 
@@ -590,9 +683,14 @@ export default function AttendancePage() {
                       className="p-4 flex flex-col sm:flex-row sm:items-center justify-between gap-3 text-xs hover:bg-slate-50 transition-colors"
                     >
                       <div className="space-y-1">
-                        <div className="flex items-center space-x-2">
+                        <div className="flex items-center flex-wrap gap-2">
                           <span className="font-bold text-navy text-sm">{worker?.name}</span>
                           <span className="text-ink-secondary">({worker?.position})</span>
+                          {rec.worker_id === rec.recorded_by && (
+                            <Badge variant="warning" size="sm">
+                              Supervisor Self-Attendance
+                            </Badge>
+                          )}
                           {rec.is_founder_override && (
                             <Badge variant="navy" size="sm">
                               Founder Override
@@ -657,7 +755,246 @@ export default function AttendancePage() {
             </div>
           </div>
         )}
+
+        {/* TAB 3: WORKFORCE DIRECTORY (ADD & MANAGE WORKERS IN ONE CLEAN PLACE) */}
+        {activeTab === 'workforce' && (
+          <div className="space-y-6">
+            {/* Inline Register Worker Form */}
+            <form
+              onSubmit={handleAddWorkerSubmit}
+              className="p-5 rounded-3xl bg-white border border-surface-border shadow-sm space-y-4 text-xs"
+            >
+              <div className="flex items-center justify-between">
+                <div>
+                  <h3 className="font-bold text-navy text-sm">Register Site Worker</h3>
+                  <p className="text-xs text-ink-secondary">
+                    Newly registered workers immediately appear on the Daily Roster and Payroll Engine.
+                  </p>
+                </div>
+              </div>
+
+              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-3 items-end">
+                <div className="lg:col-span-2">
+                  <Input
+                    label="Worker Full Name"
+                    placeholder="e.g. Danilo Santos"
+                    value={workerName}
+                    onChange={(e) => setWorkerName(e.target.value)}
+                    required
+                  />
+                </div>
+
+                <div>
+                  <Select
+                    label="Craft / Position"
+                    value={workerPosition}
+                    onChange={(e) => setWorkerPosition(e.target.value)}
+                    options={[
+                      { label: 'Foreman', value: 'Foreman' },
+                      { label: 'Mason', value: 'Mason' },
+                      { label: 'Carpenter', value: 'Carpenter' },
+                      { label: 'Steelman', value: 'Steelman' },
+                      { label: 'Electrician', value: 'Electrician' },
+                      { label: 'Plumber', value: 'Plumber' },
+                      { label: 'Welder / Tinsmith', value: 'Welder' },
+                      { label: 'Painter / Finisher', value: 'Painter' },
+                      { label: 'Skilled Laborer', value: 'Laborer' },
+                      { label: 'Site Supervisor', value: 'Site Supervisor' },
+                    ]}
+                  />
+                </div>
+
+                <div>
+                  <Input
+                    label="Daily Rate (₱)"
+                    type="number"
+                    min="0"
+                    step="50"
+                    value={workerRate}
+                    onChange={(e) => {
+                      setWorkerRate(e.target.value);
+                      setWorkerRateType('daily');
+                    }}
+                    required
+                  />
+                </div>
+
+                <div>
+                  <Input
+                    label="Contact Number"
+                    placeholder="0917XXXXXXX"
+                    value={workerPhone}
+                    onChange={(e) => setWorkerPhone(e.target.value)}
+                  />
+                </div>
+              </div>
+
+              <div className="flex justify-end">
+                <Button
+                  type="submit"
+                  variant="primary"
+                  size="sm"
+                  isLoading={isAddingWorker}
+                  leftIcon={<UserPlus className="w-4 h-4" />}
+                >
+                  Add to Workforce
+                </Button>
+              </div>
+            </form>
+
+            {/* Workforce Roster List */}
+            <div className="bg-white rounded-3xl border border-surface-border shadow-sm overflow-hidden">
+              <div className="p-4 border-b border-surface-border/60 flex items-center justify-between">
+                <div>
+                  <h3 className="font-bold text-navy text-sm">Active &amp; Registered Workforce</h3>
+                  <p className="text-xs text-ink-secondary">
+                    Includes field craftsmen and Supervisors enrolled in attendance &amp; payroll.
+                  </p>
+                </div>
+                <Badge variant="neutral" size="sm">
+                  {workers.length} total
+                </Badge>
+              </div>
+
+              <div className="divide-y divide-surface-border/70">
+                {workers.map((w) => (
+                  <div
+                    key={w.id}
+                    className="p-4 flex flex-col sm:flex-row sm:items-center justify-between gap-3 text-xs hover:bg-slate-50 transition-colors"
+                  >
+                    <div className="space-y-0.5">
+                      <div className="flex items-center gap-2">
+                        <span className="font-bold text-navy text-sm">{w.name}</span>
+                        <Badge variant={w.active ? 'success' : 'neutral'} size="sm">
+                          {w.active ? 'Active' : 'Inactive'}
+                        </Badge>
+                        {w.position.toLowerCase().includes('supervisor') && (
+                          <Badge variant="warning" size="sm">
+                            Supervisor
+                          </Badge>
+                        )}
+                      </div>
+                      <div className="text-ink-secondary">
+                        {w.position} · ₱{w.pay_rate}/{w.pay_rate_type === 'hourly' ? 'hr' : 'day'}
+                        {w.contact_number && w.contact_number !== '—' ? ` · ${w.contact_number}` : ''}
+                      </div>
+                    </div>
+
+                    {isFounder && (
+                      <Button
+                        type="button"
+                        variant="secondary"
+                        size="sm"
+                        onClick={() => openEditWorkerModal(w)}
+                        leftIcon={<Settings2 className="w-3.5 h-3.5" />}
+                      >
+                        Manage
+                      </Button>
+                    )}
+                  </div>
+                ))}
+
+                {workers.length === 0 && (
+                  <EmptyState
+                    title="No workers registered yet"
+                    description="Use the form above to add craftsmen to the BALE workforce roster."
+                  />
+                )}
+              </div>
+            </div>
+          </div>
+        )}
       </div>
+
+      {/* EDIT WORKER MODAL (Founder only — single place for editing rate/craft or toggling active status) */}
+      <Modal
+        isOpen={Boolean(editingWorker)}
+        onClose={() => setEditingWorker(null)}
+        title="Manage Worker Profile"
+        description="Update craft, daily/hourly wage rate, contact number, or active roster status."
+      >
+        {editingWorker && (
+          <form onSubmit={handleEditWorkerSubmit} className="space-y-4 text-xs">
+            <Input
+              label="Full Name"
+              value={editWorkerName}
+              onChange={(e) => setEditWorkerName(e.target.value)}
+              required
+            />
+
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+              <Input
+                label="Craft / Position"
+                value={editWorkerPosition}
+                onChange={(e) => setEditWorkerPosition(e.target.value)}
+                required
+              />
+
+              <Input
+                label="Contact Number"
+                placeholder="0917XXXXXXX"
+                value={editWorkerPhone}
+                onChange={(e) => setEditWorkerPhone(e.target.value)}
+              />
+            </div>
+
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+              <Input
+                label="Wage Rate (PHP ₱)"
+                type="number"
+                min="0"
+                step="50"
+                value={editWorkerRate}
+                onChange={(e) => setEditWorkerRate(e.target.value)}
+                required
+              />
+
+              <Select
+                label="Rate Type"
+                value={editWorkerRateType}
+                onChange={(e) => setEditWorkerRateType(e.target.value as 'daily' | 'hourly')}
+                options={[
+                  { label: 'Daily Rate (₱ / day)', value: 'daily' },
+                  { label: 'Hourly Rate (₱ / hour)', value: 'hourly' },
+                ]}
+              />
+            </div>
+
+            <div className="pt-2 border-t border-surface-border flex items-center justify-between">
+              <div className="space-y-0.5">
+                <div className="font-bold text-navy">
+                  Roster Status: {editingWorker.active ? 'Active' : 'Inactive'}
+                </div>
+                <div className="text-[11px] text-ink-secondary">
+                  Inactive workers are hidden from daily attendance but kept in historical payroll.
+                </div>
+              </div>
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                onClick={async () => {
+                  const ok = await toggleWorkerStatus(editingWorker.id);
+                  if (ok) {
+                    setEditingWorker(null);
+                  }
+                }}
+              >
+                {editingWorker.active ? 'Set Inactive' : 'Set Active'}
+              </Button>
+            </div>
+
+            <div className="pt-3 flex justify-end space-x-2">
+              <Button type="button" variant="secondary" onClick={() => setEditingWorker(null)}>
+                Cancel
+              </Button>
+              <Button type="submit" variant="primary" isLoading={isSavingWorker}>
+                Save Worker
+              </Button>
+            </div>
+          </form>
+        )}
+      </Modal>
 
       {/* FOUNDER OVERRIDE MODAL */}
       <Modal

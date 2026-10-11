@@ -442,6 +442,31 @@ export const DataStoreProvider: React.FC<{ children: React.ReactNode }> = ({ chi
 
   // --- WORKER ACTIONS ---
   const createWorker = async (data: Omit<Worker, 'id' | 'created_at'>): Promise<Worker | null> => {
+    if (user?.role === 'supervisor') {
+      try {
+        const response = await fetch('/api/workers', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(data),
+        });
+        const result = (await response.json().catch(() => ({}))) as {
+          ok?: boolean;
+          worker?: Record<string, unknown>;
+          error?: string;
+        };
+        if (!response.ok || !result.ok || !result.worker) {
+          showToast('error', result.error || 'Could not register worker.');
+          return null;
+        }
+        const mapped = mapWorker(result.worker);
+        setWorkers((prev) => [...prev, mapped]);
+        return mapped;
+      } catch {
+        showToast('error', 'Could not contact the server to register worker.');
+        return null;
+      }
+    }
+
     const row = await runMutation('Create worker', (db) =>
       db.from('workers').insert(data).select().single()
     );
