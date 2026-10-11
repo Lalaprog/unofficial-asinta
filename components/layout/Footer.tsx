@@ -14,11 +14,11 @@ export const Footer: React.FC = () => {
       <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-3 lg:py-2 flex flex-col sm:flex-row items-center justify-between gap-2">
         {/* Official Asinta Corp. Trademark Lockup */}
         <div className="flex items-center space-x-2.5">
-          <div className="w-6 h-6 rounded-lg bg-surface border border-surface-border flex items-center justify-center shrink-0">
-            <AsintaEmblem size={14} />
+          <div className="w-7 h-7 rounded-lg bg-white border border-surface-border flex items-center justify-center shrink-0">
+            <AsintaEmblem size={18} />
           </div>
           <div className="flex items-center space-x-1.5">
-            <AsintaWordmark height={12} />
+            <AsintaWordmark height={15} />
             <span className="text-[9px] font-bold text-ink-muted">TM</span>
           </div>
         </div>
