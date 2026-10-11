@@ -269,27 +269,23 @@ export default function UsersPage() {
     <AppShell requireFounder={true}>
       <div className="space-y-6">
         {/* Header */}
-        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 pb-2 border-b border-surface-border/60">
+        <div className="flex items-center justify-between gap-3 pb-3 border-b border-surface-border/60">
           <div>
-            <div className="flex items-center space-x-2">
-              <span className="text-xs font-bold text-navy uppercase tracking-widest">
-                Firm Administration
-              </span>
-              <span className="text-xs text-ink-muted">·</span>
-              <span className="text-xs text-ink-secondary">Postgres Role-Based Access Control</span>
-            </div>
-            <h1 className="text-2xl sm:text-3xl font-extrabold text-navy tracking-tight mt-1">
-              Team Accounts &amp; Role Security
+            <h1 className="text-xl sm:text-2xl font-extrabold text-navy tracking-tight">
+              Team Accounts
             </h1>
+            <p className="text-xs text-ink-secondary mt-0.5">
+              Provision Founder &amp; Supervisor accounts and site assignments
+            </p>
           </div>
 
           <Button
             variant="primary"
-            size="md"
+            size="sm"
             onClick={openCreateModal}
             leftIcon={<UserPlus className="w-4 h-4" />}
           >
-            Provision Team Account
+            Add Member
           </Button>
         </div>
 

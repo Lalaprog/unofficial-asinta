@@ -109,18 +109,16 @@ export default function SettingsPage() {
     <AppShell>
       <div className="space-y-6 max-w-4xl">
         {/* Header */}
-        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 pb-2 border-b border-surface-border/60">
+        <div className="flex items-center justify-between gap-3 pb-3 border-b border-surface-border/60">
           <div>
-            <div className="flex items-center space-x-2">
-              <span className="text-xs font-bold text-navy uppercase tracking-widest">
-                {isFounder ? 'System Configurations' : 'Field Terminal Account'}
-              </span>
-              <span className="text-xs text-ink-muted">·</span>
-              <span className="text-xs text-ink-secondary">BALE v1.0 Engine</span>
-            </div>
-            <h1 className="text-2xl sm:text-3xl font-extrabold text-navy tracking-tight mt-1">
-              {isFounder ? 'Firm Settings & Integrations' : 'Supervisor Profile & Settings'}
+            <h1 className="text-xl sm:text-2xl font-extrabold text-navy tracking-tight">
+              {isFounder ? 'Firm Settings' : 'Supervisor Profile'}
             </h1>
+            <p className="text-xs text-ink-secondary mt-0.5">
+              {isFounder
+                ? 'Studio profile, two-factor security, and service integrations'
+                : 'Account details, assigned sites, and payroll roster status'}
+            </p>
           </div>
         </div>
 

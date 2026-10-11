@@ -4,6 +4,7 @@ import { ToastProvider } from '@/components/ui/Toast';
 import { AuthProvider } from '@/lib/auth/authContext';
 import { DataStoreProvider } from '@/lib/data/store';
 import { SessionWatcher } from '@/components/auth/SessionWatcher';
+import { InspectGuard } from '@/components/security/InspectGuard';
 
 export const metadata: Metadata = {
   title: 'BALE | Billing & Advance Ledger Engine — Asinta Architects',
@@ -26,6 +27,7 @@ export default function RootLayout({
               {/* Idle-session warning + honest sign-out notice. Renders nothing
                   when there is no session or while the session is healthy. */}
               <SessionWatcher />
+              <InspectGuard />
             </DataStoreProvider>
           </AuthProvider>
         </ToastProvider>

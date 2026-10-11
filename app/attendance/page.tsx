@@ -816,21 +816,28 @@ function AttendancePageInner() {
     <AppShell>
       <div key={activeTab} className="space-y-5 max-w-5xl mx-auto animate-page-enter">
         {/* Clean Dedicated Page Header for each separated view */}
-        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 pb-3 border-b border-surface-border/60">
-          <div>
-            <h1 className="text-2xl sm:text-3xl font-extrabold text-navy tracking-tight">
+        <div className="flex items-center justify-between gap-3 pb-3 border-b border-surface-border/60">
+          <div className="min-w-0">
+            <div className="flex items-center gap-2.5">
+              <h1 className="text-xl sm:text-2xl font-extrabold text-navy tracking-tight truncate">
+                {activeTab === 'history'
+                  ? 'Attendance History'
+                  : activeTab === 'workforce'
+                    ? 'Workforce Roster'
+                    : 'Daily Roll Call'}
+              </h1>
+              {activeTab === 'terminal' && existingSiteDateRecords.length > 0 && (
+                <Badge variant={hasUnsavedChanges ? 'warning' : 'success'} size="sm">
+                  {hasUnsavedChanges ? 'Unsaved Edits' : 'Synced ✓'}
+                </Badge>
+              )}
+            </div>
+            <p className="text-xs text-ink-secondary mt-0.5 truncate">
               {activeTab === 'history'
-                ? 'Attendance History & Logs'
+                ? 'Submitted daily attendance logs & approval status'
                 : activeTab === 'workforce'
-                  ? 'Site Workforce Roster'
-                  : 'Daily Site Roll Call'}
-            </h1>
-            <p className="text-xs text-ink-secondary mt-0.5">
-              {activeTab === 'history'
-                ? 'Submitted daily attendance sheets and Founder approval status'
-                : activeTab === 'workforce'
-                  ? `${workers.filter((w) => w.active).length} active craftsmen & site supervisors`
-                  : 'Select a project site and check off each crew member on site today'}
+                  ? `${workers.filter((w) => w.active).length} active craftsmen & supervisors`
+                  : `${selectedDate} · Check off crew members on site`}
             </p>
           </div>
 
@@ -840,8 +847,9 @@ function AttendancePageInner() {
               size="sm"
               onClick={() => setIsQuickAddOpen(true)}
               leftIcon={<UserPlus className="w-4 h-4" />}
+              className="shrink-0"
             >
-              Register Worker
+              Add Worker
             </Button>
           )}
         </div>
@@ -927,10 +935,10 @@ function AttendancePageInner() {
 
         {/* Active Project & Date Selector Bar (Only shown on Daily Roster tab) */}
         {activeTab === 'terminal' && (
-          <div className="p-4 rounded-2xl bg-white border border-surface-border shadow-sm grid grid-cols-1 md:grid-cols-2 gap-4 items-center">
+          <div className="p-3.5 rounded-2xl bg-white border border-surface-border shadow-xs grid grid-cols-1 md:grid-cols-2 gap-3 items-center">
             <div>
-              <label className="text-[11px] font-bold text-navy uppercase tracking-wider block mb-1">
-                1. Select Project Site
+              <label className="text-[10px] font-bold text-ink-secondary uppercase tracking-wider block mb-1">
+                Project Site
               </label>
               <Select
                 value={selectedProjectId}
@@ -949,8 +957,8 @@ function AttendancePageInner() {
             </div>
 
             <div>
-              <label className="text-[11px] font-bold text-navy uppercase tracking-wider block mb-1">
-                2. Select Attendance Date (Today or Yesterday for Supervisors)
+              <label className="text-[10px] font-bold text-ink-secondary uppercase tracking-wider block mb-1">
+                Roll Call Date
               </label>
               <div className="flex items-center space-x-2">
                 <Button
@@ -985,58 +993,34 @@ function AttendancePageInner() {
 
         {/* TAB 1: TERMINAL / DAILY ROSTER */}
         {activeTab === 'terminal' && (
-          <form onSubmit={handleBatchSubmit} className="space-y-4">
-            {/* Compact Live Count Summary Bar */}
-            <div className="grid grid-cols-2 sm:grid-cols-5 gap-2.5">
-              <div className="p-2.5 rounded-xl bg-surface-inset border border-surface-border text-navy text-center">
-                <div className="text-lg font-extrabold leading-tight">
+          <form onSubmit={handleBatchSubmit} className="space-y-3.5">
+            {/* Single-Row 5-Column Live Count Strip (Fits cleanly on 1 row on Mobile & Desktop) */}
+            <div className="grid grid-cols-5 gap-1.5 sm:gap-2.5">
+              <div className="p-2 sm:p-2.5 rounded-xl bg-white border border-surface-border text-navy text-center shadow-2xs">
+                <div className="text-sm sm:text-lg font-extrabold leading-tight tabular-nums">
                   {checkedCount}/{markableWorkers.length}
                 </div>
-                <div className="text-[10px] font-bold uppercase tracking-wider text-ink-secondary">
-                  Crew Checked
+                <div className="text-[9px] sm:text-[10px] font-bold uppercase tracking-wider text-ink-secondary truncate">
+                  Checked
                 </div>
               </div>
-              <div className="p-2.5 rounded-xl bg-status-success-bg/70 border border-status-success/20 text-status-success text-center">
-                <div className="text-lg font-extrabold leading-tight">{presentCount}</div>
-                <div className="text-[10px] font-bold uppercase tracking-wider">Present</div>
+              <div className="p-2 sm:p-2.5 rounded-xl bg-status-success-bg/70 border border-status-success/20 text-status-success text-center">
+                <div className="text-sm sm:text-lg font-extrabold leading-tight tabular-nums">{presentCount}</div>
+                <div className="text-[9px] sm:text-[10px] font-bold uppercase tracking-wider truncate">Present</div>
               </div>
-              <div className="p-2.5 rounded-xl bg-status-warning-bg/70 border border-status-warning/20 text-status-warning text-center">
-                <div className="text-lg font-extrabold leading-tight">{halfDayCount}</div>
-                <div className="text-[10px] font-bold uppercase tracking-wider">Half Day</div>
+              <div className="p-2 sm:p-2.5 rounded-xl bg-status-warning-bg/70 border border-status-warning/20 text-status-warning text-center">
+                <div className="text-sm sm:text-lg font-extrabold leading-tight tabular-nums">{halfDayCount}</div>
+                <div className="text-[9px] sm:text-[10px] font-bold uppercase tracking-wider truncate">Half Day</div>
               </div>
-              <div className="p-2.5 rounded-xl bg-status-danger-bg/70 border border-status-danger/20 text-status-danger text-center">
-                <div className="text-lg font-extrabold leading-tight">{absentCount}</div>
-                <div className="text-[10px] font-bold uppercase tracking-wider">Absent</div>
+              <div className="p-2 sm:p-2.5 rounded-xl bg-status-danger-bg/70 border border-status-danger/20 text-status-danger text-center">
+                <div className="text-sm sm:text-lg font-extrabold leading-tight tabular-nums">{absentCount}</div>
+                <div className="text-[9px] sm:text-[10px] font-bold uppercase tracking-wider truncate">Absent</div>
               </div>
-              <div className="p-2.5 rounded-xl bg-status-info-bg/70 border border-status-info/20 text-status-info text-center col-span-2 sm:col-span-1">
-                <div className="text-lg font-extrabold leading-tight">{leaveCount}</div>
-                <div className="text-[10px] font-bold uppercase tracking-wider">Leave</div>
+              <div className="p-2 sm:p-2.5 rounded-xl bg-status-info-bg/70 border border-status-info/20 text-status-info text-center">
+                <div className="text-sm sm:text-lg font-extrabold leading-tight tabular-nums">{leaveCount}</div>
+                <div className="text-[9px] sm:text-[10px] font-bold uppercase tracking-wider truncate">Leave</div>
               </div>
             </div>
-
-            {/* Already-Synced Status Banner (prevents Founder confusion & Supervisor spam) */}
-            {existingSiteDateRecords.length > 0 && (
-              <div className="p-3.5 rounded-2xl bg-status-success-bg/80 border border-status-success/25 text-xs flex flex-col sm:flex-row sm:items-center justify-between gap-2">
-                <div className="flex items-start sm:items-center gap-2.5 text-status-success">
-                  <CheckCircle2 className="w-4 h-4 shrink-0 mt-0.5 sm:mt-0" />
-                  <div>
-                    <span className="font-bold">
-                      Site Attendance Recorded &amp; Synced to Payroll Engine:
-                    </span>{' '}
-                    <span className="text-ink-secondary">
-                      {existingSiteDateRecords.length} worker record{existingSiteDateRecords.length === 1 ? '' : 's'} saved for {selectedDate}
-                      {latestSubmittedAt
-                        ? ` (${new Date(latestSubmittedAt).toLocaleTimeString('en-PH', { hour: '2-digit', minute: '2-digit' })})`
-                        : ''}
-                      . You can update any worker to Half Day or Absent below if needed.
-                    </span>
-                  </div>
-                </div>
-                <Badge variant={hasUnsavedChanges ? 'warning' : 'success'} size="sm">
-                  {hasUnsavedChanges ? 'Unsaved Edits' : 'Synced ✓'}
-                </Badge>
-              </div>
-            )}
 
             {/* Filter, Group, Quick-Add & Bulk-Action Toolbar */}
             <div className="p-3 rounded-2xl bg-white border border-surface-border shadow-sm flex flex-col lg:flex-row lg:items-center justify-between gap-2.5">
@@ -1482,20 +1466,22 @@ function AttendancePageInner() {
               )}
             </div>
 
-            {/* Bottom Submit Sticky Bar */}
-            <div className="sticky bottom-20 lg:bottom-4 z-30 p-3.5 rounded-2xl bg-white/95 backdrop-blur-md border border-surface-border shadow-2xl flex flex-col sm:flex-row sm:items-center justify-between gap-3">
-              <div className="text-xs text-ink-secondary">
+            {/* Slim Single-Line Submit Action Bar (Never overlaps worker cards with paragraphs of text) */}
+            <div className="sticky bottom-[68px] lg:bottom-12 z-20 px-3.5 py-2.5 rounded-2xl bg-white/95 backdrop-blur-md border border-surface-border shadow-[0_8px_24px_rgba(11,31,58,0.10)] flex items-center justify-between gap-3">
+              <div className="text-xs text-ink-secondary truncate min-w-0">
                 {uncheckedCount > 0 ? (
                   <span>
-                    Checked <span className="font-bold text-navy">{checkedCount} of {markableWorkers.length}</span> crew members. Mark the remaining <span className="font-bold text-status-warning">{uncheckedCount}</span> worker{uncheckedCount === 1 ? '' : 's'} to submit.
+                    <strong className="text-navy tabular-nums">{checkedCount}/{markableWorkers.length}</strong> checked ·{' '}
+                    <span className="text-status-warning font-semibold tabular-nums">{uncheckedCount} left</span>
                   </span>
                 ) : existingSiteDateRecords.length > 0 && !hasUnsavedChanges ? (
-                  <span>
-                    Attendance for <span className="font-bold text-navy">{selectedDate}</span> is synced to the Payroll Engine. Change any worker&apos;s status above if you need to update it (e.g. Half Day).
+                  <span className="inline-flex items-center gap-1.5 text-status-success font-semibold">
+                    <CheckCircle2 className="w-3.5 h-3.5 shrink-0" />
+                    <span>Synced for {selectedDate}</span>
                   </span>
                 ) : (
                   <span>
-                    All <span className="font-bold text-navy">{markableWorkers.length} crew members</span> checked ({presentCount} Present, {halfDayCount} Half Day, {absentCount} Absent, {leaveCount} Leave) for {selectedDate}.
+                    <strong className="text-navy tabular-nums">{markableWorkers.length}/{markableWorkers.length}</strong> crew checked
                   </span>
                 )}
               </div>
@@ -1507,7 +1493,7 @@ function AttendancePageInner() {
                     ? 'secondary'
                     : 'primary'
                 }
-                size="md"
+                size="sm"
                 isLoading={isSubmitting}
                 disabled={
                   isSubmitting ||
@@ -1518,19 +1504,20 @@ function AttendancePageInner() {
                 }
                 leftIcon={
                   existingSiteDateRecords.length > 0 && !hasUnsavedChanges ? (
-                    <CheckCircle2 className="w-4 h-4 text-status-success" />
+                    <CheckCircle2 className="w-3.5 h-3.5 text-status-success" />
                   ) : (
-                    <Save className="w-4 h-4" />
+                    <Save className="w-3.5 h-3.5" />
                   )
                 }
+                className="shrink-0"
               >
                 {uncheckedCount > 0
-                  ? `Check Remaining (${uncheckedCount}) to Submit`
+                  ? `Mark ${uncheckedCount} More`
                   : existingSiteDateRecords.length > 0
                     ? hasUnsavedChanges
-                      ? 'Save Attendance Changes'
-                      : 'Synced to Payroll ✓'
-                    : 'Submit Site Attendance'}
+                      ? 'Save Changes'
+                      : 'Synced ✓'
+                    : 'Submit Roll Call'}
               </Button>
             </div>
           </form>
