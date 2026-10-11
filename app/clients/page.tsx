@@ -127,7 +127,7 @@ export default function ClientsPage() {
         </div>
 
         {/* Client Cards Grid */}
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-6 auto-rows-fr">
           {filteredClients.map((client) => {
             const clientProjects = projects.filter((p) => p.client_id === client.id);
             const clientInvoices = invoices.filter((i) => i.client_id === client.id);
@@ -137,13 +137,13 @@ export default function ClientsPage() {
             return (
               <div
                 key={client.id}
-                className="bg-white rounded-3xl p-6 border border-surface-border/80 shadow-[6px_6px_18px_rgba(11,31,58,0.06),-6px_-6px_18px_rgba(255,255,255,0.95)] hover:shadow-[10px_10px_24px_rgba(11,31,58,0.09),-10px_-10px_24px_rgba(255,255,255,1)] transition-all flex flex-col justify-between"
+                className="h-full min-w-0 bg-white rounded-3xl p-6 border border-surface-border/80 shadow-[6px_6px_18px_rgba(11,31,58,0.06),-6px_-6px_18px_rgba(255,255,255,0.95)] hover:shadow-[10px_10px_24px_rgba(11,31,58,0.09),-10px_-10px_24px_rgba(255,255,255,1)] transition-all flex flex-col justify-between"
               >
-                <div className="space-y-4">
+                <div className="space-y-4 min-w-0">
                   <div className="flex items-start justify-between gap-2">
-                    <div>
-                      <h3 className="text-lg font-bold text-navy">{client.name}</h3>
-                      <div className="text-xs text-ink-secondary mt-0.5">
+                    <div className="min-w-0 flex-1">
+                      <h3 className="text-lg font-bold text-navy truncate">{client.name}</h3>
+                      <div className="text-xs text-ink-secondary mt-0.5 truncate">
                         Attn: <span className="font-semibold text-navy">{client.contact_person}</span>
                       </div>
                     </div>

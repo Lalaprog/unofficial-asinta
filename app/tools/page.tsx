@@ -150,7 +150,7 @@ export default function ToolsPage() {
         </div>
 
         {/* Tools Grid */}
-        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6 auto-rows-fr">
           {filteredTools.map((tool) => {
             const proj = projects.find((p) => p.id === tool.project_id);
 
@@ -166,9 +166,9 @@ export default function ToolsPage() {
             return (
               <div
                 key={tool.id}
-                className="p-5 rounded-3xl bg-white border border-surface-border shadow-[5px_5px_15px_rgba(11,31,58,0.05),-5px_-5px_15px_rgba(255,255,255,0.95)] hover:border-navy/30 transition-all flex flex-col justify-between"
+                className="h-full min-w-0 p-5 rounded-3xl bg-white border border-surface-border shadow-[5px_5px_15px_rgba(11,31,58,0.05),-5px_-5px_15px_rgba(255,255,255,0.95)] hover:border-navy/30 transition-all flex flex-col justify-between"
               >
-                <div className="space-y-3">
+                <div className="space-y-3 min-w-0">
                   <div className="flex items-start justify-between gap-2">
                     <div className="w-10 h-10 rounded-2xl bg-surface-inset text-navy flex items-center justify-center border border-surface-border shadow-[inset_1px_1px_3px_rgba(11,31,58,0.06)] shrink-0">
                       <Wrench className="w-5 h-5 text-navy" />

@@ -132,27 +132,24 @@ export default function AdvancesPage() {
         </div>
 
         {/* Bale Overview Cards */}
-        <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
-          <div className="p-5 rounded-3xl bg-white border border-surface-border shadow-sm">
-            <div className="text-xs font-semibold text-ink-secondary uppercase">Active Bale Balance</div>
-            <div className="text-2xl font-bold text-navy mt-1">{formatPHP(totalOutstandingBale)}</div>
-            <div className="text-[11px] text-ink-muted mt-0.5">Deductible in upcoming payroll runs</div>
+        <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 auto-rows-fr">
+          <div className="h-full p-5 rounded-2xl bg-white border border-surface-border shadow-sm flex flex-col justify-between">
+            <div className="text-xs font-semibold text-ink-secondary uppercase truncate">Active Bale Balance</div>
+            <div className="text-2xl font-bold text-navy mt-1 tabular-nums truncate">{formatPHP(totalOutstandingBale)}</div>
           </div>
 
-          <div className="p-5 rounded-3xl bg-white border border-surface-border shadow-sm">
-            <div className="text-xs font-semibold text-ink-secondary uppercase">Workers with Advances</div>
-            <div className="text-2xl font-bold text-navy mt-1">
+          <div className="h-full p-5 rounded-2xl bg-white border border-surface-border shadow-sm flex flex-col justify-between">
+            <div className="text-xs font-semibold text-ink-secondary uppercase truncate">Workers with Advances</div>
+            <div className="text-2xl font-bold text-navy mt-1 tabular-nums">
               {new Set(projectScopedAdvances.filter((a) => a.status === 'active' || a.status === 'partially_deducted').map((a) => a.worker_id)).size}
             </div>
-            <div className="text-[11px] text-ink-muted mt-0.5">Active site craftsmen</div>
           </div>
 
-          <div className="p-5 rounded-3xl bg-white border border-surface-border shadow-sm">
-            <div className="text-xs font-semibold text-ink-secondary uppercase">Total Repaid to Date</div>
-            <div className="text-2xl font-bold text-status-success mt-1">
+          <div className="h-full p-5 rounded-2xl bg-white border border-surface-border shadow-sm flex flex-col justify-between">
+            <div className="text-xs font-semibold text-ink-secondary uppercase truncate">Total Repaid to Date</div>
+            <div className="text-2xl font-bold text-status-success mt-1 tabular-nums truncate">
               {formatPHP(projectScopedAdvances.reduce((sum, a) => sum + Number(a.amount_deducted || 0), 0))}
             </div>
-            <div className="text-[11px] text-status-success mt-0.5">Recovered via payroll deductions</div>
           </div>
         </div>
 

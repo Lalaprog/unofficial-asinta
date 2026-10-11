@@ -35,7 +35,7 @@ export const StatCard: React.FC<StatCardProps> = ({
       onClick={onClick}
       className={twMerge(
         clsx(
-          'p-5 rounded-2xl bg-white border transition-all duration-200 flex flex-col justify-between',
+          'h-full min-w-0 p-5 rounded-2xl bg-white border transition-all duration-200 flex flex-col justify-between',
           highlight
             ? 'border-navy/30 bg-gradient-to-br from-white to-slate-50/70 shadow-[7px_7px_20px_rgba(11,31,58,0.08),-7px_-7px_20px_rgba(255,255,255,0.95)]'
             : alert
@@ -46,14 +46,14 @@ export const StatCard: React.FC<StatCardProps> = ({
         )
       )}
     >
-      <div className="flex items-start justify-between gap-2">
-        <span className="text-xs font-semibold uppercase tracking-wider text-ink-secondary">
+      <div className="flex items-start justify-between gap-2 min-w-0">
+        <span className="text-xs font-semibold uppercase tracking-wider text-ink-secondary truncate">
           {title}
         </span>
         {icon && (
           <div
             className={clsx(
-              'p-2 rounded-xl text-navy',
+              'p-2 rounded-xl text-navy shrink-0',
               alert
                 ? 'bg-status-danger-bg/60 text-status-danger'
                 : 'bg-surface-inset text-navy shadow-[inset_1px_1px_3px_rgba(11,31,58,0.06)]'
@@ -64,16 +64,16 @@ export const StatCard: React.FC<StatCardProps> = ({
         )}
       </div>
 
-      <div className="mt-3">
-        <div className="text-2xl lg:text-3xl font-bold tracking-tight text-navy">
+      <div className="mt-3 min-w-0">
+        <div className="text-2xl lg:text-3xl font-bold tracking-tight text-navy tabular-nums truncate">
           {value}
         </div>
         {(subtitle || trend) && (
-          <div className="mt-1.5 flex items-center gap-2 text-xs text-ink-secondary">
+          <div className="mt-1.5 flex items-center gap-2 text-xs text-ink-secondary min-w-0">
             {trend && (
               <span
                 className={clsx(
-                  'font-semibold px-1.5 py-0.5 rounded-md text-[11px]',
+                  'font-semibold px-1.5 py-0.5 rounded-md text-[11px] shrink-0',
                   trend.isPositive
                     ? 'bg-status-success-bg text-status-success border border-status-success/20'
                     : 'bg-status-danger-bg text-status-danger border border-status-danger/20'
@@ -82,7 +82,7 @@ export const StatCard: React.FC<StatCardProps> = ({
                 {trend.value}
               </span>
             )}
-            {subtitle && <span>{subtitle}</span>}
+            {subtitle && <span className="truncate">{subtitle}</span>}
           </div>
         )}
       </div>

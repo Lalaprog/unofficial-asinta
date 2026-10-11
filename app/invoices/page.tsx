@@ -20,6 +20,7 @@ import { Badge } from '@/components/ui/Badge';
 import { Input, Textarea } from '@/components/ui/Input';
 import { Select } from '@/components/ui/Select';
 import { Modal } from '@/components/ui/Modal';
+import { AsintaEmblem, AsintaWordmark } from '@/components/ui/AsintaLogo';
 import { RequestPaymentModal } from '@/components/email/RequestPaymentModal';
 import { EmailHistoryModal } from '@/components/email/EmailHistoryModal';
 import { buildReminderSMS, estimateSMSSegments } from '@/lib/sms/templates';
@@ -560,11 +561,16 @@ export default function InvoicesPage() {
                 {/* Header */}
                 <div className="flex items-start justify-between pb-6 border-b-2 border-navy">
                   <div>
-                    <h2 className="text-2xl font-black tracking-tight text-navy">ASINTA ARCHITECTS</h2>
-                    <div className="text-xs uppercase font-semibold text-ink-secondary tracking-widest mt-0.5">
-                      Design · Build · Management
+                    <div className="flex items-center gap-3">
+                      <AsintaEmblem size={34} />
+                      <div>
+                        <AsintaWordmark height={22} />
+                        <div className="text-[10px] uppercase font-semibold text-ink-secondary tracking-widest mt-1">
+                          Design · Build · Management
+                        </div>
+                      </div>
                     </div>
-                    <div className="text-[11px] text-ink-muted mt-2">
+                    <div className="text-[11px] text-ink-muted mt-2.5">
                       Ayala Greenfield Estates / Batangas Studio · Philippines<br />
                       Principal Architects: Ar. Junel Buyagon · Ar. Rei Viviene Buyagon<br />
                       Contact: +63 917 800 2026 | info@asinta.ph
