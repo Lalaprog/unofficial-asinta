@@ -109,9 +109,9 @@ export default function SettingsPage() {
     <AppShell>
       <div className="space-y-6 max-w-4xl">
         {/* Header */}
-        <div className="flex items-center justify-between gap-3 pb-3 border-b border-surface-border/60">
+        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pb-3 border-b border-surface-border/60">
           <div>
-            <h1 className="text-xl sm:text-2xl font-extrabold text-navy tracking-tight">
+            <h1 className="text-xl sm:text-2xl font-semibold text-navy tracking-tight">
               {isFounder ? 'Firm Settings' : 'Supervisor Profile'}
             </h1>
             <p className="text-xs text-ink-secondary mt-0.5">
@@ -142,13 +142,13 @@ export default function SettingsPage() {
             <CardContent className="space-y-4 text-xs">
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                 <div>
-                  <label className="font-bold text-navy uppercase text-[11px] block mb-1">Full Name</label>
+                  <label className="text-xs font-semibold text-ink-secondary block mb-1">Full Name</label>
                   <div className="p-2.5 rounded-xl bg-surface-inset border border-surface-border font-semibold text-navy">
                     {user.name}
                   </div>
                 </div>
                 <div>
-                  <label className="font-bold text-navy uppercase text-[11px] block mb-1">Account Email</label>
+                  <label className="text-xs font-semibold text-ink-secondary block mb-1">Account Email</label>
                   <div className="p-2.5 rounded-xl bg-surface-inset border border-surface-border font-semibold text-navy">
                     {user.email}
                   </div>
@@ -156,7 +156,7 @@ export default function SettingsPage() {
               </div>
 
               <div>
-                <label className="font-bold text-navy uppercase text-[11px] block mb-1.5">
+                <label className="text-xs font-semibold text-ink-secondary block mb-1.5">
                   Assigned Project Sites ({assignedProjects.length})
                 </label>
                 {assignedProjects.length > 0 ? (
@@ -213,28 +213,28 @@ export default function SettingsPage() {
           <CardContent>
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 text-xs">
               <div>
-                <label className="font-bold text-navy uppercase text-[11px] block mb-1">Firm Name</label>
+                <label className="text-xs font-semibold text-ink-secondary block mb-1">Firm Name</label>
                 <div className="p-2.5 rounded-xl bg-surface-inset border border-surface-border font-semibold text-navy">
                   Asinta Architects (Design & Build)
                 </div>
               </div>
 
               <div>
-                <label className="font-bold text-navy uppercase text-[11px] block mb-1">Studio Location</label>
+                <label className="text-xs font-semibold text-ink-secondary block mb-1">Studio Location</label>
                 <div className="p-2.5 rounded-xl bg-surface-inset border border-surface-border font-semibold text-navy">
                   Ayala Greenfield / Sto. Tomas, Batangas, Philippines
                 </div>
               </div>
 
               <div>
-                <label className="font-bold text-navy uppercase text-[11px] block mb-1">Founders & Principals</label>
+                <label className="text-xs font-semibold text-ink-secondary block mb-1">Founders & Principals</label>
                 <div className="p-2.5 rounded-xl bg-surface-inset border border-surface-border font-semibold text-navy">
                   Ar. Junel Buyagon & Ar. Rei Viviene Buyagon
                 </div>
               </div>
 
               <div>
-                <label className="font-bold text-navy uppercase text-[11px] block mb-1">Primary Currency</label>
+                <label className="text-xs font-semibold text-ink-secondary block mb-1">Primary Currency</label>
                 <div className="p-2.5 rounded-xl bg-surface-inset border border-surface-border font-semibold text-navy">
                   Philippine Peso (PHP ₱)
                 </div>

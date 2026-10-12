@@ -18,7 +18,7 @@ export const Badge: React.FC<BadgeProps> = ({
 }) => {
   const sizeClasses = {
     sm: 'px-2 py-0.5 text-[11px] font-medium rounded-md',
-    md: 'px-2.5 py-1 text-xs font-semibold rounded-lg',
+    md: 'px-2.5 py-1 text-xs font-medium rounded-lg',
   };
 
   // Status variants use the semantic status tokens (see tailwind.config.js) so
@@ -37,7 +37,7 @@ export const Badge: React.FC<BadgeProps> = ({
     <span
       className={twMerge(
         clsx(
-          'inline-flex items-center justify-center font-sans uppercase tracking-wider select-none',
+          'inline-flex items-center justify-center font-sans font-medium select-none',
           sizeClasses[size],
           variantClasses[variant],
           className

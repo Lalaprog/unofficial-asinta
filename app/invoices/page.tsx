@@ -14,6 +14,7 @@ import {
   Printer,
   Mail,
   History,
+  MoreHorizontal,
 } from 'lucide-react';
 import { Button } from '@/components/ui/Button';
 import { Badge } from '@/components/ui/Badge';
@@ -61,6 +62,7 @@ export default function InvoicesPage() {
   const [isSmsModalOpen, setIsSmsModalOpen] = useState(false);
   const [isEmailModalOpen, setIsEmailModalOpen] = useState(false);
   const [isEmailHistoryOpen, setIsEmailHistoryOpen] = useState(false);
+  const [expandedInvoiceActions, setExpandedInvoiceActions] = useState<string | null>(null);
 
   const [selectedInvoice, setSelectedInvoice] = useState<Invoice | null>(null);
   const [paymentAmount, setPaymentAmount] = useState('');
@@ -215,9 +217,9 @@ export default function InvoicesPage() {
     <AppShell requireFounder={true}>
       <div className="space-y-6">
         {/* Header */}
-        <div className="flex items-center justify-between gap-3 pb-3 border-b border-surface-border/60">
+        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pb-3 border-b border-surface-border/60">
           <div>
-            <h1 className="text-xl sm:text-2xl font-extrabold text-navy tracking-tight">
+            <h1 className="text-xl sm:text-2xl font-semibold text-navy tracking-tight">
               Invoices &amp; Billing
             </h1>
             <p className="text-xs text-ink-secondary mt-0.5">
@@ -270,7 +272,7 @@ export default function InvoicesPage() {
         </div>
 
         {/* Invoices List / Table */}
-        <div className="bg-white rounded-3xl border border-surface-border shadow-[6px_6px_18px_rgba(11,31,58,0.06),-6px_-6px_18px_rgba(255,255,255,0.95)] overflow-hidden">
+        <div className="bg-white rounded-xl border border-surface-border overflow-hidden">
           <div className="divide-y divide-surface-border/70">
             {filteredInvoices.map((inv) => {
               const proj = projects.find((p) => p.id === inv.project_id);
@@ -289,22 +291,22 @@ export default function InvoicesPage() {
               return (
                 <div
                   key={inv.id}
-                  className="p-5 flex flex-col lg:flex-row lg:items-center justify-between gap-4 hover:bg-slate-50/60 transition-colors"
+                  className="p-4 sm:p-5 flex flex-col lg:flex-row lg:items-center justify-between gap-4 hover:bg-surface transition-colors"
                 >
                   {/* Left: Invoice info */}
-                  <div className="space-y-1">
+                  <div className="min-w-0 flex-1 space-y-1">
                     <div className="flex items-center space-x-2">
                       <span className="font-mono font-bold text-sm text-navy">{inv.invoice_number}</span>
                       <Badge variant={statusBadgeVariant} size="sm">
                         {inv.status.replace('_', ' ')}
                       </Badge>
                     </div>
-                    <div className="font-bold text-sm text-ink-primary">{proj?.name}</div>
-                    <div className="text-xs text-ink-secondary">
+                    <div className="break-words font-semibold text-sm text-ink-primary">{proj?.name}</div>
+                    <div className="break-words text-xs text-ink-secondary">
                       Client: <span className="font-medium text-navy">{client?.name}</span> ({client?.contact_person})
                     </div>
                     {inv.notes && (
-                      <div className="text-xs text-ink-muted italic pt-0.5">{inv.notes}</div>
+                      <div className="break-words text-xs text-ink-muted italic pt-0.5">{inv.notes}</div>
                     )}
                   </div>
 
@@ -331,74 +333,104 @@ export default function InvoicesPage() {
                     </div>
                   </div>
 
-                  {/* Right: Actions */}
-                  <div className="flex items-center flex-wrap gap-2">
-                    <Button
-                      variant="secondary"
-                      size="sm"
-                      onClick={() => {
-                        setSelectedInvoice(inv);
-                        setIsPreviewModalOpen(true);
-                      }}
-                      leftIcon={<Eye className="w-3.5 h-3.5" />}
-                    >
-                      View Invoice
-                    </Button>
-
-                    {inv.status !== 'paid' && (
-                      <Button
-                        variant="soft"
-                        size="sm"
-                        onClick={() => {
-                          setSelectedInvoice(inv);
-                          setPaymentAmount(String(balance));
-                          setIsPaymentModalOpen(true);
-                        }}
-                        leftIcon={<DollarSign className="w-3.5 h-3.5" />}
-                      >
-                        Record Payment
-                      </Button>
-                    )}
-
-                    {inv.status !== 'paid' && inv.status !== 'cancelled' && (
+                  {/* Primary invoice actions, with communication/history actions tucked away. */}
+                  <div className="flex min-w-0 flex-col items-start gap-2 lg:items-end">
+                    <div className="flex flex-wrap items-center gap-2">
                       <Button
                         variant="secondary"
                         size="sm"
                         onClick={() => {
                           setSelectedInvoice(inv);
-                          setIsEmailModalOpen(true);
+                          setIsPreviewModalOpen(true);
                         }}
-                        leftIcon={<Mail className="w-3.5 h-3.5 text-navy" />}
-                        title="Send Request for Payment email"
+                        leftIcon={<Eye className="w-3.5 h-3.5" />}
                       >
-                        Send Request for Payment
+                        View invoice
                       </Button>
-                    )}
 
-                    {inv.status !== 'paid' && inv.status !== 'cancelled' && (
+                      {inv.status !== 'paid' && (
+                        <Button
+                          variant="primary"
+                          size="sm"
+                          onClick={() => {
+                            setSelectedInvoice(inv);
+                            setPaymentAmount(String(balance));
+                            setIsPaymentModalOpen(true);
+                          }}
+                          leftIcon={<DollarSign className="w-3.5 h-3.5" />}
+                        >
+                          Record payment
+                        </Button>
+                      )}
+
                       <Button
-                        variant="secondary"
+                        type="button"
+                        variant="ghost"
                         size="sm"
-                        onClick={() => openSmsModal(inv)}
-                        leftIcon={<Send className="w-3.5 h-3.5 text-navy" />}
-                        title="Send PhilSMS Payment Reminder"
+                        aria-label={`More actions for ${inv.invoice_number}`}
+                        aria-expanded={expandedInvoiceActions === inv.id}
+                        aria-controls={
+                          expandedInvoiceActions === inv.id ? `invoice-actions-${inv.id}` : undefined
+                        }
+                        onClick={() =>
+                          setExpandedInvoiceActions((current) =>
+                            current === inv.id ? null : inv.id
+                          )
+                        }
+                        leftIcon={<MoreHorizontal className="w-4 h-4" />}
                       >
-                        SMS
+                        More
                       </Button>
-                    )}
+                    </div>
 
-                    <Button
-                      variant="ghost"
-                      size="sm"
-                      onClick={() => {
-                        setSelectedInvoice(inv);
-                        setIsEmailHistoryOpen(true);
-                      }}
-                      leftIcon={<History className="w-3.5 h-3.5" />}
-                      title="View billing email history"
-                    >
-                      Email History
-                    </Button>
+                    {expandedInvoiceActions === inv.id && (
+                      <div
+                        id={`invoice-actions-${inv.id}`}
+                        role="group"
+                        aria-label={`More actions for ${inv.invoice_number}`}
+                        className="flex w-full flex-wrap gap-2 rounded-lg border border-surface-border bg-surface p-2 lg:w-auto lg:justify-end"
+                      >
+                        {inv.status !== 'paid' && inv.status !== 'cancelled' && (
+                          <>
+                            <Button
+                              variant="ghost"
+                              size="sm"
+                              onClick={() => {
+                                setSelectedInvoice(inv);
+                                setIsEmailModalOpen(true);
+                                setExpandedInvoiceActions(null);
+                              }}
+                              leftIcon={<Mail className="w-3.5 h-3.5" />}
+                            >
+                              Send payment request
+                            </Button>
+                            <Button
+                              variant="ghost"
+                              size="sm"
+                              onClick={() => {
+                                setExpandedInvoiceActions(null);
+                                void openSmsModal(inv);
+                              }}
+                              leftIcon={<Send className="w-3.5 h-3.5" />}
+                            >
+                              Send SMS reminder
+                            </Button>
+                          </>
+                        )}
+                        <Button
+                          variant="ghost"
+                          size="sm"
+                          onClick={() => {
+                            setSelectedInvoice(inv);
+                            setIsEmailHistoryOpen(true);
+                            setExpandedInvoiceActions(null);
+                          }}
+                          leftIcon={<History className="w-3.5 h-3.5" />}
+                        >
+                          Email history
+                        </Button>
+                      </div>
+                    )}
                   </div>
                 </div>
               );
@@ -561,7 +593,7 @@ export default function InvoicesPage() {
                       <AsintaEmblem size={34} />
                       <div>
                         <AsintaWordmark height={22} />
-                        <div className="text-[10px] uppercase font-semibold text-ink-secondary tracking-widest mt-1">
+                        <div className="text-[11px] font-medium text-ink-secondary mt-1">
                           Design · Build · Management
                         </div>
                       </div>
@@ -574,7 +606,7 @@ export default function InvoicesPage() {
                   </div>
 
                   <div className="text-right">
-                    <div className="text-xs font-bold text-ink-secondary uppercase">Progress Billing</div>
+                    <div className="text-xs font-medium text-ink-secondary">Progress Billing</div>
                     <div className="text-lg font-mono font-black text-navy">{selectedInvoice.invoice_number}</div>
                     <div className="mt-2 text-xs">
                       <span className="text-ink-secondary">Issue Date:</span> <span className="font-semibold">{selectedInvoice.issue_date}</span><br />
@@ -586,7 +618,7 @@ export default function InvoicesPage() {
                 {/* Bill To */}
                 <div className="grid grid-cols-2 gap-6 text-xs">
                   <div>
-                    <div className="text-[10px] font-bold uppercase tracking-wider text-ink-secondary">Billed To</div>
+                    <div className="text-[11px] font-medium text-ink-secondary">Billed To</div>
                     <div className="font-bold text-navy text-sm mt-1">{client?.name}</div>
                     <div className="text-ink-secondary mt-0.5">Attn: {client?.contact_person}</div>
                     <div className="text-ink-secondary">{client?.address}</div>
@@ -594,7 +626,7 @@ export default function InvoicesPage() {
                   </div>
 
                   <div>
-                    <div className="text-[10px] font-bold uppercase tracking-wider text-ink-secondary">Project Site</div>
+                    <div className="text-[11px] font-medium text-ink-secondary">Project Site</div>
                     <div className="font-bold text-navy text-sm mt-1">{proj?.name}</div>
                     <div className="text-ink-secondary mt-0.5">Location: {proj?.location}</div>
                     <div className="text-ink-secondary">Contract Budget: {formatPHP(proj?.budget_estimate || 0)}</div>

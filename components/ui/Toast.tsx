@@ -30,7 +30,8 @@ export const ToastProvider: React.FC<{ children: React.ReactNode }> = ({ childre
     (type: ToastType, message: string) => {
       const id = nextToastId++;
       setToasts((prev) => [...prev, { id, type, message }].slice(-4));
-      setTimeout(() => dismissToast(id), type === 'error' ? 8000 : 4500);
+      const duration = type === 'error' ? 8000 : type === 'success' ? 3500 : 4500;
+      setTimeout(() => dismissToast(id), duration);
     },
     [dismissToast]
   );
@@ -41,7 +42,7 @@ export const ToastProvider: React.FC<{ children: React.ReactNode }> = ({ childre
     <ToastContext.Provider value={value}>
       {children}
       {/* Toast viewport */}
-      <div className="fixed bottom-4 right-4 z-[9999] flex flex-col gap-2 w-[min(92vw,380px)]">
+      <div className="fixed bottom-[calc(env(safe-area-inset-bottom)+5rem)] right-4 z-[9999] flex flex-col gap-2 w-[min(92vw,380px)] lg:bottom-4">
         {toasts.map((toast) => (
           <div
             key={toast.id}

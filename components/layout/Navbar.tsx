@@ -48,6 +48,8 @@ interface ActionNotification {
   actionLabel: string;
   href: string;
   variant: 'warning' | 'danger' | 'info' | 'success';
+  actionable?: boolean;
+  priority?: number;
   dismissOnClick?: boolean;
 }
 
@@ -186,7 +188,6 @@ export const Navbar: React.FC<NavbarProps> = () => {
   const { user, logout, isFounder, isSupervisor } = useAuth();
   const {
     invoices,
-    advances,
     attendance,
     payroll,
     projects,
@@ -209,6 +210,8 @@ export const Navbar: React.FC<NavbarProps> = () => {
   const [localAttendanceTab, setLocalAttendanceTab] = useState<string>(currentTab);
   const [pendingHref, setPendingHref] = useState<string | null>(null);
   const navRef = useRef<HTMLDivElement>(null);
+  const notificationButtonRef = useRef<HTMLButtonElement>(null);
+  const accountMenuButtonRef = useRef<HTMLButtonElement>(null);
 
   const storageKey = user?.id ? `bale-dismissed-notifs:${user.id}` : null;
 
@@ -234,7 +237,7 @@ export const Navbar: React.FC<NavbarProps> = () => {
     return () => window.removeEventListener('bale:attendance-tab', onTabEvent);
   }, []);
 
-  // Close popovers on outside click
+  // Close popovers on outside click or Escape.
   useEffect(() => {
     const handleClickOutside = (event: MouseEvent) => {
       if (navRef.current && !navRef.current.contains(event.target as Node)) {
@@ -243,9 +246,21 @@ export const Navbar: React.FC<NavbarProps> = () => {
         setShowNotifications(false);
       }
     };
+    const handleEscape = (event: KeyboardEvent) => {
+      if (event.key !== 'Escape') return;
+      if (showNotifications) notificationButtonRef.current?.focus();
+      else if (showUserMenu) accountMenuButtonRef.current?.focus();
+      setOpenDropdownId(null);
+      setShowUserMenu(false);
+      setShowNotifications(false);
+    };
     document.addEventListener('mousedown', handleClickOutside);
-    return () => document.removeEventListener('mousedown', handleClickOutside);
-  }, []);
+    document.addEventListener('keydown', handleEscape);
+    return () => {
+      document.removeEventListener('mousedown', handleClickOutside);
+      document.removeEventListener('keydown', handleEscape);
+    };
+  }, [showNotifications, showUserMenu]);
 
   useEffect(() => {
     if (!storageKey || typeof window === 'undefined') return;
@@ -272,10 +287,7 @@ export const Navbar: React.FC<NavbarProps> = () => {
     }
   };
 
-  const dismissNotification = (signature: string, e?: React.MouseEvent) => {
-    if (e) {
-      e.stopPropagation();
-    }
+  const dismissNotification = (signature: string) => {
     if (!dismissedSignatures.includes(signature)) {
       persistDismissed([...dismissedSignatures, signature]);
     }
@@ -311,8 +323,11 @@ export const Navbar: React.FC<NavbarProps> = () => {
   const handleManualSync = async () => {
     if (isRefreshing) return;
     setIsRefreshing(true);
-    await refresh({ silent: true });
-    setIsRefreshing(false);
+    try {
+      await refresh({ silent: true });
+    } finally {
+      setIsRefreshing(false);
+    }
   };
 
   const isHrefActive = (href: string) => {
@@ -391,6 +406,8 @@ export const Navbar: React.FC<NavbarProps> = () => {
         actionLabel: 'Verify in Attendance History',
         href: '/attendance?tab=history',
         variant: 'warning',
+        actionable: true,
+        priority: 1,
       });
     }
 
@@ -407,26 +424,12 @@ export const Navbar: React.FC<NavbarProps> = () => {
         id: 'founder-attendance-missing',
         signature: `founder-attendance-missing:${todayStr}:${missingKey}`,
         title: "Today's Site Attendance Pending",
-        description: `${missingSitesToday.length} active project site(s) (${missingSitesToday
-          .slice(0, 2)
-          .map((p) => p.name)
-          .join(', ')}) have no attendance logged for ${todayStr} yet.`,
+        description: `${missingSitesToday.length} active site(s) have no attendance logged for ${todayStr}. Submit these roll calls so the day's workforce and Payroll records are complete.`,
         actionLabel: 'Open Roll Call',
         href: '/attendance',
         variant: 'warning',
-      });
-    }
-
-    if (todayLogs.length > 0) {
-      allNotifications.push({
-        id: 'founder-attendance-today',
-        signature: `founder-attendance-today:${todayStr}:${todayLogs.length}`,
-        title: 'Field Attendance Synced Today',
-        description: `${todayLogs.length} worker record(s) across ${todayLoggedProjectIds.size} site(s) are live and ready for Payroll.`,
-        actionLabel: 'Review Roll Call',
-        href: '/attendance',
-        variant: 'success',
-        dismissOnClick: true,
+        actionable: true,
+        priority: 2,
       });
     }
 
@@ -442,6 +445,8 @@ export const Navbar: React.FC<NavbarProps> = () => {
         actionLabel: 'Approve in Payroll Engine',
         href: '/payroll',
         variant: 'info',
+        actionable: true,
+        priority: 3,
       });
     }
 
@@ -461,35 +466,19 @@ export const Navbar: React.FC<NavbarProps> = () => {
         actionLabel: 'Collect or Send Reminder',
         href: '/invoices',
         variant: 'danger',
+        actionable: true,
+        priority: 0,
       });
     });
 
-    const activeBales = advances.filter(
-      (a) => a.status === 'active' || a.status === 'partially_deducted'
-    );
-    if (activeBales.length > 0) {
-      const baleBalance = activeBales.reduce(
-        (sum, a) => sum + Math.max(0, Number(a.amount || 0) - Number(a.amount_deducted || 0)),
-        0
-      );
-      allNotifications.push({
-        id: 'founder-active-bale',
-        signature: `founder-active-bale:${activeBales.length}:${baleBalance}`,
-        title: 'Active Worker Advances (Bale)',
-        description: `${activeBales.length} active advance(s) (${formatPHP(baleBalance)} outstanding) queued for payroll deduction.`,
-        actionLabel: 'Manage Bale Ledger',
-        href: '/advances',
-        variant: 'info',
-        dismissOnClick: true,
-      });
-    }
   } else if (isSupervisor && user) {
     const assignedSites = getProjectsForSupervisor(user.id);
     const assignedSiteIds = new Set(assignedSites.map((p) => p.id));
-    const todaySiteLogs = attendance.filter(
-      (a) => a.date === todayStr && assignedSiteIds.has(a.project_id)
+    const loggedSiteIdsToday = new Set(
+      attendance
+        .filter((record) => record.date === todayStr && assignedSiteIds.has(record.project_id))
+        .map((record) => record.project_id)
     );
-    const loggedSiteIdsToday = new Set(todaySiteLogs.map((a) => a.project_id));
     const pendingSitesToday = assignedSites.filter(
       (p) => p.status !== 'completed' && p.status !== 'on_hold' && !loggedSiteIdsToday.has(p.id)
     );
@@ -503,6 +492,8 @@ export const Navbar: React.FC<NavbarProps> = () => {
         actionLabel: 'View Supervisor Profile',
         href: '/settings',
         variant: 'warning',
+        actionable: true,
+        priority: 0,
       });
     } else if (pendingSitesToday.length > 0) {
       const pendingKey = pendingSitesToday.map((p) => p.id).sort().join(',');
@@ -512,45 +503,46 @@ export const Navbar: React.FC<NavbarProps> = () => {
         title: "Today's Daily Attendance Due",
         description: `Submit daily attendance for ${pendingSitesToday
           .map((p) => p.name)
-          .join(', ')} (${todayStr}).`,
+          .join(', ')} (${todayStr}); otherwise, crew records and Payroll will remain incomplete.`,
         actionLabel: 'Open Roll Call',
         href: '/attendance',
         variant: 'warning',
-      });
-    } else if (todaySiteLogs.length > 0) {
-      allNotifications.push({
-        id: 'sup-synced-today',
-        signature: `sup-synced-today:${todayStr}:${todaySiteLogs.length}`,
-        title: "Today's Attendance Synced to Payroll",
-        description: `${todaySiteLogs.length} worker record(s) submitted for ${todayStr} and live in the Payroll Engine.`,
-        actionLabel: 'View Attendance History',
-        href: '/attendance?tab=history',
-        variant: 'success',
-        dismissOnClick: true,
+        actionable: true,
+        priority: 1,
       });
     }
 
-    const overriddenLogs = attendance.filter(
-      (a) => assignedSiteIds.has(a.project_id) && a.is_founder_override
-    );
-    if (overriddenLogs.length > 0) {
-      const latestOverrideId = overriddenLogs[0]?.id || String(overriddenLogs.length);
+    const latestOverride = attendance
+      .filter((record) => assignedSiteIds.has(record.project_id) && record.is_founder_override)
+      .reduce<(typeof attendance)[number] | null>((latest, record) => {
+        if (!latest) return record;
+        return Date.parse(record.submitted_at) > Date.parse(latest.submitted_at) ? record : latest;
+      }, null);
+    if (latestOverride) {
+      const workerName = workers.find((worker) => worker.id === latestOverride.worker_id)?.name;
+      const projectName = projects.find((project) => project.id === latestOverride.project_id)?.name;
       allNotifications.push({
         id: 'sup-founder-override',
-        signature: `sup-founder-override:${overriddenLogs.length}:${latestOverrideId}`,
-        title: 'Founder Attendance Verification / Update',
-        description: `${overriddenLogs.length} attendance log(s) on your assigned site(s) were verified or adjusted by a Founder.`,
-        actionLabel: 'Inspect Attendance History',
+        signature: `sup-founder-override:${latestOverride.id}:${latestOverride.submitted_at}:${latestOverride.status}`,
+        title: 'Founder updated an attendance record',
+        description: `${workerName || 'A worker'} at ${projectName || 'your assigned site'} was verified or adjusted. Review the update for payroll accuracy.`,
+        actionLabel: 'Review attendance history',
         href: '/attendance?tab=history',
         variant: 'info',
+        actionable: true,
+        priority: 2,
         dismissOnClick: true,
       });
     }
   }
 
-  const visibleNotifications = allNotifications.filter(
-    (n) => !dismissedSignatures.includes(n.signature)
-  );
+  const isActionableNotification = (notification: ActionNotification) =>
+    notification.actionable ??
+    (notification.variant === 'danger' || notification.variant === 'warning');
+  const visibleNotifications = [...allNotifications]
+    .sort((a, b) => (a.priority ?? 10) - (b.priority ?? 10))
+    .filter((notification) => !dismissedSignatures.includes(notification.signature));
+  const actionableNotificationCount = visibleNotifications.filter(isActionableNotification).length;
   const dismissedCount = allNotifications.length - visibleNotifications.length;
 
   const handleClearAll = () => {
@@ -605,7 +597,7 @@ export const Navbar: React.FC<NavbarProps> = () => {
                   onClick={(e) => handleNavClick(e, '/dashboard')}
                   className={`flex items-center space-x-1.5 px-3.5 py-2 rounded-xl text-xs font-bold transition-all active:scale-[0.98] ${
                     isHrefActive('/dashboard')
-                      ? 'bg-navy text-white shadow-[0_4px_12px_rgba(11,31,58,0.18)]'
+                      ? 'bg-brand text-white'
                       : 'text-ink-secondary hover:text-navy hover:bg-surface-inset/70'
                   }`}
                 >
@@ -643,7 +635,7 @@ export const Navbar: React.FC<NavbarProps> = () => {
                       </button>
 
                       {isOpen && (
-                        <div className="absolute left-0 mt-2 w-72 rounded-2xl bg-white border border-surface-border shadow-[10px_14px_32px_rgba(11,31,58,0.12)] p-2 z-50 animate-dropdown-enter">
+                        <div className="absolute left-0 mt-2 w-72 rounded-2xl bg-white border border-surface-border shadow-lg p-2 z-50 animate-dropdown-enter">
                           <div className="space-y-1">
                             {group.items.map((item) => {
                               const Icon = item.icon;
@@ -656,7 +648,7 @@ export const Navbar: React.FC<NavbarProps> = () => {
                                   onClick={(e) => handleNavClick(e, item.href)}
                                   className={`flex items-start space-x-3 p-2.5 rounded-xl transition-all ${
                                     itemActive
-                                      ? 'bg-navy text-white shadow-sm'
+                                      ? 'bg-brand text-white'
                                       : 'hover:bg-surface-inset/70 text-navy'
                                   }`}
                                 >
@@ -707,7 +699,7 @@ export const Navbar: React.FC<NavbarProps> = () => {
                     onClick={(e) => handleNavClick(e, item.href)}
                     className={`flex items-center space-x-1.5 px-4 py-2 rounded-xl text-xs font-bold transition-all active:scale-[0.98] ${
                       active
-                        ? 'bg-navy text-white shadow-[0_4px_12px_rgba(11,31,58,0.18)]'
+                        ? 'bg-brand text-white'
                         : 'text-ink-secondary hover:text-navy hover:bg-surface-inset/70'
                     }`}
                   >
@@ -730,79 +722,104 @@ export const Navbar: React.FC<NavbarProps> = () => {
                   setShowUserMenu(false);
                   setOpenDropdownId(null);
                 }}
-                className="w-10 h-10 rounded-xl text-ink-secondary hover:text-navy hover:bg-surface-inset border border-surface-border/70 bg-white flex items-center justify-center transition-all active:scale-95 relative shadow-[2px_2px_6px_rgba(11,31,58,0.04)]"
-                aria-label="Notifications"
+                ref={notificationButtonRef}
+                className="w-11 h-11 rounded-lg text-ink-secondary hover:text-brand hover:bg-surface-inset border border-surface-border bg-white flex items-center justify-center transition-colors active:scale-95 relative focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand/25"
+                aria-label={
+                  actionableNotificationCount > 0
+                    ? `${actionableNotificationCount} actionable notification${actionableNotificationCount === 1 ? '' : 's'}`
+                    : 'Notifications'
+                }
+                aria-expanded={showNotifications}
+                aria-controls={showNotifications ? 'navbar-notifications-panel' : undefined}
               >
                 <Bell className="w-4 h-4" />
-                {visibleNotifications.length > 0 && (
-                  <span className="absolute -top-1 -right-1 min-w-[18px] h-[18px] px-1 bg-status-warning text-navy text-[10px] font-extrabold rounded-full ring-2 ring-white flex items-center justify-center">
-                    {visibleNotifications.length}
+                {actionableNotificationCount > 0 && (
+                  <span
+                    aria-hidden="true"
+                    className="absolute -top-1 -right-1 min-w-[18px] h-[18px] px-1 bg-status-warning text-navy text-[10px] font-bold rounded-full ring-2 ring-white flex items-center justify-center"
+                  >
+                    {actionableNotificationCount > 99 ? '99+' : actionableNotificationCount}
                   </span>
                 )}
               </button>
 
               {showNotifications && (
-                <div className="absolute right-0 mt-2 w-80 sm:w-96 bg-white rounded-2xl border border-surface-border shadow-xl p-4 z-50 animate-dropdown-enter">
-                  <div className="flex items-center justify-between pb-3 border-b border-surface-border/60">
-                    <div className="flex items-center gap-2">
-                      <h4 className="text-xs font-bold uppercase tracking-wider text-navy">
-                        {isFounder ? 'Founder Action Center' : 'Field Notifications'}
+                <div
+                  id="navbar-notifications-panel"
+                  role="region"
+                  aria-labelledby="navbar-notifications-title"
+                  className="absolute right-0 mt-2 w-[calc(100vw-2rem)] sm:w-96 bg-white rounded-xl border border-surface-border shadow-lg p-2.5 sm:p-3 z-50 animate-dropdown-enter"
+                >
+                  <div className="flex items-center justify-between gap-2 border-b border-surface-border pb-2.5">
+                    <div className="flex min-w-0 items-center gap-2">
+                      <h4 id="navbar-notifications-title" className="text-sm font-semibold text-navy truncate">
+                        {actionableNotificationCount > 0
+                          ? isFounder
+                            ? 'Founder tasks'
+                            : 'Site tasks'
+                          : isFounder
+                            ? 'Founder updates'
+                            : 'Site updates'}
                       </h4>
                       <span
-                        className="inline-flex items-center gap-1 text-[10px] font-semibold text-status-success"
-                        title="Live Supabase Realtime & background sync active"
+                        className="inline-flex shrink-0 items-center gap-1 text-[10px] font-medium text-status-success"
+                        title="Live Supabase Realtime and background sync are active"
                       >
-                        <span className="w-1.5 h-1.5 rounded-full bg-status-success animate-pulse" />
+                        <span aria-hidden="true" className="w-1.5 h-1.5 rounded-full bg-status-success animate-pulse" />
                         Live
                       </span>
                     </div>
 
-                    <div className="flex items-center gap-1.5">
+                    <div className="flex shrink-0 items-center gap-1">
                       {visibleNotifications.length > 0 && (
                         <button
                           type="button"
                           onClick={handleClearAll}
-                          className="inline-flex items-center gap-1 px-2 py-1 rounded-lg text-[11px] font-semibold text-ink-secondary hover:text-navy hover:bg-surface-inset transition-colors"
+                          className="inline-flex min-h-11 items-center gap-1.5 rounded-lg px-2 text-[11px] font-medium text-ink-secondary hover:text-navy hover:bg-surface-inset transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand/25"
                           title="Clear all notifications"
                         >
                           <CheckCheck className="w-3.5 h-3.5" />
-                          <span>Clear All</span>
+                          <span>Clear all</span>
                         </button>
                       )}
                       <button
                         type="button"
                         onClick={handleManualSync}
-                        className="p-1 rounded-lg text-ink-secondary hover:text-navy hover:bg-surface-inset transition-colors"
+                        disabled={isRefreshing}
+                        className="inline-flex min-h-11 min-w-11 items-center justify-center rounded-lg text-ink-secondary hover:text-navy hover:bg-surface-inset transition-colors disabled:opacity-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand/25"
                         title="Sync now"
                         aria-label="Sync notifications now"
+                        aria-busy={isRefreshing}
                       >
                         <RefreshCw
-                          className={`w-3.5 h-3.5 ${isRefreshing ? 'animate-spin text-navy' : ''}`}
+                          className={`w-3.5 h-3.5 ${isRefreshing ? 'animate-spin text-brand' : ''}`}
                         />
                       </button>
                     </div>
                   </div>
 
-                  <div className="divide-y divide-surface-border/40 text-xs max-h-96 overflow-y-auto">
+                  <div className="mt-1 max-h-[70vh] overflow-y-auto divide-y divide-surface-border/70 text-xs">
                     {visibleNotifications.map((item) => (
-                      <div
-                        key={item.id}
-                        onClick={() => handleNotificationClick(item)}
-                        role="button"
-                        tabIndex={0}
-                        onKeyDown={(e) => {
-                          if (e.key === 'Enter' || e.key === ' ') {
-                            e.preventDefault();
-                            handleNotificationClick(item);
-                          }
-                        }}
-                        className="w-full text-left py-3 px-2 -mx-2 rounded-xl hover:bg-surface-inset/70 transition-colors group cursor-pointer relative"
-                      >
-                        <div className="flex items-start justify-between gap-2">
-                          <span className="font-bold text-navy group-hover:text-navy-deep pr-1">
-                            {item.title}
-                          </span>
-                          <div className="flex items-center gap-1.5 shrink-0">
+                      <article key={item.id} className="py-2">
+                        <div className="flex items-start gap-2 rounded-lg px-2 py-2 transition-colors hover:bg-surface">
+                          <button
+                            type="button"
+                            onClick={() => handleNotificationClick(item)}
+                            className="min-w-0 flex-1 whitespace-normal text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand/25 rounded-md"
+                          >
+                            <span className="block break-words font-semibold leading-snug text-navy">
+                              {item.title}
+                            </span>
+                            <span className="mt-1 block break-words text-[12px] leading-relaxed text-ink-secondary">
+                              {item.description}
+                            </span>
+                            <span className="mt-1.5 inline-flex items-center gap-1 text-[11px] font-semibold text-brand">
+                              <span>{item.actionLabel}</span>
+                              <ArrowRight className="w-3 h-3" />
+                            </span>
+                          </button>
+
+                          <div className="flex shrink-0 items-center gap-1">
                             <Badge variant={item.variant} size="sm">
                               {item.variant === 'danger'
                                 ? 'Urgent'
@@ -814,8 +831,8 @@ export const Navbar: React.FC<NavbarProps> = () => {
                             </Badge>
                             <button
                               type="button"
-                              onClick={(e) => dismissNotification(item.signature, e)}
-                              className="p-1 rounded-md text-ink-muted hover:text-navy hover:bg-white transition-colors"
+                              onClick={() => dismissNotification(item.signature)}
+                              className="inline-flex min-h-11 min-w-11 items-center justify-center rounded-lg border border-transparent text-ink-muted hover:text-navy hover:bg-white transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand/25"
                               title="Dismiss notification"
                               aria-label={`Dismiss ${item.title}`}
                             >
@@ -823,26 +840,20 @@ export const Navbar: React.FC<NavbarProps> = () => {
                             </button>
                           </div>
                         </div>
-                        <div className="text-ink-secondary mt-1 leading-relaxed">
-                          {item.description}
-                        </div>
-                        <div className="mt-1.5 inline-flex items-center gap-1 text-[11px] font-bold text-navy group-hover:underline">
-                          <span>{item.actionLabel}</span>
-                          <ArrowRight className="w-3 h-3 transition-transform group-hover:translate-x-0.5" />
-                        </div>
-                      </div>
+                      </article>
                     ))}
 
                     {visibleNotifications.length === 0 && (
-                      <div className="py-6 text-center space-y-2">
-                        <div className="text-ink-secondary">
-                          All clear — no pending notifications.
-                        </div>
+                      <div className="px-4 py-7 text-center space-y-2">
+                        <CheckCheck className="mx-auto h-5 w-5 text-status-success" aria-hidden="true" />
+                        <p className="text-xs font-medium text-ink-secondary">
+                          All clear — nothing needs attention right now.
+                        </p>
                         {dismissedCount > 0 && (
                           <button
                             type="button"
                             onClick={handleRestoreDismissed}
-                            className="text-[11px] font-semibold text-navy hover:underline"
+                            className="inline-flex min-h-11 items-center justify-center rounded-lg px-3 text-[11px] font-semibold text-brand hover:bg-surface-inset focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand/25"
                           >
                             Show {dismissedCount} cleared notification{dismissedCount === 1 ? '' : 's'}
                           </button>
@@ -863,9 +874,12 @@ export const Navbar: React.FC<NavbarProps> = () => {
                   setShowNotifications(false);
                   setOpenDropdownId(null);
                 }}
+                ref={accountMenuButtonRef}
                 title={`${user?.name || 'Account'} (${isFounder ? 'Founder' : 'Supervisor'})`}
                 aria-label="Account and Sign Out menu"
-                className={`w-10 h-10 rounded-xl border flex items-center justify-center transition-all active:scale-95 relative shadow-[2px_2px_6px_rgba(11,31,58,0.06)] ${
+                aria-expanded={showUserMenu}
+                aria-controls={showUserMenu ? 'navbar-account-menu' : undefined}
+                className={`w-11 h-11 rounded-lg border flex items-center justify-center transition-colors active:scale-95 relative focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand/25 ${
                   isFounder
                     ? 'bg-[#1B4978] text-white border-[#14395E] hover:bg-navy'
                     : 'bg-status-warning-bg text-status-warning border-status-warning/30 hover:bg-status-warning/20'
@@ -880,7 +894,7 @@ export const Navbar: React.FC<NavbarProps> = () => {
               </button>
 
               {showUserMenu && (
-                <div className="absolute right-0 mt-2 w-72 bg-white rounded-2xl border border-surface-border shadow-xl p-3 z-50 animate-dropdown-enter">
+                <div id="navbar-account-menu" className="absolute right-0 mt-2 w-72 bg-white rounded-xl border border-surface-border shadow-lg p-3 z-50 animate-dropdown-enter">
                   <div className="px-3 py-2.5 border-b border-surface-border/60 flex items-start space-x-3">
                     <div
                       className={`w-10 h-10 rounded-xl flex items-center justify-center shrink-0 mt-0.5 ${

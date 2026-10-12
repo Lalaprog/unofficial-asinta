@@ -28,24 +28,24 @@ export const Button = React.forwardRef<HTMLButtonElement, ButtonProps>(
     ref
   ) => {
     const sizeClasses = {
-      sm: 'px-3 py-1.5 text-xs font-medium rounded-lg gap-1.5',
-      md: 'px-4 py-2 text-sm font-medium rounded-xl gap-2',
-      lg: 'px-6 py-3 text-base font-semibold rounded-xl gap-2.5',
+      sm: 'min-h-11 px-3 py-1.5 text-xs font-medium rounded-lg gap-1.5 sm:min-h-9',
+      md: 'min-h-11 px-4 py-2 text-sm font-medium rounded-lg gap-2',
+      lg: 'min-h-11 px-6 py-3 text-base font-semibold rounded-lg gap-2.5',
     };
 
     const variantClasses = {
       primary:
-        'bg-navy text-white hover:bg-navy-deep border border-navy-deep shadow-[0_4px_12px_rgba(11,31,58,0.20)] active:translate-y-0 active:shadow-sm transition-all',
+        'bg-brand text-white hover:bg-brand-deep border border-brand transition-colors',
       secondary:
-        'bg-white text-navy hover:bg-slate-50 border border-surface-border shadow-[3px_3px_8px_rgba(11,31,58,0.05),-3px_-3px_8px_rgba(255,255,255,0.9)] hover:border-slate-300 transition-all',
+        'bg-white text-navy hover:bg-surface-elevated border border-surface-border hover:border-surface-borderHover transition-colors',
       outline:
-        'bg-transparent text-navy hover:bg-white border border-surface-border hover:border-navy transition-all',
+        'bg-transparent text-navy hover:bg-white border border-surface-border hover:border-brand/40 transition-colors',
       danger:
-        'bg-status-danger text-white hover:bg-red-700 border border-red-800 shadow-[0_3px_10px_rgba(197,40,40,0.25)] transition-all',
+        'bg-status-danger text-white hover:bg-red-700 border border-status-danger transition-colors',
       ghost:
-        'bg-transparent text-ink-secondary hover:text-navy hover:bg-surface-inset border-transparent transition-all',
+        'bg-transparent text-ink-secondary hover:text-navy hover:bg-surface-inset border border-transparent transition-colors',
       soft:
-        'bg-surface-inset text-navy hover:bg-slate-200 border border-surface-border shadow-[inset_1px_1px_2px_rgba(11,31,58,0.04)] transition-all',
+        'bg-surface-inset text-navy hover:bg-slate-200 border border-surface-border transition-colors',
     };
 
     return (
@@ -54,7 +54,7 @@ export const Button = React.forwardRef<HTMLButtonElement, ButtonProps>(
         disabled={disabled || isLoading}
         className={twMerge(
           clsx(
-            'inline-flex items-center justify-center font-sans transition-all duration-150 focus:outline-none focus:ring-2 focus:ring-navy/20 disabled:opacity-50 disabled:pointer-events-none select-none cursor-pointer',
+            'inline-flex items-center justify-center font-sans transition-colors duration-150 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand/25 focus-visible:ring-offset-2 disabled:opacity-50 disabled:pointer-events-none select-none cursor-pointer',
             sizeClasses[size],
             variantClasses[variant],
             className

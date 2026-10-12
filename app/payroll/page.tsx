@@ -143,9 +143,9 @@ export default function PayrollPage() {
     <AppShell requireFounder={true}>
       <div className="space-y-6">
         {/* Header */}
-        <div className="flex items-center justify-between gap-3 pb-3 border-b border-surface-border/60">
+        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pb-3 border-b border-surface-border/60">
           <div>
-            <h1 className="text-xl sm:text-2xl font-extrabold text-navy tracking-tight">
+            <h1 className="text-xl sm:text-2xl font-semibold text-navy tracking-tight">
               Payroll Engine
             </h1>
             <p className="text-xs text-ink-secondary mt-0.5">
@@ -165,18 +165,18 @@ export default function PayrollPage() {
 
         {/* Top Summary Cards */}
         <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 auto-rows-fr">
-          <div className="h-full p-5 rounded-2xl bg-white border border-surface-border shadow-sm flex flex-col justify-between">
-            <div className="text-xs font-semibold text-ink-secondary uppercase truncate">Total Net Payroll</div>
+          <div className="h-full p-4 sm:p-5 rounded-xl bg-white border border-surface-border flex flex-col justify-between">
+            <div className="text-xs font-medium text-ink-secondary truncate">Total Net Payroll</div>
             <div className="text-2xl font-bold text-navy mt-1 tabular-nums truncate">{formatPHP(totalNetDisbursement)}</div>
           </div>
 
-          <div className="h-full p-5 rounded-2xl bg-white border border-surface-border shadow-sm flex flex-col justify-between">
-            <div className="text-xs font-semibold text-ink-secondary uppercase truncate">Bale Deductions Recovered</div>
+          <div className="h-full p-4 sm:p-5 rounded-xl bg-white border border-surface-border flex flex-col justify-between">
+            <div className="text-xs font-medium text-ink-secondary truncate">Bale Deductions Recovered</div>
             <div className="text-2xl font-bold text-status-success mt-1 tabular-nums truncate">{formatPHP(totalBaleRecovered)}</div>
           </div>
 
-          <div className="h-full p-5 rounded-2xl bg-white border border-surface-border shadow-sm flex flex-col justify-between">
-            <div className="text-xs font-semibold text-ink-secondary uppercase truncate">Pending Founder Approval</div>
+          <div className="h-full p-4 sm:p-5 rounded-xl bg-white border border-surface-border flex flex-col justify-between">
+            <div className="text-xs font-medium text-ink-secondary truncate">Pending Founder Approval</div>
             <div className="text-2xl font-bold text-status-warning mt-1 tabular-nums">
               {filteredPayroll.filter((p) => p.status === 'draft' || p.status === 'reviewed').length}
             </div>
@@ -223,7 +223,7 @@ export default function PayrollPage() {
         </div>
 
         {/* Payroll Table */}
-        <div className="bg-white rounded-3xl border border-surface-border shadow-[6px_6px_18px_rgba(11,31,58,0.06),-6px_-6px_18px_rgba(255,255,255,0.95)] overflow-hidden">
+        <div className="bg-white rounded-xl border border-surface-border overflow-hidden">
           <div className="divide-y divide-surface-border/70">
             {filteredPayroll.map((pay) => {
               const worker = workers.find((w) => w.id === pay.worker_id);
@@ -239,10 +239,10 @@ export default function PayrollPage() {
               return (
                 <div
                   key={pay.id}
-                  className="p-5 flex flex-col lg:flex-row lg:items-center justify-between gap-4 hover:bg-slate-50/60 transition-colors"
+                  className="p-4 sm:p-5 flex flex-col lg:flex-row lg:items-center justify-between gap-4 hover:bg-surface transition-colors"
                 >
                   {/* Left: Worker info */}
-                  <div className="space-y-1">
+                  <div className="min-w-0 flex-1 space-y-1">
                     <div className="flex items-center flex-wrap gap-2">
                       <span className="font-bold text-sm text-navy">{worker?.name}</span>
                       <span className="text-xs text-ink-secondary">({worker?.position})</span>
@@ -261,7 +261,7 @@ export default function PayrollPage() {
                         {payProjects.map((proj) => (
                           <span
                             key={proj.id}
-                            className="px-2 py-0.5 rounded-lg bg-surface-inset border border-surface-border text-[11px] font-semibold text-navy"
+                            className="min-w-0 max-w-full truncate px-2 py-0.5 rounded-lg bg-surface-inset border border-surface-border text-[11px] font-semibold text-navy"
                           >
                             {proj.name}
                           </span>
@@ -270,7 +270,7 @@ export default function PayrollPage() {
                     )}
 
                     {pay.notes && (
-                      <div className="text-xs text-ink-muted italic">{pay.notes}</div>
+                      <div className="break-words text-xs text-ink-muted italic">{pay.notes}</div>
                     )}
                   </div>
 
@@ -444,7 +444,7 @@ export default function PayrollPage() {
                     <AsintaEmblem size={30} />
                     <div>
                       <AsintaWordmark height={18} />
-                      <div className="text-[10px] uppercase font-semibold text-ink-secondary tracking-widest mt-1">
+                      <div className="text-[11px] font-medium text-ink-secondary mt-1">
                         Design · Build · Batangas
                       </div>
                     </div>

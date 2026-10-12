@@ -94,9 +94,9 @@ export default function ProjectsPage() {
     <AppShell>
       <div className="space-y-6">
         {/* Header */}
-        <div className="flex items-center justify-between gap-3 pb-3 border-b border-surface-border/60">
+        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pb-3 border-b border-surface-border/60">
           <div>
-            <h1 className="text-xl sm:text-2xl font-extrabold text-navy tracking-tight">
+            <h1 className="text-xl sm:text-2xl font-semibold text-navy tracking-tight">
               {isFounder ? 'Project Sites' : 'Assigned Projects'}
             </h1>
             <p className="text-xs text-ink-secondary mt-0.5">
@@ -143,7 +143,7 @@ export default function ProjectsPage() {
         </div>
 
         {/* Projects Cards Grid */}
-        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-2 gap-6 auto-rows-fr">
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-4 auto-rows-fr">
           {filteredProjects.map((proj) => {
             const client = clients.find((c) => c.id === proj.client_id);
             const projInvoices = invoices.filter((i) => i.project_id === proj.id);
@@ -166,13 +166,13 @@ export default function ProjectsPage() {
             return (
               <div
                 key={proj.id}
-                className="h-full min-w-0 bg-white rounded-3xl p-6 border border-surface-border/80 shadow-[6px_6px_18px_rgba(11,31,58,0.06),-6px_-6px_18px_rgba(255,255,255,0.95)] hover:shadow-[10px_10px_26px_rgba(11,31,58,0.09),-10px_-10px_26px_rgba(255,255,255,1)] hover:border-navy/30 transition-all flex flex-col justify-between group"
+                className="h-full min-w-0 bg-white rounded-xl p-4 sm:p-5 border border-surface-border/80 hover:border-brand/35 transition-colors duration-150 flex flex-col justify-between group"
               >
                 <div className="min-w-0">
                   {/* Top line */}
                   <div className="flex items-start justify-between gap-3">
                     <div className="space-y-1 min-w-0 flex-1">
-                      <div className="text-xs font-semibold text-ink-secondary uppercase tracking-wider truncate">
+                      <div className="text-xs font-medium text-ink-secondary truncate">
                         {client?.name || 'Private Client'}
                       </div>
                       <h3
@@ -251,7 +251,7 @@ export default function ProjectsPage() {
         </div>
 
         {filteredProjects.length === 0 && (
-          <div className="p-12 text-center bg-white rounded-3xl border border-surface-border text-ink-secondary">
+          <div className="p-12 text-center bg-white rounded-xl border border-surface-border text-ink-secondary">
             <FolderKanban className="w-10 h-10 mx-auto text-ink-muted mb-2" />
             <div className="font-bold text-navy text-sm">No Projects Found</div>
             <div className="text-xs text-ink-secondary mt-1">

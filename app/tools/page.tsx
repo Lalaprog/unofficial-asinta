@@ -93,9 +93,9 @@ export default function ToolsPage() {
     <AppShell requireFounder={true}>
       <div className="space-y-6">
         {/* Header */}
-        <div className="flex items-center justify-between gap-3 pb-3 border-b border-surface-border/60">
+        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pb-3 border-b border-surface-border/60">
           <div>
-            <h1 className="text-xl sm:text-2xl font-extrabold text-navy tracking-tight">
+            <h1 className="text-xl sm:text-2xl font-semibold text-navy tracking-tight">
               Tools &amp; Equipment
             </h1>
             <p className="text-xs text-ink-secondary mt-0.5">
@@ -160,16 +160,19 @@ export default function ToolsPage() {
             return (
               <div
                 key={tool.id}
-                className="h-full min-w-0 p-5 rounded-3xl bg-white border border-surface-border shadow-[5px_5px_15px_rgba(11,31,58,0.05),-5px_-5px_15px_rgba(255,255,255,0.95)] hover:border-navy/30 transition-all flex flex-col justify-between"
+                className="h-full min-w-0 p-4 sm:p-5 rounded-xl bg-white border border-surface-border hover:border-brand/35 transition-colors duration-150 flex flex-col justify-between"
               >
                 <div className="space-y-3 min-w-0">
                   <div className="flex items-start justify-between gap-2">
-                    <div className="w-10 h-10 rounded-2xl bg-surface-inset text-navy flex items-center justify-center border border-surface-border shadow-[inset_1px_1px_3px_rgba(11,31,58,0.06)] shrink-0">
+                    <div className="w-10 h-10 rounded-2xl bg-surface-inset text-navy flex items-center justify-center border border-surface-border shrink-0">
                       <Wrench className="w-5 h-5 text-navy" />
                     </div>
 
                     <div className="flex items-center space-x-1">
                       <button
+                        type="button"
+                        aria-label={`Edit ${tool.name}`}
+                        title="Edit tool"
                         onClick={() => {
                           setSelectedTool(tool);
                           setFormData({
@@ -180,13 +183,16 @@ export default function ToolsPage() {
                           });
                           setIsEditModalOpen(true);
                         }}
-                        className="p-1.5 rounded-lg text-ink-secondary hover:text-navy hover:bg-surface-inset"
+                        className="min-h-11 min-w-11 sm:min-h-9 sm:min-w-9 inline-flex items-center justify-center rounded-lg text-ink-secondary hover:text-navy hover:bg-surface-inset focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand/25"
                       >
                         <Edit2 className="w-4 h-4" />
                       </button>
                       <button
+                        type="button"
+                        aria-label={`Delete ${tool.name}`}
+                        title="Delete tool"
                         onClick={() => handleDelete(tool.id, tool.name)}
-                        className="p-1.5 rounded-lg text-status-danger hover:bg-status-danger-bg"
+                        className="min-h-11 min-w-11 sm:min-h-9 sm:min-w-9 inline-flex items-center justify-center rounded-lg text-status-danger hover:bg-status-danger-bg focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-status-danger/25"
                       >
                         <Trash2 className="w-4 h-4" />
                       </button>
@@ -202,7 +208,7 @@ export default function ToolsPage() {
 
                   {/* Allocation */}
                   <div className="p-3 rounded-xl bg-surface-inset/60 border border-surface-border text-xs">
-                    <div className="text-[10px] font-bold uppercase tracking-wider text-ink-secondary">
+                    <div className="text-[11px] font-medium text-ink-secondary">
                       Current Site Deployment
                     </div>
                     <div className="font-semibold text-navy mt-0.5">
@@ -222,7 +228,7 @@ export default function ToolsPage() {
           })}
 
           {filteredTools.length === 0 && (
-            <div className="md:col-span-2 lg:col-span-3 bg-white rounded-3xl border border-surface-border">
+            <div className="md:col-span-2 lg:col-span-3 bg-white rounded-xl border border-surface-border">
               <EmptyState
                 title="No equipment to show"
                 description={

@@ -269,9 +269,9 @@ export default function UsersPage() {
     <AppShell requireFounder={true}>
       <div className="space-y-6">
         {/* Header */}
-        <div className="flex items-center justify-between gap-3 pb-3 border-b border-surface-border/60">
+        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pb-3 border-b border-surface-border/60">
           <div>
-            <h1 className="text-xl sm:text-2xl font-extrabold text-navy tracking-tight">
+            <h1 className="text-xl sm:text-2xl font-semibold text-navy tracking-tight">
               Team Accounts
             </h1>
             <p className="text-xs text-ink-secondary mt-0.5">
@@ -293,7 +293,7 @@ export default function UsersPage() {
         {provisionedCredentials && (
           <div
             role="status"
-            className="p-5 rounded-3xl bg-status-info-bg/70 border border-status-info/30 space-y-3 text-xs"
+            className="p-5 rounded-xl bg-status-info-bg/70 border border-status-info/30 space-y-3 text-xs"
           >
             <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
               <div className="flex items-center space-x-2">
@@ -371,7 +371,7 @@ export default function UsersPage() {
         </div>
 
         {/* Users Cards Grid */}
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-6 auto-rows-fr">
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-4 auto-rows-fr">
           {filteredUsers.map((u) => {
             const assignedProjectIds = projectSupervisors
               .filter((ps) => ps.supervisor_id === u.id)
@@ -383,12 +383,12 @@ export default function UsersPage() {
             return (
               <div
                 key={u.id}
-                className="h-full min-w-0 p-6 rounded-3xl bg-white border border-surface-border shadow-[6px_6px_18px_rgba(11,31,58,0.06),-6px_-6px_18px_rgba(255,255,255,0.95)] space-y-4 flex flex-col justify-between"
+                className="h-full min-w-0 p-4 sm:p-5 rounded-xl bg-white border border-surface-border space-y-4 flex flex-col justify-between"
               >
                 <div className="space-y-4 min-w-0">
                   <div className="flex items-start justify-between gap-2">
                     <div className="flex items-center space-x-3.5 min-w-0 flex-1">
-                      <div className="w-12 h-12 rounded-2xl bg-surface-inset text-navy flex items-center justify-center font-bold text-base border border-surface-border shadow-[inset_1px_1px_3px_rgba(11,31,58,0.06)] shrink-0">
+                      <div className="w-12 h-12 rounded-2xl bg-surface-inset text-navy flex items-center justify-center font-bold text-base border border-surface-border shrink-0">
                         {u.role === 'founder' ? (
                           <Compass className="w-6 h-6 text-navy" />
                         ) : (
@@ -419,7 +419,7 @@ export default function UsersPage() {
                   {/* Permissions Description */}
                   <div className="p-3.5 rounded-2xl bg-surface-inset/50 border border-surface-border/70 text-xs space-y-2">
                     <div className="flex items-center justify-between gap-2">
-                      <span className="text-[10px] font-bold uppercase tracking-wider text-ink-secondary">
+                      <span className="text-[11px] font-medium text-ink-secondary">
                         Authorized Scope
                       </span>
                       {linkedWorker && (
@@ -478,7 +478,7 @@ export default function UsersPage() {
           })}
 
           {filteredUsers.length === 0 && (
-            <div className="bg-white rounded-3xl border border-surface-border md:col-span-2">
+            <div className="bg-white rounded-xl border border-surface-border md:col-span-2">
               <EmptyState
                 title="No accounts to show"
                 description={
@@ -532,7 +532,7 @@ export default function UsersPage() {
           {newRole === 'supervisor' && (
             <>
               <div className="space-y-2">
-                <label className="block text-[11px] font-bold uppercase tracking-wider text-navy">
+                <label className="block text-xs font-semibold text-ink-secondary">
                   Assign Project Sites ({newAssignedProjects.length} selected)
                 </label>
                 <div className="max-h-36 overflow-y-auto p-3 rounded-2xl bg-surface-inset border border-surface-border space-y-2">
@@ -605,7 +605,7 @@ export default function UsersPage() {
           )}
 
           <div className="space-y-1.5">
-            <label className="block text-[11px] font-bold uppercase tracking-wider text-navy">
+            <label className="block text-xs font-semibold text-ink-secondary">
               Temporary First-Sign-In Password
             </label>
             <div className="flex items-center gap-2">
@@ -707,7 +707,7 @@ export default function UsersPage() {
               {editRole === 'supervisor' && (
                 <>
                   <div className="space-y-2">
-                    <label className="block text-[11px] font-bold uppercase tracking-wider text-navy">
+                    <label className="block text-xs font-semibold text-ink-secondary">
                       Assigned Project Sites ({editAssignedProjects.length} selected)
                     </label>
                     <div className="max-h-36 overflow-y-auto p-3 rounded-2xl bg-surface-inset border border-surface-border space-y-2">
@@ -776,7 +776,7 @@ export default function UsersPage() {
               )}
 
               <div className="space-y-1.5 pt-2 border-t border-surface-border">
-                <label className="block text-[11px] font-bold uppercase tracking-wider text-navy">
+                <label className="block text-xs font-semibold text-ink-secondary">
                   Reset to Temporary Password (Optional)
                 </label>
                 <div className="flex items-center gap-2">

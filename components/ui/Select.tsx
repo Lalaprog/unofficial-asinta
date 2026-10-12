@@ -25,7 +25,7 @@ export const Select = React.forwardRef<HTMLSelectElement, SelectProps>(
         {label && (
           <label
             htmlFor={selectId}
-            className="text-xs font-semibold text-navy uppercase tracking-wider"
+            className="text-xs font-semibold text-ink-secondary"
           >
             {label}
           </label>
@@ -38,9 +38,8 @@ export const Select = React.forwardRef<HTMLSelectElement, SelectProps>(
             aria-describedby={describedBy}
             className={twMerge(
               clsx(
-                'w-full bg-surface-inset/60 text-ink-primary text-sm rounded-xl border border-surface-border py-2.5 px-3.5 pr-8 appearance-none transition-all duration-150',
-                'shadow-[inset_2px_2px_4px_rgba(11,31,58,0.05),inset_-2px_-2px_4px_rgba(255,255,255,0.9)]',
-                'focus:bg-white focus:border-navy focus:ring-2 focus:ring-navy/15 focus:outline-none cursor-pointer',
+                'w-full min-h-11 bg-white text-ink-primary text-base sm:text-sm rounded-lg border border-surface-border py-2.5 px-3.5 pr-8 appearance-none transition-colors duration-150',
+                'focus:border-brand focus:ring-2 focus:ring-brand/15 focus:outline-none cursor-pointer',
                 error && 'border-status-danger ring-1 ring-status-danger/30 bg-status-danger-bg/40',
                 className
               )

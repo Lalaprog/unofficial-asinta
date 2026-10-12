@@ -107,9 +107,9 @@ export default function AdvancesPage() {
     <AppShell requireFounder={true}>
       <div className="space-y-6">
         {/* Header */}
-        <div className="flex items-center justify-between gap-3 pb-3 border-b border-surface-border/60">
+        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pb-3 border-b border-surface-border/60">
           <div>
-            <h1 className="text-xl sm:text-2xl font-extrabold text-navy tracking-tight">
+            <h1 className="text-xl sm:text-2xl font-semibold text-navy tracking-tight">
               Worker Advances (&ldquo;Bale&rdquo;)
             </h1>
             <p className="text-xs text-ink-secondary mt-0.5">
@@ -129,20 +129,20 @@ export default function AdvancesPage() {
 
         {/* Bale Overview Cards */}
         <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 auto-rows-fr">
-          <div className="h-full p-5 rounded-2xl bg-white border border-surface-border shadow-sm flex flex-col justify-between">
-            <div className="text-xs font-semibold text-ink-secondary uppercase truncate">Active Bale Balance</div>
+          <div className="h-full p-4 sm:p-5 rounded-xl bg-white border border-surface-border flex flex-col justify-between">
+            <div className="text-xs font-medium text-ink-secondary truncate">Active Bale Balance</div>
             <div className="text-2xl font-bold text-navy mt-1 tabular-nums truncate">{formatPHP(totalOutstandingBale)}</div>
           </div>
 
-          <div className="h-full p-5 rounded-2xl bg-white border border-surface-border shadow-sm flex flex-col justify-between">
-            <div className="text-xs font-semibold text-ink-secondary uppercase truncate">Workers with Advances</div>
+          <div className="h-full p-4 sm:p-5 rounded-xl bg-white border border-surface-border flex flex-col justify-between">
+            <div className="text-xs font-medium text-ink-secondary truncate">Workers with Advances</div>
             <div className="text-2xl font-bold text-navy mt-1 tabular-nums">
               {new Set(projectScopedAdvances.filter((a) => a.status === 'active' || a.status === 'partially_deducted').map((a) => a.worker_id)).size}
             </div>
           </div>
 
-          <div className="h-full p-5 rounded-2xl bg-white border border-surface-border shadow-sm flex flex-col justify-between">
-            <div className="text-xs font-semibold text-ink-secondary uppercase truncate">Total Repaid to Date</div>
+          <div className="h-full p-4 sm:p-5 rounded-xl bg-white border border-surface-border flex flex-col justify-between">
+            <div className="text-xs font-medium text-ink-secondary truncate">Total Repaid to Date</div>
             <div className="text-2xl font-bold text-status-success mt-1 tabular-nums truncate">
               {formatPHP(projectScopedAdvances.reduce((sum, a) => sum + Number(a.amount_deducted || 0), 0))}
             </div>
@@ -189,7 +189,7 @@ export default function AdvancesPage() {
         </div>
 
         {/* Advances List */}
-        <div className="bg-white rounded-3xl border border-surface-border shadow-[6px_6px_18px_rgba(11,31,58,0.06),-6px_-6px_18px_rgba(255,255,255,0.95)] overflow-hidden">
+        <div className="bg-white rounded-xl border border-surface-border overflow-hidden">
           <div className="divide-y divide-surface-border/70">
             {filteredAdvances.map((adv) => {
               const worker = workers.find((w) => w.id === adv.worker_id);
@@ -206,10 +206,10 @@ export default function AdvancesPage() {
               return (
                 <div
                   key={adv.id}
-                  className="p-5 flex flex-col lg:flex-row lg:items-center justify-between gap-4 hover:bg-slate-50/60 transition-colors"
+                  className="p-4 sm:p-5 flex flex-col lg:flex-row lg:items-center justify-between gap-4 hover:bg-surface transition-colors"
                 >
                   {/* Left: Worker & Reason */}
-                  <div className="space-y-1">
+                  <div className="min-w-0 flex-1 space-y-1">
                     <div className="flex items-center space-x-2">
                       <span className="font-bold text-sm text-navy">{worker?.name}</span>
                       <span className="text-xs text-ink-secondary">({worker?.position})</span>
@@ -218,9 +218,9 @@ export default function AdvancesPage() {
                       </Badge>
                     </div>
 
-                    <div className="text-xs text-ink-primary font-medium">{adv.reason}</div>
+                    <div className="break-words text-xs text-ink-primary font-medium">{adv.reason}</div>
 
-                    <div className="text-xs text-ink-secondary">
+                    <div className="break-words text-xs text-ink-secondary">
                       Site: <span className="font-semibold text-navy">{proj?.name}</span> · Date Given: {adv.date}
                     </div>
                   </div>

@@ -152,7 +152,7 @@ export const MobileNav: React.FC<MobileNavProps> = () => {
       {/* Fixed Mobile Bottom Navigation Bar */}
       <nav
         aria-label="Mobile Bottom Navigation"
-        className="fixed bottom-0 inset-x-0 z-40 lg:hidden bg-white/95 backdrop-blur-md border-t border-surface-border/90 shadow-[0_-4px_20px_rgba(11,31,58,0.07)] px-2 py-1.5"
+        className="fixed bottom-0 inset-x-0 z-40 lg:hidden bg-white/95 backdrop-blur-md border-t border-surface-border/90 shadow-[0_-4px_20px_rgba(11,31,58,0.07)] px-2 pt-1.5 pb-[calc(env(safe-area-inset-bottom)+0.375rem)]"
       >
         <div
           className={`grid ${
@@ -168,9 +168,9 @@ export const MobileNav: React.FC<MobileNavProps> = () => {
                 key={item.href}
                 href={item.href}
                 onClick={(e) => handleNavClick(e, item.href)}
-                className={`flex flex-col items-center justify-center py-1.5 px-1 rounded-2xl transition-all duration-150 active:scale-95 ${
+                className={`flex min-h-11 flex-col items-center justify-center py-1.5 px-1 rounded-xl transition-colors duration-150 active:scale-95 ${
                   active
-                    ? 'bg-navy text-white shadow-[0_4px_12px_rgba(11,31,58,0.22)]'
+                    ? 'bg-brand text-white'
                     : 'text-ink-secondary hover:text-navy hover:bg-surface-inset/50'
                 }`}
               >
@@ -191,9 +191,9 @@ export const MobileNav: React.FC<MobileNavProps> = () => {
             <button
               type="button"
               onClick={() => setIsSheetOpen(!isSheetOpen)}
-              className={`flex flex-col items-center justify-center py-1.5 px-1 rounded-2xl transition-all duration-150 active:scale-95 ${
+              className={`flex min-h-11 flex-col items-center justify-center py-1.5 px-1 rounded-xl transition-colors duration-150 active:scale-95 ${
                 isSheetOpen
-                  ? 'bg-navy text-white shadow-[0_4px_12px_rgba(11,31,58,0.22)]'
+                  ? 'bg-brand text-white'
                   : 'text-ink-secondary hover:text-navy hover:bg-surface-inset/50'
               }`}
             >
@@ -216,7 +216,7 @@ export const MobileNav: React.FC<MobileNavProps> = () => {
             onClick={() => setIsSheetOpen(false)}
           />
 
-          <div className="relative z-10 w-full max-w-lg mx-auto bg-surface rounded-t-3xl border-t border-surface-border shadow-[0_-12px_36px_rgba(11,31,58,0.18)] p-4 pb-6 space-y-3.5 animate-sheet-up">
+          <div className="relative z-10 w-full max-w-lg mx-auto bg-surface rounded-t-3xl border-t border-surface-border shadow-[0_-12px_36px_rgba(11,31,58,0.18)] p-4 pb-[calc(env(safe-area-inset-bottom)+1.5rem)] space-y-3.5 animate-sheet-up">
             <div className="flex items-center justify-between px-1">
               <div>
                 <h3 className="text-sm font-extrabold text-navy tracking-tight">
@@ -257,7 +257,7 @@ export const MobileNav: React.FC<MobileNavProps> = () => {
                           onClick={(e) => handleNavClick(e, item.href)}
                           className={`flex flex-col items-center justify-center py-2 px-1.5 rounded-xl text-center transition-all active:scale-95 ${
                             active
-                              ? 'bg-navy text-white shadow-xs'
+                              ? 'bg-brand text-white'
                               : 'bg-surface/60 text-navy hover:bg-surface-inset'
                           }`}
                         >

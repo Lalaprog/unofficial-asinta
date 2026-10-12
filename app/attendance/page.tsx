@@ -19,7 +19,6 @@ import {
   LayoutList,
   LayoutGrid,
   MessageSquare,
-  CheckCheck,
   XCircle,
   Lock,
 } from 'lucide-react';
@@ -174,7 +173,7 @@ function AttendancePageInner() {
   >({});
 
   const [isSubmitting, setIsSubmitting] = useState(false);
-  const [submissionSuccess, setSubmissionSuccess] = useState(false);
+  const [attendanceSaveFailed, setAttendanceSaveFailed] = useState(false);
   const [searchWorker, setSearchWorker] = useState('');
 
   // History tab filters & collapsible daily sheets
@@ -377,7 +376,7 @@ function AttendancePageInner() {
     });
 
     setDraftAttendance(initialDraft);
-    setSubmissionSuccess(false);
+    setAttendanceSaveFailed(false);
   }, [
     selectedProjectId,
     selectedDate,
@@ -412,6 +411,7 @@ function AttendancePageInner() {
       notes: '',
     };
 
+    setAttendanceSaveFailed(false);
     setDraftAttendance({
       ...draftAttendance,
       [worker.id]: {
@@ -423,6 +423,7 @@ function AttendancePageInner() {
 
   const handleNotesChange = (workerId: string, notes: string) => {
     const current = draftAttendance[workerId] || { status: null, notes: '' };
+    setAttendanceSaveFailed(false);
     setDraftAttendance({
       ...draftAttendance,
       [workerId]: {
@@ -432,17 +433,19 @@ function AttendancePageInner() {
     });
   };
 
-  // Bulk mark all regular crew (or a specific craft group) Present
+  // Fill only unmarked regular crew in a craft group as Present
   const handleMarkCrewPresent = (targetWorkers: Worker[]) => {
     const updated = { ...draftAttendance };
     targetWorkers.forEach((w) => {
       if (isSelfSupervisorWorker(w)) return;
+      if (updated[w.id]?.status) return;
       if (otherSiteActiveAttendanceByWorker.has(w.id)) return;
       updated[w.id] = {
         status: 'present',
         notes: updated[w.id]?.notes || '',
       };
     });
+    setAttendanceSaveFailed(false);
     setDraftAttendance(updated);
   };
 
@@ -466,7 +469,7 @@ function AttendancePageInner() {
 
   const handleBatchSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!selectedProjectId || !user) return;
+    if (isSubmitting || !selectedProjectId || !user) return;
     if (selectedDate > today) {
       showToast('error', 'Attendance cannot be recorded for a future date.');
       return;
@@ -480,6 +483,7 @@ function AttendancePageInner() {
     }
 
     setIsSubmitting(true);
+    setAttendanceSaveFailed(false);
 
     const timeLabel = new Date().toLocaleTimeString('en-PH', {
       hour: '2-digit',
@@ -564,11 +568,17 @@ function AttendancePageInner() {
       }
     }
 
-    const success = await recordAttendanceBatch(batch);
-    setIsSubmitting(false);
+    let success = false;
+    try {
+      success = await recordAttendanceBatch(batch);
+    } finally {
+      setIsSubmitting(false);
+    }
     if (success) {
-      setSubmissionSuccess(true);
-      setTimeout(() => setSubmissionSuccess(false), 3000);
+      setAttendanceSaveFailed(false);
+      showToast('success', 'Attendance saved and synced to Payroll.');
+    } else {
+      setAttendanceSaveFailed(true);
     }
   };
 
@@ -758,17 +768,17 @@ function AttendancePageInner() {
   }, null);
 
   // Attendance summary counts for active date & project
-  const presentCount = Object.values(draftAttendance).filter(
-    (d) => d.status === 'present'
+  const presentCount = markableWorkers.filter(
+    (worker) => draftAttendance[worker.id]?.status === 'present'
   ).length;
-  const halfDayCount = Object.values(draftAttendance).filter(
-    (d) => d.status === 'half_day'
+  const halfDayCount = markableWorkers.filter(
+    (worker) => draftAttendance[worker.id]?.status === 'half_day'
   ).length;
-  const absentCount = Object.values(draftAttendance).filter(
-    (d) => d.status === 'absent'
+  const absentCount = markableWorkers.filter(
+    (worker) => draftAttendance[worker.id]?.status === 'absent'
   ).length;
-  const leaveCount = Object.values(draftAttendance).filter(
-    (d) => d.status === 'leave'
+  const leaveCount = markableWorkers.filter(
+    (worker) => draftAttendance[worker.id]?.status === 'leave'
   ).length;
 
   const accessibleProjectIdSet = new Set(accessibleProjects.map((p) => p.id));
@@ -856,23 +866,18 @@ function AttendancePageInner() {
 
   return (
     <AppShell>
-      <div key={activeTab} className="space-y-5 max-w-5xl mx-auto animate-page-enter">
+      <div key={activeTab} className="space-y-4 max-w-5xl mx-auto">
         {/* Clean Dedicated Page Header for each separated view */}
         <div className="flex items-center justify-between gap-3 pb-3 border-b border-surface-border/60">
           <div className="min-w-0">
             <div className="flex items-center gap-2.5">
-              <h1 className="text-xl sm:text-2xl font-extrabold text-navy tracking-tight truncate">
+              <h1 className="text-xl sm:text-2xl font-semibold text-navy tracking-tight truncate">
                 {activeTab === 'history'
                   ? 'Attendance History'
                   : activeTab === 'workforce'
                     ? 'Workforce Roster'
                     : 'Daily Roll Call'}
               </h1>
-              {activeTab === 'terminal' && existingSiteDateRecords.length > 0 && (
-                <Badge variant={hasUnsavedChanges ? 'warning' : 'success'} size="sm">
-                  {hasUnsavedChanges ? 'Unsaved Edits' : 'Synced ✓'}
-                </Badge>
-              )}
             </div>
             <p className="text-xs text-ink-secondary mt-0.5 truncate">
               {activeTab === 'history'
@@ -898,22 +903,19 @@ function AttendancePageInner() {
 
         {/* Founder Review Banner: Supervisor Attendance Submitted with Crew Report */}
         {isFounder && unverifiedSelfLogs.length > 0 && (
-          <div className="p-4 rounded-2xl bg-status-warning-bg/80 border border-status-warning/40 space-y-3 text-xs">
+          <div className="p-3.5 rounded-xl bg-status-warning-bg/60 border border-status-warning/25 space-y-3 text-xs">
             <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
               <div className="flex items-start sm:items-center gap-2.5">
                 <ShieldAlert className="w-5 h-5 text-status-warning shrink-0 mt-0.5 sm:mt-0" />
                 <div>
                   <div className="font-bold text-navy text-sm">
-                    Supervisor Attendance Pending Founder Approval ({unverifiedSelfLogs.length})
+                    Supervisor approvals ({unverifiedSelfLogs.length})
                   </div>
                   <div className="text-ink-secondary">
-                    Supervisors are automatically logged when they submit their site&apos;s crew attendance and held back from Payroll until you approve them below.
+                    Review these supervisor logs before they are included in Payroll.
                   </div>
                 </div>
               </div>
-              <Badge variant="warning" size="sm">
-                Awaiting Founder Approval
-              </Badge>
             </div>
 
             <div className="divide-y divide-surface-border/60 bg-white rounded-xl border border-surface-border overflow-hidden">
@@ -945,6 +947,7 @@ function AttendancePageInner() {
                         type="button"
                         variant="primary"
                         size="sm"
+                        className="min-h-11 sm:min-h-9"
                         onClick={() => handleFounderSupervisorReview(rec, 'present')}
                         leftIcon={<ShieldCheck className="w-3.5 h-3.5" />}
                       >
@@ -954,6 +957,7 @@ function AttendancePageInner() {
                         type="button"
                         variant="secondary"
                         size="sm"
+                        className="min-h-11 sm:min-h-9"
                         onClick={() => handleFounderSupervisorReview(rec, 'half_day')}
                       >
                         Half Day
@@ -962,6 +966,7 @@ function AttendancePageInner() {
                         type="button"
                         variant="danger"
                         size="sm"
+                        className="min-h-11 sm:min-h-9"
                         onClick={() => handleFounderSupervisorReview(rec, 'absent')}
                         leftIcon={<XCircle className="w-3.5 h-3.5" />}
                       >
@@ -977,9 +982,9 @@ function AttendancePageInner() {
 
         {/* Active Project & Date Selector Bar (Only shown on Daily Roster tab) */}
         {activeTab === 'terminal' && (
-          <div className="p-3.5 rounded-2xl bg-white border border-surface-border shadow-xs grid grid-cols-1 md:grid-cols-2 gap-3 items-center">
+          <div className="p-3.5 rounded-xl bg-white border border-surface-border grid grid-cols-1 md:grid-cols-2 gap-3 items-center">
             <div>
-              <label className="text-[10px] font-bold text-ink-secondary uppercase tracking-wider block mb-1">
+              <label className="text-xs font-semibold text-ink-secondary block mb-1.5">
                 Project Site
               </label>
               <Select
@@ -999,14 +1004,15 @@ function AttendancePageInner() {
             </div>
 
             <div>
-              <label className="text-[10px] font-bold text-ink-secondary uppercase tracking-wider block mb-1">
+              <label className="text-xs font-semibold text-ink-secondary block mb-1.5">
                 Roll Call Date
               </label>
-              <div className="flex items-center space-x-2">
+              <div className="flex flex-wrap items-center gap-2">
                 <Button
                   type="button"
                   variant={selectedDate === today ? 'primary' : 'secondary'}
                   size="sm"
+                  className="min-h-11 sm:min-h-9"
                   onClick={() => setSelectedDate(today)}
                 >
                   Today ({today.slice(5)})
@@ -1015,6 +1021,7 @@ function AttendancePageInner() {
                   type="button"
                   variant={selectedDate === yesterday ? 'primary' : 'secondary'}
                   size="sm"
+                  className="min-h-11 sm:min-h-9"
                   onClick={() => setSelectedDate(yesterday)}
                 >
                   Yesterday ({yesterday.slice(5)})
@@ -1025,7 +1032,7 @@ function AttendancePageInner() {
                     value={selectedDate}
                     max={today}
                     onChange={(e) => setSelectedDate(e.target.value)}
-                    className="py-1.5 text-xs"
+                    className="py-2"
                   />
                 )}
               </div>
@@ -1036,184 +1043,141 @@ function AttendancePageInner() {
         {/* TAB 1: TERMINAL / DAILY ROSTER */}
         {activeTab === 'terminal' && (
           <form onSubmit={handleBatchSubmit} className="space-y-3.5">
-            {/* Single-Row 5-Column Live Count Strip (Fits cleanly on 1 row on Mobile & Desktop) */}
-            <div className="grid grid-cols-5 gap-1.5 sm:gap-2.5">
-              <div className="p-2 sm:p-2.5 rounded-xl bg-white border border-surface-border text-navy text-center shadow-2xs">
-                <div className="text-sm sm:text-lg font-extrabold leading-tight tabular-nums">
-                  {checkedCount}/{markableWorkers.length}
-                </div>
-                <div className="text-[9px] sm:text-[10px] font-bold uppercase tracking-wider text-ink-secondary truncate">
-                  Checked
-                </div>
+            {/* Compact progress summary: the roster remains the focus, counts stay scannable. */}
+            <section
+              aria-label="Attendance summary"
+              className="rounded-xl border border-surface-border bg-white px-3.5 py-3"
+            >
+              <div className="flex items-center justify-between gap-3">
+                <h2 className="text-sm font-semibold text-ink-primary">Crew status</h2>
+                <span className="text-xs font-medium text-ink-secondary tabular-nums">
+                  {checkedCount} of {markableWorkers.length} marked
+                </span>
               </div>
-              <div className="p-2 sm:p-2.5 rounded-xl bg-status-success-bg/70 border border-status-success/20 text-status-success text-center">
-                <div className="text-sm sm:text-lg font-extrabold leading-tight tabular-nums">{presentCount}</div>
-                <div className="text-[9px] sm:text-[10px] font-bold uppercase tracking-wider truncate">Present</div>
+              <div
+                className="mt-2 h-1.5 overflow-hidden rounded-full bg-surface-inset"
+                role="progressbar"
+                aria-label="Attendance completion"
+                aria-valuemin={0}
+                aria-valuemax={Math.max(markableWorkers.length, 1)}
+                aria-valuenow={checkedCount}
+              >
+                <div
+                  className="h-full rounded-full bg-brand transition-[width] duration-200"
+                  style={{
+                    width: `${markableWorkers.length ? Math.round((checkedCount / markableWorkers.length) * 100) : 0}%`,
+                  }}
+                />
               </div>
-              <div className="p-2 sm:p-2.5 rounded-xl bg-status-warning-bg/70 border border-status-warning/20 text-status-warning text-center">
-                <div className="text-sm sm:text-lg font-extrabold leading-tight tabular-nums">{halfDayCount}</div>
-                <div className="text-[9px] sm:text-[10px] font-bold uppercase tracking-wider truncate">Half Day</div>
+              <ul
+                aria-label="Attendance counts by status"
+                className="mt-2.5 flex flex-wrap items-center gap-x-4 gap-y-1 text-[11px]"
+              >
+                {[
+                  { label: 'Present', count: presentCount, dot: 'bg-status-success' },
+                  { label: 'Half day', count: halfDayCount, dot: 'bg-status-warning' },
+                  { label: 'Absent', count: absentCount, dot: 'bg-status-danger' },
+                  { label: 'Leave', count: leaveCount, dot: 'bg-status-info' },
+                ].map((item) => (
+                  <li key={item.label} className="inline-flex items-center gap-1.5 text-ink-secondary">
+                    <span aria-hidden="true" className={`h-1.5 w-1.5 rounded-full ${item.dot}`} />
+                    <span className="font-semibold text-ink-primary tabular-nums">{item.count}</span>
+                    <span>{item.label}</span>
+                  </li>
+                ))}
+              </ul>
+            </section>
+
+            {/* Search and craft filters */}
+            <div className="rounded-xl border border-surface-border bg-white p-3 flex flex-col md:flex-row md:items-center gap-2.5">
+              <div className="grid flex-1 grid-cols-1 sm:grid-cols-2 gap-2">
+                <Input
+                  placeholder="Search workers..."
+                  value={searchWorker}
+                  onChange={(e) => setSearchWorker(e.target.value)}
+                  leftIcon={<Search className="w-4 h-4" />}
+                />
+                <Select
+                  value={craftFilter}
+                  onChange={(e) => setCraftFilter(e.target.value)}
+                  options={[
+                    { label: 'All Craft Groups', value: 'all' },
+                    { label: 'Supervision & Foremen', value: 'supervision' },
+                    { label: 'Masonry & Concrete', value: 'masonry' },
+                    { label: 'Carpentry & Formworks', value: 'carpentry' },
+                    { label: 'Steel, Electrical & Plumbing', value: 'mep_steel' },
+                    { label: 'Finishing & General Labor', value: 'general' },
+                  ]}
+                />
               </div>
-              <div className="p-2 sm:p-2.5 rounded-xl bg-status-danger-bg/70 border border-status-danger/20 text-status-danger text-center">
-                <div className="text-sm sm:text-lg font-extrabold leading-tight tabular-nums">{absentCount}</div>
-                <div className="text-[9px] sm:text-[10px] font-bold uppercase tracking-wider truncate">Absent</div>
-              </div>
-              <div className="p-2 sm:p-2.5 rounded-xl bg-status-info-bg/70 border border-status-info/20 text-status-info text-center">
-                <div className="text-sm sm:text-lg font-extrabold leading-tight tabular-nums">{leaveCount}</div>
-                <div className="text-[9px] sm:text-[10px] font-bold uppercase tracking-wider truncate">Leave</div>
+
+              <div className="hidden md:inline-flex shrink-0 rounded-lg border border-surface-border bg-surface-inset/60 p-0.5">
+                <button
+                  type="button"
+                  onClick={() => setViewMode('compact')}
+                  aria-pressed={viewMode === 'compact'}
+                  className={`min-h-9 px-3 rounded-md text-xs font-medium flex items-center gap-1.5 transition-colors ${
+                    viewMode === 'compact'
+                      ? 'bg-white text-navy border border-surface-border'
+                      : 'text-ink-secondary hover:text-navy'
+                  }`}
+                  title="Compact grouped rows"
+                >
+                  <LayoutList className="w-3.5 h-3.5" />
+                  <span>Compact</span>
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setViewMode('cards')}
+                  aria-pressed={viewMode === 'cards'}
+                  className={`min-h-9 px-3 rounded-md text-xs font-medium flex items-center gap-1.5 transition-colors ${
+                    viewMode === 'cards'
+                      ? 'bg-white text-navy border border-surface-border'
+                      : 'text-ink-secondary hover:text-navy'
+                  }`}
+                  title="Expanded cards"
+                >
+                  <LayoutGrid className="w-3.5 h-3.5" />
+                  <span>Cards</span>
+                </button>
               </div>
             </div>
-
-            {/* Filter, Group, Quick-Add & Bulk-Action Toolbar */}
-            <div className="p-3 rounded-2xl bg-white border border-surface-border shadow-sm flex flex-col lg:flex-row lg:items-center justify-between gap-2.5">
-              <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-2 flex-1">
-                <div className="w-full sm:w-60">
-                  <Input
-                    placeholder="Filter worker or craft..."
-                    value={searchWorker}
-                    onChange={(e) => setSearchWorker(e.target.value)}
-                    leftIcon={<Search className="w-4 h-4" />}
-                  />
-                </div>
-
-                <div className="w-full sm:w-52">
-                  <Select
-                    value={craftFilter}
-                    onChange={(e) => setCraftFilter(e.target.value)}
-                    options={[
-                      { label: 'All Craft Groups', value: 'all' },
-                      { label: 'Supervision & Foremen', value: 'supervision' },
-                      { label: 'Masonry & Concrete', value: 'masonry' },
-                      { label: 'Carpentry & Formworks', value: 'carpentry' },
-                      { label: 'Steel, Electrical & Plumbing', value: 'mep_steel' },
-                      { label: 'Finishing & General Labor', value: 'general' },
-                    ]}
-                  />
-                </div>
-              </div>
-
-              <div className="flex items-center flex-wrap justify-between sm:justify-end gap-2">
-                <Button
-                  type="button"
-                  variant="secondary"
-                  size="sm"
-                  onClick={() => setIsQuickAddOpen(true)}
-                  leftIcon={<UserPlus className="w-3.5 h-3.5" />}
-                >
-                  + Add Worker
-                </Button>
-
-                <Button
-                  type="button"
-                  variant="secondary"
-                  size="sm"
-                  onClick={() => handleMarkCrewPresent(filteredWorkers)}
-                  leftIcon={<CheckCheck className="w-3.5 h-3.5" />}
-                >
-                  Mark Crew Present
-                </Button>
-
-                <Button
-                  type="submit"
-                  variant={
-                    existingSiteDateRecords.length > 0 && !hasUnsavedChanges
-                      ? 'secondary'
-                      : 'primary'
-                  }
-                  size="sm"
-                  isLoading={isSubmitting}
-                  disabled={
-                    isSubmitting ||
-                    !selectedProjectId ||
-                    markableWorkers.length === 0 ||
-                    uncheckedCount > 0 ||
-                    (existingSiteDateRecords.length > 0 && !hasUnsavedChanges)
-                  }
-                  leftIcon={
-                    existingSiteDateRecords.length > 0 && !hasUnsavedChanges ? (
-                      <CheckCircle2 className="w-3.5 h-3.5 text-status-success" />
-                    ) : (
-                      <Save className="w-3.5 h-3.5" />
-                    )
-                  }
-                >
-                  {uncheckedCount > 0
-                    ? `${uncheckedCount} Left`
-                    : existingSiteDateRecords.length > 0
-                      ? hasUnsavedChanges
-                        ? 'Save'
-                        : 'Synced ✓'
-                      : 'Submit'}
-                </Button>
-
-                <div className="inline-flex rounded-xl border border-surface-border bg-surface-inset p-0.5">
-                  <button
-                    type="button"
-                    onClick={() => setViewMode('compact')}
-                    className={`px-2.5 py-1 rounded-lg text-xs font-semibold flex items-center gap-1 transition-all ${
-                      viewMode === 'compact'
-                        ? 'bg-white text-navy shadow-sm'
-                        : 'text-ink-secondary hover:text-navy'
-                    }`}
-                    title="Compact Grouped Table"
-                  >
-                    <LayoutList className="w-3.5 h-3.5" />
-                    <span>Compact</span>
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => setViewMode('cards')}
-                    className={`px-2.5 py-1 rounded-lg text-xs font-semibold flex items-center gap-1 transition-all ${
-                      viewMode === 'cards'
-                        ? 'bg-white text-navy shadow-sm'
-                        : 'text-ink-secondary hover:text-navy'
-                    }`}
-                    title="Expanded Cards"
-                  >
-                    <LayoutGrid className="w-3.5 h-3.5" />
-                    <span>Cards</span>
-                  </button>
-                </div>
-              </div>
-            </div>
-
-            {submissionSuccess && (
-              <div className="p-3.5 rounded-2xl bg-status-success-bg border border-status-success/20 text-status-success text-xs font-semibold flex items-center space-x-2">
-                <CheckCircle2 className="w-4 h-4 text-status-success" />
-                <span>Attendance records saved and live in the Payroll Engine!</span>
-              </div>
-            )}
 
             {/* GROUPED WORKER ROSTER */}
-            <div className="space-y-3">
+            <div className="space-y-2.5">
               {groupedRosterWorkers.map(([groupKey, groupWorkers]) => {
                 const isCollapsed = Boolean(collapsedGroups[groupKey]);
-                const groupPresent = groupWorkers.filter(
+                const groupMarkableWorkers = groupWorkers.filter(
+                  (worker) => !isSelfSupervisorWorker(worker)
+                );
+                const groupPresent = groupMarkableWorkers.filter(
                   (w) => draftAttendance[w.id]?.status === 'present'
                 ).length;
-                const groupHalf = groupWorkers.filter(
+                const groupHalf = groupMarkableWorkers.filter(
                   (w) => draftAttendance[w.id]?.status === 'half_day'
                 ).length;
-                const groupAbsent = groupWorkers.filter(
-                  (w) =>
-                    draftAttendance[w.id]?.status === 'absent' ||
-                    draftAttendance[w.id]?.status === 'leave'
+                const groupAbsent = groupMarkableWorkers.filter(
+                  (w) => draftAttendance[w.id]?.status === 'absent'
                 ).length;
-                const groupUnchecked = groupWorkers.filter(
-                  (w) => !isSelfSupervisorWorker(w) && !draftAttendance[w.id]?.status
+                const groupLeave = groupMarkableWorkers.filter(
+                  (w) => draftAttendance[w.id]?.status === 'leave'
+                ).length;
+                const groupUnchecked = groupMarkableWorkers.filter(
+                  (w) => !draftAttendance[w.id]?.status
                 ).length;
 
                 return (
                   <div
                     key={groupKey}
-                    className="rounded-2xl bg-white border border-surface-border shadow-sm overflow-hidden"
+                    className="rounded-xl bg-white border border-surface-border overflow-hidden"
                   >
                     {/* Collapsible Craft Group Header */}
-                    <div className="px-4 py-2.5 bg-surface-inset/70 border-b border-surface-border/60 flex flex-wrap items-center justify-between gap-2">
+                    <div className="px-3 sm:px-4 py-2 bg-white border-b border-surface-border/70 flex flex-wrap items-center justify-between gap-2">
                       <button
                         type="button"
                         onClick={() => toggleGroupCollapse(groupKey)}
-                        className="flex items-center gap-2 text-left font-bold text-xs text-navy hover:text-navy-deep"
+                        aria-expanded={!isCollapsed}
+                        className="flex min-h-11 min-w-0 max-w-full flex-1 flex-wrap items-center gap-x-2 gap-y-1 text-left font-semibold text-xs text-navy hover:text-navy-deep focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand/25 rounded-md sm:flex-none"
                       >
                         {isCollapsed ? (
                           <ChevronRight className="w-4 h-4 text-ink-secondary" />
@@ -1226,32 +1190,35 @@ function AttendancePageInner() {
                         </Badge>
                         {groupUnchecked > 0 && (
                           <Badge variant="warning" size="sm">
-                            {groupUnchecked} unchecked
+                            {groupUnchecked} unmarked
                           </Badge>
                         )}
                       </button>
 
-                      <div className="flex items-center gap-2 text-[11px]">
-                        <span className="text-status-success font-bold">{groupPresent}P</span>
-                        <span className="text-ink-muted">·</span>
-                        <span className="text-status-warning font-bold">{groupHalf}½</span>
-                        <span className="text-ink-muted">·</span>
-                        <span className="text-status-danger font-bold">{groupAbsent}A</span>
+                      <div className="flex flex-wrap items-center justify-end gap-x-3 gap-y-1 text-[11px] text-ink-secondary">
+                        <span><strong className="text-status-success tabular-nums">{groupPresent}</strong> present</span>
+                        <span><strong className="text-status-warning tabular-nums">{groupHalf}</strong> half day</span>
+                        <span><strong className="text-status-danger tabular-nums">{groupAbsent}</strong> absent</span>
+                        <span><strong className="text-status-info tabular-nums">{groupLeave}</strong> leave</span>
 
-                        {groupWorkers.some((w) => !isSelfSupervisorWorker(w)) && (
+                        {groupMarkableWorkers.some(
+                          (worker) =>
+                            !draftAttendance[worker.id]?.status &&
+                            !otherSiteActiveAttendanceByWorker.has(worker.id)
+                        ) && (
                           <button
                             type="button"
                             onClick={() => handleMarkCrewPresent(groupWorkers)}
-                            className="ml-2 px-2 py-0.5 rounded-lg bg-white border border-surface-border text-[11px] font-semibold text-navy hover:bg-surface-inset transition-colors"
+                            className="min-h-11 sm:min-h-9 rounded-lg border border-surface-border bg-white px-3 text-[11px] font-semibold text-navy hover:bg-surface-elevated hover:border-brand/30 transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand/25"
                           >
-                            All Present
+                            Mark remaining present
                           </button>
                         )}
                       </div>
                     </div>
 
-                    {!isCollapsed && viewMode === 'compact' && (
-                      <div className="divide-y divide-surface-border/60">
+                    {!isCollapsed && (
+                      <div className={`divide-y divide-surface-border/60 ${viewMode === 'cards' ? 'md:hidden' : ''}`}>
                         {groupWorkers.map((worker) => {
                           const currentDraft = draftAttendance[worker.id] || {
                             status: null,
@@ -1280,23 +1247,21 @@ function AttendancePageInner() {
                           return (
                             <div
                               key={worker.id}
-                              className={`px-4 py-2.5 text-xs transition-colors ${
+                              className={`px-3 sm:px-4 py-3 text-xs transition-colors ${
                                 isSelfSup || isPendingFounderApprovalOnRow
-                                  ? 'bg-amber-50/40'
-                                  : !currentDraft.status
-                                    ? 'bg-amber-50/15 hover:bg-slate-50/80'
-                                    : 'hover:bg-slate-50/80'
+                                  ? 'bg-status-warning-bg/25'
+                                  : 'bg-white hover:bg-surface-elevated'
                               }`}
                             >
                               <div className="flex flex-col md:flex-row md:items-center justify-between gap-2">
                                 {/* Left: Compact Worker Identity */}
                                 <div className="min-w-0 flex-1">
                                   <div className="flex items-center gap-1.5 flex-wrap">
-                                    <span className="font-bold text-navy text-sm truncate">
+                                    <span className="font-semibold text-ink-primary text-sm truncate">
                                       {worker.name}
                                     </span>
-                                    <span className="text-ink-secondary text-[11px]">
-                                      {worker.position} · ₱{worker.pay_rate}/day
+                                    <span className="text-ink-secondary text-xs">
+                                      {worker.position}
                                     </span>
                                     {isAnySupRow && (
                                       <Badge variant="warning" size="sm">
@@ -1324,7 +1289,7 @@ function AttendancePageInner() {
                                     )}
                                     {!isSelfSup && !currentDraft.status && (
                                       <Badge variant="neutral" size="sm">
-                                        Not checked yet
+                                        Unmarked
                                       </Badge>
                                     )}
                                   </div>
@@ -1351,7 +1316,7 @@ function AttendancePageInner() {
                                         )
                                       ) : (
                                         <span>
-                                          Auto-logged as Present when you submit crew attendance · Founder Approval
+                                          Auto-logged when you submit crew roll call.
                                         </span>
                                       )}
                                     </div>
@@ -1363,6 +1328,7 @@ function AttendancePageInner() {
                                         type="button"
                                         variant="primary"
                                         size="sm"
+                                        className="min-h-11 md:min-h-9"
                                         onClick={() =>
                                           handleFounderSupervisorReview(savedRec, 'present')
                                         }
@@ -1371,31 +1337,35 @@ function AttendancePageInner() {
                                         Approve ✓
                                       </Button>
                                     )}
-                                    <div className="inline-flex rounded-xl bg-surface-inset p-0.5 border border-surface-border">
+                                    <div
+                                      role="group"
+                                      aria-label={`Attendance status for ${worker.name}`}
+                                      className="grid grid-cols-4 md:inline-flex rounded-lg bg-surface-inset/70 p-0.5 border border-surface-border"
+                                    >
                                       {[
                                         {
                                           id: 'present',
                                           label: 'Present',
                                           activeClass:
-                                            'bg-status-success text-white font-bold shadow-sm',
+                                            'bg-status-success text-white font-semibold',
                                         },
                                         {
                                           id: 'half_day',
                                           label: 'Half Day',
                                           activeClass:
-                                            'bg-status-warning text-white font-bold shadow-sm',
+                                            'bg-status-warning text-white font-semibold',
                                         },
                                         {
                                           id: 'absent',
                                           label: 'Absent',
                                           activeClass:
-                                            'bg-status-danger text-white font-bold shadow-sm',
+                                            'bg-status-danger text-white font-semibold',
                                         },
                                         {
                                           id: 'leave',
                                           label: 'Leave',
                                           activeClass:
-                                            'bg-status-info text-white font-bold shadow-sm',
+                                            'bg-status-info text-white font-semibold',
                                         },
                                       ].map((st) => {
                                         const active = currentDraft.status === st.id;
@@ -1409,10 +1379,11 @@ function AttendancePageInner() {
                                                 st.id as AttendanceStatus
                                               )
                                             }
-                                            className={`px-3 py-1 rounded-lg text-[11px] transition-all ${
+                                            aria-pressed={active}
+                                            className={`min-h-11 md:min-h-9 px-1 sm:px-2 md:px-3 rounded-md text-[10px] sm:text-[11px] transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand/25 ${
                                               active
                                                 ? st.activeClass
-                                                : 'text-ink-secondary hover:text-navy font-medium'
+                                                : 'text-ink-secondary hover:text-navy hover:bg-white font-medium'
                                             }`}
                                           >
                                             {st.label}
@@ -1424,12 +1395,13 @@ function AttendancePageInner() {
                                     <button
                                       type="button"
                                       onClick={() => toggleNoteInput(worker.id)}
-                                      className={`p-1.5 rounded-lg border transition-colors ${
+                                      className={`min-h-11 min-w-11 md:min-h-9 md:min-w-9 inline-flex items-center justify-center rounded-lg border transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand/25 ${
                                         currentDraft.notes
-                                          ? 'border-navy/30 bg-navy/5 text-navy'
+                                          ? 'border-brand/30 bg-brand/5 text-brand'
                                           : 'border-transparent text-ink-muted hover:text-navy hover:bg-surface-inset'
                                       }`}
                                       title="Add or view activity note"
+                                      aria-expanded={showNoteBox}
                                       aria-label={`Toggle note for ${worker.name}`}
                                     >
                                       <MessageSquare className="w-3.5 h-3.5" />
@@ -1446,7 +1418,7 @@ function AttendancePageInner() {
                                     onChange={(e) =>
                                       handleNotesChange(worker.id, e.target.value)
                                     }
-                                    className="text-xs py-1.5"
+                                    className="py-2"
                                   />
                                 </div>
                               )}
@@ -1457,7 +1429,7 @@ function AttendancePageInner() {
                     )}
 
                     {!isCollapsed && viewMode === 'cards' && (
-                      <div className="p-4 grid grid-cols-1 md:grid-cols-2 gap-3">
+                      <div className="hidden md:grid p-4 grid-cols-1 md:grid-cols-2 gap-3">
                         {groupWorkers.map((worker) => {
                           const currentDraft = draftAttendance[worker.id] || {
                             status: null,
@@ -1471,7 +1443,7 @@ function AttendancePageInner() {
                           return (
                             <div
                               key={worker.id}
-                              className="p-4 rounded-2xl bg-surface-inset/30 border border-surface-border space-y-3"
+                              className="p-4 rounded-xl bg-white border border-surface-border space-y-3"
                             >
                               <div className="flex items-center justify-between gap-2">
                                 <div>
@@ -1485,13 +1457,13 @@ function AttendancePageInner() {
                                       </Badge>
                                     )}
                                   </div>
-                                  <div className="text-[11px] text-ink-secondary">
-                                    {worker.position} · ₱{worker.pay_rate}/day
+                                  <div className="text-xs text-ink-secondary">
+                                    {worker.position}
                                   </div>
                                 </div>
                                 {!isSelfSup && !currentDraft.status && (
-                                  <Badge variant="warning" size="sm">
-                                    Unchecked
+                                  <Badge variant="neutral" size="sm">
+                                    Unmarked
                                   </Badge>
                                 )}
                               </div>
@@ -1504,17 +1476,33 @@ function AttendancePageInner() {
                                       ? savedRec.is_founder_override
                                         ? `Founder Approved (${formatStatusLabel(savedRec.status)}) ✓`
                                         : 'Submitted as Present · Pending Founder Approval'
-                                      : 'Auto-logged as Present when you submit crew attendance'}
+                                      : 'Auto-logged when you submit crew roll call.'}
                                   </span>
                                 </div>
                               ) : (
                                 <>
                                   <div className="grid grid-cols-4 gap-1.5">
                                     {[
-                                      { id: 'present', label: 'Present' },
-                                      { id: 'half_day', label: 'Half Day' },
-                                      { id: 'absent', label: 'Absent' },
-                                      { id: 'leave', label: 'Leave' },
+                                      {
+                                        id: 'present',
+                                        label: 'Present',
+                                        activeClass: 'bg-status-success text-white border-status-success',
+                                      },
+                                      {
+                                        id: 'half_day',
+                                        label: 'Half Day',
+                                        activeClass: 'bg-status-warning text-white border-status-warning',
+                                      },
+                                      {
+                                        id: 'absent',
+                                        label: 'Absent',
+                                        activeClass: 'bg-status-danger text-white border-status-danger',
+                                      },
+                                      {
+                                        id: 'leave',
+                                        label: 'Leave',
+                                        activeClass: 'bg-status-info text-white border-status-info',
+                                      },
                                     ].map((item) => {
                                       const isSelected = currentDraft.status === item.id;
                                       return (
@@ -1527,9 +1515,10 @@ function AttendancePageInner() {
                                               item.id as AttendanceStatus
                                             )
                                           }
-                                          className={`py-2 px-2 rounded-xl border text-[11px] font-bold transition-all ${
+                                          aria-pressed={isSelected}
+                                          className={`min-h-11 px-2 rounded-lg border text-[11px] font-semibold transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand/25 ${
                                             isSelected
-                                              ? 'bg-navy text-white border-navy'
+                                              ? item.activeClass
                                               : 'bg-white border-surface-border text-ink-secondary hover:bg-surface-inset'
                                           }`}
                                         >
@@ -1545,7 +1534,7 @@ function AttendancePageInner() {
                                     onChange={(e) =>
                                       handleNotesChange(worker.id, e.target.value)
                                     }
-                                    className="text-xs py-1.5"
+                                    className="py-2"
                                   />
                                 </>
                               )}
@@ -1559,12 +1548,12 @@ function AttendancePageInner() {
               })}
 
               {filteredWorkers.length === 0 && (
-                <div className="bg-white rounded-3xl border border-surface-border">
+                <div className="bg-white rounded-xl border border-surface-border">
                   <EmptyState
                     title="No workers on this site"
                     description={
                       workers.length === 0
-                        ? 'Click "+ Add Worker" above to register craftsmen — they will appear here grouped by craft.'
+                        ? 'Add workers from the Workforce tab. They will appear here grouped by craft.'
                         : 'No worker matches the current filter.'
                     }
                   />
@@ -1573,12 +1562,20 @@ function AttendancePageInner() {
             </div>
 
             {/* In-Flow Bottom Submit & Sync Card (Moves naturally with collapsed/expanded groups — never overlaps) */}
-            <div className="mt-4 px-4 py-3 rounded-2xl bg-white border border-surface-border shadow-xs flex items-center justify-between gap-3">
-              <div className="text-xs text-ink-secondary truncate min-w-0">
-                {uncheckedCount > 0 ? (
+            <div className="mt-3 px-3 sm:px-4 py-3 rounded-xl bg-white border border-surface-border flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+              <div
+                role="status"
+                aria-live="polite"
+                aria-busy={isSubmitting}
+                className="min-w-0 text-xs text-ink-secondary sm:flex-1"
+              >
+                {attendanceSaveFailed ? (
+                  <span className="text-status-warning">
+                    Couldn&apos;t sync. Your selections are still here—retry when connected.
+                  </span>
+                ) : uncheckedCount > 0 ? (
                   <span>
-                    <strong className="text-navy tabular-nums">{checkedCount}/{markableWorkers.length}</strong> checked ·{' '}
-                    <span className="text-status-warning font-semibold tabular-nums">{uncheckedCount} left</span>
+                    <strong className="text-status-warning font-semibold tabular-nums">{uncheckedCount}</strong> statuses left to choose
                   </span>
                 ) : existingSiteDateRecords.length > 0 && !hasUnsavedChanges ? (
                   <span className="inline-flex items-center gap-1.5 text-status-success font-semibold">
@@ -1586,9 +1583,7 @@ function AttendancePageInner() {
                     <span>Synced for {selectedDate}</span>
                   </span>
                 ) : (
-                  <span>
-                    <strong className="text-navy tabular-nums">{markableWorkers.length}/{markableWorkers.length}</strong> crew checked
-                  </span>
+                  <span>All crew statuses are selected.</span>
                 )}
               </div>
 
@@ -1600,6 +1595,7 @@ function AttendancePageInner() {
                     : 'primary'
                 }
                 size="sm"
+                className="min-h-11 w-full sm:w-auto sm:min-h-9 shrink-0"
                 isLoading={isSubmitting}
                 disabled={
                   isSubmitting ||
@@ -1615,15 +1611,18 @@ function AttendancePageInner() {
                     <Save className="w-3.5 h-3.5" />
                   )
                 }
-                className="shrink-0"
               >
                 {uncheckedCount > 0
-                  ? `Mark ${uncheckedCount} More`
-                  : existingSiteDateRecords.length > 0
-                    ? hasUnsavedChanges
-                      ? 'Save Changes'
-                      : 'Synced ✓'
-                    : 'Submit Roll Call'}
+                  ? `Select ${uncheckedCount} remaining`
+                  : attendanceSaveFailed
+                    ? existingSiteDateRecords.length > 0
+                      ? 'Retry Save'
+                      : 'Retry Submit'
+                    : existingSiteDateRecords.length > 0
+                      ? hasUnsavedChanges
+                        ? 'Save Changes'
+                        : 'Synced ✓'
+                      : 'Submit Roll Call'}
               </Button>
             </div>
           </form>
@@ -1677,7 +1676,7 @@ function AttendancePageInner() {
                   value={historyDateFilter}
                   max={today}
                   onChange={(e) => setHistoryDateFilter(e.target.value)}
-                  className="py-1.5 text-xs"
+                  className="py-2"
                 />
                 {(historyProjectFilter !== 'all' ||
                   historyStatusFilter !== 'all' ||
@@ -1869,7 +1868,7 @@ function AttendancePageInner() {
               })}
 
               {groupedHistorySheets.length === 0 && (
-                <div className="bg-white rounded-3xl border border-surface-border">
+                <div className="bg-white rounded-xl border border-surface-border">
                   <EmptyState
                     title="No attendance records match"
                     description={
@@ -2075,7 +2074,7 @@ function AttendancePageInner() {
               ))}
 
               {groupedWorkforceDirectory.length === 0 && (
-                <div className="bg-white rounded-3xl border border-surface-border">
+                <div className="bg-white rounded-xl border border-surface-border">
                   <EmptyState
                     title="No workers match"
                     description="Register craftsmen above or clear your search filter."
