@@ -156,21 +156,7 @@ function AttendancePageInner() {
   const [craftFilter, setCraftFilter] = useState<string>('all');
   const [isCrewFilterSheetOpen, setIsCrewFilterSheetOpen] = useState(false);
   const [collapsedGroups, setCollapsedGroups] = useState<Record<string, boolean>>({});
-  const [isMobileRosterCompact, setIsMobileRosterCompact] = useState(false);
-  const mobileRosterManualOverrideRef = useRef(false);
   const [expandedNoteWorkers, setExpandedNoteWorkers] = useState<Record<string, boolean>>({});
-
-  useEffect(() => {
-    const mediaQuery = window.matchMedia('(max-width: 639px)');
-    const updateCompactDefault = () => {
-      if (!mobileRosterManualOverrideRef.current) {
-        setIsMobileRosterCompact(mediaQuery.matches);
-      }
-    };
-    updateCompactDefault();
-    mediaQuery.addEventListener('change', updateCompactDefault);
-    return () => mediaQuery.removeEventListener('change', updateCompactDefault);
-  }, []);
 
   // Workforce registration stays collapsed until the user asks to add a worker.
   const [isWorkerFormOpen, setIsWorkerFormOpen] = useState(false);
@@ -1035,7 +1021,7 @@ function AttendancePageInner() {
                 ? 'Submitted daily attendance logs & approval status'
                 : activeTab === 'workforce'
                   ? `${workers.filter((w) => w.active).length} active craftsmen & supervisors`
-                  : `${selectedDate} · Check off crew members on site`}
+                  : 'Mark crew on site'}
             </p>
           </div>
 
@@ -1141,7 +1127,7 @@ function AttendancePageInner() {
 
         {/* Active Project & Date Selector Bar (Only shown on Daily Roster tab) */}
         {activeTab === 'terminal' && (
-          <div className="p-3.5 rounded-xl bg-white border border-surface-border grid grid-cols-1 md:grid-cols-2 gap-3 items-center">
+          <div className="rounded-xl border border-surface-border bg-white p-3 sm:p-3.5 grid grid-cols-1 md:grid-cols-2 gap-2.5 md:gap-3 items-center">
             <div>
               <label className="text-xs font-semibold text-ink-secondary block mb-1.5">
                 Project Site
@@ -1205,11 +1191,11 @@ function AttendancePageInner() {
 
         {/* TAB 1: TERMINAL / DAILY ROSTER */}
         {activeTab === 'terminal' && (
-          <form onSubmit={handleBatchSubmit} className="space-y-3.5">
+          <form onSubmit={handleBatchSubmit} className="space-y-2.5 sm:space-y-3.5">
             {/* Compact progress summary: the roster remains the focus, counts stay scannable. */}
             <section
               aria-label="Attendance summary"
-              className="rounded-xl border border-surface-border bg-white px-3.5 py-3"
+              className="rounded-xl border border-surface-border bg-white px-3 py-2.5 sm:px-3.5 sm:py-3"
             >
               <div className="flex items-center justify-between gap-3">
                 <h2 className="text-sm font-semibold text-ink-primary">Crew status</h2>
@@ -1273,7 +1259,7 @@ function AttendancePageInner() {
             </section>
 
             {/* Search stays visible; the craft filter moves to a focused sheet on phones. */}
-            <div className="rounded-xl border border-surface-border bg-white p-3">
+            <div className="rounded-xl border border-surface-border bg-white p-2.5 sm:p-3">
               <div className="grid grid-cols-1 gap-2 md:grid-cols-[minmax(0,1fr)_minmax(13rem,18rem)] md:items-center">
                 <div className="flex min-w-0 items-center gap-2">
                   <div className="min-w-0 flex-1">
@@ -1312,41 +1298,21 @@ function AttendancePageInner() {
                 </div>
               </div>
 
-              <div className="mt-2 flex items-center justify-between gap-2 sm:hidden">
-                {craftFilter !== 'all' ? (
+              {craftFilter !== 'all' && (
+                <div className="mt-2 flex sm:hidden">
                   <button
                     type="button"
                     onClick={() => setCraftFilter('all')}
                     aria-label={`Remove craft filter: ${CRAFT_FILTER_OPTIONS.find((option) => option.value === craftFilter)?.label || 'selected group'}`}
-                    className="inline-flex min-h-11 min-w-0 max-w-[65%] items-center gap-1.5 rounded-full bg-surface-inset px-3 py-1 text-xs font-medium text-navy transition-colors hover:bg-slate-200 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand focus-visible:ring-offset-2"
+                    className="inline-flex min-h-11 min-w-0 max-w-full items-center gap-1.5 rounded-full bg-surface-inset px-3 py-1 text-xs font-medium text-navy transition-colors hover:bg-slate-200 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand focus-visible:ring-offset-2"
                   >
                     <span className="truncate">
                       {CRAFT_FILTER_OPTIONS.find((option) => option.value === craftFilter)?.label || 'Selected craft'}
                     </span>
                     <X className="h-3.5 w-3.5 shrink-0" aria-hidden="true" />
                   </button>
-                ) : (
-                  <span className="text-xs text-ink-secondary" aria-live="polite">
-                    {filteredWorkers.length} {filteredWorkers.length === 1 ? 'worker' : 'workers'}
-                  </span>
-                )}
-                <button
-                  type="button"
-                  onClick={() => {
-                    mobileRosterManualOverrideRef.current = true;
-                    setIsMobileRosterCompact((current) => !current);
-                  }}
-                  aria-pressed={isMobileRosterCompact}
-                  aria-label={isMobileRosterCompact ? 'Use comfortable row spacing' : 'Use compact row spacing'}
-                  className={`inline-flex min-h-11 shrink-0 items-center rounded-full px-3 text-xs font-semibold transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand focus-visible:ring-offset-2 ${
-                    isMobileRosterCompact
-                      ? 'bg-brand/10 text-brand'
-                      : 'bg-surface-inset text-ink-secondary hover:bg-slate-200'
-                  }`}
-                >
-                  Compact rows
-                </button>
-              </div>
+                </div>
+              )}
             </div>
 
             <Modal
@@ -1388,7 +1354,7 @@ function AttendancePageInner() {
             </Modal>
 
             {/* GROUPED WORKER ROSTER */}
-            <div className="space-y-2.5">
+            <div className="space-y-2 sm:space-y-2.5">
               {groupedRosterWorkers.map(([groupKey, groupWorkers]) => {
                 const isCollapsed = Boolean(collapsedGroups[groupKey]);
                 const groupMarkableWorkers = groupWorkers.filter(
@@ -1421,7 +1387,7 @@ function AttendancePageInner() {
                     className="rounded-xl bg-white border border-surface-border overflow-hidden"
                   >
                     {/* Stable two-tier header: group total stays aligned; actions never share its title row. */}
-                    <div className="border-b border-surface-border/70 bg-white px-3 py-2.5 sm:px-4">
+                    <div className="border-b border-surface-border/70 bg-white px-3 py-2 sm:px-4">
                       <button
                         type="button"
                         onClick={() => toggleGroupCollapse(groupKey)}
@@ -1442,8 +1408,8 @@ function AttendancePageInner() {
                         </span>
                       </button>
 
-                      <div className="mt-2 flex flex-col gap-2 md:flex-row md:items-center md:justify-between">
-                        <div className="flex min-w-0 flex-wrap items-center gap-x-3 gap-y-1.5 text-[11px] text-ink-secondary">
+                      <div className="mt-1.5 flex flex-col gap-1.5 md:flex-row md:items-center md:justify-between">
+                        <div className="flex min-w-0 flex-wrap items-center gap-x-2.5 gap-y-1 text-[11px] text-ink-secondary">
                           <span><strong className="tabular-nums text-status-success">{groupPresent}</strong> present</span>
                           <span><strong className="tabular-nums text-status-warning">{groupHalf}</strong> half day</span>
                           <span><strong className="tabular-nums text-status-danger">{groupAbsent}</strong> absent</span>
@@ -1459,7 +1425,7 @@ function AttendancePageInner() {
                           <button
                             type="button"
                             onClick={() => handleMarkCrewPresent(groupWorkers)}
-                            className="min-h-11 w-fit max-w-full shrink-0 rounded-lg border border-surface-border bg-white px-3 text-xs font-semibold text-navy transition-colors hover:border-brand/30 hover:bg-surface-elevated focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand/25"
+                            className="inline-flex min-h-11 w-fit max-w-full shrink-0 items-center rounded-lg px-2 text-xs font-semibold text-brand transition-colors hover:bg-brand/5 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand/25"
                           >
                             Mark remaining present
                           </button>
@@ -1496,13 +1462,13 @@ function AttendancePageInner() {
                           return (
                             <div
                               key={worker.id}
-                              className={`px-3 sm:px-4 ${isMobileRosterCompact ? 'py-2 sm:py-3' : 'py-3'} text-xs transition-colors ${
+                              className={`px-3 py-2 sm:px-4 sm:py-3 text-xs transition-colors ${
                                 isSelfSup || isPendingFounderApprovalOnRow
                                   ? 'bg-status-warning-bg/25'
                                   : 'bg-white hover:bg-surface-elevated'
                               }`}
                             >
-                              <div className={`flex flex-col lg:flex-row lg:items-start lg:justify-between lg:gap-5 ${isMobileRosterCompact ? 'gap-2' : 'gap-2.5'}`}>
+                              <div className="flex flex-col gap-2 lg:flex-row lg:items-start lg:justify-between lg:gap-5">
                                 {/* Worker identity stays above a full-width status selector on phones. */}
                                 <div className="min-w-0 lg:flex-1">
                                   <div className="flex min-w-0 flex-wrap items-center gap-x-2 gap-y-1">
@@ -1605,7 +1571,7 @@ function AttendancePageInner() {
                                               )
                                             }
                                             aria-pressed={active}
-                                            className={`inline-flex ${isMobileRosterCompact ? 'min-h-11 sm:min-h-12' : 'min-h-12'} min-w-0 w-full items-center justify-center whitespace-nowrap rounded-md px-1 text-[10px] font-medium leading-tight transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand/25 sm:px-1.5 sm:text-[11px] ${
+                                            className={`inline-flex min-h-11 min-w-0 w-full items-center justify-center whitespace-nowrap rounded-md px-1 text-[10px] font-medium leading-tight transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand/25 sm:min-h-12 sm:px-1.5 sm:text-[11px] ${
                                               active
                                                 ? status.activeClass
                                                 : 'text-ink-secondary hover:bg-white hover:text-navy'
@@ -1617,13 +1583,13 @@ function AttendancePageInner() {
                                       })}
                                     </div>
 
-                                    <div className="mt-2 flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+                                    <div className="mt-1.5 flex flex-wrap items-center justify-between gap-2">
                                       <button
                                         type="button"
                                         onClick={() => toggleNoteInput(worker.id)}
                                         aria-expanded={showNoteBox}
                                         aria-controls={`attendance-note-${worker.id}`}
-                                        className={`inline-flex min-h-11 w-full items-center justify-center gap-2 rounded-lg border px-3 text-xs font-semibold transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand/25 sm:w-auto sm:justify-start ${
+                                        className={`inline-flex min-h-11 w-fit max-w-full items-center justify-center gap-2 rounded-lg border px-3 text-xs font-semibold transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand/25 ${
                                           currentDraft.notes
                                             ? 'border-brand/30 bg-brand/5 text-brand'
                                             : 'border-surface-border bg-white text-ink-secondary hover:bg-surface-inset hover:text-navy'
@@ -1644,7 +1610,7 @@ function AttendancePageInner() {
                                           type="button"
                                           variant="primary"
                                           size="sm"
-                                          className="min-h-11 w-full sm:w-auto"
+                                          className="min-h-11 w-fit max-w-full"
                                           onClick={() =>
                                             handleFounderSupervisorReview(savedRec, 'present')
                                           }
@@ -1702,7 +1668,7 @@ function AttendancePageInner() {
                 role="status"
                 aria-live="polite"
                 aria-busy={isSubmitting}
-                className="min-w-0 space-y-1 text-xs text-ink-secondary sm:flex-1"
+                className="min-w-0 text-xs text-ink-secondary sm:flex-1"
               >
                 <div>
                   {attendanceSaveFailed ? (
@@ -1722,7 +1688,6 @@ function AttendancePageInner() {
                     <span>All crew statuses are selected.</span>
                   )}
                 </div>
-
               </div>
 
               <Button
