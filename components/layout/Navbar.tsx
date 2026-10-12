@@ -34,6 +34,7 @@ import {
 import { Badge } from '@/components/ui/Badge';
 import { BaleLogo } from '@/components/ui/AsintaLogo';
 import { AsintaLoader } from '@/components/ui/AsintaLoader';
+import { Modal } from '@/components/ui/Modal';
 import { formatPesoCompact } from '@/lib/email/format';
 
 interface NavbarProps {
@@ -65,6 +66,97 @@ interface NavDropdownGroup {
   label: string;
   items: NavDropdownItem[];
 }
+
+interface NotificationCardProps {
+  item: ActionNotification;
+  compact?: boolean;
+  onOpen: (item: ActionNotification) => void;
+  onDismiss: (signature: string) => void;
+}
+
+function getNotificationTypeLabel(variant: ActionNotification['variant']): string {
+  if (variant === 'danger') return 'Urgent';
+  if (variant === 'warning') return 'Action';
+  if (variant === 'success') return 'Synced';
+  return 'Info';
+}
+
+const NotificationCard: React.FC<NotificationCardProps> = ({
+  item,
+  compact = false,
+  onOpen,
+  onDismiss,
+}) => (
+  <article className={compact ? 'py-3' : 'py-2'}>
+    {compact ? (
+      <div className="rounded-xl px-2 py-1 transition-colors hover:bg-surface/70">
+        <div className="flex items-center justify-between gap-2">
+          <Badge variant={item.variant} size="sm">
+            {getNotificationTypeLabel(item.variant)}
+          </Badge>
+          <button
+            type="button"
+            onClick={() => onDismiss(item.signature)}
+            className="inline-flex min-h-11 min-w-11 shrink-0 items-center justify-center rounded-full text-ink-muted transition-colors hover:bg-surface-inset hover:text-navy focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand focus-visible:ring-offset-2"
+            title="Dismiss notification"
+            aria-label={`Dismiss ${item.title}`}
+          >
+            <X className="h-4 w-4" />
+          </button>
+        </div>
+        <button
+          type="button"
+          onClick={() => onOpen(item)}
+          className="mt-1 block min-h-11 w-full rounded-lg py-2 text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand focus-visible:ring-inset"
+        >
+          <span className="block break-words text-sm font-semibold leading-snug text-navy">
+            {item.title}
+          </span>
+          <span className="mt-1 block break-words text-[13px] leading-relaxed text-ink-secondary">
+            {item.description}
+          </span>
+          <span className="mt-3 inline-flex min-h-10 w-full items-center justify-between gap-2 rounded-lg bg-surface-inset/80 px-3 text-xs font-semibold text-brand">
+            <span className="break-words text-left">{item.actionLabel}</span>
+            <ArrowRight className="h-4 w-4 shrink-0" aria-hidden="true" />
+          </span>
+        </button>
+      </div>
+    ) : (
+      <div className="flex items-start gap-2 rounded-lg px-2 py-2 transition-colors hover:bg-surface">
+        <button
+          type="button"
+          onClick={() => onOpen(item)}
+          className="min-w-0 flex-1 whitespace-normal rounded-md text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand/25"
+        >
+          <span className="block break-words font-semibold leading-snug text-navy">
+            {item.title}
+          </span>
+          <span className="mt-1 block break-words text-[12px] leading-relaxed text-ink-secondary">
+            {item.description}
+          </span>
+          <span className="mt-1.5 inline-flex items-center gap-1 text-[11px] font-semibold text-brand">
+            <span>{item.actionLabel}</span>
+            <ArrowRight className="h-3 w-3" aria-hidden="true" />
+          </span>
+        </button>
+        <div className="flex shrink-0 items-center gap-1">
+          <Badge variant={item.variant} size="sm">
+            {getNotificationTypeLabel(item.variant)}
+          </Badge>
+          <button
+            type="button"
+            onClick={() => onDismiss(item.signature)}
+            className="inline-flex min-h-11 min-w-11 items-center justify-center rounded-lg border border-transparent text-ink-muted transition-colors hover:bg-white hover:text-navy focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand/25"
+            title="Dismiss notification"
+            aria-label={`Dismiss ${item.title}`}
+          >
+            <X className="h-3.5 w-3.5" />
+          </button>
+        </div>
+      </div>
+    )}
+  </article>
+);
 
 const FOUNDER_DROPDOWN_GROUPS: NavDropdownGroup[] = [
   {
@@ -203,6 +295,7 @@ export const Navbar: React.FC<NavbarProps> = () => {
 
   const [showUserMenu, setShowUserMenu] = useState(false);
   const [showNotifications, setShowNotifications] = useState(false);
+  const [isCompactViewport, setIsCompactViewport] = useState(false);
   const [openDropdownId, setOpenDropdownId] = useState<string | null>(null);
   const [isRefreshing, setIsRefreshing] = useState(false);
   const [isSigningOut, setIsSigningOut] = useState(false);
@@ -214,6 +307,21 @@ export const Navbar: React.FC<NavbarProps> = () => {
   const accountMenuButtonRef = useRef<HTMLButtonElement>(null);
 
   const storageKey = user?.id ? `bale-dismissed-notifs:${user.id}` : null;
+
+  useEffect(() => {
+    if (typeof window.matchMedia !== 'function') return;
+    const viewport = window.matchMedia('(max-width: 1023px)');
+    const updateViewport = () => setIsCompactViewport(viewport.matches);
+    updateViewport();
+
+    if (typeof viewport.addEventListener === 'function') {
+      viewport.addEventListener('change', updateViewport);
+      return () => viewport.removeEventListener('change', updateViewport);
+    }
+
+    viewport.addListener(updateViewport);
+    return () => viewport.removeListener(updateViewport);
+  }, []);
 
   // Close popovers on route/query change
   useEffect(() => {
@@ -240,7 +348,13 @@ export const Navbar: React.FC<NavbarProps> = () => {
   // Close popovers on outside click or Escape.
   useEffect(() => {
     const handleClickOutside = (event: MouseEvent) => {
-      if (navRef.current && !navRef.current.contains(event.target as Node)) {
+      const target = event.target;
+      const isInsideDialog = target instanceof Element && Boolean(target.closest('[role="dialog"]'));
+      if (
+        navRef.current &&
+        !navRef.current.contains(target as Node) &&
+        !isInsideDialog
+      ) {
         setOpenDropdownId(null);
         setShowUserMenu(false);
         setShowNotifications(false);
@@ -248,6 +362,8 @@ export const Navbar: React.FC<NavbarProps> = () => {
     };
     const handleEscape = (event: KeyboardEvent) => {
       if (event.key !== 'Escape') return;
+      // The shared Modal owns Escape handling and focus restoration for the sheet.
+      if (showNotifications && isCompactViewport) return;
       if (showNotifications) notificationButtonRef.current?.focus();
       else if (showUserMenu) accountMenuButtonRef.current?.focus();
       setOpenDropdownId(null);
@@ -260,7 +376,7 @@ export const Navbar: React.FC<NavbarProps> = () => {
       document.removeEventListener('mousedown', handleClickOutside);
       document.removeEventListener('keydown', handleEscape);
     };
-  }, [showNotifications, showUserMenu]);
+  }, [isCompactViewport, showNotifications, showUserMenu]);
 
   useEffect(() => {
     if (!storageKey || typeof window === 'undefined') return;
@@ -556,6 +672,74 @@ export const Navbar: React.FC<NavbarProps> = () => {
     persistDismissed([]);
   };
 
+  const notificationHeading =
+    actionableNotificationCount > 0
+      ? isFounder
+        ? 'Founder tasks'
+        : 'Site tasks'
+      : isFounder
+        ? 'Founder updates'
+        : 'Site updates';
+
+  const renderNotificationControls = () => (
+    <div className="flex shrink-0 items-center gap-1">
+      {visibleNotifications.length > 0 && (
+        <button
+          type="button"
+          onClick={handleClearAll}
+          className="inline-flex min-h-11 items-center gap-1.5 rounded-full px-2.5 text-[11px] font-medium text-ink-secondary transition-colors hover:bg-surface-inset hover:text-navy focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand focus-visible:ring-offset-2"
+          title="Clear all notifications"
+        >
+          <CheckCheck className="h-3.5 w-3.5" />
+          <span>Clear all</span>
+        </button>
+      )}
+      <button
+        type="button"
+        onClick={handleManualSync}
+        disabled={isRefreshing}
+        className="inline-flex min-h-11 min-w-11 items-center justify-center rounded-full text-ink-secondary transition-colors hover:bg-surface-inset hover:text-navy disabled:opacity-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand focus-visible:ring-offset-2"
+        title="Sync now"
+        aria-label="Sync notifications now"
+        aria-busy={isRefreshing}
+      >
+        <RefreshCw className={`h-3.5 w-3.5 ${isRefreshing ? 'animate-spin text-brand' : ''}`} />
+      </button>
+    </div>
+  );
+
+  const renderNotificationList = (compact = false) => (
+    <div className="divide-y divide-surface-border/70 text-xs">
+      {visibleNotifications.map((item) => (
+        <NotificationCard
+          key={item.id}
+          item={item}
+          compact={compact}
+          onOpen={handleNotificationClick}
+          onDismiss={dismissNotification}
+        />
+      ))}
+
+      {visibleNotifications.length === 0 && (
+        <div className="space-y-2 px-4 py-7 text-center">
+          <CheckCheck className="mx-auto h-5 w-5 text-status-success" aria-hidden="true" />
+          <p className="text-xs font-medium text-ink-secondary">
+            All clear — nothing needs attention right now.
+          </p>
+          {dismissedCount > 0 && (
+            <button
+              type="button"
+              onClick={handleRestoreDismissed}
+              className="inline-flex min-h-11 items-center justify-center rounded-full px-3 text-[11px] font-semibold text-brand transition-colors hover:bg-surface-inset focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand focus-visible:ring-offset-2"
+            >
+              Show {dismissedCount} cleared notification{dismissedCount === 1 ? '' : 's'}
+            </button>
+          )}
+        </div>
+      )}
+    </div>
+  );
+
   return (
     <>
       {isSigningOut && (
@@ -723,7 +907,11 @@ export const Navbar: React.FC<NavbarProps> = () => {
                   setOpenDropdownId(null);
                 }}
                 ref={notificationButtonRef}
-                className="w-11 h-11 rounded-lg text-ink-secondary hover:text-brand hover:bg-surface-inset border border-surface-border bg-white flex items-center justify-center transition-colors active:scale-95 relative focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand/25"
+                className={`relative inline-flex min-h-11 min-w-11 items-center justify-center rounded-full text-ink-secondary transition-colors active:scale-95 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand focus-visible:ring-offset-2 ${
+                  showNotifications
+                    ? 'bg-surface-inset text-brand'
+                    : 'hover:bg-surface-inset hover:text-brand'
+                }`}
                 aria-label={
                   actionableNotificationCount > 0
                     ? `${actionableNotificationCount} actionable notification${actionableNotificationCount === 1 ? '' : 's'}`
@@ -743,123 +931,30 @@ export const Navbar: React.FC<NavbarProps> = () => {
                 )}
               </button>
 
-              {showNotifications && (
+              {showNotifications && !isCompactViewport && (
                 <div
                   id="navbar-notifications-panel"
                   role="region"
                   aria-labelledby="navbar-notifications-title"
-                  className="absolute right-0 mt-2 w-[calc(100vw-2rem)] sm:w-96 bg-white rounded-xl border border-surface-border shadow-lg p-2.5 sm:p-3 z-50 animate-dropdown-enter"
+                  className="absolute right-0 top-full z-50 mt-2 w-96 max-w-[calc(100vw-2rem)] rounded-xl border border-surface-border bg-white p-2.5 shadow-lg animate-dropdown-enter sm:p-3"
                 >
                   <div className="flex items-center justify-between gap-2 border-b border-surface-border pb-2.5">
                     <div className="flex min-w-0 items-center gap-2">
-                      <h4 id="navbar-notifications-title" className="text-sm font-semibold text-navy truncate">
-                        {actionableNotificationCount > 0
-                          ? isFounder
-                            ? 'Founder tasks'
-                            : 'Site tasks'
-                          : isFounder
-                            ? 'Founder updates'
-                            : 'Site updates'}
+                      <h4 id="navbar-notifications-title" className="truncate text-sm font-semibold text-navy">
+                        {notificationHeading}
                       </h4>
                       <span
                         className="inline-flex shrink-0 items-center gap-1 text-[10px] font-medium text-status-success"
                         title="Live Supabase Realtime and background sync are active"
                       >
-                        <span aria-hidden="true" className="w-1.5 h-1.5 rounded-full bg-status-success animate-pulse" />
+                        <span aria-hidden="true" className="h-1.5 w-1.5 rounded-full bg-status-success animate-pulse" />
                         Live
                       </span>
                     </div>
-
-                    <div className="flex shrink-0 items-center gap-1">
-                      {visibleNotifications.length > 0 && (
-                        <button
-                          type="button"
-                          onClick={handleClearAll}
-                          className="inline-flex min-h-11 items-center gap-1.5 rounded-lg px-2 text-[11px] font-medium text-ink-secondary hover:text-navy hover:bg-surface-inset transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand/25"
-                          title="Clear all notifications"
-                        >
-                          <CheckCheck className="w-3.5 h-3.5" />
-                          <span>Clear all</span>
-                        </button>
-                      )}
-                      <button
-                        type="button"
-                        onClick={handleManualSync}
-                        disabled={isRefreshing}
-                        className="inline-flex min-h-11 min-w-11 items-center justify-center rounded-lg text-ink-secondary hover:text-navy hover:bg-surface-inset transition-colors disabled:opacity-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand/25"
-                        title="Sync now"
-                        aria-label="Sync notifications now"
-                        aria-busy={isRefreshing}
-                      >
-                        <RefreshCw
-                          className={`w-3.5 h-3.5 ${isRefreshing ? 'animate-spin text-brand' : ''}`}
-                        />
-                      </button>
-                    </div>
+                    {renderNotificationControls()}
                   </div>
-
-                  <div className="mt-1 max-h-[70vh] overflow-y-auto divide-y divide-surface-border/70 text-xs">
-                    {visibleNotifications.map((item) => (
-                      <article key={item.id} className="py-2">
-                        <div className="flex items-start gap-2 rounded-lg px-2 py-2 transition-colors hover:bg-surface">
-                          <button
-                            type="button"
-                            onClick={() => handleNotificationClick(item)}
-                            className="min-w-0 flex-1 whitespace-normal text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand/25 rounded-md"
-                          >
-                            <span className="block break-words font-semibold leading-snug text-navy">
-                              {item.title}
-                            </span>
-                            <span className="mt-1 block break-words text-[12px] leading-relaxed text-ink-secondary">
-                              {item.description}
-                            </span>
-                            <span className="mt-1.5 inline-flex items-center gap-1 text-[11px] font-semibold text-brand">
-                              <span>{item.actionLabel}</span>
-                              <ArrowRight className="w-3 h-3" />
-                            </span>
-                          </button>
-
-                          <div className="flex shrink-0 items-center gap-1">
-                            <Badge variant={item.variant} size="sm">
-                              {item.variant === 'danger'
-                                ? 'Urgent'
-                                : item.variant === 'warning'
-                                  ? 'Action'
-                                  : item.variant === 'success'
-                                    ? 'Synced'
-                                    : 'Info'}
-                            </Badge>
-                            <button
-                              type="button"
-                              onClick={() => dismissNotification(item.signature)}
-                              className="inline-flex min-h-11 min-w-11 items-center justify-center rounded-lg border border-transparent text-ink-muted hover:text-navy hover:bg-white transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand/25"
-                              title="Dismiss notification"
-                              aria-label={`Dismiss ${item.title}`}
-                            >
-                              <X className="w-3.5 h-3.5" />
-                            </button>
-                          </div>
-                        </div>
-                      </article>
-                    ))}
-
-                    {visibleNotifications.length === 0 && (
-                      <div className="px-4 py-7 text-center space-y-2">
-                        <CheckCheck className="mx-auto h-5 w-5 text-status-success" aria-hidden="true" />
-                        <p className="text-xs font-medium text-ink-secondary">
-                          All clear — nothing needs attention right now.
-                        </p>
-                        {dismissedCount > 0 && (
-                          <button
-                            type="button"
-                            onClick={handleRestoreDismissed}
-                            className="inline-flex min-h-11 items-center justify-center rounded-lg px-3 text-[11px] font-semibold text-brand hover:bg-surface-inset focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand/25"
-                          >
-                            Show {dismissedCount} cleared notification{dismissedCount === 1 ? '' : 's'}
-                          </button>
-                        )}
-                      </div>
-                    )}
+                  <div className="mt-1 max-h-[min(70vh,32rem)] overflow-y-auto overscroll-contain">
+                    {renderNotificationList()}
                   </div>
                 </div>
               )}
@@ -879,10 +974,10 @@ export const Navbar: React.FC<NavbarProps> = () => {
                 aria-label="Account and Sign Out menu"
                 aria-expanded={showUserMenu}
                 aria-controls={showUserMenu ? 'navbar-account-menu' : undefined}
-                className={`w-11 h-11 rounded-lg border flex items-center justify-center transition-colors active:scale-95 relative focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand/25 ${
+                className={`relative inline-flex min-h-11 min-w-11 items-center justify-center rounded-full transition-colors active:scale-95 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand focus-visible:ring-offset-2 ${
                   isFounder
-                    ? 'bg-[#1B4978] text-white border-[#14395E] hover:bg-navy'
-                    : 'bg-status-warning-bg text-status-warning border-status-warning/30 hover:bg-status-warning/20'
+                    ? `bg-[#1B4978] text-white hover:bg-navy ${showUserMenu ? 'ring-2 ring-brand/20' : ''}`
+                    : `bg-status-warning-bg text-status-warning hover:bg-status-warning/20 ${showUserMenu ? 'ring-2 ring-status-warning/25' : ''}`
                 }`}
               >
                 {isFounder ? (
@@ -948,6 +1043,34 @@ export const Navbar: React.FC<NavbarProps> = () => {
           </div>
         </div>
       </header>
+
+      {isCompactViewport && (
+        <Modal
+          isOpen={showNotifications}
+          onClose={() => setShowNotifications(false)}
+          title={notificationHeading}
+          description="Updates for your role and assigned sites."
+          maxWidth="full"
+          presentation="top-sheet"
+        >
+          <div
+            id="navbar-notifications-panel"
+            className="space-y-2"
+          >
+            <div className="flex items-center justify-between gap-2 border-b border-surface-border/70 pb-2">
+              <span
+                className="inline-flex shrink-0 items-center gap-1.5 text-[11px] font-medium text-status-success"
+                title="Live Supabase Realtime and background sync are active"
+              >
+                <span aria-hidden="true" className="h-1.5 w-1.5 rounded-full bg-status-success animate-pulse" />
+                Live updates
+              </span>
+              {renderNotificationControls()}
+            </div>
+            {renderNotificationList(true)}
+          </div>
+        </Modal>
+      )}
     </>
   );
 };

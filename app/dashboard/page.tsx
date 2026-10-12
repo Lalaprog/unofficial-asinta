@@ -85,7 +85,7 @@ export default function FounderDashboard() {
     <AppShell requireFounder={true}>
       <div className="space-y-6">
         {/* Top Header */}
-        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pb-3 border-b border-surface-border/60">
+        <div className="blueprint-accent flex flex-col sm:flex-row sm:items-center justify-between gap-3 pb-3 border-b border-surface-border/60">
           <div>
             <h1 className="text-xl sm:text-2xl font-semibold text-navy tracking-tight">
               Financial Overview

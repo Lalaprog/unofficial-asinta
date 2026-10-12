@@ -17,7 +17,9 @@ import {
   ChevronDown,
   ChevronRight,
   MessageSquare,
+  X,
   XCircle,
+  SlidersHorizontal,
   Lock,
 } from 'lucide-react';
 import { Button } from '@/components/ui/Button';
@@ -26,6 +28,7 @@ import { Input } from '@/components/ui/Input';
 import { Select } from '@/components/ui/Select';
 import { Modal } from '@/components/ui/Modal';
 import { EmptyState } from '@/components/ui/EmptyState';
+import { formatDatePH } from '@/lib/email/format';
 import { useToast } from '@/components/ui/Toast';
 
 type CraftGroupKey =
@@ -139,8 +142,8 @@ function AttendancePageInner() {
   const [collapsedGroups, setCollapsedGroups] = useState<Record<string, boolean>>({});
   const [expandedNoteWorkers, setExpandedNoteWorkers] = useState<Record<string, boolean>>({});
 
-  // Quick Add Worker modal + Workforce tab state
-  const [isQuickAddOpen, setIsQuickAddOpen] = useState(false);
+  // Workforce registration stays collapsed until the user asks to add a worker.
+  const [isWorkerFormOpen, setIsWorkerFormOpen] = useState(false);
   const [workerName, setWorkerName] = useState('');
   const [workerPosition, setWorkerPosition] = useState('Mason');
   const [workerRate, setWorkerRate] = useState('850');
@@ -177,6 +180,7 @@ function AttendancePageInner() {
   const [historyStatusFilter, setHistoryStatusFilter] = useState<string>('all');
   const [historyDateFilter, setHistoryDateFilter] = useState<string>('');
   const [historySearchQuery, setHistorySearchQuery] = useState<string>('');
+  const [isHistoryFilterSheetOpen, setIsHistoryFilterSheetOpen] = useState(false);
   const [collapsedHistorySheets, setCollapsedHistorySheets] = useState<Record<string, boolean>>({});
 
   // Founder Override modal
@@ -643,7 +647,7 @@ function AttendancePageInner() {
     if (created) {
       setWorkerName('');
       setWorkerPhone('');
-      setIsQuickAddOpen(false);
+      setIsWorkerFormOpen(false);
       showToast(
         'success',
         `Added ${created.name} (${created.position}) to the workforce roster.`
@@ -852,6 +856,21 @@ function AttendancePageInner() {
     );
   }, [workers, workforceCraftFilter, workforceSearch]);
 
+  const activeHistoryFilterCount =
+    Number(historyProjectFilter !== 'all') +
+    Number(historyStatusFilter !== 'all') +
+    Number(Boolean(historyDateFilter));
+  const hasAnyHistoryCriteria = Boolean(
+    activeHistoryFilterCount || historySearchQuery.trim()
+  );
+
+  const clearHistoryFilters = () => {
+    setHistoryProjectFilter('all');
+    setHistoryStatusFilter('all');
+    setHistoryDateFilter('');
+    setHistorySearchQuery('');
+  };
+
   const toggleGroupCollapse = (key: string) => {
     setCollapsedGroups((prev) => ({ ...prev, [key]: !prev[key] }));
   };
@@ -868,7 +887,7 @@ function AttendancePageInner() {
     <AppShell>
       <div key={activeTab} className="space-y-4 max-w-5xl mx-auto">
         {/* Clean Dedicated Page Header for each separated view */}
-        <div className="flex items-center justify-between gap-3 pb-3 border-b border-surface-border/60">
+        <div className="blueprint-accent flex items-center justify-between gap-3 pb-3 border-b border-surface-border/60">
           <div className="min-w-0">
             <div className="flex items-center gap-2.5">
               <h1 className="text-xl sm:text-2xl font-semibold text-navy tracking-tight truncate">
@@ -890,13 +909,21 @@ function AttendancePageInner() {
 
           {activeTab === 'workforce' && (
             <Button
-              variant="primary"
+              variant={isWorkerFormOpen ? 'secondary' : 'primary'}
               size="sm"
-              onClick={() => setIsQuickAddOpen(true)}
-              leftIcon={<UserPlus className="w-4 h-4" />}
+              onClick={() => setIsWorkerFormOpen((isOpen) => !isOpen)}
+              aria-expanded={isWorkerFormOpen}
+              aria-controls="workforce-worker-form"
+              leftIcon={
+                isWorkerFormOpen ? (
+                  <X className="h-4 w-4" />
+                ) : (
+                  <UserPlus className="h-4 w-4" />
+                )
+              }
               className="shrink-0"
             >
-              Add Worker
+              {isWorkerFormOpen ? 'Close form' : 'Add Worker'}
             </Button>
           )}
         </div>
@@ -1491,73 +1518,191 @@ function AttendancePageInner() {
         {/* TAB 2: ATTENDANCE HISTORY & FOUNDER OVERRIDE (GROUPED BY DAILY SITE SHEETS) */}
         {activeTab === 'history' && (
           <div className="space-y-4">
-            {/* Project Site, Status, Date & Worker Filters for History */}
-            <div className="p-3.5 rounded-2xl bg-white border border-surface-border shadow-sm flex flex-col sm:flex-row flex-wrap items-center gap-2.5">
-              <div className="w-full sm:w-64">
-                <Input
-                  placeholder="Search worker, craft, project, or notes..."
-                  value={historySearchQuery}
-                  onChange={(e) => setHistorySearchQuery(e.target.value)}
-                  leftIcon={<Search className="w-4 h-4" />}
-                />
+            {/* Keep search visible on mobile; reveal secondary filters only on request. */}
+            <div className="space-y-3 rounded-2xl border border-surface-border bg-white p-3.5 shadow-sm">
+              <div className="flex items-center gap-2 lg:hidden">
+                <div className="min-w-0 flex-1">
+                  <Input
+                    placeholder="Search workers, sites, notes..."
+                    value={historySearchQuery}
+                    onChange={(e) => setHistorySearchQuery(e.target.value)}
+                    leftIcon={<Search className="h-4 w-4" />}
+                    className="min-w-0"
+                  />
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setIsHistoryFilterSheetOpen(true)}
+                  aria-expanded={isHistoryFilterSheetOpen}
+                  aria-controls={isHistoryFilterSheetOpen ? 'attendance-history-filters' : undefined}
+                  className="inline-flex min-h-11 shrink-0 items-center justify-center gap-2 rounded-full px-3 text-sm font-semibold text-navy transition-colors hover:bg-surface-inset focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand focus-visible:ring-offset-2"
+                >
+                  <SlidersHorizontal className="h-4 w-4" aria-hidden="true" />
+                  <span>Filters</span>
+                  {activeHistoryFilterCount > 0 && (
+                    <span className="inline-flex h-5 min-w-5 items-center justify-center rounded-full bg-brand px-1.5 text-[11px] font-bold text-white">
+                      {activeHistoryFilterCount}
+                    </span>
+                  )}
+                </button>
               </div>
 
-              <div className="w-full sm:w-56">
+              {activeHistoryFilterCount > 0 && (
+                <div
+                  role="group"
+                  aria-label="Active history filters"
+                  className="flex flex-wrap gap-2 lg:hidden"
+                >
+                  {historyProjectFilter !== 'all' && (
+                    <button
+                      type="button"
+                      onClick={() => setHistoryProjectFilter('all')}
+                      aria-label={`Remove site filter: ${projects.find((project) => project.id === historyProjectFilter)?.name || 'selected site'}`}
+                      className="inline-flex min-h-9 max-w-full items-center gap-1.5 rounded-full bg-surface-inset px-3 py-1 text-xs font-medium text-navy transition-colors hover:bg-slate-200 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand focus-visible:ring-offset-2"
+                    >
+                      <span className="break-words text-left">
+                        Site · {projects.find((project) => project.id === historyProjectFilter)?.name || 'Selected'}
+                      </span>
+                      <X className="h-3.5 w-3.5 shrink-0" aria-hidden="true" />
+                    </button>
+                  )}
+                  {historyStatusFilter !== 'all' && (
+                    <button
+                      type="button"
+                      onClick={() => setHistoryStatusFilter('all')}
+                      aria-label={`Remove status filter: ${historyStatusFilter.replace('_', ' ')}`}
+                      className="inline-flex min-h-9 items-center gap-1.5 rounded-full bg-surface-inset px-3 py-1 text-xs font-medium text-navy transition-colors hover:bg-slate-200 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand focus-visible:ring-offset-2"
+                    >
+                      <span>Status · {historyStatusFilter === 'half_day' ? 'Half Day' : historyStatusFilter === 'leave' ? 'Approved Leave' : historyStatusFilter[0].toUpperCase() + historyStatusFilter.slice(1)}</span>
+                      <X className="h-3.5 w-3.5 shrink-0" aria-hidden="true" />
+                    </button>
+                  )}
+                  {historyDateFilter && (
+                    <button
+                      type="button"
+                      onClick={() => setHistoryDateFilter('')}
+                      aria-label={`Remove date filter: ${formatDatePH(historyDateFilter)}`}
+                      className="inline-flex min-h-9 items-center gap-1.5 rounded-full bg-surface-inset px-3 py-1 text-xs font-medium text-navy transition-colors hover:bg-slate-200 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand focus-visible:ring-offset-2"
+                    >
+                      <span>Date · {formatDatePH(historyDateFilter)}</span>
+                      <X className="h-3.5 w-3.5 shrink-0" aria-hidden="true" />
+                    </button>
+                  )}
+                </div>
+              )}
+
+              <div className="hidden items-center gap-2 lg:grid lg:grid-cols-[minmax(12rem,2fr)_minmax(12rem,1.6fr)_minmax(8.5rem,1fr)_minmax(9rem,1.1fr)_auto]">
+                <Input
+                  placeholder="Search worker, craft, site, or notes..."
+                  value={historySearchQuery}
+                  onChange={(e) => setHistorySearchQuery(e.target.value)}
+                  leftIcon={<Search className="h-4 w-4" />}
+                  aria-label="Search attendance history"
+                />
                 <Select
+                  aria-label="Filter by project site"
                   value={historyProjectFilter}
                   onChange={(e) => setHistoryProjectFilter(e.target.value)}
                   options={[
-                    { label: 'All Project Sites', value: 'all' },
-                    ...accessibleProjects.map((p) => ({
-                      label: `${p.name} (${p.location.split(',')[0]})`,
-                      value: p.id,
+                    { label: 'All sites', value: 'all' },
+                    ...accessibleProjects.map((project) => ({
+                      label: `${project.name} (${project.location.split(',')[0]})`,
+                      value: project.id,
                     })),
                   ]}
                 />
-              </div>
-
-              <div className="w-full sm:w-40">
                 <Select
+                  aria-label="Filter by attendance status"
                   value={historyStatusFilter}
                   onChange={(e) => setHistoryStatusFilter(e.target.value)}
                   options={[
-                    { label: 'All Statuses', value: 'all' },
+                    { label: 'All statuses', value: 'all' },
                     { label: 'Present', value: 'present' },
                     { label: 'Half Day', value: 'half_day' },
                     { label: 'Absent', value: 'absent' },
                     { label: 'Approved Leave', value: 'leave' },
                   ]}
                 />
-              </div>
-
-              <div className="w-full sm:w-auto flex items-center gap-2">
                 <Input
                   type="date"
                   value={historyDateFilter}
                   max={today}
                   onChange={(e) => setHistoryDateFilter(e.target.value)}
                   className="py-2"
+                  aria-label="Filter by attendance date"
                 />
-                {(historyProjectFilter !== 'all' ||
-                  historyStatusFilter !== 'all' ||
-                  historyDateFilter ||
-                  historySearchQuery) && (
+                {hasAnyHistoryCriteria && (
                   <Button
                     type="button"
-                    variant="secondary"
+                    variant="ghost"
                     size="sm"
-                    onClick={() => {
-                      setHistoryProjectFilter('all');
-                      setHistoryStatusFilter('all');
-                      setHistoryDateFilter('');
-                      setHistorySearchQuery('');
-                    }}
+                    onClick={clearHistoryFilters}
                   >
                     Reset
                   </Button>
                 )}
               </div>
             </div>
+
+            <Modal
+              isOpen={isHistoryFilterSheetOpen}
+              onClose={() => setIsHistoryFilterSheetOpen(false)}
+              title="Attendance filters"
+              description="Results update as you change a site, status, or date."
+              maxWidth="full"
+              presentation="bottom-sheet"
+            >
+              <div id="attendance-history-filters" className="space-y-4">
+                <Select
+                  label="Project site"
+                  value={historyProjectFilter}
+                  onChange={(e) => setHistoryProjectFilter(e.target.value)}
+                  options={[
+                    { label: 'All sites', value: 'all' },
+                    ...accessibleProjects.map((project) => ({
+                      label: `${project.name} (${project.location.split(',')[0]})`,
+                      value: project.id,
+                    })),
+                  ]}
+                />
+                <Select
+                  label="Attendance status"
+                  value={historyStatusFilter}
+                  onChange={(e) => setHistoryStatusFilter(e.target.value)}
+                  options={[
+                    { label: 'All statuses', value: 'all' },
+                    { label: 'Present', value: 'present' },
+                    { label: 'Half Day', value: 'half_day' },
+                    { label: 'Absent', value: 'absent' },
+                    { label: 'Approved Leave', value: 'leave' },
+                  ]}
+                />
+                <Input
+                  label="Attendance date"
+                  type="date"
+                  value={historyDateFilter}
+                  max={today}
+                  onChange={(e) => setHistoryDateFilter(e.target.value)}
+                />
+                <div className="flex flex-col-reverse gap-2 border-t border-surface-border/70 pt-3 sm:flex-row sm:justify-between">
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    onClick={clearHistoryFilters}
+                    disabled={!hasAnyHistoryCriteria}
+                  >
+                    Reset filters
+                  </Button>
+                  <Button
+                    type="button"
+                    variant="primary"
+                    onClick={() => setIsHistoryFilterSheetOpen(false)}
+                  >
+                    Done
+                  </Button>
+                </div>
+              </div>
+            </Modal>
 
             {/* Grouped Daily Attendance Sheets */}
             <div className="space-y-3">
@@ -1746,32 +1891,34 @@ function AttendancePageInner() {
         {/* TAB 3: WORKFORCE DIRECTORY (COMPACT & GROUPED BY CRAFT) */}
         {activeTab === 'workforce' && (
           <div className="space-y-4">
-            {/* Inline Register Worker Form */}
-            <form
-              onSubmit={handleAddWorkerSubmit}
-              className="p-4 rounded-2xl bg-white border border-surface-border shadow-sm space-y-3 text-xs"
+            {/* The header action reveals this single inline registration workflow. */}
+            <section
+              id="workforce-worker-form"
+              aria-labelledby="workforce-worker-form-title"
+              hidden={!isWorkerFormOpen}
+              className="rounded-2xl border border-surface-border bg-white p-4 shadow-sm"
             >
-              <div className="flex items-center justify-between">
+              <form onSubmit={handleAddWorkerSubmit} className="space-y-4 text-xs">
                 <div>
-                  <h3 className="font-bold text-navy text-sm">Register Site Worker</h3>
-                  <p className="text-xs text-ink-secondary">
-                    Newly registered workers are automatically grouped by craft on the Daily Roster and Payroll Engine. (Supervisors are synced automatically from Team Accounts.)
+                  <h3 id="workforce-worker-form-title" className="text-sm font-bold text-navy">
+                    Register Site Worker
+                  </h3>
+                  <p className="mt-1 text-xs leading-relaxed text-ink-secondary">
+                    New workers appear on Roll Call and Payroll. Supervisor accounts sync from Team Accounts.
                   </p>
                 </div>
-              </div>
 
-              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-3 items-end">
-                <div className="lg:col-span-2">
-                  <Input
-                    label="Worker Full Name"
-                    placeholder="e.g. Danilo Santos"
-                    value={workerName}
-                    onChange={(e) => setWorkerName(e.target.value)}
-                    required
-                  />
-                </div>
+                <div className="grid grid-cols-1 items-end gap-3 sm:grid-cols-2 lg:grid-cols-5">
+                  <div className="lg:col-span-2">
+                    <Input
+                      label="Worker Full Name"
+                      placeholder="e.g. Danilo Santos"
+                      value={workerName}
+                      onChange={(e) => setWorkerName(e.target.value)}
+                      required
+                    />
+                  </div>
 
-                <div>
                   <Select
                     label="Craft / Position"
                     value={workerPosition}
@@ -1788,9 +1935,7 @@ function AttendancePageInner() {
                       { label: 'Skilled Laborer', value: 'Laborer' },
                     ]}
                   />
-                </div>
 
-                <div>
                   <Input
                     label="Daily Rate (₱)"
                     type="number"
@@ -1800,29 +1945,29 @@ function AttendancePageInner() {
                     onChange={(e) => setWorkerRate(e.target.value)}
                     required
                   />
+
+                  <Input
+                    label="Contact Number"
+                    placeholder="0917XXXXXXX"
+                    value={workerPhone}
+                    onChange={(e) => setWorkerPhone(e.target.value)}
+                  />
                 </div>
 
-                <div className="flex items-end gap-2">
-                  <div className="flex-1">
-                    <Input
-                      label="Contact Number"
-                      placeholder="0917XXXXXXX"
-                      value={workerPhone}
-                      onChange={(e) => setWorkerPhone(e.target.value)}
-                    />
-                  </div>
+                <div className="flex justify-end">
                   <Button
                     type="submit"
                     variant="primary"
                     size="md"
                     isLoading={isAddingWorker}
-                    leftIcon={<UserPlus className="w-4 h-4" />}
+                    leftIcon={<UserPlus className="h-4 w-4" />}
+                    className="w-full sm:w-auto"
                   >
-                    Add
+                    Add Worker to Roster
                   </Button>
                 </div>
-              </div>
-            </form>
+              </form>
+            </section>
 
             {/* Filter Bar for Workforce Directory */}
             <div className="p-3 rounded-2xl bg-white border border-surface-border shadow-sm flex flex-col sm:flex-row items-center justify-between gap-2.5">
@@ -1937,7 +2082,7 @@ function AttendancePageInner() {
                 <div className="bg-white rounded-xl border border-surface-border">
                   <EmptyState
                     title="No workers match"
-                    description="Register craftsmen above or clear your search filter."
+                    description="Choose Add Worker above to register a craftsman, or clear your search filter."
                   />
                 </div>
               )}
@@ -1945,73 +2090,6 @@ function AttendancePageInner() {
           </div>
         )}
       </div>
-
-      {/* QUICK ADD WORKER MODAL (Accessible directly from Daily Roster) */}
-      <Modal
-        isOpen={isQuickAddOpen}
-        onClose={() => setIsQuickAddOpen(false)}
-        title="Quick Add Site Worker"
-        description="Add a craftsman directly to the workforce roster without leaving your attendance sheet."
-      >
-        <form onSubmit={handleAddWorkerSubmit} className="space-y-4 text-xs">
-          <Input
-            label="Worker Full Name"
-            placeholder="e.g. Danilo Santos"
-            value={workerName}
-            onChange={(e) => setWorkerName(e.target.value)}
-            required
-          />
-
-          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-            <Select
-              label="Craft / Position"
-              value={workerPosition}
-              onChange={(e) => setWorkerPosition(e.target.value)}
-              options={[
-                { label: 'Foreman', value: 'Foreman' },
-                { label: 'Mason', value: 'Mason' },
-                { label: 'Carpenter', value: 'Carpenter' },
-                { label: 'Steelman', value: 'Steelman' },
-                { label: 'Electrician', value: 'Electrician' },
-                { label: 'Plumber', value: 'Plumber' },
-                { label: 'Welder / Tinsmith', value: 'Welder' },
-                { label: 'Painter / Finisher', value: 'Painter' },
-                { label: 'Skilled Laborer', value: 'Laborer' },
-              ]}
-            />
-
-            <Input
-              label="Daily Rate (PHP ₱)"
-              type="number"
-              min="0"
-              step="50"
-              value={workerRate}
-              onChange={(e) => setWorkerRate(e.target.value)}
-              required
-            />
-          </div>
-
-          <Input
-            label="Contact Number (Optional)"
-            placeholder="0917XXXXXXX"
-            value={workerPhone}
-            onChange={(e) => setWorkerPhone(e.target.value)}
-          />
-
-          <div className="pt-2 flex justify-end space-x-2">
-            <Button
-              type="button"
-              variant="secondary"
-              onClick={() => setIsQuickAddOpen(false)}
-            >
-              Cancel
-            </Button>
-            <Button type="submit" variant="primary" isLoading={isAddingWorker}>
-              Add Worker to Roster
-            </Button>
-          </div>
-        </form>
-      </Modal>
 
       {/* EDIT WORKER MODAL (Founder only) */}
       <Modal
