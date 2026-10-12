@@ -29,6 +29,12 @@ import { Select } from '@/components/ui/Select';
 import { Modal } from '@/components/ui/Modal';
 import { EmptyState } from '@/components/ui/EmptyState';
 import { formatDatePH } from '@/lib/email/format';
+import {
+  parseAttendanceDraft,
+  serializeAttendanceDraft,
+  type AttendanceDraftEntry,
+  type AttendanceDraftMap,
+} from '@/lib/attendance/drafts';
 import { useToast } from '@/components/ui/Toast';
 
 type CraftGroupKey =
@@ -48,6 +54,15 @@ const CRAFT_GROUP_META: Record<
   mep_steel: { label: 'Steel, Electrical & Plumbing', order: 4 },
   general: { label: 'Finishing & General Labor', order: 5 },
 };
+
+const CRAFT_FILTER_OPTIONS = [
+  { label: 'All Craft Groups', value: 'all' },
+  { label: 'Supervision & Foremen', value: 'supervision' },
+  { label: 'Masonry & Concrete', value: 'masonry' },
+  { label: 'Carpentry & Formworks', value: 'carpentry' },
+  { label: 'Steel, Electrical & Plumbing', value: 'mep_steel' },
+  { label: 'Finishing & General Labor', value: 'general' },
+];
 
 function getCraftGroup(position: string): CraftGroupKey {
   const pos = position.toLowerCase();
@@ -139,6 +154,7 @@ function AttendancePageInner() {
   }, []);
 
   const [craftFilter, setCraftFilter] = useState<string>('all');
+  const [isCrewFilterSheetOpen, setIsCrewFilterSheetOpen] = useState(false);
   const [collapsedGroups, setCollapsedGroups] = useState<Record<string, boolean>>({});
   const [expandedNoteWorkers, setExpandedNoteWorkers] = useState<Record<string, boolean>>({});
 
@@ -160,16 +176,17 @@ function AttendancePageInner() {
   const [editWorkerPhone, setEditWorkerPhone] = useState('');
   const [isSavingWorker, setIsSavingWorker] = useState(false);
 
-  // Terminal active draft attendance records (`status: null` = not checked yet!)
-  const [draftAttendance, setDraftAttendance] = useState<
-    Record<
-      string,
-      {
-        status: AttendanceStatus | null;
-        notes: string;
-      }
-    >
-  >({});
+  // Terminal drafts stay local until the explicit Submit action writes official attendance.
+  const [draftAttendance, setDraftAttendance] = useState<AttendanceDraftMap>({});
+  const [dirtyDraftWorkerIds, setDirtyDraftWorkerIds] = useState<string[]>([]);
+  const [draftStorageReadyKey, setDraftStorageReadyKey] = useState<string | null>(null);
+  const [draftStorageStatus, setDraftStorageStatus] = useState<'ready' | 'saved' | 'error'>('ready');
+  const initializedDraftContextRef = useRef<string | null>(null);
+
+  const attendanceDraftStorageKey =
+    user?.id && selectedProjectId && selectedDate
+      ? `asinta-attendance-draft:v1:${encodeURIComponent(user.id)}:${encodeURIComponent(selectedProjectId)}:${selectedDate}`
+      : null;
 
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [attendanceSaveFailed, setAttendanceSaveFailed] = useState(false);
@@ -338,52 +355,153 @@ function AttendancePageInner() {
     findSupervisorAccountForWorker,
   ]);
 
-  // Load existing records for project and date into terminal.
-  // When no attendance has been submitted yet for (selectedProjectId, selectedDate),
-  // all workers start UNCHECKED (`status: null`) — except workers already marked
-  // Present/Half Day on another site today, who default to `absent` on this site.
-  useEffect(() => {
-    if (!selectedProjectId) return;
-    const existing = attendance.filter(
-      (a) => a.project_id === selectedProjectId && a.date === selectedDate
-    );
-
-    const initialDraft: Record<
-      string,
-      { status: AttendanceStatus | null; notes: string }
-    > = {};
-
-    siteRosterWorkers.forEach((w) => {
-      const match = existing.find((a) => a.worker_id === w.id);
-      if (match) {
-        initialDraft[w.id] = {
-          status: match.status,
-          notes: match.notes || '',
-        };
-      } else if (otherSiteActiveAttendanceByWorker.has(w.id)) {
-        const otherSite = otherSiteActiveAttendanceByWorker.get(w.id)!;
-        initialDraft[w.id] = {
-          status: 'absent',
-          notes: `[At ${otherSite.projectName}]`,
-        };
-      } else {
-        // Start UNCHECKED so the Supervisor or Founder must explicitly check each worker
-        initialDraft[w.id] = {
-          status: null,
-          notes: '',
-        };
+  const getBaselineDraftEntry = useCallback(
+    (workerId: string): AttendanceDraftEntry => {
+      const saved = attendance.find(
+        (record) =>
+          record.worker_id === workerId &&
+          record.project_id === selectedProjectId &&
+          record.date === selectedDate
+      );
+      if (saved) {
+        return { status: saved.status, notes: saved.notes || '' };
       }
+
+      const otherSite = otherSiteActiveAttendanceByWorker.get(workerId);
+      if (otherSite) {
+        return { status: 'absent', notes: `[At ${otherSite.projectName}]` };
+      }
+
+      // A new day/site starts unchecked, preserving the existing roll-call rule.
+      return { status: null, notes: '' };
+    },
+    [attendance, selectedProjectId, selectedDate, otherSiteActiveAttendanceByWorker]
+  );
+
+  // Hydrate once per user/site/date. On later data refreshes, update untouched rows
+  // from the server but never replace a worker's in-progress local selection.
+  useEffect(() => {
+    if (!isLoaded || !attendanceDraftStorageKey) return;
+
+    const baseline: AttendanceDraftMap = {};
+    siteRosterWorkers.forEach((worker) => {
+      baseline[worker.id] = getBaselineDraftEntry(worker.id);
     });
 
-    setDraftAttendance(initialDraft);
-    setAttendanceSaveFailed(false);
+    if (initializedDraftContextRef.current !== attendanceDraftStorageKey) {
+      let restoredEntries: AttendanceDraftMap = {};
+      let storageReadFailed = false;
+      try {
+        const raw = window.localStorage.getItem(attendanceDraftStorageKey);
+        if (raw) {
+          const parsed = parseAttendanceDraft(raw);
+          if (parsed) {
+            const knownWorkerIds = new Set(workers.map((worker) => worker.id));
+            restoredEntries = Object.fromEntries(
+              Object.entries(parsed).filter(([workerId, entry]) => {
+                const savedBaseline = baseline[workerId];
+                return (
+                  knownWorkerIds.has(workerId) &&
+                  Boolean(savedBaseline) &&
+                  (entry.status !== savedBaseline?.status ||
+                    entry.notes.trim() !== savedBaseline?.notes.trim())
+                );
+              })
+            );
+          } else {
+            window.localStorage.removeItem(attendanceDraftStorageKey);
+          }
+        }
+      } catch {
+        storageReadFailed = true;
+      }
+
+      setDraftAttendance({ ...baseline, ...restoredEntries });
+      setDirtyDraftWorkerIds(Object.keys(restoredEntries));
+      setDraftStorageReadyKey(attendanceDraftStorageKey);
+      setDraftStorageStatus(
+        storageReadFailed ? 'error' : Object.keys(restoredEntries).length > 0 ? 'saved' : 'ready'
+      );
+      setAttendanceSaveFailed(false);
+      initializedDraftContextRef.current = attendanceDraftStorageKey;
+      return;
+    }
+
+    setDraftAttendance((current) => {
+      const next = { ...baseline };
+      dirtyDraftWorkerIds.forEach((workerId) => {
+        if (current[workerId]) next[workerId] = current[workerId];
+      });
+      return next;
+    });
   }, [
-    selectedProjectId,
-    selectedDate,
-    attendance,
+    isLoaded,
+    attendanceDraftStorageKey,
     siteRosterWorkers,
-    otherSiteActiveAttendanceByWorker,
+    getBaselineDraftEntry,
+    workers,
+    dirtyDraftWorkerIds,
   ]);
+
+  // Persist only locally changed rows; official attendance still requires Submit.
+  useEffect(() => {
+    if (
+      !attendanceDraftStorageKey ||
+      draftStorageReadyKey !== attendanceDraftStorageKey
+    ) {
+      return;
+    }
+
+    try {
+      const entries: AttendanceDraftMap = {};
+      dirtyDraftWorkerIds.forEach((workerId) => {
+        const entry = draftAttendance[workerId];
+        if (entry) entries[workerId] = entry;
+      });
+
+      if (Object.keys(entries).length === 0) {
+        window.localStorage.removeItem(attendanceDraftStorageKey);
+        setDraftStorageStatus('ready');
+        return;
+      }
+
+      window.localStorage.setItem(
+        attendanceDraftStorageKey,
+        serializeAttendanceDraft(entries)
+      );
+      setDraftStorageStatus('saved');
+    } catch {
+      setDraftStorageStatus('error');
+    }
+  }, [
+    attendanceDraftStorageKey,
+    draftStorageReadyKey,
+    dirtyDraftWorkerIds,
+    draftAttendance,
+  ]);
+
+  const applyDraftChanges = (changes: AttendanceDraftMap) => {
+    const changedEntries = Object.entries(changes);
+    if (changedEntries.length === 0) return;
+
+    setAttendanceSaveFailed(false);
+    setDraftAttendance((current) => ({ ...current, ...changes }));
+    setDirtyDraftWorkerIds((current) => {
+      const next = new Set(current);
+      changedEntries.forEach(([workerId, entry]) => {
+        const baseline = getBaselineDraftEntry(workerId);
+        if (
+          entry.status !== baseline.status ||
+          entry.notes.trim() !== baseline.notes.trim()
+        ) {
+          next.add(workerId);
+        } else {
+          next.delete(workerId);
+        }
+      });
+      return Array.from(next);
+    });
+  };
 
   const handleStatusChange = (worker: Worker, status: AttendanceStatus) => {
     // Supervisor cannot manually toggle their own row (auto-logged on crew submit)
@@ -406,14 +524,8 @@ function AttendancePageInner() {
       return;
     }
 
-    const current = draftAttendance[worker.id] || {
-      status: null,
-      notes: '',
-    };
-
-    setAttendanceSaveFailed(false);
-    setDraftAttendance({
-      ...draftAttendance,
+    const current = draftAttendance[worker.id] || getBaselineDraftEntry(worker.id);
+    applyDraftChanges({
       [worker.id]: {
         ...current,
         status,
@@ -422,10 +534,8 @@ function AttendancePageInner() {
   };
 
   const handleNotesChange = (workerId: string, notes: string) => {
-    const current = draftAttendance[workerId] || { status: null, notes: '' };
-    setAttendanceSaveFailed(false);
-    setDraftAttendance({
-      ...draftAttendance,
+    const current = draftAttendance[workerId] || getBaselineDraftEntry(workerId);
+    applyDraftChanges({
       [workerId]: {
         ...current,
         notes,
@@ -435,18 +545,15 @@ function AttendancePageInner() {
 
   // Fill only unmarked regular crew in a craft group as Present
   const handleMarkCrewPresent = (targetWorkers: Worker[]) => {
-    const updated = { ...draftAttendance };
-    targetWorkers.forEach((w) => {
-      if (isSelfSupervisorWorker(w)) return;
-      if (updated[w.id]?.status) return;
-      if (otherSiteActiveAttendanceByWorker.has(w.id)) return;
-      updated[w.id] = {
-        status: 'present',
-        notes: updated[w.id]?.notes || '',
-      };
+    const changes: AttendanceDraftMap = {};
+    targetWorkers.forEach((worker) => {
+      if (isSelfSupervisorWorker(worker)) return;
+      const current = draftAttendance[worker.id] || getBaselineDraftEntry(worker.id);
+      if (current.status) return;
+      if (otherSiteActiveAttendanceByWorker.has(worker.id)) return;
+      changes[worker.id] = { ...current, status: 'present' };
     });
-    setAttendanceSaveFailed(false);
-    setDraftAttendance(updated);
+    applyDraftChanges(changes);
   };
 
   // Existing submitted attendance records for the active project & date
@@ -571,11 +678,22 @@ function AttendancePageInner() {
     let success = false;
     try {
       success = await recordAttendanceBatch(batch);
+    } catch {
+      success = false;
     } finally {
       setIsSubmitting(false);
     }
     if (success) {
       setAttendanceSaveFailed(false);
+      setDirtyDraftWorkerIds([]);
+      setDraftStorageStatus('ready');
+      if (attendanceDraftStorageKey) {
+        try {
+          window.localStorage.removeItem(attendanceDraftStorageKey);
+        } catch {
+          setDraftStorageStatus('error');
+        }
+      }
       showToast('success', 'Attendance saved and synced to Payroll.');
     } else {
       setAttendanceSaveFailed(true);
@@ -903,7 +1021,7 @@ function AttendancePageInner() {
                 ? 'Submitted daily attendance logs & approval status'
                 : activeTab === 'workforce'
                   ? `${workers.filter((w) => w.active).length} active craftsmen & supervisors`
-                  : `${selectedDate} · Check off crew members on site`}
+                  : 'Mark crew on site'}
             </p>
           </div>
 
@@ -1009,13 +1127,14 @@ function AttendancePageInner() {
 
         {/* Active Project & Date Selector Bar (Only shown on Daily Roster tab) */}
         {activeTab === 'terminal' && (
-          <div className="p-3.5 rounded-xl bg-white border border-surface-border grid grid-cols-1 md:grid-cols-2 gap-3 items-center">
+          <div className="rounded-xl border border-surface-border bg-white p-3 sm:p-3.5 grid grid-cols-1 md:grid-cols-2 gap-2.5 md:gap-3 items-center">
             <div>
               <label className="text-xs font-semibold text-ink-secondary block mb-1.5">
                 Project Site
               </label>
               <Select
                 value={selectedProjectId}
+                disabled={isSubmitting}
                 onChange={(e) => setSelectedProjectId(e.target.value)}
               >
                 {accessibleProjects.length === 0 ? (
@@ -1040,6 +1159,7 @@ function AttendancePageInner() {
                   variant={selectedDate === today ? 'primary' : 'secondary'}
                   size="sm"
                   className="min-h-11 sm:min-h-9"
+                  disabled={isSubmitting}
                   onClick={() => setSelectedDate(today)}
                 >
                   Today ({today.slice(5)})
@@ -1049,6 +1169,7 @@ function AttendancePageInner() {
                   variant={selectedDate === yesterday ? 'primary' : 'secondary'}
                   size="sm"
                   className="min-h-11 sm:min-h-9"
+                  disabled={isSubmitting}
                   onClick={() => setSelectedDate(yesterday)}
                 >
                   Yesterday ({yesterday.slice(5)})
@@ -1058,6 +1179,7 @@ function AttendancePageInner() {
                     type="date"
                     value={selectedDate}
                     max={today}
+                    disabled={isSubmitting}
                     onChange={(e) => setSelectedDate(e.target.value)}
                     className="py-2"
                   />
@@ -1069,11 +1191,11 @@ function AttendancePageInner() {
 
         {/* TAB 1: TERMINAL / DAILY ROSTER */}
         {activeTab === 'terminal' && (
-          <form onSubmit={handleBatchSubmit} className="space-y-3.5">
+          <form onSubmit={handleBatchSubmit} className="space-y-2.5 sm:space-y-3.5">
             {/* Compact progress summary: the roster remains the focus, counts stay scannable. */}
             <section
               aria-label="Attendance summary"
-              className="rounded-xl border border-surface-border bg-white px-3.5 py-3"
+              className="rounded-xl border border-surface-border bg-white px-3 py-2.5 sm:px-3.5 sm:py-3"
             >
               <div className="flex items-center justify-between gap-3">
                 <h2 className="text-sm font-semibold text-ink-primary">Crew status</h2>
@@ -1113,34 +1235,126 @@ function AttendancePageInner() {
                   </li>
                 ))}
               </ul>
+              {dirtyDraftWorkerIds.length > 0 && (
+                <div
+                  role="status"
+                  aria-live="polite"
+                  className="mt-2 inline-flex flex-wrap items-center gap-x-1.5 gap-y-0.5 text-xs"
+                >
+                  {draftStorageStatus === 'saved' ? (
+                    <>
+                      <CheckCircle2 className="h-3.5 w-3.5 shrink-0 text-status-success" />
+                      <span className="font-semibold text-status-success">Draft saved on this device</span>
+                      <span className="text-ink-secondary">· Submit to record attendance</span>
+                    </>
+                  ) : draftStorageStatus === 'error' ? (
+                    <span className="font-medium text-status-warning">
+                      Draft saving is unavailable on this device. Keep this page open until you submit.
+                    </span>
+                  ) : (
+                    <span className="text-ink-secondary">Saving draft on this device…</span>
+                  )}
+                </div>
+              )}
             </section>
 
-            {/* Search and craft filters */}
-            <div className="rounded-xl border border-surface-border bg-white p-3 flex flex-col md:flex-row md:items-center gap-2.5">
-              <div className="grid flex-1 grid-cols-1 sm:grid-cols-2 gap-2">
-                <Input
-                  placeholder="Search workers..."
-                  value={searchWorker}
-                  onChange={(e) => setSearchWorker(e.target.value)}
-                  leftIcon={<Search className="w-4 h-4" />}
-                />
-                <Select
-                  value={craftFilter}
-                  onChange={(e) => setCraftFilter(e.target.value)}
-                  options={[
-                    { label: 'All Craft Groups', value: 'all' },
-                    { label: 'Supervision & Foremen', value: 'supervision' },
-                    { label: 'Masonry & Concrete', value: 'masonry' },
-                    { label: 'Carpentry & Formworks', value: 'carpentry' },
-                    { label: 'Steel, Electrical & Plumbing', value: 'mep_steel' },
-                    { label: 'Finishing & General Labor', value: 'general' },
-                  ]}
-                />
+            {/* Search stays visible; the craft filter moves to a focused sheet on phones. */}
+            <div className="rounded-xl border border-surface-border bg-white p-2.5 sm:p-3">
+              <div className="grid grid-cols-1 gap-2 md:grid-cols-[minmax(0,1fr)_minmax(13rem,18rem)] md:items-center">
+                <div className="flex min-w-0 items-center gap-2">
+                  <div className="min-w-0 flex-1">
+                    <Input
+                      placeholder="Search workers..."
+                      value={searchWorker}
+                      onChange={(e) => setSearchWorker(e.target.value)}
+                      leftIcon={<Search className="w-4 h-4" />}
+                      className="min-w-0"
+                      aria-label="Search roster workers"
+                    />
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => setIsCrewFilterSheetOpen(true)}
+                    aria-expanded={isCrewFilterSheetOpen}
+                    aria-controls={isCrewFilterSheetOpen ? 'attendance-crew-filters' : undefined}
+                    className="inline-flex min-h-11 shrink-0 items-center justify-center gap-2 rounded-lg border border-surface-border px-3 text-xs font-semibold text-navy transition-colors hover:bg-surface-inset focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand focus-visible:ring-offset-2 md:hidden"
+                  >
+                    <SlidersHorizontal className="h-4 w-4" aria-hidden="true" />
+                    <span>Filters</span>
+                    {craftFilter !== 'all' && (
+                      <span className="inline-flex h-5 min-w-5 items-center justify-center rounded-full bg-brand px-1.5 text-[11px] font-bold text-white">
+                        1
+                      </span>
+                    )}
+                  </button>
+                </div>
+                <div className="hidden md:block">
+                  <Select
+                    aria-label="Filter by craft group"
+                    value={craftFilter}
+                    onChange={(e) => setCraftFilter(e.target.value)}
+                    options={CRAFT_FILTER_OPTIONS}
+                  />
+                </div>
               </div>
+
+              {craftFilter !== 'all' && (
+                <div className="mt-2 flex sm:hidden">
+                  <button
+                    type="button"
+                    onClick={() => setCraftFilter('all')}
+                    aria-label={`Remove craft filter: ${CRAFT_FILTER_OPTIONS.find((option) => option.value === craftFilter)?.label || 'selected group'}`}
+                    className="inline-flex min-h-11 min-w-0 max-w-full items-center gap-1.5 rounded-full bg-surface-inset px-3 py-1 text-xs font-medium text-navy transition-colors hover:bg-slate-200 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand focus-visible:ring-offset-2"
+                  >
+                    <span className="truncate">
+                      {CRAFT_FILTER_OPTIONS.find((option) => option.value === craftFilter)?.label || 'Selected craft'}
+                    </span>
+                    <X className="h-3.5 w-3.5 shrink-0" aria-hidden="true" />
+                  </button>
+                </div>
+              )}
             </div>
 
+            <Modal
+              isOpen={isCrewFilterSheetOpen}
+              onClose={() => setIsCrewFilterSheetOpen(false)}
+              title="Crew filters"
+              description="Filter the roster by craft group."
+              maxWidth="full"
+              presentation="bottom-sheet"
+            >
+              <div id="attendance-crew-filters" className="space-y-4">
+                <Select
+                  label="Craft group"
+                  value={craftFilter}
+                  onChange={(e) => setCraftFilter(e.target.value)}
+                  options={CRAFT_FILTER_OPTIONS}
+                />
+                <div className="flex flex-col-reverse gap-2 sm:flex-row sm:justify-end">
+                  {craftFilter !== 'all' && (
+                    <Button
+                      type="button"
+                      variant="secondary"
+                      className="min-h-11 w-full sm:w-auto"
+                      onClick={() => setCraftFilter('all')}
+                    >
+                      Clear filter
+                    </Button>
+                  )}
+                  <Button
+                    type="button"
+                    variant="primary"
+                    className="min-h-11 w-full sm:w-auto"
+                    onClick={() => setIsCrewFilterSheetOpen(false)}
+                  >
+                    Done
+                  </Button>
+                </div>
+              </div>
+            </Modal>
+
             {/* GROUPED WORKER ROSTER */}
-            <div className="space-y-2.5">
+            <div className="space-y-2 sm:space-y-2.5">
               {groupedRosterWorkers.map(([groupKey, groupWorkers]) => {
                 const isCollapsed = Boolean(collapsedGroups[groupKey]);
                 const groupMarkableWorkers = groupWorkers.filter(
@@ -1173,7 +1387,7 @@ function AttendancePageInner() {
                     className="rounded-xl bg-white border border-surface-border overflow-hidden"
                   >
                     {/* Stable two-tier header: group total stays aligned; actions never share its title row. */}
-                    <div className="border-b border-surface-border/70 bg-white px-3 py-2.5 sm:px-4">
+                    <div className="border-b border-surface-border/70 bg-white px-3 py-2 sm:px-4">
                       <button
                         type="button"
                         onClick={() => toggleGroupCollapse(groupKey)}
@@ -1194,8 +1408,8 @@ function AttendancePageInner() {
                         </span>
                       </button>
 
-                      <div className="mt-2 flex flex-col gap-2 md:flex-row md:items-center md:justify-between">
-                        <div className="flex min-w-0 flex-wrap items-center gap-x-3 gap-y-1.5 text-[11px] text-ink-secondary">
+                      <div className="mt-1.5 flex flex-col gap-1.5 md:flex-row md:items-center md:justify-between">
+                        <div className="flex min-w-0 flex-wrap items-center gap-x-2.5 gap-y-1 text-[11px] text-ink-secondary">
                           <span><strong className="tabular-nums text-status-success">{groupPresent}</strong> present</span>
                           <span><strong className="tabular-nums text-status-warning">{groupHalf}</strong> half day</span>
                           <span><strong className="tabular-nums text-status-danger">{groupAbsent}</strong> absent</span>
@@ -1211,7 +1425,7 @@ function AttendancePageInner() {
                           <button
                             type="button"
                             onClick={() => handleMarkCrewPresent(groupWorkers)}
-                            className="min-h-11 w-full shrink-0 rounded-lg border border-surface-border bg-white px-3 text-xs font-semibold text-navy transition-colors hover:border-brand/30 hover:bg-surface-elevated focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand/25 md:w-auto"
+                            className="inline-flex min-h-11 w-fit max-w-full shrink-0 items-center rounded-lg px-2 text-xs font-semibold text-brand transition-colors hover:bg-brand/5 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand/25"
                           >
                             Mark remaining present
                           </button>
@@ -1248,13 +1462,13 @@ function AttendancePageInner() {
                           return (
                             <div
                               key={worker.id}
-                              className={`px-3 sm:px-4 py-3 text-xs transition-colors ${
+                              className={`px-3 py-2 sm:px-4 sm:py-3 text-xs transition-colors ${
                                 isSelfSup || isPendingFounderApprovalOnRow
                                   ? 'bg-status-warning-bg/25'
                                   : 'bg-white hover:bg-surface-elevated'
                               }`}
                             >
-                              <div className="flex flex-col gap-2.5 lg:flex-row lg:items-start lg:justify-between lg:gap-5">
+                              <div className="flex flex-col gap-2 lg:flex-row lg:items-start lg:justify-between lg:gap-5">
                                 {/* Worker identity stays above a full-width status selector on phones. */}
                                 <div className="min-w-0 lg:flex-1">
                                   <div className="flex min-w-0 flex-wrap items-center gap-x-2 gap-y-1">
@@ -1357,7 +1571,7 @@ function AttendancePageInner() {
                                               )
                                             }
                                             aria-pressed={active}
-                                            className={`inline-flex min-h-12 min-w-0 w-full items-center justify-center whitespace-nowrap rounded-md px-1 text-[10px] font-medium leading-tight transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand/25 sm:px-1.5 sm:text-[11px] ${
+                                            className={`inline-flex min-h-11 min-w-0 w-full items-center justify-center whitespace-nowrap rounded-md px-1 text-[10px] font-medium leading-tight transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand/25 sm:min-h-12 sm:px-1.5 sm:text-[11px] ${
                                               active
                                                 ? status.activeClass
                                                 : 'text-ink-secondary hover:bg-white hover:text-navy'
@@ -1369,13 +1583,13 @@ function AttendancePageInner() {
                                       })}
                                     </div>
 
-                                    <div className="mt-2 flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+                                    <div className="mt-1.5 flex flex-wrap items-center justify-between gap-2">
                                       <button
                                         type="button"
                                         onClick={() => toggleNoteInput(worker.id)}
                                         aria-expanded={showNoteBox}
                                         aria-controls={`attendance-note-${worker.id}`}
-                                        className={`inline-flex min-h-11 w-full items-center justify-center gap-2 rounded-lg border px-3 text-xs font-semibold transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand/25 sm:w-auto sm:justify-start ${
+                                        className={`inline-flex min-h-11 w-fit max-w-full items-center justify-center gap-2 rounded-lg border px-3 text-xs font-semibold transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand/25 ${
                                           currentDraft.notes
                                             ? 'border-brand/30 bg-brand/5 text-brand'
                                             : 'border-surface-border bg-white text-ink-secondary hover:bg-surface-inset hover:text-navy'
@@ -1396,7 +1610,7 @@ function AttendancePageInner() {
                                           type="button"
                                           variant="primary"
                                           size="sm"
-                                          className="min-h-11 w-full sm:w-auto"
+                                          className="min-h-11 w-fit max-w-full"
                                           onClick={() =>
                                             handleFounderSupervisorReview(savedRec, 'present')
                                           }
@@ -1456,22 +1670,24 @@ function AttendancePageInner() {
                 aria-busy={isSubmitting}
                 className="min-w-0 text-xs text-ink-secondary sm:flex-1"
               >
-                {attendanceSaveFailed ? (
-                  <span className="text-status-warning">
-                    Couldn&apos;t sync. Your selections are still here—retry when connected.
-                  </span>
-                ) : uncheckedCount > 0 ? (
-                  <span>
-                    <strong className="text-status-warning font-semibold tabular-nums">{uncheckedCount}</strong> statuses left to choose
-                  </span>
-                ) : existingSiteDateRecords.length > 0 && !hasUnsavedChanges ? (
-                  <span className="inline-flex items-center gap-1.5 text-status-success font-semibold">
-                    <CheckCircle2 className="w-3.5 h-3.5 shrink-0" />
-                    <span>Synced for {selectedDate}</span>
-                  </span>
-                ) : (
-                  <span>All crew statuses are selected.</span>
-                )}
+                <div>
+                  {attendanceSaveFailed ? (
+                    <span className="text-status-warning">
+                      Attendance wasn&apos;t submitted. Your selections remain in the draft; retry when ready.
+                    </span>
+                  ) : uncheckedCount > 0 ? (
+                    <span>
+                      <strong className="font-semibold tabular-nums text-status-warning">{uncheckedCount}</strong> statuses left to choose
+                    </span>
+                  ) : existingSiteDateRecords.length > 0 && !hasUnsavedChanges ? (
+                    <span className="inline-flex items-center gap-1.5 font-semibold text-status-success">
+                      <CheckCircle2 className="h-3.5 w-3.5 shrink-0" />
+                      <span>Synced for {selectedDate}</span>
+                    </span>
+                  ) : (
+                    <span>All crew statuses are selected.</span>
+                  )}
+                </div>
               </div>
 
               <Button
