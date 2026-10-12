@@ -12,6 +12,8 @@ interface ModalProps {
   description?: string;
   children: React.ReactNode;
   maxWidth?: 'sm' | 'md' | 'lg' | 'xl' | '2xl' | 'full';
+  /** Use a safe-area-aware sheet for viewport-bound mobile flows. */
+  presentation?: 'center' | 'bottom-sheet' | 'top-sheet';
   /** Use "alertdialog" for messages that must interrupt (e.g. session expiry). */
   role?: 'dialog' | 'alertdialog';
   /** Set false when an accidental outside click must not dismiss (session warnings). */
@@ -47,6 +49,7 @@ export const Modal: React.FC<ModalProps> = ({
   description,
   children,
   maxWidth = 'md',
+  presentation = 'center',
   role = 'dialog',
   dismissOnBackdrop = true,
   dismissOnEscape = true,
@@ -147,7 +150,15 @@ export const Modal: React.FC<ModalProps> = ({
   };
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-4 overflow-y-auto">
+    <div
+      className={twMerge(
+        clsx(
+          'fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-4 overflow-y-auto',
+          presentation === 'bottom-sheet' && 'items-end p-0 sm:p-0 lg:items-center lg:p-4',
+          presentation === 'top-sheet' && 'inset-x-0 top-[calc(4rem+env(safe-area-inset-top))] bottom-0 items-start justify-start p-0 sm:p-0 lg:inset-0 lg:items-center lg:justify-center lg:p-4'
+        )
+      )}
+    >
       {/* Backdrop */}
       <div
         className="fixed inset-0 bg-navy/40 backdrop-blur-sm transition-opacity animate-in fade-in"
@@ -162,7 +173,9 @@ export const Modal: React.FC<ModalProps> = ({
         className={twMerge(
           clsx(
             'relative w-full bg-white rounded-2xl border border-surface-border shadow-2xl z-10 transition-all max-h-[86dvh] flex flex-col my-auto',
-            'animate-in zoom-in-95 duration-150',
+            presentation === 'center' && 'animate-in zoom-in-95 duration-150',
+            presentation === 'bottom-sheet' && 'max-h-[calc(100dvh-env(safe-area-inset-top)-1rem)] rounded-t-2xl rounded-b-none my-0 pb-[env(safe-area-inset-bottom)] animate-sheet-up lg:max-h-[86dvh] lg:rounded-2xl lg:my-auto lg:pb-0 lg:animate-in lg:zoom-in-95 lg:duration-150',
+            presentation === 'top-sheet' && 'max-h-[calc(100dvh-4rem-env(safe-area-inset-top))] rounded-t-none rounded-b-2xl my-0 pb-[env(safe-area-inset-bottom)] animate-dropdown-enter lg:max-h-[86dvh] lg:rounded-2xl lg:my-auto lg:pb-0',
             'focus:outline-none',
             maxWidthClasses[maxWidth]
           )
@@ -174,8 +187,8 @@ export const Modal: React.FC<ModalProps> = ({
       >
         {/* Header */}
         <div className="flex items-center justify-between px-5 sm:px-6 py-4 border-b border-surface-border/80 shrink-0">
-          <div>
-            <h3 id={titleId} className="text-base sm:text-lg font-bold text-navy tracking-tight">
+          <div className="min-w-0 flex-1 pr-3">
+            <h3 id={titleId} className="break-words text-base sm:text-lg font-bold text-navy tracking-tight">
               {title}
             </h3>
             {description && (
@@ -189,7 +202,7 @@ export const Modal: React.FC<ModalProps> = ({
               type="button"
               onClick={onClose}
               aria-label="Close dialog"
-              className="p-1.5 rounded-xl text-ink-secondary hover:text-navy hover:bg-surface-inset transition-colors"
+              className="inline-flex min-h-11 min-w-11 shrink-0 items-center justify-center rounded-xl text-ink-secondary transition-colors hover:bg-surface-inset hover:text-navy focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand focus-visible:ring-offset-2"
             >
               <X className="w-5 h-5" />
             </button>
