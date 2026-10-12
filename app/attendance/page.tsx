@@ -16,8 +16,6 @@ import {
   ShieldCheck,
   ChevronDown,
   ChevronRight,
-  LayoutList,
-  LayoutGrid,
   MessageSquare,
   XCircle,
   Lock,
@@ -137,8 +135,6 @@ function AttendancePageInner() {
     return () => window.removeEventListener('bale:attendance-tab', onTabEvent);
   }, []);
 
-  // Compact vs Card view for Daily Roster (defaults to compact grouped rows)
-  const [viewMode, setViewMode] = useState<'compact' | 'cards'>('compact');
   const [craftFilter, setCraftFilter] = useState<string>('all');
   const [collapsedGroups, setCollapsedGroups] = useState<Record<string, boolean>>({});
   const [expandedNoteWorkers, setExpandedNoteWorkers] = useState<Record<string, boolean>>({});
@@ -861,7 +857,11 @@ function AttendancePageInner() {
   };
 
   const toggleNoteInput = (workerId: string) => {
-    setExpandedNoteWorkers((prev) => ({ ...prev, [workerId]: !prev[workerId] }));
+    setExpandedNoteWorkers((prev) => {
+      const currentlyExpanded =
+        prev[workerId] ?? Boolean(draftAttendance[workerId]?.notes);
+      return { ...prev, [workerId]: !currentlyExpanded };
+    });
   };
 
   return (
@@ -1110,37 +1110,6 @@ function AttendancePageInner() {
                   ]}
                 />
               </div>
-
-              <div className="hidden md:inline-flex shrink-0 rounded-lg border border-surface-border bg-surface-inset/60 p-0.5">
-                <button
-                  type="button"
-                  onClick={() => setViewMode('compact')}
-                  aria-pressed={viewMode === 'compact'}
-                  className={`min-h-9 px-3 rounded-md text-xs font-medium flex items-center gap-1.5 transition-colors ${
-                    viewMode === 'compact'
-                      ? 'bg-white text-navy border border-surface-border'
-                      : 'text-ink-secondary hover:text-navy'
-                  }`}
-                  title="Compact grouped rows"
-                >
-                  <LayoutList className="w-3.5 h-3.5" />
-                  <span>Compact</span>
-                </button>
-                <button
-                  type="button"
-                  onClick={() => setViewMode('cards')}
-                  aria-pressed={viewMode === 'cards'}
-                  className={`min-h-9 px-3 rounded-md text-xs font-medium flex items-center gap-1.5 transition-colors ${
-                    viewMode === 'cards'
-                      ? 'bg-white text-navy border border-surface-border'
-                      : 'text-ink-secondary hover:text-navy'
-                  }`}
-                  title="Expanded cards"
-                >
-                  <LayoutGrid className="w-3.5 h-3.5" />
-                  <span>Cards</span>
-                </button>
-              </div>
             </div>
 
             {/* GROUPED WORKER ROSTER */}
@@ -1165,51 +1134,57 @@ function AttendancePageInner() {
                 const groupUnchecked = groupMarkableWorkers.filter(
                   (w) => !draftAttendance[w.id]?.status
                 ).length;
+                const hasUnmarkedCrew = groupMarkableWorkers.some(
+                  (worker) =>
+                    !draftAttendance[worker.id]?.status &&
+                    !otherSiteActiveAttendanceByWorker.has(worker.id)
+                );
 
                 return (
                   <div
                     key={groupKey}
                     className="rounded-xl bg-white border border-surface-border overflow-hidden"
                   >
-                    {/* Collapsible Craft Group Header */}
-                    <div className="px-3 sm:px-4 py-2 bg-white border-b border-surface-border/70 flex flex-wrap items-center justify-between gap-2">
+                    {/* Stable two-tier header: group total stays aligned; actions never share its title row. */}
+                    <div className="border-b border-surface-border/70 bg-white px-3 py-2.5 sm:px-4">
                       <button
                         type="button"
                         onClick={() => toggleGroupCollapse(groupKey)}
                         aria-expanded={!isCollapsed}
-                        className="flex min-h-11 min-w-0 max-w-full flex-1 flex-wrap items-center gap-x-2 gap-y-1 text-left font-semibold text-xs text-navy hover:text-navy-deep focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand/25 rounded-md sm:flex-none"
+                        className="flex min-h-11 w-full min-w-0 items-center gap-2.5 rounded-md text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand/25"
                       >
                         {isCollapsed ? (
-                          <ChevronRight className="w-4 h-4 text-ink-secondary" />
+                          <ChevronRight className="h-4 w-4 shrink-0 text-ink-secondary" />
                         ) : (
-                          <ChevronDown className="w-4 h-4 text-ink-secondary" />
+                          <ChevronDown className="h-4 w-4 shrink-0 text-ink-secondary" />
                         )}
-                        <span>{CRAFT_GROUP_META[groupKey].label}</span>
-                        <Badge variant="neutral" size="sm">
+                        <span className="min-w-0 flex-1 break-words text-sm font-semibold leading-snug text-navy">
+                          {CRAFT_GROUP_META[groupKey].label}
+                        </span>
+                        <span className="inline-flex h-8 min-w-8 shrink-0 items-center justify-center rounded-full border border-surface-border bg-surface px-2 text-xs font-semibold tabular-nums text-navy">
                           {groupWorkers.length}
-                        </Badge>
-                        {groupUnchecked > 0 && (
-                          <Badge variant="warning" size="sm">
-                            {groupUnchecked} unmarked
-                          </Badge>
-                        )}
+                          <span className="sr-only"> workers</span>
+                        </span>
                       </button>
 
-                      <div className="flex flex-wrap items-center justify-end gap-x-3 gap-y-1 text-[11px] text-ink-secondary">
-                        <span><strong className="text-status-success tabular-nums">{groupPresent}</strong> present</span>
-                        <span><strong className="text-status-warning tabular-nums">{groupHalf}</strong> half day</span>
-                        <span><strong className="text-status-danger tabular-nums">{groupAbsent}</strong> absent</span>
-                        <span><strong className="text-status-info tabular-nums">{groupLeave}</strong> leave</span>
+                      <div className="mt-2 flex flex-col gap-2 md:flex-row md:items-center md:justify-between">
+                        <div className="flex min-w-0 flex-wrap items-center gap-x-3 gap-y-1.5 text-[11px] text-ink-secondary">
+                          <span><strong className="tabular-nums text-status-success">{groupPresent}</strong> present</span>
+                          <span><strong className="tabular-nums text-status-warning">{groupHalf}</strong> half day</span>
+                          <span><strong className="tabular-nums text-status-danger">{groupAbsent}</strong> absent</span>
+                          <span><strong className="tabular-nums text-status-info">{groupLeave}</strong> leave</span>
+                          {groupUnchecked > 0 && (
+                            <span className="font-semibold text-status-warning">
+                              {groupUnchecked} unmarked
+                            </span>
+                          )}
+                        </div>
 
-                        {groupMarkableWorkers.some(
-                          (worker) =>
-                            !draftAttendance[worker.id]?.status &&
-                            !otherSiteActiveAttendanceByWorker.has(worker.id)
-                        ) && (
+                        {hasUnmarkedCrew && (
                           <button
                             type="button"
                             onClick={() => handleMarkCrewPresent(groupWorkers)}
-                            className="min-h-11 sm:min-h-9 rounded-lg border border-surface-border bg-white px-3 text-[11px] font-semibold text-navy hover:bg-surface-elevated hover:border-brand/30 transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand/25"
+                            className="min-h-11 w-full shrink-0 rounded-lg border border-surface-border bg-white px-3 text-xs font-semibold text-navy transition-colors hover:border-brand/30 hover:bg-surface-elevated focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand/25 md:w-auto"
                           >
                             Mark remaining present
                           </button>
@@ -1218,7 +1193,7 @@ function AttendancePageInner() {
                     </div>
 
                     {!isCollapsed && (
-                      <div className={`divide-y divide-surface-border/60 ${viewMode === 'cards' ? 'md:hidden' : ''}`}>
+                      <div className="divide-y divide-surface-border/60">
                         {groupWorkers.map((worker) => {
                           const currentDraft = draftAttendance[worker.id] || {
                             status: null,
@@ -1241,8 +1216,7 @@ function AttendancePageInner() {
                             !isVerifiedByFounder &&
                             (savedRec?.status === 'present' || savedRec?.status === 'half_day');
                           const showNoteBox =
-                            Boolean(expandedNoteWorkers[worker.id]) ||
-                            Boolean(currentDraft.notes && !isSelfSup);
+                            expandedNoteWorkers[worker.id] ?? Boolean(currentDraft.notes && !isSelfSup);
 
                           return (
                             <div
@@ -1253,15 +1227,12 @@ function AttendancePageInner() {
                                   : 'bg-white hover:bg-surface-elevated'
                               }`}
                             >
-                              <div className="flex flex-col md:flex-row md:items-center justify-between gap-2">
-                                {/* Left: Compact Worker Identity */}
-                                <div className="min-w-0 flex-1">
-                                  <div className="flex items-center gap-1.5 flex-wrap">
-                                    <span className="font-semibold text-ink-primary text-sm truncate">
+                              <div className="flex flex-col gap-2.5 lg:flex-row lg:items-start lg:justify-between lg:gap-5">
+                                {/* Worker identity stays above a full-width status selector on phones. */}
+                                <div className="min-w-0 lg:flex-1">
+                                  <div className="flex min-w-0 flex-wrap items-center gap-x-2 gap-y-1">
+                                    <span className="break-words text-sm font-semibold text-ink-primary">
                                       {worker.name}
-                                    </span>
-                                    <span className="text-ink-secondary text-xs">
-                                      {worker.position}
                                     </span>
                                     {isAnySupRow && (
                                       <Badge variant="warning" size="sm">
@@ -1278,6 +1249,16 @@ function AttendancePageInner() {
                                         Founder Approved ✓
                                       </Badge>
                                     )}
+                                    {!isSelfSup && !currentDraft.status && (
+                                      <Badge variant="neutral" size="sm">
+                                        Unmarked
+                                      </Badge>
+                                    )}
+                                  </div>
+                                  <div className="mt-1 flex min-w-0 flex-wrap items-center gap-x-2 gap-y-1 text-xs">
+                                    <span className="break-words text-ink-secondary">
+                                      {worker.position}
+                                    </span>
                                     {otherSiteInfo && (
                                       <Badge variant="info" size="sm">
                                         Already at {otherSiteInfo.projectName} (
@@ -1287,262 +1268,141 @@ function AttendancePageInner() {
                                         )
                                       </Badge>
                                     )}
-                                    {!isSelfSup && !currentDraft.status && (
-                                      <Badge variant="neutral" size="sm">
-                                        Unmarked
-                                      </Badge>
-                                    )}
                                   </div>
                                 </div>
 
-                                {/* Right: Status Controls (or Locked Auto-Status for Supervisor's Own Row) */}
+                                {/* A Supervisor's own status remains locked; all other rows get equal-width choices. */}
                                 {isSelfSup ? (
-                                  <div className="flex items-center gap-2">
-                                    <div className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-white border border-surface-border text-[11px] font-semibold text-navy">
-                                      <Lock className="w-3.5 h-3.5 text-status-warning" />
+                                  <div className="flex w-full min-w-0 items-start gap-2 rounded-lg border border-surface-border bg-white px-3 py-2.5 text-[11px] font-semibold text-navy lg:w-[26rem] lg:shrink-0">
+                                    <Lock className="mt-0.5 h-3.5 w-3.5 shrink-0 text-status-warning" />
+                                    <span className="min-w-0 break-words leading-snug">
                                       {otherSiteInfo ? (
-                                        <span>
-                                          Logged via {otherSiteInfo.projectName} ({selectedDate})
-                                        </span>
+                                        `Logged via ${otherSiteInfo.projectName} (${selectedDate})`
                                       ) : savedRec ? (
                                         isVerifiedByFounder ? (
-                                          <span className="text-status-success font-bold">
-                                            Founder Approved ({formatStatusLabel(savedRec.status)}) ✓
-                                          </span>
+                                          `Founder Approved (${formatStatusLabel(savedRec.status)}) ✓`
                                         ) : (
-                                          <span>
-                                            Submitted as Present · Pending Founder Approval
-                                          </span>
+                                          'Submitted as Present · Pending Founder Approval'
                                         )
                                       ) : (
-                                        <span>
-                                          Auto-logged when you submit crew roll call.
-                                        </span>
+                                        'Auto-logged when you submit crew roll call.'
                                       )}
-                                    </div>
+                                    </span>
                                   </div>
                                 ) : (
-                                  <div className="flex items-center flex-wrap gap-1.5">
-                                    {isFounder && isPendingFounderApprovalOnRow && savedRec && (
-                                      <Button
-                                        type="button"
-                                        variant="primary"
-                                        size="sm"
-                                        className="min-h-11 md:min-h-9"
-                                        onClick={() =>
-                                          handleFounderSupervisorReview(savedRec, 'present')
-                                        }
-                                        leftIcon={<ShieldCheck className="w-3.5 h-3.5" />}
-                                      >
-                                        Approve ✓
-                                      </Button>
-                                    )}
+                                  <div className="w-full min-w-0 lg:w-[26rem] lg:shrink-0">
                                     <div
                                       role="group"
                                       aria-label={`Attendance status for ${worker.name}`}
-                                      className="grid grid-cols-4 md:inline-flex rounded-lg bg-surface-inset/70 p-0.5 border border-surface-border"
+                                      className="grid w-full grid-cols-4 gap-1 rounded-lg border border-surface-border bg-surface-inset/70 p-1"
                                     >
                                       {[
                                         {
                                           id: 'present',
                                           label: 'Present',
-                                          activeClass:
-                                            'bg-status-success text-white font-semibold',
+                                          activeClass: 'bg-status-success text-white font-semibold',
                                         },
                                         {
                                           id: 'half_day',
                                           label: 'Half Day',
-                                          activeClass:
-                                            'bg-status-warning text-white font-semibold',
+                                          activeClass: 'bg-status-warning text-white font-semibold',
                                         },
                                         {
                                           id: 'absent',
                                           label: 'Absent',
-                                          activeClass:
-                                            'bg-status-danger text-white font-semibold',
+                                          activeClass: 'bg-status-danger text-white font-semibold',
                                         },
                                         {
                                           id: 'leave',
                                           label: 'Leave',
-                                          activeClass:
-                                            'bg-status-info text-white font-semibold',
+                                          activeClass: 'bg-status-info text-white font-semibold',
                                         },
-                                      ].map((st) => {
-                                        const active = currentDraft.status === st.id;
+                                      ].map((status) => {
+                                        const active = currentDraft.status === status.id;
                                         return (
                                           <button
-                                            key={st.id}
+                                            key={status.id}
                                             type="button"
                                             onClick={() =>
                                               handleStatusChange(
                                                 worker,
-                                                st.id as AttendanceStatus
+                                                status.id as AttendanceStatus
                                               )
                                             }
                                             aria-pressed={active}
-                                            className={`min-h-11 md:min-h-9 px-1 sm:px-2 md:px-3 rounded-md text-[10px] sm:text-[11px] transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand/25 ${
+                                            className={`inline-flex min-h-12 min-w-0 w-full items-center justify-center whitespace-nowrap rounded-md px-1 text-[10px] font-medium leading-tight transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand/25 sm:px-1.5 sm:text-[11px] ${
                                               active
-                                                ? st.activeClass
-                                                : 'text-ink-secondary hover:text-navy hover:bg-white font-medium'
+                                                ? status.activeClass
+                                                : 'text-ink-secondary hover:bg-white hover:text-navy'
                                             }`}
                                           >
-                                            {st.label}
+                                            {status.label}
                                           </button>
                                         );
                                       })}
                                     </div>
 
-                                    <button
-                                      type="button"
-                                      onClick={() => toggleNoteInput(worker.id)}
-                                      className={`min-h-11 min-w-11 md:min-h-9 md:min-w-9 inline-flex items-center justify-center rounded-lg border transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand/25 ${
-                                        currentDraft.notes
-                                          ? 'border-brand/30 bg-brand/5 text-brand'
-                                          : 'border-transparent text-ink-muted hover:text-navy hover:bg-surface-inset'
-                                      }`}
-                                      title="Add or view activity note"
-                                      aria-expanded={showNoteBox}
-                                      aria-label={`Toggle note for ${worker.name}`}
-                                    >
-                                      <MessageSquare className="w-3.5 h-3.5" />
-                                    </button>
-                                  </div>
-                                )}
-                              </div>
+                                    <div className="mt-2 flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+                                      <button
+                                        type="button"
+                                        onClick={() => toggleNoteInput(worker.id)}
+                                        aria-expanded={showNoteBox}
+                                        aria-controls={`attendance-note-${worker.id}`}
+                                        className={`inline-flex min-h-11 w-full items-center justify-center gap-2 rounded-lg border px-3 text-xs font-semibold transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand/25 sm:w-auto sm:justify-start ${
+                                          currentDraft.notes
+                                            ? 'border-brand/30 bg-brand/5 text-brand'
+                                            : 'border-surface-border bg-white text-ink-secondary hover:bg-surface-inset hover:text-navy'
+                                        }`}
+                                      >
+                                        <MessageSquare className="h-3.5 w-3.5 shrink-0" />
+                                        <span>
+                                          {showNoteBox
+                                            ? 'Hide note'
+                                            : currentDraft.notes
+                                              ? 'Edit note'
+                                              : 'Add note'}
+                                        </span>
+                                      </button>
 
-                              {showNoteBox && !isSelfSup && (
-                                <div className="mt-2">
-                                  <Input
-                                    placeholder="Activity note (e.g. 2F slab rebar, went home at noon)..."
-                                    value={currentDraft.notes}
-                                    onChange={(e) =>
-                                      handleNotesChange(worker.id, e.target.value)
-                                    }
-                                    className="py-2"
-                                  />
-                                </div>
-                              )}
-                            </div>
-                          );
-                        })}
-                      </div>
-                    )}
+                                      {isFounder && isPendingFounderApprovalOnRow && savedRec && (
+                                        <Button
+                                          type="button"
+                                          variant="primary"
+                                          size="sm"
+                                          className="min-h-11 w-full sm:w-auto"
+                                          onClick={() =>
+                                            handleFounderSupervisorReview(savedRec, 'present')
+                                          }
+                                          leftIcon={<ShieldCheck className="h-3.5 w-3.5" />}
+                                        >
+                                          Approve ✓
+                                        </Button>
+                                      )}
+                                    </div>
 
-                    {!isCollapsed && viewMode === 'cards' && (
-                      <div className="hidden md:grid p-4 grid-cols-1 md:grid-cols-2 gap-3">
-                        {groupWorkers.map((worker) => {
-                          const currentDraft = draftAttendance[worker.id] || {
-                            status: null,
-                            notes: '',
-                          };
-                          const isSelfSup = isSelfSupervisorWorker(worker);
-                          const savedRec = existingSiteDateRecords.find(
-                            (a) => a.worker_id === worker.id
-                          );
-
-                          return (
-                            <div
-                              key={worker.id}
-                              className="p-4 rounded-xl bg-white border border-surface-border space-y-3"
-                            >
-                              <div className="flex items-center justify-between gap-2">
-                                <div>
-                                  <div className="flex items-center gap-1.5 flex-wrap">
-                                    <span className="text-sm font-bold text-navy">
-                                      {worker.name}
-                                    </span>
-                                    {worker.position.toLowerCase().includes('supervisor') && (
-                                      <Badge variant="warning" size="sm">
-                                        Supervisor
-                                      </Badge>
+                                    {showNoteBox && (
+                                      <div className="mt-2">
+                                        <Input
+                                          id={`attendance-note-${worker.id}`}
+                                          placeholder="Activity note (e.g. 2F slab rebar, went home at noon)..."
+                                          value={currentDraft.notes}
+                                          onChange={(e) =>
+                                            handleNotesChange(worker.id, e.target.value)
+                                          }
+                                          className="py-2"
+                                        />
+                                      </div>
                                     )}
                                   </div>
-                                  <div className="text-xs text-ink-secondary">
-                                    {worker.position}
-                                  </div>
-                                </div>
-                                {!isSelfSup && !currentDraft.status && (
-                                  <Badge variant="neutral" size="sm">
-                                    Unmarked
-                                  </Badge>
                                 )}
                               </div>
-
-                              {isSelfSup ? (
-                                <div className="p-2.5 rounded-xl bg-white border border-surface-border text-[11px] font-semibold text-navy flex items-center gap-2">
-                                  <Lock className="w-3.5 h-3.5 text-status-warning shrink-0" />
-                                  <span>
-                                    {savedRec
-                                      ? savedRec.is_founder_override
-                                        ? `Founder Approved (${formatStatusLabel(savedRec.status)}) ✓`
-                                        : 'Submitted as Present · Pending Founder Approval'
-                                      : 'Auto-logged when you submit crew roll call.'}
-                                  </span>
-                                </div>
-                              ) : (
-                                <>
-                                  <div className="grid grid-cols-4 gap-1.5">
-                                    {[
-                                      {
-                                        id: 'present',
-                                        label: 'Present',
-                                        activeClass: 'bg-status-success text-white border-status-success',
-                                      },
-                                      {
-                                        id: 'half_day',
-                                        label: 'Half Day',
-                                        activeClass: 'bg-status-warning text-white border-status-warning',
-                                      },
-                                      {
-                                        id: 'absent',
-                                        label: 'Absent',
-                                        activeClass: 'bg-status-danger text-white border-status-danger',
-                                      },
-                                      {
-                                        id: 'leave',
-                                        label: 'Leave',
-                                        activeClass: 'bg-status-info text-white border-status-info',
-                                      },
-                                    ].map((item) => {
-                                      const isSelected = currentDraft.status === item.id;
-                                      return (
-                                        <button
-                                          key={item.id}
-                                          type="button"
-                                          onClick={() =>
-                                            handleStatusChange(
-                                              worker,
-                                              item.id as AttendanceStatus
-                                            )
-                                          }
-                                          aria-pressed={isSelected}
-                                          className={`min-h-11 px-2 rounded-lg border text-[11px] font-semibold transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand/25 ${
-                                            isSelected
-                                              ? item.activeClass
-                                              : 'bg-white border-surface-border text-ink-secondary hover:bg-surface-inset'
-                                          }`}
-                                        >
-                                          {item.label}
-                                        </button>
-                                      );
-                                    })}
-                                  </div>
-
-                                  <Input
-                                    placeholder="Activity notes (optional)..."
-                                    value={currentDraft.notes}
-                                    onChange={(e) =>
-                                      handleNotesChange(worker.id, e.target.value)
-                                    }
-                                    className="py-2"
-                                  />
-                                </>
-                              )}
                             </div>
                           );
                         })}
                       </div>
                     )}
+
+
                   </div>
                 );
               })}
