@@ -49,8 +49,15 @@ export async function middleware(request: NextRequest) {
     return NextResponse.redirect(url, 308);
   }
 
-  // API routes and Next assets: only refresh session cookies.
-  if (pathname.startsWith('/api') || pathname.startsWith('/_next') || pathname === '/favicon.ico') {
+  // API routes and public static assets: only refresh session cookies.
+  if (
+    pathname.startsWith('/api') ||
+    pathname.startsWith('/_next') ||
+    pathname.startsWith('/brand/') ||
+    pathname === '/favicon.ico' ||
+    pathname === '/icon.svg' ||
+    /\.(?:svg|png|jpg|jpeg|gif|webp|ico)$/i.test(pathname)
+  ) {
     const { response } = createMiddlewareSupabaseClient(request);
     return response;
   }
