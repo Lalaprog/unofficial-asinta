@@ -706,9 +706,9 @@ export default function ExpensesPage() {
     <AppShell requireFounder={true}>
       <div className="space-y-6">
         {/* Header */}
-        <div className="flex items-center justify-between gap-3 pb-3 border-b border-surface-border/60">
+        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pb-3 border-b border-surface-border/60">
           <div>
-            <h1 className="text-xl sm:text-2xl font-extrabold text-navy tracking-tight">
+            <h1 className="text-xl sm:text-2xl font-semibold text-navy tracking-tight">
               Site Expenses
             </h1>
             <p className="text-xs text-ink-secondary mt-0.5">
@@ -731,7 +731,7 @@ export default function ExpensesPage() {
             The model extracts; the Founder confirms in the modal below. Nothing
             written here reaches the ledger.
            ------------------------------------------------------------------ */}
-        <div className="rounded-3xl border border-surface-border bg-white p-4 sm:p-5 shadow-[6px_6px_18px_rgba(11,31,58,0.06),-6px_-6px_18px_rgba(255,255,255,0.95)] space-y-3">
+        <div className="rounded-xl border border-surface-border bg-white p-4 sm:p-5 space-y-3">
           <div className="flex flex-wrap items-center justify-between gap-2">
             <div className="flex items-center gap-2">
               <Sparkles className="h-4 w-4 text-navy" />
@@ -833,7 +833,7 @@ export default function ExpensesPage() {
 
         {/* Ledger checks — arithmetic, not AI (Track C) */}
         {(ledgerDuplicates.length > 0 || missingReceipts.length > 0) && (
-          <div className="rounded-3xl border border-status-warning/20 bg-status-warning-bg/60 p-4 space-y-3">
+          <div className="rounded-xl border border-status-warning/20 bg-status-warning-bg/60 p-4 space-y-3">
             <div className="flex items-center gap-2">
               <AlertTriangle className="h-4 w-4 text-status-warning" />
               <span className="text-sm font-bold text-navy">Ledger checks</span>
@@ -844,7 +844,7 @@ export default function ExpensesPage() {
 
             {ledgerDuplicates.length > 0 && (
               <div className="space-y-1">
-                <div className="text-[11px] font-bold uppercase tracking-wider text-navy">
+                <div className="text-xs font-semibold text-ink-secondary">
                   Possible duplicates ({ledgerDuplicates.length})
                 </div>
                 <ul className="space-y-1 text-[11px] text-ink-secondary">
@@ -870,7 +870,7 @@ export default function ExpensesPage() {
 
             {missingReceipts.length > 0 && (
               <div className="space-y-1">
-                <div className="text-[11px] font-bold uppercase tracking-wider text-navy">
+                <div className="text-xs font-semibold text-ink-secondary">
                   Large expenses with no receipt photo ({missingReceipts.length})
                 </div>
                 <ul className="space-y-1 text-[11px] text-ink-secondary">
@@ -922,7 +922,7 @@ export default function ExpensesPage() {
         </div>
 
         {/* Expenses List */}
-        <div className="bg-white rounded-3xl border border-surface-border shadow-[6px_6px_18px_rgba(11,31,58,0.06),-6px_-6px_18px_rgba(255,255,255,0.95)] overflow-hidden">
+        <div className="bg-white rounded-xl border border-surface-border overflow-hidden">
           <div className="divide-y divide-surface-border/70">
             {filteredExpenses.map((exp) => {
               const proj = projects.find((p) => p.id === exp.project_id);
@@ -930,12 +930,12 @@ export default function ExpensesPage() {
               return (
                 <div
                   key={exp.id}
-                  className="p-5 flex flex-col lg:flex-row lg:items-center justify-between gap-4 hover:bg-slate-50/60 transition-colors"
+                  className="p-4 sm:p-5 flex flex-col lg:flex-row lg:items-center justify-between gap-4 hover:bg-surface transition-colors"
                 >
                   {/* Left info */}
-                  <div className="space-y-1.5 max-w-xl">
+                  <div className="min-w-0 max-w-xl flex-1 space-y-1.5">
                     <div className="flex flex-wrap items-center gap-2">
-                      <span className="font-bold text-sm text-navy">{exp.description}</span>
+                      <span className="break-words font-semibold text-sm text-navy">{exp.description}</span>
                       <Badge variant="navy" size="sm" className="capitalize">
                         {exp.category}
                       </Badge>
@@ -989,7 +989,7 @@ export default function ExpensesPage() {
                     })()}
 
                     {/* Entry provenance — states what actually happened. */}
-                    <div className="flex items-center space-x-2 pt-1 text-[11px] text-ink-secondary">
+                    <div className="flex flex-wrap items-center gap-2 pt-1 text-[11px] text-ink-secondary">
                       <span className="inline-flex items-center space-x-1 text-status-success font-semibold bg-status-success-bg px-2 py-0.5 rounded-md border border-status-success/20">
                         <CheckCircle2 className="w-3 h-3 text-status-success" />
                         <span>
@@ -1239,7 +1239,7 @@ export default function ExpensesPage() {
 
           <div className="space-y-1">
             <div className="flex items-center justify-between">
-              <label className="text-xs font-semibold text-navy uppercase tracking-wider">
+              <label className="text-xs font-semibold text-ink-secondary">
                 Expense Description
               </label>
               <button
@@ -1300,7 +1300,7 @@ export default function ExpensesPage() {
               <div className="grid grid-cols-2 gap-2 text-[11px]">
                 <div className="p-2 rounded-xl bg-white border border-slate-200">
                   <span className="text-ink-secondary">Suggested Category:</span>
-                  <div className="font-bold text-navy uppercase">{aiResult.category}</div>
+                  <div className="font-semibold text-navy">{aiResult.category}</div>
                 </div>
                 <div className="p-2 rounded-xl bg-white border border-slate-200">
                   <span className="text-ink-secondary">Possible Worker Bale:</span>
@@ -1376,10 +1376,10 @@ export default function ExpensesPage() {
             </Select>
 
             <div>
-              <label className="text-xs font-semibold text-navy uppercase tracking-wider block mb-1.5">
+              <label className="text-xs font-semibold text-ink-secondary block mb-1.5">
                 Receipt / Invoice Photo
               </label>
-              <label className="flex items-center justify-center gap-2 p-2.5 rounded-xl bg-surface-inset border border-surface-border hover:bg-slate-200 cursor-pointer text-xs font-semibold text-navy transition-all shadow-[inset_1px_1px_2px_rgba(11,31,58,0.05)]">
+              <label className="flex items-center justify-center gap-2 p-2.5 rounded-xl bg-surface-inset border border-surface-border hover:bg-slate-200 cursor-pointer text-xs font-semibold text-navy transition-colors">
                 {isUploadingReceipt ? (
                   <>
                     <Loader2 className="w-4 h-4 animate-spin" />

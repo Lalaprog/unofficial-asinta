@@ -87,9 +87,9 @@ export default function ClientsPage() {
     <AppShell requireFounder={true}>
       <div className="space-y-6">
         {/* Header */}
-        <div className="flex items-center justify-between gap-3 pb-3 border-b border-surface-border/60">
+        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pb-3 border-b border-surface-border/60">
           <div>
-            <h1 className="text-xl sm:text-2xl font-extrabold text-navy tracking-tight">
+            <h1 className="text-xl sm:text-2xl font-semibold text-navy tracking-tight">
               Client Directory
             </h1>
             <p className="text-xs text-ink-secondary mt-0.5">
@@ -121,7 +121,7 @@ export default function ClientsPage() {
         </div>
 
         {/* Client Cards Grid */}
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-6 auto-rows-fr">
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-4 auto-rows-fr">
           {filteredClients.map((client) => {
             const clientProjects = projects.filter((p) => p.client_id === client.id);
             const clientInvoices = invoices.filter((i) => i.client_id === client.id);
@@ -131,7 +131,7 @@ export default function ClientsPage() {
             return (
               <div
                 key={client.id}
-                className="h-full min-w-0 bg-white rounded-3xl p-6 border border-surface-border/80 shadow-[6px_6px_18px_rgba(11,31,58,0.06),-6px_-6px_18px_rgba(255,255,255,0.95)] hover:shadow-[10px_10px_24px_rgba(11,31,58,0.09),-10px_-10px_24px_rgba(255,255,255,1)] transition-all flex flex-col justify-between"
+                className="h-full min-w-0 bg-white rounded-xl p-4 sm:p-5 border border-surface-border/80 transition-all flex flex-col justify-between"
               >
                 <div className="space-y-4 min-w-0">
                   <div className="flex items-start justify-between gap-2">
@@ -144,6 +144,9 @@ export default function ClientsPage() {
 
                     <div className="flex items-center space-x-1">
                       <button
+                        type="button"
+                        aria-label={`Edit ${client.name}`}
+                        title="Edit client"
                         onClick={() => {
                           setSelectedClient(client);
                           setFormData({
@@ -155,13 +158,16 @@ export default function ClientsPage() {
                           });
                           setIsEditModalOpen(true);
                         }}
-                        className="p-1.5 rounded-lg text-ink-secondary hover:text-navy hover:bg-surface-inset"
+                        className="min-h-11 min-w-11 sm:min-h-9 sm:min-w-9 inline-flex items-center justify-center rounded-lg text-ink-secondary hover:text-navy hover:bg-surface-inset focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand/25"
                       >
                         <Edit2 className="w-4 h-4" />
                       </button>
                       <button
+                        type="button"
+                        aria-label={`Delete ${client.name}`}
+                        title="Delete client"
                         onClick={() => handleDelete(client.id, client.name)}
-                        className="p-1.5 rounded-lg text-status-danger hover:bg-status-danger-bg"
+                        className="min-h-11 min-w-11 sm:min-h-9 sm:min-w-9 inline-flex items-center justify-center rounded-lg text-status-danger hover:bg-status-danger-bg focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-status-danger/25"
                       >
                         <Trash2 className="w-4 h-4" />
                       </button>
@@ -170,32 +176,32 @@ export default function ClientsPage() {
 
                   {/* Contact info */}
                   <div className="space-y-2 text-xs text-ink-secondary bg-surface-inset/40 p-3 rounded-2xl border border-surface-border/60">
-                    <div className="flex items-center space-x-2">
+                    <div className="flex min-w-0 items-center gap-2">
                       <Phone className="w-3.5 h-3.5 text-navy shrink-0" />
-                      <span className="font-mono text-navy">{client.phone}</span>
+                      <span className="min-w-0 break-words font-mono text-navy">{client.phone}</span>
                     </div>
-                    <div className="flex items-center space-x-2">
-                      <Mail className="w-3.5 h-3.5 text-navy shrink-0" />
-                      <span>{client.email}</span>
+                    <div className="flex min-w-0 items-start gap-2">
+                      <Mail className="w-3.5 h-3.5 text-navy shrink-0 mt-0.5" />
+                      <span className="min-w-0 break-words">{client.email}</span>
                     </div>
-                    <div className="flex items-center space-x-2">
-                      <MapPin className="w-3.5 h-3.5 text-navy shrink-0" />
-                      <span>{client.address}</span>
+                    <div className="flex min-w-0 items-start gap-2">
+                      <MapPin className="w-3.5 h-3.5 text-navy shrink-0 mt-0.5" />
+                      <span className="min-w-0 break-words">{client.address}</span>
                     </div>
                   </div>
 
                   {/* Active Projects */}
                   <div>
-                    <div className="text-[11px] font-bold uppercase tracking-wider text-ink-secondary mb-1.5">
+                    <div className="text-xs font-medium text-ink-secondary mb-1.5">
                       Engaged Projects ({clientProjects.length})
                     </div>
                     <div className="space-y-1">
                       {clientProjects.map((p) => (
                         <div
                           key={p.id}
-                          className="text-xs font-semibold text-navy bg-slate-50 px-2.5 py-1.5 rounded-xl border border-slate-200/80 flex items-center justify-between"
+                          className="min-w-0 text-xs font-semibold text-navy bg-surface px-2.5 py-1.5 rounded-lg border border-surface-border flex items-center justify-between gap-2"
                         >
-                          <span>{p.name}</span>
+                          <span className="min-w-0 truncate">{p.name}</span>
                           <Badge variant="navy" size="sm">
                             {p.status}
                           </Badge>
@@ -221,7 +227,7 @@ export default function ClientsPage() {
           })}
 
           {filteredClients.length === 0 && (
-            <div className="md:col-span-2 bg-white rounded-3xl border border-surface-border">
+            <div className="md:col-span-2 bg-white rounded-xl border border-surface-border">
               <EmptyState
                 title="No clients to show"
                 description={

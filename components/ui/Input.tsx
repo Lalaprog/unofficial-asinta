@@ -12,7 +12,7 @@ export interface InputProps extends React.InputHTMLAttributes<HTMLInputElement> 
   rightIcon?: React.ReactNode;
 }
 
-const LABEL_CLASSES = 'text-xs font-semibold text-navy uppercase tracking-wider';
+const LABEL_CLASSES = 'text-xs font-semibold text-ink-secondary';
 
 export const Input = React.forwardRef<HTMLInputElement, InputProps>(
   ({ className, label, error, hint, leftIcon, rightIcon, id, ...props }, ref) => {
@@ -41,9 +41,8 @@ export const Input = React.forwardRef<HTMLInputElement, InputProps>(
             aria-describedby={describedBy}
             className={twMerge(
               clsx(
-                'w-full bg-surface-inset/60 text-ink-primary placeholder:text-ink-muted text-sm rounded-xl border border-surface-border py-2.5 transition-all duration-150',
-                'shadow-[inset_2px_2px_4px_rgba(11,31,58,0.05),inset_-2px_-2px_4px_rgba(255,255,255,0.9)]',
-                'focus:bg-white focus:border-navy focus:ring-2 focus:ring-navy/15 focus:outline-none',
+                'w-full min-h-11 bg-white text-ink-primary placeholder:text-ink-muted text-base sm:text-sm rounded-lg border border-surface-border px-3.5 py-2.5 transition-colors duration-150',
+                'focus:border-brand focus:ring-2 focus:ring-brand/15 focus:outline-none',
                 leftIcon ? 'pl-9' : 'pl-3.5',
                 rightIcon ? 'pr-9' : 'pr-3.5',
                 error && 'border-status-danger ring-1 ring-status-danger/30 bg-status-danger-bg/40',
@@ -100,9 +99,8 @@ export const Textarea = React.forwardRef<HTMLTextAreaElement, TextareaProps>(
           aria-describedby={describedBy}
           className={twMerge(
             clsx(
-              'w-full bg-surface-inset/60 text-ink-primary placeholder:text-ink-muted text-sm rounded-xl border border-surface-border p-3 transition-all duration-150',
-              'shadow-[inset_2px_2px_4px_rgba(11,31,58,0.05),inset_-2px_-2px_4px_rgba(255,255,255,0.9)]',
-              'focus:bg-white focus:border-navy focus:ring-2 focus:ring-navy/15 focus:outline-none resize-none',
+              'w-full min-h-24 bg-white text-ink-primary placeholder:text-ink-muted text-base sm:text-sm rounded-lg border border-surface-border p-3 transition-colors duration-150',
+              'focus:border-brand focus:ring-2 focus:ring-brand/15 focus:outline-none resize-none',
               error && 'border-status-danger ring-1 ring-status-danger/30 bg-status-danger-bg/40',
               className
             )

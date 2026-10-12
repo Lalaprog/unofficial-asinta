@@ -11,19 +11,17 @@ interface CardProps extends React.HTMLAttributes<HTMLDivElement> {
 export const Card = React.forwardRef<HTMLDivElement, CardProps>(
   ({ className, variant = 'raised', children, ...props }, ref) => {
     const variantClasses = {
-      raised:
-        'bg-white border border-surface-border/80 shadow-[6px_6px_18px_rgba(11,31,58,0.06),-6px_-6px_18px_rgba(255,255,255,0.95)] rounded-2xl',
-      flat: 'bg-white border border-surface-border rounded-2xl',
-      inset:
-        'bg-surface-inset/60 border border-surface-border/70 shadow-[inset_2px_2px_5px_rgba(11,31,58,0.06),inset_-2px_-2px_5px_rgba(255,255,255,0.90)] rounded-xl',
+      raised: 'bg-white border border-surface-border shadow-sm rounded-xl',
+      flat: 'bg-white border border-surface-border rounded-xl',
+      inset: 'bg-surface-inset/60 border border-surface-border/80 rounded-lg',
       interactive:
-        'bg-white border border-surface-border/80 shadow-[6px_6px_18px_rgba(11,31,58,0.06),-6px_-6px_18px_rgba(255,255,255,0.95)] hover:shadow-[8px_8px_22px_rgba(11,31,58,0.09),-8px_-8px_22px_rgba(255,255,255,1)] hover:border-navy/30 transition-all duration-200 cursor-pointer rounded-2xl',
+        'bg-white border border-surface-border hover:border-brand/35 hover:shadow-sm transition-colors duration-150 cursor-pointer rounded-xl focus-within:ring-2 focus-within:ring-brand/15',
     };
 
     return (
       <div
         ref={ref}
-        className={twMerge(clsx(variantClasses[variant], 'p-5 md:p-6 transition-all', className))}
+        className={twMerge(clsx(variantClasses[variant], 'p-5 md:p-6 transition-colors', className))}
         {...props}
       >
         {children}

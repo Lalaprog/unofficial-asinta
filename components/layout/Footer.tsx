@@ -10,7 +10,7 @@ import { AsintaEmblem, AsintaWordmark } from '@/components/ui/AsintaLogo';
  */
 export const Footer: React.FC = () => {
   return (
-    <footer className="mt-8 pb-20 lg:pb-0 lg:mt-0 lg:fixed lg:bottom-0 lg:inset-x-0 lg:z-30 border-t border-surface-border/80 bg-white/95 backdrop-blur-md shadow-[0_-2px_10px_rgba(11,31,58,0.03)]">
+    <footer className="mt-8 pb-[calc(env(safe-area-inset-bottom)+5rem)] lg:pb-0 lg:mt-0 lg:fixed lg:bottom-0 lg:inset-x-0 lg:z-30 border-t border-surface-border/80 bg-white/95 backdrop-blur-md shadow-[0_-2px_10px_rgba(11,31,58,0.03)]">
       <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-3 lg:py-2 flex flex-col sm:flex-row items-center justify-between gap-2">
         {/* Official Asinta Corp. Trademark Lockup */}
         <div className="flex items-center space-x-2.5">

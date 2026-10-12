@@ -173,9 +173,9 @@ export default function SMSPage() {
     <AppShell requireFounder={true}>
       <div className="space-y-6">
         {/* Header */}
-        <div className="flex items-center justify-between gap-3 pb-3 border-b border-surface-border/60">
+        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pb-3 border-b border-surface-border/60">
           <div>
-            <h1 className="text-xl sm:text-2xl font-extrabold text-navy tracking-tight">
+            <h1 className="text-xl sm:text-2xl font-semibold text-navy tracking-tight">
               PhilSMS Dispatch Log
             </h1>
             <p className="text-xs text-ink-secondary mt-0.5">
@@ -195,8 +195,8 @@ export default function SMSPage() {
 
         {/* SMS Status Cards — honest statuses only */}
         <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
-          <div className="p-5 rounded-3xl bg-white border border-surface-border shadow-sm">
-            <div className="text-xs font-semibold text-ink-secondary uppercase">PhilSMS Gateway Status</div>
+          <div className="p-4 sm:p-5 rounded-xl bg-white border border-surface-border">
+            <div className="text-xs font-medium text-ink-secondary">PhilSMS Gateway Status</div>
             <div className="text-xl font-bold text-navy mt-1 flex items-center gap-2">
               {!gatewayStatus ? (
                 'Checking…'
@@ -219,14 +219,14 @@ export default function SMSPage() {
             </div>
           </div>
 
-          <div className="p-5 rounded-3xl bg-white border border-surface-border shadow-sm">
-            <div className="text-xs font-semibold text-ink-secondary uppercase">Total Dispatch Attempts</div>
+          <div className="p-4 sm:p-5 rounded-xl bg-white border border-surface-border">
+            <div className="text-xs font-medium text-ink-secondary">Total Dispatch Attempts</div>
             <div className="text-2xl font-bold text-navy mt-1">{smsLogs.length} Messages</div>
             <div className="text-[11px] text-ink-muted mt-0.5">Manual and automated reminder attempts</div>
           </div>
 
-          <div className="p-5 rounded-3xl bg-white border border-surface-border shadow-sm">
-            <div className="text-xs font-semibold text-ink-secondary uppercase">Delivery Confirmations</div>
+          <div className="p-4 sm:p-5 rounded-xl bg-white border border-surface-border">
+            <div className="text-xs font-medium text-ink-secondary">Delivery Confirmations</div>
             <div className="text-2xl font-bold text-navy mt-1">
               {smsLogs.filter((log) => log.status === 'delivered').length} Delivered
             </div>
@@ -247,7 +247,7 @@ export default function SMSPage() {
         </div>
 
         {/* Logs List */}
-        <div className="bg-white rounded-3xl border border-surface-border shadow-[6px_6px_18px_rgba(11,31,58,0.06),-6px_-6px_18px_rgba(255,255,255,0.95)] overflow-hidden">
+        <div className="bg-white rounded-xl border border-surface-border overflow-hidden">
           <div className="p-4 border-b border-surface-border/60">
             <h3 className="font-bold text-navy text-sm">SMS Dispatch History</h3>
           </div>

@@ -93,7 +93,7 @@ export const AppShell: React.FC<AppShellProps> = ({ children, requireFounder = f
     return (
       <div className="min-h-screen bg-surface flex flex-col">
         <div className="flex-1 flex items-center justify-center p-6">
-          <div className="max-w-md w-full bg-white p-8 rounded-3xl border border-surface-border shadow-xl text-center space-y-4">
+          <div className="max-w-md w-full bg-white p-8 rounded-xl border border-surface-border shadow-sm text-center space-y-4">
             <div className="w-14 h-14 bg-status-warning-bg text-status-warning rounded-2xl flex items-center justify-center mx-auto border border-status-warning/20">
               <Settings2 className="w-7 h-7" />
             </div>
@@ -143,7 +143,7 @@ export const AppShell: React.FC<AppShellProps> = ({ children, requireFounder = f
       return (
         <div className="min-h-screen bg-surface flex flex-col">
           <div className="flex-1 flex items-center justify-center p-6">
-            <div className="max-w-md w-full bg-white p-8 rounded-3xl border border-surface-border shadow-xl text-center space-y-4">
+            <div className="max-w-md w-full bg-white p-8 rounded-xl border border-surface-border shadow-sm text-center space-y-4">
               <div className="w-14 h-14 bg-status-warning-bg text-status-warning rounded-2xl flex items-center justify-center mx-auto border border-status-warning/20">
                 <AlertTriangle className="w-7 h-7" />
               </div>
@@ -183,7 +183,7 @@ export const AppShell: React.FC<AppShellProps> = ({ children, requireFounder = f
           <Navbar />
         </Suspense>
         <div className="flex-1 flex items-center justify-center p-6">
-          <div className="max-w-md w-full bg-white p-8 rounded-3xl border border-surface-border shadow-xl text-center space-y-4">
+          <div className="max-w-md w-full bg-white p-8 rounded-xl border border-surface-border shadow-sm text-center space-y-4">
             <div className="w-14 h-14 bg-status-danger-bg text-status-danger rounded-2xl flex items-center justify-center mx-auto border border-status-danger/20">
               <ShieldAlert className="w-7 h-7" />
             </div>
@@ -229,7 +229,7 @@ export const AppShell: React.FC<AppShellProps> = ({ children, requireFounder = f
       )}
 
       <main className="flex-1 w-full max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-6 lg:pb-14 min-w-0 overflow-x-hidden">
-        <div className="animate-page-enter">
+        <div>
           <PasswordSetupGate>{children}</PasswordSetupGate>
         </div>
       </main>

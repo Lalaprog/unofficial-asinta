@@ -135,12 +135,12 @@ export default function ProjectDetailPage() {
           <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 pb-4 border-b border-surface-border/60">
             <div>
               <div className="flex items-center space-x-2">
-                <Badge variant={project.status === 'active' ? 'success' : 'navy'} size="sm">
-                  {project.status.toUpperCase()}
+                <Badge variant={project.status === 'active' ? 'success' : 'navy'} size="sm" className="capitalize">
+                  {project.status.replace(/_/g, ' ')}
                 </Badge>
                 <span className="text-xs text-ink-secondary">Client: {client?.name}</span>
               </div>
-              <h1 className="text-2xl sm:text-3xl font-extrabold text-navy tracking-tight mt-1.5">
+              <h1 className="text-2xl sm:text-3xl font-semibold text-navy tracking-tight mt-1.5">
                 {project.name}
               </h1>
               <div className="flex flex-wrap items-center gap-4 mt-2 text-xs text-ink-secondary">
@@ -184,7 +184,7 @@ export default function ProjectDetailPage() {
         </div>
 
         {/* Tab Navigation */}
-        <div className="flex border-b border-surface-border/80 space-x-2 overflow-x-auto">
+        <div className="grid grid-cols-2 gap-x-2 border-b border-surface-border/80 sm:flex sm:flex-wrap">
           {[
             { id: 'overview', label: 'Overview & Summary' },
             ...(isFounder ? [{ id: 'invoices', label: `Invoices (${projInvoices.length})` }] : []),
@@ -195,9 +195,12 @@ export default function ProjectDetailPage() {
             <button
               key={tab.id}
               onClick={() => setActiveTab(tab.id as any)}
-              className={`px-4 py-2.5 text-xs font-semibold whitespace-nowrap transition-all border-b-2 ${
+              aria-pressed={activeTab === tab.id}
+              className={`min-h-11 px-3 sm:px-4 py-2 text-xs font-semibold text-center break-words transition-colors border-b-2 ${
+                tab.id === 'overview' ? 'col-span-2 sm:col-span-1' : ''
+              } ${
                 activeTab === tab.id
-                  ? 'border-navy text-navy'
+                  ? 'border-brand text-brand'
                   : 'border-transparent text-ink-secondary hover:text-navy'
               }`}
             >
@@ -212,26 +215,26 @@ export default function ProjectDetailPage() {
             {/* Financial summary metrics (Founder only) */}
             {isFounder && (
               <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
-                <div className="p-4 rounded-2xl bg-white border border-surface-border shadow-sm">
-                  <div className="text-xs font-semibold text-ink-secondary uppercase">Budget Estimate</div>
+                <div className="p-4 rounded-xl bg-white border border-surface-border">
+                  <div className="text-xs font-medium text-ink-secondary">Budget Estimate</div>
                   <div className="text-xl font-bold text-navy mt-1">{formatPHP(project.budget_estimate)}</div>
                   <div className="text-[11px] text-ink-muted mt-0.5">Contract Total</div>
                 </div>
 
-                <div className="p-4 rounded-2xl bg-white border border-surface-border shadow-sm">
-                  <div className="text-xs font-semibold text-ink-secondary uppercase">Progress Invoiced</div>
+                <div className="p-4 rounded-xl bg-white border border-surface-border">
+                  <div className="text-xs font-medium text-ink-secondary">Progress Invoiced</div>
                   <div className="text-xl font-bold text-navy mt-1">{formatPHP(totalInvoiced)}</div>
                   <div className="text-[11px] text-status-success mt-0.5">{formatPHP(totalCollected)} Collected</div>
                 </div>
 
-                <div className="p-4 rounded-2xl bg-white border border-surface-border shadow-sm">
-                  <div className="text-xs font-semibold text-ink-secondary uppercase">Site Expenses</div>
+                <div className="p-4 rounded-xl bg-white border border-surface-border">
+                  <div className="text-xs font-medium text-ink-secondary">Site Expenses</div>
                   <div className="text-xl font-bold text-navy mt-1">{formatPHP(totalExpenses)}</div>
                   <div className="text-[11px] text-ink-secondary mt-0.5">{budgetConsumedPercent}% of Budget</div>
                 </div>
 
-                <div className="p-4 rounded-2xl bg-white border border-surface-border shadow-sm">
-                  <div className="text-xs font-semibold text-ink-secondary uppercase">Net Collected Margin</div>
+                <div className="p-4 rounded-xl bg-white border border-surface-border">
+                  <div className="text-xs font-medium text-ink-secondary">Net Collected Margin</div>
                   <div className="text-xl font-bold text-status-success mt-1">
                     {formatPHP(Math.max(0, totalCollected - totalExpenses))}
                   </div>
@@ -247,25 +250,25 @@ export default function ProjectDetailPage() {
                   <CardTitle>Site & Client Specifications</CardTitle>
                 </CardHeader>
                 <CardContent className="space-y-3 text-xs">
-                  <div className="flex justify-between py-1.5 border-b border-surface-border/60">
+                  <div className="flex items-start justify-between gap-3 py-1.5 border-b border-surface-border/60">
                     <span className="text-ink-secondary">Client Name:</span>
-                    <span className="font-bold text-navy">{client?.name}</span>
+                    <span className="min-w-0 max-w-[60%] break-words text-right font-bold text-navy">{client?.name}</span>
                   </div>
-                  <div className="flex justify-between py-1.5 border-b border-surface-border/60">
+                  <div className="flex items-start justify-between gap-3 py-1.5 border-b border-surface-border/60">
                     <span className="text-ink-secondary">Contact Person:</span>
-                    <span className="font-medium text-navy">{client?.contact_person}</span>
+                    <span className="min-w-0 max-w-[60%] break-words text-right font-medium text-navy">{client?.contact_person}</span>
                   </div>
-                  <div className="flex justify-between py-1.5 border-b border-surface-border/60">
+                  <div className="flex items-start justify-between gap-3 py-1.5 border-b border-surface-border/60">
                     <span className="text-ink-secondary">Phone Number:</span>
-                    <span className="font-medium text-navy">{client?.phone}</span>
+                    <span className="min-w-0 max-w-[60%] break-words text-right font-medium text-navy">{client?.phone}</span>
                   </div>
-                  <div className="flex justify-between py-1.5 border-b border-surface-border/60">
+                  <div className="flex items-start justify-between gap-3 py-1.5 border-b border-surface-border/60">
                     <span className="text-ink-secondary">Client Email:</span>
-                    <span className="font-medium text-navy">{client?.email}</span>
+                    <span className="min-w-0 max-w-[60%] break-words text-right font-medium text-navy">{client?.email}</span>
                   </div>
-                  <div className="flex justify-between py-1.5">
+                  <div className="flex items-start justify-between gap-3 py-1.5">
                     <span className="text-ink-secondary">Site Address:</span>
-                    <span className="font-medium text-navy text-right max-w-[60%]">{project.location}</span>
+                    <span className="min-w-0 max-w-[60%] break-words font-medium text-navy text-right">{project.location}</span>
                   </div>
                 </CardContent>
               </Card>
@@ -290,7 +293,7 @@ export default function ProjectDetailPage() {
                             </div>
                             <div>
                               <div className="font-bold text-xs text-navy">{sup.name}</div>
-                              <div className="text-[10px] text-ink-secondary">{sup.email}</div>
+                              <div className="text-[11px] text-ink-secondary break-words">{sup.email}</div>
                             </div>
                           </div>
                           <Badge variant="warning" size="sm">
@@ -330,7 +333,7 @@ export default function ProjectDetailPage() {
               </Link>
             </div>
 
-            <div className="bg-white rounded-2xl border border-surface-border overflow-hidden shadow-sm">
+            <div className="bg-white rounded-xl border border-surface-border overflow-hidden">
               <div className="divide-y divide-surface-border/70">
                 {projInvoices.length > 0 ? (
                   projInvoices.map((inv) => (
@@ -384,7 +387,7 @@ export default function ProjectDetailPage() {
               </Link>
             </div>
 
-            <div className="bg-white rounded-2xl border border-surface-border overflow-hidden shadow-sm">
+            <div className="bg-white rounded-xl border border-surface-border overflow-hidden">
               <div className="divide-y divide-surface-border/70">
                 {projExpenses.length > 0 ? (
                   projExpenses.map((exp) => (
@@ -429,7 +432,7 @@ export default function ProjectDetailPage() {
             <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
               {projTools.length > 0 ? (
                 projTools.map((tool) => (
-                  <div key={tool.id} className="p-4 rounded-2xl bg-white border border-surface-border shadow-sm space-y-2">
+                  <div key={tool.id} className="p-4 rounded-xl bg-white border border-surface-border space-y-2">
                     <div className="flex items-center justify-between">
                       <div className="w-8 h-8 rounded-xl bg-surface-inset text-navy flex items-center justify-center">
                         <Wrench className="w-4 h-4" />
@@ -463,7 +466,7 @@ export default function ProjectDetailPage() {
               </Link>
             </div>
 
-            <div className="bg-white rounded-2xl border border-surface-border overflow-hidden shadow-sm">
+            <div className="bg-white rounded-xl border border-surface-border overflow-hidden">
               <div className="divide-y divide-surface-border/70">
                 {projAttendance.length > 0 ? (
                   projAttendance.map((att) => {

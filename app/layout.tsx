@@ -1,4 +1,4 @@
-import type { Metadata } from 'next';
+import type { Metadata, Viewport } from 'next';
 import './globals.css';
 import { ToastProvider } from '@/components/ui/Toast';
 import { AuthProvider } from '@/lib/auth/authContext';
@@ -11,6 +11,12 @@ export const metadata: Metadata = {
   title: 'BALE | Billing & Advance Ledger Engine — Asinta Architects',
   description:
     'Lightweight AI-integrated service and ledger management platform for Asinta Architects (Batangas, Philippines). Built for project billing, expenses, attendance, and worker advances.',
+};
+
+export const viewport: Viewport = {
+  width: 'device-width',
+  initialScale: 1,
+  viewportFit: 'cover',
 };
 
 export default function RootLayout({

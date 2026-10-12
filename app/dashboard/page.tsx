@@ -83,11 +83,11 @@ export default function FounderDashboard() {
 
   return (
     <AppShell requireFounder={true}>
-      <div className="space-y-8">
+      <div className="space-y-6">
         {/* Top Header */}
         <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pb-3 border-b border-surface-border/60">
           <div>
-            <h1 className="text-xl sm:text-2xl font-extrabold text-navy tracking-tight">
+            <h1 className="text-xl sm:text-2xl font-semibold text-navy tracking-tight">
               Financial Overview
             </h1>
             <p className="text-xs text-ink-secondary mt-0.5">
@@ -414,7 +414,7 @@ export default function FounderDashboard() {
                 </div>
 
                 <div className="space-y-1.5">
-                  <label className="font-bold text-navy uppercase text-[11px]">SMS Message Preview (PhilSMS)</label>
+                  <label className="text-xs font-semibold text-ink-secondary">SMS Message Preview (PhilSMS)</label>
                   <div className="p-3 rounded-xl bg-slate-50 border border-slate-200 text-ink-primary font-sans leading-relaxed text-xs">
                     {buildSmsPreviewMessage(selectedInvoiceForSMS)}
                   </div>

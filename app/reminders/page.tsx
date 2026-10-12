@@ -196,7 +196,7 @@ export default function RemindersPage() {
         {/* Header */}
         <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pb-3 border-b border-surface-border/60">
           <div>
-            <h1 className="text-xl sm:text-2xl font-extrabold text-navy tracking-tight">
+            <h1 className="text-xl sm:text-2xl font-semibold text-navy tracking-tight">
               Reminder Queue
             </h1>
             <p className="text-xs text-ink-secondary mt-0.5">
@@ -218,7 +218,7 @@ export default function RemindersPage() {
         {/* Queue */}
         <div className="space-y-4">
           {queue.length === 0 && (
-            <div className="p-12 text-center text-xs text-ink-secondary bg-white rounded-3xl border border-surface-border">
+            <div className="p-12 text-center text-xs text-ink-secondary bg-white rounded-xl border border-surface-border">
               <BellRing className="w-8 h-8 mx-auto mb-3 text-ink-muted" />
               No invoices currently need a reminder. Approaching, due, and overdue invoices with a
               balance will appear here automatically.
@@ -238,7 +238,7 @@ export default function RemindersPage() {
             return (
               <div
                 key={inv.id}
-                className="bg-white rounded-3xl border border-surface-border shadow-[6px_6px_18px_rgba(11,31,58,0.06),-6px_-6px_18px_rgba(255,255,255,0.95)] p-5 space-y-4"
+                className="bg-white rounded-xl border border-surface-border p-5 space-y-4"
               >
                 <div className="flex flex-col lg:flex-row lg:items-start justify-between gap-4">
                   <div className="space-y-1 min-w-0">
@@ -341,7 +341,7 @@ export default function RemindersPage() {
 
         {/* Paused invoices */}
         {pausedInvoices.length > 0 && (
-          <div className="bg-white rounded-3xl border border-surface-border overflow-hidden">
+          <div className="bg-white rounded-xl border border-surface-border overflow-hidden">
             <div className="p-4 border-b border-surface-border/60">
               <h3 className="font-bold text-navy text-sm">Paused Reminders</h3>
             </div>
