@@ -4,6 +4,7 @@ import React, { Suspense, useEffect } from 'react';
 import { useRouter } from 'next/navigation';
 import { Navbar } from './Navbar';
 import { MobileNav } from './MobileNav';
+import { Sidebar } from './Sidebar';
 import { Footer } from './Footer';
 import { useAuth } from '@/lib/auth/authContext';
 import { useDataStore } from '@/lib/data/store';
@@ -208,14 +209,14 @@ export const AppShell: React.FC<AppShellProps> = ({ children, requireFounder = f
   return (
     <div className="min-h-[100lvh] bg-surface flex flex-col antialiased">
       <Suspense fallback={null}>
-        <Navbar />
+        <Navbar showDesktopNavigation={false} />
       </Suspense>
       <Suspense fallback={null}>
         <MobileNav />
       </Suspense>
 
       {loadError && (
-        <div className="max-w-7xl w-full mx-auto px-4 sm:px-6 lg:px-8 pt-4">
+        <div className="w-full px-4 sm:px-6 lg:px-8 pt-4">
           <div className="p-3 rounded-2xl bg-status-warning-bg border border-status-warning/20 text-status-warning text-xs flex items-center justify-between gap-3">
             <span className="flex items-center gap-2 font-semibold">
               <AlertTriangle className="w-4 h-4 shrink-0" />
@@ -228,11 +229,16 @@ export const AppShell: React.FC<AppShellProps> = ({ children, requireFounder = f
         </div>
       )}
 
-      <main className="flex-1 w-full max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-6 lg:pb-14 min-w-0 overflow-x-hidden">
-        <div>
-          <PasswordSetupGate>{children}</PasswordSetupGate>
-        </div>
-      </main>
+      <div className="flex w-full flex-1">
+        <Suspense fallback={null}>
+          <Sidebar />
+        </Suspense>
+        <main className="flex-1 min-w-0 w-full overflow-x-hidden px-4 sm:px-6 lg:px-8 py-6 lg:pb-14">
+          <div className="w-full min-w-0">
+            <PasswordSetupGate>{children}</PasswordSetupGate>
+          </div>
+        </main>
+      </div>
 
       <Footer />
     </div>
