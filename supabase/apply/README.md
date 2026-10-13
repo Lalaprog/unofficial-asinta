@@ -4,13 +4,14 @@
 | --- | --- | --- |
 | `preflight.sql` | **first, always** — reports what is applied, the next step, and the two ordering dependencies | Supabase SQL editor (read-only) |
 | `fresh-install.sql` | the project has no BALE tables yet | Supabase SQL editor |
-| `upgrade-hardening.sql` | the base schema exists, the 2026-10-06 changes do not | Supabase SQL editor |
+| `upgrade-hardening.sql` | the base schema exists, and the hardening / AI / Bale-request changes do not | Supabase SQL editor |
 | `verify-live.sql` | always, after either bundle | Supabase SQL editor (read-only) |
 | `seed-cleanup.sql` | the demo seed was applied — §1 rotate, §2 force re-auth, §3 delete | Supabase SQL editor |
 
 `preflight.sql` and `seed-cleanup.sql` are hand-written and safe to re-run.
 The two `*-install.sql` / `*-hardening.sql` bundles are generated; never
-hand-edit them — regenerate instead.
+hand-edit them — regenerate instead. The upgrade bundle now also carries the
+Founder-reviewed Bale request migration for already-migrated projects.
 
 ⚠️ **Order matters.** `20260929000000_communications.sql` must be applied
 before `upgrade-hardening.sql`, and the two bundles are mutually exclusive.

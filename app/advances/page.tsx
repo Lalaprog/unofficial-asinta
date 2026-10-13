@@ -1,7 +1,10 @@
 'use client';
 
-import React, { useState } from 'react';
+import React, { Suspense, useState } from 'react';
+import { useRouter, useSearchParams } from 'next/navigation';
 import { AppShell } from '@/components/layout/AppShell';
+import { AdvanceRequestsPanel } from '@/components/advances/AdvanceRequestsPanel';
+import { useAuth } from '@/lib/auth/authContext';
 import { useDataStore } from '@/lib/data/store';
 import { Advance } from '@/types';
 import {
@@ -17,6 +20,98 @@ import { Modal } from '@/components/ui/Modal';
 import { formatPesoCompact } from '@/lib/email/format';
 
 export default function AdvancesPage() {
+  return (
+    <Suspense
+      fallback={
+        <div className="min-h-48 px-4 py-8 text-center text-sm text-ink-secondary">
+          Loading Bale requests…
+        </div>
+      }
+    >
+      <AdvancesPageContent />
+    </Suspense>
+  );
+}
+
+function AdvancesPageContent() {
+  const { isFounder } = useAuth();
+  const router = useRouter();
+  const searchParams = useSearchParams();
+  const activeTab = isFounder && searchParams?.get('tab') === 'issued' ? 'issued' : 'requests';
+
+  const selectTab = (tab: 'requests' | 'issued') => {
+    router.replace(`/advances?tab=${tab}`, { scroll: false });
+  };
+
+  return (
+    <AppShell>
+      <div className="w-full space-y-5">
+        <header className="flex flex-col gap-2 border-b border-surface-border/60 pb-4">
+          <h1 className="text-xl font-semibold tracking-tight text-navy sm:text-2xl">
+            {isFounder ? 'Bale Requests & Advances' : 'Bale Requests'}
+          </h1>
+          <p className="text-xs leading-relaxed text-ink-secondary">
+            {isFounder
+              ? 'Review worker requests and keep issued advance balances separate.'
+              : 'Submit a worker’s requested amount for Founder review.'}
+          </p>
+        </header>
+
+        {isFounder && (
+          <div className="flex flex-wrap gap-2" role="tablist" aria-label="Bale request and advance views">
+            <button
+              type="button"
+              role="tab"
+              id="advances-requests-tab"
+              aria-controls="advances-panel"
+              aria-selected={activeTab === 'requests'}
+              onClick={() => selectTab('requests')}
+              className={`min-h-11 rounded-lg px-4 text-xs font-semibold transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand/25 ${
+                activeTab === 'requests'
+                  ? 'bg-navy text-white'
+                  : 'border border-surface-border bg-white text-ink-secondary hover:bg-surface-inset hover:text-navy'
+              }`}
+            >
+              Requests
+            </button>
+            <button
+              type="button"
+              role="tab"
+              id="advances-issued-tab"
+              aria-controls="advances-panel"
+              aria-selected={activeTab === 'issued'}
+              onClick={() => selectTab('issued')}
+              className={`min-h-11 rounded-lg px-4 text-xs font-semibold transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand/25 ${
+                activeTab === 'issued'
+                  ? 'bg-navy text-white'
+                  : 'border border-surface-border bg-white text-ink-secondary hover:bg-surface-inset hover:text-navy'
+              }`}
+            >
+              Issued advances
+            </button>
+          </div>
+        )}
+
+        <div
+          id="advances-panel"
+          role={isFounder ? 'tabpanel' : undefined}
+          aria-labelledby={
+            isFounder
+              ? activeTab === 'requests'
+                ? 'advances-requests-tab'
+                : 'advances-issued-tab'
+              : undefined
+          }
+          tabIndex={isFounder ? 0 : undefined}
+        >
+          {activeTab === 'requests' ? <AdvanceRequestsPanel /> : <IssuedAdvancesPanel />}
+        </div>
+      </div>
+    </AppShell>
+  );
+}
+
+function IssuedAdvancesPanel() {
   const {
     advances,
     workers,
@@ -104,14 +199,13 @@ export default function AdvancesPage() {
   };
 
   return (
-    <AppShell requireFounder={true}>
-      <div className="space-y-6">
+    <div className="space-y-6">
         {/* Header */}
         <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pb-3 border-b border-surface-border/60">
           <div>
-            <h1 className="text-xl sm:text-2xl font-semibold text-navy tracking-tight">
+            <h2 className="text-lg sm:text-xl font-semibold text-navy tracking-tight">
               Worker Advances (&ldquo;Bale&rdquo;)
-            </h1>
+            </h2>
             <p className="text-xs text-ink-secondary mt-0.5">
               Cash advances and automatic payroll deduction balances
             </p>
@@ -275,7 +369,6 @@ export default function AdvancesPage() {
             )}
           </div>
         </div>
-      </div>
 
       {/* RECORD BALE MODAL */}
       <Modal
@@ -394,6 +487,6 @@ export default function AdvancesPage() {
           </form>
         )}
       </Modal>
-    </AppShell>
+    </div>
   );
 }

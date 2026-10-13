@@ -232,6 +232,31 @@ describe('statement boundaries are real', () => {
   });
 });
 
+describe('Supervisor Bale requests remain separate until payment is confirmed', () => {
+  const sql = readMigration('20261013000000_advance_requests.sql');
+
+  it('stores request metadata separately from issued advances', () => {
+    expect(sql).toMatch(/create table if not exists public\.advance_requests/i);
+    expect(sql).toMatch(/requested_amount\s+numeric\(10,\s*2\)\s+not null\s+check\s*\(requested_amount > 0\)/i);
+    expect(sql).toMatch(/submitted_by\s+uuid\s+not null\s+references public\.users\(id\)/i);
+    expect(sql).toMatch(/status\s+text\s+not null\s+default 'pending_approval'[\s\S]*?'issued'/i);
+    expect(sql).toMatch(/grant select, insert on public\.advance_requests to authenticated/i);
+    expect(sql).toMatch(/revoke update, delete on public\.advance_requests from authenticated/i);
+    expect(sql).toContain("'Approved Bale request'");
+  });
+
+  it('limits review and payment issuance to Founder RPCs', () => {
+    expect(sql).toMatch(/create or replace function public\.review_advance_request[\s\S]*?if not public\.is_founder\(\)/i);
+    expect(sql).toMatch(/create or replace function public\.issue_advance_request[\s\S]*?if not public\.is_founder\(\)/i);
+    expect(sql).toMatch(/status <> 'pending_approval'/i);
+    expect(sql).toMatch(/status <> 'approved_pending_payment'/i);
+    expect(sql).toMatch(/revoke all on function public\.review_advance_request\(uuid, text\) from public/i);
+    expect(sql).toMatch(/revoke all on function public\.issue_advance_request\(uuid\) from public/i);
+    expect(sql).toMatch(/grant execute on function public\.review_advance_request\(uuid, text\) to authenticated/i);
+    expect(sql).toMatch(/grant execute on function public\.issue_advance_request\(uuid\) to authenticated/i);
+  });
+});
+
 describe('every policy names its grantee', () => {
   it('has no policy anywhere that resolves to PUBLIC', async () => {
     const offenders: string[] = [];

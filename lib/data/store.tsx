@@ -9,6 +9,7 @@ import {
   Worker,
   Client,
   Advance,
+  AdvanceRequest,
   Attendance,
   Payroll,
   Tool,
@@ -31,6 +32,7 @@ interface DataStoreContextType {
   workers: Worker[];
   clients: Client[];
   advances: Advance[];
+  advanceRequests: AdvanceRequest[];
   attendance: Attendance[];
   payroll: Payroll[];
   tools: Tool[];
@@ -76,6 +78,13 @@ interface DataStoreContextType {
   createAdvance: (
     data: Omit<Advance, 'id' | 'created_at' | 'amount_deducted' | 'status'>
   ) => Promise<Advance | null>;
+  createAdvanceRequest: (data: {
+    worker_id: string;
+    project_id: string;
+    requested_amount: number;
+  }) => Promise<AdvanceRequest | null>;
+  reviewAdvanceRequest: (id: string, decision: 'approve' | 'reject') => Promise<boolean>;
+  issueAdvanceRequest: (id: string) => Promise<boolean>;
   recordAdvanceDeduction: (id: string, deductionAmount: number) => Promise<boolean>;
   updateAdvanceStatus: (id: string, status: Advance['status']) => Promise<boolean>;
 
@@ -188,6 +197,11 @@ const mapAdvance = (row: any): Advance => ({
   amount_deducted: toNumber(row.amount_deducted),
 });
 
+const mapAdvanceRequest = (row: any): AdvanceRequest => ({
+  ...row,
+  requested_amount: toNumber(row.requested_amount),
+});
+
 const mapAttendance = (row: any): Attendance => ({
   ...row,
   hours_worked: toNumber(row.hours_worked),
@@ -225,6 +239,7 @@ export const DataStoreProvider: React.FC<{ children: React.ReactNode }> = ({ chi
   const [workers, setWorkers] = useState<Worker[]>([]);
   const [clients, setClients] = useState<Client[]>([]);
   const [advances, setAdvances] = useState<Advance[]>([]);
+  const [advanceRequests, setAdvanceRequests] = useState<AdvanceRequest[]>([]);
   const [attendance, setAttendance] = useState<Attendance[]>([]);
   const [payroll, setPayroll] = useState<Payroll[]>([]);
   const [tools, setTools] = useState<Tool[]>([]);
@@ -254,6 +269,7 @@ export const DataStoreProvider: React.FC<{ children: React.ReactNode }> = ({ chi
           supabase.from('workers').select('*').order('created_at', { ascending: true }),
           supabase.from('clients').select('*').order('created_at', { ascending: true }),
           supabase.from('advances').select('*').order('created_at', { ascending: false }),
+          supabase.from('advance_requests').select('*').order('created_at', { ascending: false }),
           supabase.from('attendance').select('*').order('date', { ascending: false }),
           supabase.from('payroll').select('*').order('created_at', { ascending: false }),
           supabase.from('tools').select('*').order('created_at', { ascending: true }),
@@ -281,12 +297,13 @@ export const DataStoreProvider: React.FC<{ children: React.ReactNode }> = ({ chi
         const nextWorkers = (results[3].data ?? []).map(mapWorker);
         const nextClients = (results[4].data ?? []).map(mapClient);
         const nextAdvances = (results[5].data ?? []).map(mapAdvance);
-        const nextAttendance = (results[6].data ?? []).map(mapAttendance);
-        const nextPayroll = (results[7].data ?? []).map(mapPayroll);
-        const nextTools = (results[8].data ?? []).map(mapTool);
-        const nextSmsLogs = results[9].data ?? [];
-        const nextProjectSupervisors = results[10].data ?? [];
-        const nextUsers = results[11].data ?? [];
+        const nextAdvanceRequests = (results[6].data ?? []).map(mapAdvanceRequest);
+        const nextAttendance = (results[7].data ?? []).map(mapAttendance);
+        const nextPayroll = (results[8].data ?? []).map(mapPayroll);
+        const nextTools = (results[9].data ?? []).map(mapTool);
+        const nextSmsLogs = results[10].data ?? [];
+        const nextProjectSupervisors = results[11].data ?? [];
+        const nextUsers = results[12].data ?? [];
 
         setProjects(nextProjects);
         setInvoices(nextInvoices);
@@ -294,6 +311,7 @@ export const DataStoreProvider: React.FC<{ children: React.ReactNode }> = ({ chi
         setWorkers(nextWorkers);
         setClients(nextClients);
         setAdvances(nextAdvances);
+        setAdvanceRequests(nextAdvanceRequests);
         setAttendance(nextAttendance);
         setPayroll(nextPayroll);
         setTools(nextTools);
@@ -313,6 +331,7 @@ export const DataStoreProvider: React.FC<{ children: React.ReactNode }> = ({ chi
                 workers: nextWorkers,
                 clients: nextClients,
                 advances: nextAdvances,
+                advanceRequests: nextAdvanceRequests,
                 attendance: nextAttendance,
                 payroll: nextPayroll,
                 tools: nextTools,
@@ -348,6 +367,7 @@ export const DataStoreProvider: React.FC<{ children: React.ReactNode }> = ({ chi
     setWorkers([]);
     setClients([]);
     setAdvances([]);
+    setAdvanceRequests([]);
     setAttendance([]);
     setPayroll([]);
     setTools([]);
@@ -379,6 +399,7 @@ export const DataStoreProvider: React.FC<{ children: React.ReactNode }> = ({ chi
             setWorkers(cached.workers ?? []);
             setClients(cached.clients ?? []);
             setAdvances(cached.advances ?? []);
+            setAdvanceRequests(cached.advanceRequests ?? []);
             setAttendance(cached.attendance ?? []);
             setPayroll(cached.payroll ?? []);
             setTools(cached.tools ?? []);
@@ -798,6 +819,71 @@ export const DataStoreProvider: React.FC<{ children: React.ReactNode }> = ({ chi
       });
     }
     return mapped;
+  };
+
+  const createAdvanceRequest = async (data: {
+    worker_id: string;
+    project_id: string;
+    requested_amount: number;
+  }): Promise<AdvanceRequest | null> => {
+    if (!user?.id || !Number.isFinite(data.requested_amount) || data.requested_amount <= 0) {
+      showToast('error', 'Enter a valid requested amount before submitting.');
+      return null;
+    }
+
+    const row = await runMutation('Submit Bale request', (db) =>
+      db
+        .from('advance_requests')
+        .insert({
+          worker_id: data.worker_id,
+          project_id: data.project_id,
+          requested_amount: round2(data.requested_amount),
+          submitted_by: user.id,
+        })
+        .select()
+        .single()
+    );
+    const mapped = row ? mapAdvanceRequest(row) : null;
+    if (mapped) {
+      setAdvanceRequests((prev) => [mapped, ...prev]);
+      showToast('success', 'Bale request sent to the Founder for approval.');
+    }
+    return mapped;
+  };
+
+  const reviewAdvanceRequest = async (
+    id: string,
+    decision: 'approve' | 'reject'
+  ): Promise<boolean> => {
+    const row = await runMutation('Review Bale request', (db) =>
+      db.rpc('review_advance_request', {
+        p_request_id: id,
+        p_decision: decision,
+      })
+    );
+    const returnedRequest = Array.isArray(row) ? row[0] : row;
+    const mapped = returnedRequest ? mapAdvanceRequest(returnedRequest) : null;
+    if (!mapped) return false;
+
+    setAdvanceRequests((prev) => prev.map((request) => (request.id === id ? mapped : request)));
+    showToast(
+      'success',
+      decision === 'approve'
+        ? 'Request approved. It is now waiting to be paid.'
+        : 'Bale request rejected.'
+    );
+    return true;
+  };
+
+  const issueAdvanceRequest = async (id: string): Promise<boolean> => {
+    const issuedAdvanceId = await runMutation<string>('Issue approved Bale request', (db) =>
+      db.rpc('issue_advance_request', { p_request_id: id })
+    );
+    if (!issuedAdvanceId) return false;
+
+    showToast('success', 'Payment recorded and added to issued advances.');
+    await refresh();
+    return true;
   };
 
   const recordAdvanceDeduction = async (id: string, deductionAmount: number): Promise<boolean> => {
@@ -1378,6 +1464,7 @@ export const DataStoreProvider: React.FC<{ children: React.ReactNode }> = ({ chi
         workers,
         clients,
         advances,
+        advanceRequests,
         attendance,
         payroll,
         tools,
@@ -1407,6 +1494,9 @@ export const DataStoreProvider: React.FC<{ children: React.ReactNode }> = ({ chi
         updateExpense,
         deleteExpense,
         createAdvance,
+        createAdvanceRequest,
+        reviewAdvanceRequest,
+        issueAdvanceRequest,
         recordAdvanceDeduction,
         updateAdvanceStatus,
         recordAttendanceBatch,

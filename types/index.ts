@@ -102,6 +102,30 @@ export interface Expense {
 
 export type AdvanceStatus = 'active' | 'partially_deducted' | 'fully_deducted' | 'cancelled';
 
+export type AdvanceRequestStatus =
+  | 'pending_approval'
+  | 'approved_pending_payment'
+  | 'rejected'
+  | 'issued';
+
+export interface AdvanceRequest {
+  id: string;
+  worker_id: string;
+  project_id: string;
+  requested_amount: number;
+  submitted_by: string;
+  status: AdvanceRequestStatus;
+  approved_by: string | null;
+  approved_at: string | null;
+  rejected_by: string | null;
+  rejected_at: string | null;
+  issued_by: string | null;
+  issued_at: string | null;
+  issued_advance_id: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
 export interface Advance {
   id: string;
   worker_id: string;

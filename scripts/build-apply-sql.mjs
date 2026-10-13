@@ -7,7 +7,7 @@
  * Applying migrations to a hosted Supabase project normally means
  * `supabase db push` with the database password. That is not always available
  * (or wanted) — a founder with dashboard access can instead paste one file into
- * the SQL editor and run it. Doing that by hand from six migration files is
+ * the SQL editor and run it. Doing that by hand from multiple migration files is
  * where copy-paste mistakes come from and where "which order?" gets lost.
  *
  * The bundles are GENERATED, never hand-edited: the header records the source
@@ -43,14 +43,16 @@ const BUNDLES = [
   },
   {
     file: 'upgrade-hardening.sql',
-    title: 'BALE — security & AI hardening (already-migrated project)',
+    title: 'BALE — security, AI & advance-request updates (already-migrated project)',
     description:
-      'Only the 2026-10-06 changes: private receipts bucket + URL backfill +\n' +
-      'audit_log, expenses.vendor + vendor_memory, and the RLS re-scope of every\n' +
-      'existing policy to `authenticated` with pinned search_path on the helpers.\n' +
-      'Run this if the base BALE schema is already present.',
+      'The 2026-10-06 security/AI hardening plus the 2026-10-13 Bale request\n' +
+      'workflow: private receipts + audit log, vendor memory, and Founder-reviewed\n' +
+      'advance requests kept separate from issued advances. Requires the base\n' +
+      'BALE schema and communications migration to already be present.',
     include: (name) =>
-      name === '20261006000000_security_hardening.sql' || name === '20261006000001_ai_draft_support.sql',
+      name === '20261006000000_security_hardening.sql' ||
+      name === '20261006000001_ai_draft_support.sql' ||
+      name === '20261013000000_advance_requests.sql',
   },
 ];
 

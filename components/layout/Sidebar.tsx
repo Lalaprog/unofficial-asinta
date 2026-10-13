@@ -5,42 +5,40 @@ import Link from 'next/link';
 import { usePathname, useSearchParams } from 'next/navigation';
 import { useAuth } from '@/lib/auth/authContext';
 import {
-  LayoutDashboard,
-  FolderKanban,
-  Receipt,
-  CreditCard,
-  UserCheck,
   Banknote,
+  BellRing,
+  ChevronDown,
+  Clock,
+  CreditCard,
+  FolderKanban,
   HandCoins,
+  LayoutDashboard,
+  MessageSquareText,
+  Receipt,
+  Settings,
+  UserCheck,
+  UserCog,
   Users,
   Wrench,
-  MessageSquareText,
-  BellRing,
-  UserCog,
-  Settings,
-  Clock,
-  PanelLeftClose,
-  PanelLeftOpen,
-  LucideIcon,
+  type LucideIcon,
 } from 'lucide-react';
 
-export interface NavItem {
+interface NavItem {
   label: string;
   href: string;
   icon: LucideIcon;
-  badge?: string;
 }
 
-export interface NavGroup {
+interface NavGroup {
   id: string;
   title: string;
   items: NavItem[];
 }
 
-export const FOUNDER_NAV_GROUPS: NavGroup[] = [
+const FOUNDER_NAV_GROUPS: NavGroup[] = [
   {
-    id: 'studio',
-    title: '01 · Studio & Sites',
+    id: 'overview-projects',
+    title: 'Overview & Projects',
     items: [
       { label: 'Dashboard', href: '/dashboard', icon: LayoutDashboard },
       { label: 'Projects & Sites', href: '/projects', icon: FolderKanban },
@@ -48,170 +46,159 @@ export const FOUNDER_NAV_GROUPS: NavGroup[] = [
     ],
   },
   {
-    id: 'receivables',
-    title: '02 · Client Receivables',
+    id: 'clients-billing',
+    title: 'Clients & Billing',
     items: [
       { label: 'Clients', href: '/clients', icon: Users },
-      { label: 'Invoices & Billing', href: '/invoices', icon: Receipt },
+      { label: 'Invoices', href: '/invoices', icon: Receipt },
       { label: 'Reminder Queue', href: '/reminders', icon: BellRing },
       { label: 'SMS Dispatch', href: '/sms', icon: MessageSquareText },
     ],
   },
   {
-    id: 'workforce',
-    title: '03 · Workforce & Pay',
+    id: 'workforce-pay',
+    title: 'Workforce & Pay',
     items: [
-      { label: 'Site Attendance', href: '/attendance', icon: UserCheck },
-      { label: 'Bale Advances', href: '/advances', icon: HandCoins },
-      { label: 'Payroll Engine', href: '/payroll', icon: Banknote },
+      { label: 'Attendance', href: '/attendance', icon: UserCheck },
+      { label: 'Payroll', href: '/payroll', icon: Banknote },
+      { label: 'Bale Requests & Advances', href: '/advances', icon: HandCoins },
     ],
   },
   {
-    id: 'ledger',
-    title: '04 · Ledger & Admin',
+    id: 'costs-admin',
+    title: 'Costs & Admin',
     items: [
-      { label: 'Expenses & AI', href: '/expenses', icon: CreditCard, badge: 'AI' },
+      { label: 'Expenses', href: '/expenses', icon: CreditCard },
       { label: 'Team Accounts', href: '/users', icon: UserCog },
       { label: 'Settings', href: '/settings', icon: Settings },
     ],
   },
 ];
 
-export const SUPERVISOR_NAV_GROUPS: NavGroup[] = [
+const SUPERVISOR_NAV_GROUPS: NavGroup[] = [
   {
-    id: 'field',
+    id: 'field-operations',
     title: 'Field Operations',
     items: [
       { label: 'Site Attendance', href: '/attendance', icon: UserCheck },
-      { label: 'Assigned Projects', href: '/projects', icon: FolderKanban },
+      { label: 'Workforce Roster', href: '/attendance?tab=workforce', icon: Users },
       { label: 'Attendance History', href: '/attendance?tab=history', icon: Clock },
+      { label: 'Assigned Projects', href: '/projects', icon: FolderKanban },
+      { label: 'Bale Requests', href: '/advances?tab=requests', icon: HandCoins },
       { label: 'Supervisor Profile', href: '/settings', icon: UserCog },
     ],
   },
 ];
 
+function isItemActive(
+  href: string,
+  pathname: string | null,
+  currentTab: string,
+  isFounder: boolean
+): boolean {
+  const [hrefPath, queryString] = href.split('?');
+  const targetTab = new URLSearchParams(queryString || '').get('tab');
+
+  if (hrefPath === '/attendance') {
+    if (pathname !== '/attendance') return false;
+    if (targetTab) return currentTab === targetTab;
+    return isFounder || currentTab === 'terminal';
+  }
+
+  return (
+    pathname === hrefPath ||
+    Boolean(pathname?.startsWith(`${hrefPath}/`))
+  );
+}
+
 export const Sidebar: React.FC = () => {
   const pathname = usePathname();
   const searchParams = useSearchParams();
+  const currentTab = searchParams?.get('tab') || 'terminal';
   const { isFounder } = useAuth();
-  const [collapsed, setCollapsed] = useState(false);
-
-  useEffect(() => {
-    if (typeof window === 'undefined') return;
-    try {
-      const saved = window.localStorage.getItem('bale-sidebar-collapsed');
-      if (saved === '1') setCollapsed(true);
-    } catch {
-      // Ignore storage error
-    }
-  }, []);
-
-  const toggleCollapsed = () => {
-    const next = !collapsed;
-    setCollapsed(next);
-    try {
-      window.localStorage.setItem('bale-sidebar-collapsed', next ? '1' : '0');
-    } catch {
-      // Ignore storage error
-    }
-  };
+  const [expandedGroups, setExpandedGroups] = useState<Record<string, boolean>>({});
 
   const groups = isFounder ? FOUNDER_NAV_GROUPS : SUPERVISOR_NAV_GROUPS;
+  const activeGroupId = groups.find((group) =>
+    group.items.some((item) => isItemActive(item.href, pathname, currentTab, isFounder))
+  )?.id;
+
+  // Keep the active section visible after route changes; other sections remain
+  // independently collapsible to keep the rail compact.
+  useEffect(() => {
+    if (!activeGroupId) return;
+    setExpandedGroups((previous) => ({ ...previous, [activeGroupId]: true }));
+  }, [activeGroupId]);
 
   return (
-    <aside
-      className={`sticky top-16 hidden lg:flex flex-col ${
-        collapsed ? 'w-[68px]' : 'w-60'
-      } h-[calc(100dvh-7rem)] self-start bg-white border-r border-surface-border/80 p-3 select-none shrink-0 transition-all duration-200`}
-    >
-      {/* Collapse / Expand Rail Header */}
-      <div
-        className={`flex items-center ${
-          collapsed ? 'justify-center' : 'justify-between px-2'
-        } pb-2 mb-2 border-b border-surface-border/60`}
-      >
-        {!collapsed && (
-          <span className="text-[10px] font-extrabold uppercase tracking-widest text-ink-muted truncate">
-            {isFounder ? 'Studio Navigation' : 'Field Terminal'}
-          </span>
-        )}
-        <button
-          type="button"
-          onClick={toggleCollapsed}
-          className="inline-flex min-h-11 min-w-11 items-center justify-center rounded-lg text-ink-secondary hover:text-navy hover:bg-surface-inset focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand/25 transition-colors"
-          title={collapsed ? 'Expand sidebar' : 'Collapse sidebar'}
-          aria-label={collapsed ? 'Expand sidebar' : 'Collapse sidebar'}
-          aria-expanded={!collapsed}
-        >
-          {collapsed ? (
-            <PanelLeftOpen className="w-4 h-4" />
-          ) : (
-            <PanelLeftClose className="w-4 h-4" />
-          )}
-        </button>
+    <aside className="sticky top-16 hidden h-[calc(100dvh-7rem)] w-60 shrink-0 self-start flex-col border-r border-surface-border/80 bg-white p-3 lg:flex">
+      <div className="mb-3 px-2 pt-1">
+        <span className="text-[10px] font-bold uppercase tracking-widest text-ink-muted">
+          Asinta Workspace
+        </span>
       </div>
 
-      {/* Grouped Navigation Sections */}
-      <div className="space-y-4 flex-1 overflow-y-auto">
-        {groups.map((group) => (
-          <div key={group.id} className="space-y-1">
-            {!collapsed && (
-              <div className="px-2.5 pb-1 text-[10px] font-bold text-ink-muted uppercase tracking-wider truncate">
-                {group.title}
-              </div>
-            )}
-            <nav className="space-y-0.5">
-              {group.items.map((item) => {
-                const Icon = item.icon;
-                const [hrefPath, queryString] = item.href.split('?');
-                const targetTab = new URLSearchParams(queryString || '').get('tab');
-                const currentTab = searchParams?.get('tab') || 'terminal';
-                const isActive =
-                  (pathname === hrefPath &&
-                    (hrefPath !== '/attendance' ||
-                      (targetTab ? currentTab === targetTab : isFounder || currentTab === 'terminal'))) ||
-                  (hrefPath !== '/dashboard' &&
-                    hrefPath !== '/attendance' &&
-                    !targetTab &&
-                    Boolean(pathname?.startsWith(`${hrefPath}/`)));
+      <div className="flex-1 space-y-2 overflow-y-auto">
+        {groups.map((group) => {
+          const isExpanded = expandedGroups[group.id] ?? group.id === activeGroupId;
+          const groupHasActiveItem = group.items.some((item) =>
+            isItemActive(item.href, pathname, currentTab, isFounder)
+          );
 
-                return (
-                  <Link
-                    key={item.href}
-                    href={item.href}
-                    aria-current={isActive ? 'page' : undefined}
-                    title={collapsed ? item.label : undefined}
-                    className={`group flex items-center ${
-                      collapsed ? 'justify-center px-2 py-2.5' : 'justify-between px-3 py-2'
-                    } rounded-xl text-xs font-semibold transition-all duration-150 ${
-                      isActive
-                        ? 'bg-navy text-white shadow-[0_3px_10px_rgba(11,31,58,0.20)]'
-                        : 'text-ink-secondary hover:text-navy hover:bg-surface-inset'
-                    }`}
-                  >
-                    <div className="flex items-center space-x-2.5 min-w-0">
-                      <Icon
-                        className={`w-4 h-4 shrink-0 transition-colors ${
-                          isActive ? 'text-white' : 'text-ink-secondary group-hover:text-navy'
-                        }`}
-                      />
-                      {!collapsed && <span className="truncate">{item.label}</span>}
-                    </div>
-                    {!collapsed && item.badge && (
-                      <span
-                        className={`px-1.5 py-0.5 rounded text-[9px] font-extrabold shrink-0 ${
-                          isActive ? 'bg-white/20 text-white' : 'bg-navy/10 text-navy'
+          return (
+            <section key={group.id} className="overflow-hidden rounded-xl">
+              <button
+                type="button"
+                onClick={() =>
+                  setExpandedGroups((previous) => ({
+                    ...previous,
+                    [group.id]: !isExpanded,
+                  }))
+                }
+                className={`flex min-h-11 w-full items-center justify-between gap-2 rounded-xl px-2.5 text-left text-[11px] font-bold uppercase tracking-wide transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand/25 ${
+                  groupHasActiveItem
+                    ? 'text-navy hover:bg-surface-inset'
+                    : 'text-ink-secondary hover:bg-surface-inset hover:text-navy'
+                }`}
+                aria-expanded={isExpanded}
+                aria-controls={`sidebar-group-${group.id}`}
+              >
+                <span className="truncate">{group.title}</span>
+                <ChevronDown
+                  className={`h-4 w-4 shrink-0 transition-transform ${isExpanded ? 'rotate-180' : ''}`}
+                  aria-hidden="true"
+                />
+              </button>
+
+              {isExpanded && (
+                <nav id={`sidebar-group-${group.id}`} aria-label={group.title} className="space-y-0.5 pb-1">
+                  {group.items.map((item) => {
+                    const Icon = item.icon;
+                    const isActive = isItemActive(item.href, pathname, currentTab, isFounder);
+                    return (
+                      <Link
+                        key={item.href}
+                        href={item.href}
+                        aria-current={isActive ? 'page' : undefined}
+                        className={`group ml-1 flex min-h-10 items-center gap-2.5 rounded-lg px-3 text-xs font-medium transition-colors ${
+                          isActive
+                            ? 'bg-navy text-white'
+                            : 'text-ink-secondary hover:bg-surface-inset hover:text-navy'
                         }`}
                       >
-                        {item.badge}
-                      </span>
-                    )}
-                  </Link>
-                );
-              })}
-            </nav>
-          </div>
-        ))}
+                        <Icon
+                          className={`h-4 w-4 shrink-0 ${isActive ? 'text-white' : 'text-ink-secondary group-hover:text-navy'}`}
+                          aria-hidden="true"
+                        />
+                        <span className="min-w-0 break-words">{item.label}</span>
+                      </Link>
+                    );
+                  })}
+                </nav>
+              )}
+            </section>
+          );
+        })}
       </div>
     </aside>
   );

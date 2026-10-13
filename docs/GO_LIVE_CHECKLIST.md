@@ -59,7 +59,7 @@ creates one temporary table in your session and drops it at the end.
 
 It reports:
 
-- what is already applied — base schema, communications, hardening, AI-draft
+- what is already applied — base schema, communications, hardening, AI-draft, Bale requests
 - the **next step** for your project, in one line
 - the **two ordering dependencies**, and whether each is satisfied
 - whether the demo seed is live, and how many rows of it are there
@@ -85,8 +85,8 @@ If `communications applied` reads `false`, apply
 
 ## Step 3 — Apply the hardening bundle
 
-Apply **`upgrade-hardening.sql`**. It is wrapped in `begin; … commit;` and does
-four things:
+Apply **`upgrade-hardening.sql`**. It is wrapped in `begin; … commit;` and
+includes the security/AI hardening plus the Founder-reviewed Bale request workflow:
 
 | Section | Effect |
 | --- | --- |
@@ -95,6 +95,7 @@ four things:
 | `20261006000000` §3 | creates append-only `audit_log`; re-scopes all 23 existing policies `TO authenticated` |
 | `20261006000000` §4 | pins `search_path` on `current_user_role`, `is_founder`, `is_supervisor_assigned` |
 | `20261006000001` | `expenses.vendor`, two indexes, `vendor_memory`, `record_vendor_outcome()`, drops the dead `ai_approval_suggestion` column |
+| `20261013000000` | Supervisor Bale requests, RLS + audit trail, Founder approve/reject, and atomic payment-to-issued-advance RPC |
 
 Expect `Success. No rows returned` — this is DDL, not a query.
 
@@ -110,7 +111,7 @@ test `SECURITY.md` §10 is still waiting for.
 ## Step 4 — Verify
 
 Run **`verify-live.sql`** (read-only). **Every row must say `PASS`.** It checks
-17 base tables exist, RLS is on everywhere, no policy is reachable by `anon`,
+18 base tables exist, RLS is on everywhere, no policy is reachable by `anon`,
 no `USING (true)`, `audit_log` cannot be rewritten, the helpers pin
 `search_path`, the receipts bucket is private, no `receipt_url` still holds an
 `http(s)://` value, and there is at least one Founder profile.
@@ -198,7 +199,7 @@ the file. It reads policy grantees from the parse tree rather than from a
 regex, so an unscoped policy shows up as `ROLESPEC_PUBLIC` instead of matching
 a neighbouring line.
 
-Current suite: **19 test files, 243 tests, all passing** (typecheck, lint and
+Current suite: **22 test files, 270 tests, all passing** (typecheck, lint and
 `next build` too). Both defects were re-introduced into a scratch copy during
 development and each one turned the relevant test red, so these are not no-op
 assertions.

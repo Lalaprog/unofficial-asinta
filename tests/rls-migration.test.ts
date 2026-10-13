@@ -54,6 +54,7 @@ describe('row level security coverage', () => {
     expect(tables).toContain('expenses');
     expect(tables).toContain('audit_log');
     expect(tables).toContain('vendor_memory');
+    expect(tables).toContain('advance_requests');
   });
 
   it('enables RLS on every table created by a migration', () => {

@@ -11,7 +11,7 @@
 -- WHAT YOU GET BACK — one grid, one row per item:
 --
 --   · what is already applied      (base schema / communications / hardening /
---                                   AI-draft support)
+--                                   AI-draft support / Bale requests)
 --   · the two ORDERING DEPENDENCIES, spelled out — getting either wrong makes
 --     the bundle abort and roll back, which is exactly the failure that looked
 --     like two unrelated bugs last time
@@ -96,6 +96,7 @@ declare
   v_hard      boolean;
   v_ai        boolean;
   v_vendor    boolean;
+  v_requests  boolean;
   v_bucket    text;
   v_demo_auth bigint := 0;
   v_demo_prof bigint := 0;
@@ -106,8 +107,9 @@ begin
   -- ── what is applied ───────────────────────────────────────────────────────
   v_base   := to_regclass('public.expenses')            is not null;
   v_comm   := to_regclass('public.reminder_dispatches') is not null;
-  v_hard   := to_regclass('public.audit_log')           is not null;
-  v_ai     := to_regclass('public.vendor_memory')       is not null;
+  v_hard    := to_regclass('public.audit_log')           is not null;
+  v_ai      := to_regclass('public.vendor_memory')       is not null;
+  v_requests := to_regclass('public.advance_requests')   is not null;
 
   select exists (
     select 1 from information_schema.columns
@@ -165,7 +167,7 @@ begin
   elsif not v_comm then
     v_next := '1) apply supabase/migrations/20260929000000_communications.sql, '
            || 'THEN 2) supabase/apply/upgrade-hardening.sql';
-  elsif not v_hard or not v_ai or not v_vendor then
+  elsif not v_hard or not v_ai or not v_vendor or not v_requests then
     v_next := 'apply supabase/apply/upgrade-hardening.sql';
   else
     v_next := 'nothing to apply — run supabase/apply/verify-live.sql';
@@ -181,27 +183,28 @@ begin
 
   -- ── emit the report ───────────────────────────────────────────────────────
   insert into pg_temp.bale_preflight (ord, item, value, meaning) values
-    (1,  'base schema applied',        v_base::text,   '20260913000000 + 20260913000001 — public.expenses exists'),
-    (2,  'communications applied',     v_comm::text,   '20260929000000 — public.reminder_dispatches exists'),
-    (3,  'hardening applied',          v_hard::text,   '20261006000000 — public.audit_log exists'),
-    (4,  'AI-draft support applied',   v_ai::text,     '20261006000001 — public.vendor_memory exists'),
-    (5,  'expenses.vendor column',     v_vendor::text, '20261006000001 — needed by vendor memory & duplicate detection'),
-    (6,  'receipts bucket',            v_bucket,       'must read "private" after hardening'),
+    (1,  'base schema applied',        v_base::text,      '20260913000000 + 20260913000001 — public.expenses exists'),
+    (2,  'communications applied',     v_comm::text,      '20260929000000 — public.reminder_dispatches exists'),
+    (3,  'hardening applied',          v_hard::text,      '20261006000000 — public.audit_log exists'),
+    (4,  'AI-draft support applied',   v_ai::text,        '20261006000001 — public.vendor_memory exists'),
+    (5,  'expenses.vendor column',     v_vendor::text,    '20261006000001 — needed by vendor memory & duplicate detection'),
+    (6,  'receipts bucket',            v_bucket,          'must read "private" after hardening'),
+    (7,  'Bale request workflow',      v_requests::text,  '20261013000000 — public.advance_requests exists'),
 
-    (7,  'DEMO SEED: auth accounts',   v_demo_auth::text, 'accounts created by 20260913000002 (4 = all of them)'),
-    (8,  'DEMO SEED: profiles',        v_demo_prof::text, 'public.users rows for those accounts'),
-    (9,  'DEMO SEED: data rows',       v_demo_data::text, 'seeded clients/projects/workers/invoices/… (57 = all of them)'),
-    (10, 'DEMO SEED: exposure',        case when v_demo_auth > 0 then 'LIVE' else 'none' end, v_seed_risk),
+    (8,  'DEMO SEED: auth accounts',   v_demo_auth::text, 'accounts created by 20260913000002 (4 = all of them)'),
+    (9,  'DEMO SEED: profiles',        v_demo_prof::text, 'public.users rows for those accounts'),
+    (10, 'DEMO SEED: data rows',       v_demo_data::text, 'seeded clients/projects/workers/invoices/… (57 = all of them)'),
+    (11, 'DEMO SEED: exposure',        case when v_demo_auth > 0 then 'LIVE' else 'none' end, v_seed_risk),
 
-    (11, '>>> NEXT STEP',              v_next,         'do this one thing, then re-run this file'),
+    (12, '>>> NEXT STEP',              v_next,            'do this one thing, then re-run this file'),
 
-    (12, '>>> ORDER 1 (blocking)',     case when v_comm then 'satisfied' else 'NOT SATISFIED' end,
+    (13, '>>> ORDER 1 (blocking)',     case when v_comm then 'satisfied' else 'NOT SATISFIED' end,
          '20260929000000_communications.sql MUST run BEFORE supabase/apply/upgrade-hardening.sql. '
       || 'The hardening migration re-scopes policies on email_templates, email_logs and '
       || 'reminder_dispatches — three tables only that migration creates. If they are missing the '
       || 'bundle dies on: relation "public.email_templates" does not exist.'),
 
-    (13, '>>> ORDER 2 (blocking)',     case when v_base then 'upgrade-hardening' else 'fresh-install' end,
+    (14, '>>> ORDER 2 (blocking)',     case when v_base then 'upgrade-hardening' else 'fresh-install' end,
          'The two bundles are MUTUALLY EXCLUSIVE — never run both. fresh-install.sql is for an EMPTY '
       || 'project and is NOT idempotent (the base schema uses plain CREATE POLICY, so a second run '
       || 'fails on "policy already exists"). upgrade-hardening.sql REQUIRES the base schema to be '
