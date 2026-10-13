@@ -103,16 +103,29 @@ export function AdvanceRequestsPanel() {
 
   return (
     <div className="space-y-4">
-      <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-        <div>
-          <h2 className="text-base font-semibold text-navy">
-            {isFounder ? 'Advance request queue' : 'Requests you submitted'}
-          </h2>
-          <p className="mt-1 text-xs leading-relaxed text-ink-secondary">
-            {isFounder
-              ? 'Review requests first, then confirm payment only after the money is issued.'
-              : 'Choose a worker and amount. Your request will appear here while it is reviewed.'}
-          </p>
+      <div
+        className={`flex flex-col gap-3 rounded-2xl border p-4 sm:flex-row sm:items-center sm:justify-between sm:p-5 ${
+          isSupervisor
+            ? 'border-brand/15 bg-gradient-to-br from-white via-white to-brand/5'
+            : 'border-surface-border bg-white'
+        }`}
+      >
+        <div className="flex min-w-0 items-start gap-3">
+          {isSupervisor && (
+            <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl border border-brand/10 bg-brand/5 text-brand">
+              <HandCoins className="h-5 w-5" aria-hidden="true" />
+            </span>
+          )}
+          <div className="min-w-0">
+            <h2 className="text-base font-semibold text-navy">
+              {isFounder ? 'Advance request queue' : 'Request a worker Bale'}
+            </h2>
+            <p className="mt-1 max-w-2xl text-xs leading-relaxed text-ink-secondary">
+              {isFounder
+                ? 'Review requests first, then confirm payment only after the money is issued.'
+                : 'Choose a worker and amount. Your project is added automatically when you have one assigned; select it if you supervise more than one. No reason or note is needed.'}
+            </p>
+          </div>
         </div>
 
         {isSupervisor && (
@@ -120,6 +133,7 @@ export function AdvanceRequestsPanel() {
             type="button"
             variant="primary"
             size="sm"
+            className="w-full shrink-0 sm:w-auto"
             onClick={openRequestModal}
             disabled={accessibleProjects.length === 0 || activeWorkers.length === 0}
           >
@@ -127,6 +141,47 @@ export function AdvanceRequestsPanel() {
           </Button>
         )}
       </div>
+
+      {isSupervisor && (
+        <div className="rounded-2xl border border-surface-border bg-white p-4 sm:p-5">
+          <p className="text-[10px] font-bold uppercase tracking-[0.16em] text-ink-muted">How it works</p>
+          <ol className="mt-3 grid gap-3 sm:grid-cols-3">
+            <li className="flex items-start gap-2.5">
+              <span className="flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-brand/10 text-[11px] font-bold text-brand">
+                1
+              </span>
+              <div className="min-w-0">
+                <p className="text-xs font-semibold text-navy">Send the request</p>
+                <p className="mt-0.5 text-[11px] leading-relaxed text-ink-secondary">
+                  Select a worker and enter the amount.
+                </p>
+              </div>
+            </li>
+            <li className="flex items-start gap-2.5">
+              <span className="flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-brand/10 text-[11px] font-bold text-brand">
+                2
+              </span>
+              <div className="min-w-0">
+                <p className="text-xs font-semibold text-navy">Founder reviews it</p>
+                <p className="mt-0.5 text-[11px] leading-relaxed text-ink-secondary">
+                  It stays a request while waiting.
+                </p>
+              </div>
+            </li>
+            <li className="flex items-start gap-2.5">
+              <span className="flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-brand/10 text-[11px] font-bold text-brand">
+                3
+              </span>
+              <div className="min-w-0">
+                <p className="text-xs font-semibold text-navy">Payment is confirmed</p>
+                <p className="mt-0.5 text-[11px] leading-relaxed text-ink-secondary">
+                  Only then is it recorded as an issued advance.
+                </p>
+              </div>
+            </li>
+          </ol>
+        </div>
+      )}
 
       {isSupervisor && (accessibleProjects.length === 0 || activeWorkers.length === 0) && (
         <p className="rounded-lg border border-status-warning/20 bg-status-warning-bg/50 px-3 py-2 text-xs leading-relaxed text-ink-secondary">

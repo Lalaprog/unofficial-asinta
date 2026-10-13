@@ -46,7 +46,7 @@ export const AppShell: React.FC<AppShellProps> = ({ children, requireFounder = f
           '/sms',
           '/settings',
         ]
-      : ['/attendance', '/projects', '/settings'];
+      : ['/attendance', '/projects', '/advances?tab=requests', '/settings'];
 
     const timer = window.setTimeout(() => {
       routes.forEach((route) => {
