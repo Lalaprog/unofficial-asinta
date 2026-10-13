@@ -14,6 +14,7 @@ import {
   CheckCircle2,
   CreditCard,
   FolderKanban,
+  HandCoins,
   Receipt,
   Send,
   Sparkles,
@@ -131,7 +132,17 @@ function renderProjectSpend(project: ProjectFinancialSummary, formatPHP: (amount
 }
 
 export default function FounderDashboard() {
-  const { invoices, expenses, advances, payroll, tools, clients, projects, sendSMS } = useDataStore();
+  const {
+    invoices,
+    expenses,
+    advances,
+    advanceRequests,
+    payroll,
+    tools,
+    clients,
+    projects,
+    sendSMS,
+  } = useDataStore();
 
   const now = new Date();
   const asOfDate = [
@@ -197,9 +208,17 @@ export default function FounderDashboard() {
   const projectsWithoutEstimateCount = metrics.projects.filter(
     (project) => project.budgetEstimate <= 0
   ).length;
+  const pendingAdvanceRequestCount = advanceRequests.filter(
+    (request) => request.status === 'pending_approval'
+  ).length;
+  const approvedAdvanceRequestCount = advanceRequests.filter(
+    (request) => request.status === 'approved_pending_payment'
+  ).length;
   const attentionItemCount =
     Number(metrics.receivables.overdueInvoiceCount > 0) +
     Number(metrics.payroll.needsReviewCount > 0) +
+    Number(pendingAdvanceRequestCount > 0) +
+    Number(approvedAdvanceRequestCount > 0) +
     Number(metrics.projectsOverEstimate.length > 0) +
     Number(metrics.tools.attentionUnits > 0);
 
@@ -273,8 +292,20 @@ export default function FounderDashboard() {
               Needs review: {metrics.payroll.needsReviewCount} · {formatPHP(metrics.payroll.needsReview)}
             </p>
             <p className="font-medium text-navy">
-              Open advances (separate): {formatPHP(metrics.advances.outstanding)}
+              Open advances (issued balance): {formatPHP(metrics.advances.outstanding)}
             </p>
+            <div className="border-t border-surface-border/60 pt-2">
+              <p className="font-medium text-navy">Bale requests · not yet issued</p>
+              <p>
+                {pendingAdvanceRequestCount} awaiting approval · {approvedAdvanceRequestCount} approved, awaiting payment
+              </p>
+              <Link
+                href="/advances?tab=requests"
+                className="inline-flex min-h-10 items-center gap-1 font-semibold text-brand hover:underline"
+              >
+                Review request queue <ArrowRight className="h-3.5 w-3.5" />
+              </Link>
+            </div>
             <Link href="/payroll" className="inline-flex min-h-10 items-center gap-1 font-semibold text-brand hover:underline">
               Open payroll <ArrowRight className="h-3.5 w-3.5" />
             </Link>
@@ -384,6 +415,42 @@ export default function FounderDashboard() {
                 </Link>
               )}
 
+              {pendingAdvanceRequestCount > 0 && (
+                <Link
+                  href="/advances?tab=requests"
+                  className="flex min-h-14 items-center justify-between gap-3 py-3 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand/25"
+                >
+                  <div className="flex min-w-0 items-start gap-2.5">
+                    <HandCoins className="mt-0.5 h-4 w-4 shrink-0 text-status-warning" aria-hidden="true" />
+                    <div className="min-w-0">
+                      <p className="break-words text-sm font-semibold text-navy">
+                        {pendingAdvanceRequestCount} Bale request{pendingAdvanceRequestCount === 1 ? '' : 's'} await approval
+                      </p>
+                      <p className="text-xs text-ink-secondary">Submitted by Supervisors for Founder review</p>
+                    </div>
+                  </div>
+                  <ArrowRight className="h-4 w-4 shrink-0 text-ink-muted" aria-hidden="true" />
+                </Link>
+              )}
+
+              {approvedAdvanceRequestCount > 0 && (
+                <Link
+                  href="/advances?tab=requests"
+                  className="flex min-h-14 items-center justify-between gap-3 py-3 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand/25"
+                >
+                  <div className="flex min-w-0 items-start gap-2.5">
+                    <HandCoins className="mt-0.5 h-4 w-4 shrink-0 text-status-info" aria-hidden="true" />
+                    <div className="min-w-0">
+                      <p className="break-words text-sm font-semibold text-navy">
+                        {approvedAdvanceRequestCount} approved Bale request{approvedAdvanceRequestCount === 1 ? '' : 's'} await payment
+                      </p>
+                      <p className="text-xs text-ink-secondary">Not yet counted as issued advances</p>
+                    </div>
+                  </div>
+                  <ArrowRight className="h-4 w-4 shrink-0 text-ink-muted" aria-hidden="true" />
+                </Link>
+              )}
+
               {metrics.projectsOverEstimate.length > 0 && (
                 <Link
                   href="/projects"
@@ -427,7 +494,7 @@ export default function FounderDashboard() {
 
               {attentionItemCount === 0 && (
                 <p className="py-4 text-sm text-ink-secondary">
-                  No overdue invoices, payroll reviews, over-estimate projects, or tool service items.
+                  No overdue invoices, payroll reviews, open Bale requests, over-estimate projects, or tool service items.
                 </p>
               )}
             </div>
@@ -561,9 +628,11 @@ export default function FounderDashboard() {
           <span className="font-semibold text-navy">Metric notes:</span>
           <span>Receivables exclude draft/cancelled invoices.</span>
           <span aria-hidden="true">·</span>
-          <span>Advances are shown separately from net payroll.</span>
+          <span>Issued advances are separate from net payroll.</span>
           <span aria-hidden="true">·</span>
-          <span>Project costs show logged expenses, not an end-cost forecast.</span>
+          <span>Requests stay outside issued balances until paid.</span>
+          <span aria-hidden="true">·</span>
+          <span>Project costs show logged expenses, not an end-cost forecast; payroll has no project link.</span>
         </div>
       </div>
 

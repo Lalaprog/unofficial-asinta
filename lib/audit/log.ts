@@ -4,7 +4,8 @@
  * WHAT IS RECORDED
  * ----------------
  * Inserts, updates and deletes on the tables that move money: `invoices`,
- * `expenses`, `advances` and `payroll`. Each entry stores WHO (actor id and the
+ * `expenses`, `advances`, `payroll`, and the separate `advance_requests` workflow.
+ * Each entry stores WHO (actor id and the
  * email at the time of the action), WHAT (table + record id), WHICH operation,
  * and the full row snapshot BEFORE and AFTER — so "this invoice was marked paid"
  * is backed by "amount_paid went from 0 to 120,000".
@@ -28,7 +29,7 @@ import type { PostgrestError } from '@supabase/supabase-js';
 export type AuditAction = 'insert' | 'update' | 'delete';
 
 /** Tables whose mutations are money-relevant and therefore audited. */
-export const AUDITED_TABLES = ['invoices', 'expenses', 'advances', 'payroll'] as const;
+export const AUDITED_TABLES = ['invoices', 'expenses', 'advances', 'payroll', 'advance_requests'] as const;
 export type AuditedTable = (typeof AUDITED_TABLES)[number];
 
 export interface AuditEntry {

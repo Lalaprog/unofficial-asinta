@@ -2,6 +2,7 @@
 
 import React, { Suspense, useState, useEffect, useMemo, useRef, useCallback } from 'react';
 import { useSearchParams } from 'next/navigation';
+import Link from 'next/link';
 import { AppShell } from '@/components/layout/AppShell';
 import { useDataStore } from '@/lib/data/store';
 import { useAuth } from '@/lib/auth/authContext';
@@ -11,6 +12,7 @@ import {
   Save,
   Search,
   UserPlus,
+  HandCoins,
   Settings2,
   ShieldAlert,
   ShieldCheck,
@@ -1005,7 +1007,7 @@ function AttendancePageInner() {
     <AppShell>
       <div key={activeTab} className="w-full space-y-4">
         {/* Clean Dedicated Page Header for each separated view */}
-        <div className="blueprint-accent flex items-center justify-between gap-3 pb-3 border-b border-surface-border/60">
+        <div className="blueprint-accent flex flex-col gap-3 border-b border-surface-border/60 pb-3 sm:flex-row sm:items-center sm:justify-between">
           <div className="min-w-0">
             <div className="flex items-center gap-2.5">
               <h1 className="text-xl sm:text-2xl font-semibold text-navy tracking-tight truncate">
@@ -1026,23 +1028,37 @@ function AttendancePageInner() {
           </div>
 
           {activeTab === 'workforce' && (
-            <Button
-              variant={isWorkerFormOpen ? 'secondary' : 'primary'}
-              size="sm"
-              onClick={() => setIsWorkerFormOpen((isOpen) => !isOpen)}
-              aria-expanded={isWorkerFormOpen}
-              aria-controls="workforce-worker-form"
-              leftIcon={
-                isWorkerFormOpen ? (
-                  <X className="h-4 w-4" />
-                ) : (
-                  <UserPlus className="h-4 w-4" />
-                )
-              }
-              className="shrink-0"
-            >
-              {isWorkerFormOpen ? 'Close form' : 'Add Worker'}
-            </Button>
+            <div className="flex flex-wrap gap-2">
+              {isSupervisor && (
+                <Link href="/advances?tab=requests" prefetch={false}>
+                  <Button
+                    type="button"
+                    variant="secondary"
+                    size="sm"
+                    leftIcon={<HandCoins className="h-4 w-4" />}
+                  >
+                    Bale Requests
+                  </Button>
+                </Link>
+              )}
+              <Button
+                variant={isWorkerFormOpen ? 'secondary' : 'primary'}
+                size="sm"
+                onClick={() => setIsWorkerFormOpen((isOpen) => !isOpen)}
+                aria-expanded={isWorkerFormOpen}
+                aria-controls="workforce-worker-form"
+                leftIcon={
+                  isWorkerFormOpen ? (
+                    <X className="h-4 w-4" />
+                  ) : (
+                    <UserPlus className="h-4 w-4" />
+                  )
+                }
+                className="shrink-0"
+              >
+                {isWorkerFormOpen ? 'Close form' : 'Add Worker'}
+              </Button>
+            </div>
           )}
         </div>
 

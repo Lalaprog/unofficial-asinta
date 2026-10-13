@@ -16,7 +16,7 @@ expected_tables(name) as (
   values ('users'), ('workers'), ('clients'), ('projects'), ('project_supervisors'),
          ('invoices'), ('expenses'), ('advances'), ('attendance'), ('payroll'),
          ('tools'), ('sms_logs'), ('email_logs'), ('email_templates'),
-         ('reminder_dispatches'), ('audit_log'), ('vendor_memory')
+         ('reminder_dispatches'), ('audit_log'), ('vendor_memory'), ('advance_requests')
 ),
 missing_tables as (
   select e.name
@@ -86,9 +86,9 @@ orphan_profiles as (
 
 -- ── results: one row per check ────────────────────────────────────────────
 select 'base tables present' as check_name,
-       '17 tables' as expected,
+       '18 tables' as expected,
        case when (select count(*) from missing_tables) = 0
-            then 'all 17 present'
+            then 'all 18 present'
             else 'MISSING: ' || (select string_agg(name, ', ') from missing_tables) end as actual,
        case when (select count(*) from missing_tables) = 0 then 'PASS' else 'FAIL' end as status
 

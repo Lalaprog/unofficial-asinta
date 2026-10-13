@@ -76,7 +76,7 @@ npm run build:apply-sql
 Use `./node_modules/.bin/tsc`, never `npx tsc` — the latter can resolve an
 unrelated `tsc` package from the registry.
 
-Expected: **19 test files, 243 tests, all passing.**
+Expected: **22 test files, 270 tests, all passing** (plus a clean typecheck and lint).
 
 ### Re-applying the corrections
 
@@ -127,6 +127,7 @@ select
   to_regclass('public.expenses')  is not null as base_schema_applied,
   to_regclass('public.audit_log') is not null as hardening_applied,
   to_regclass('public.vendor_memory') is not null as ai_draft_applied,
+  to_regclass('public.advance_requests') is not null as bale_requests_applied,
   exists (
     select 1 from information_schema.columns
     where table_schema = 'public' and table_name = 'expenses' and column_name = 'vendor'
@@ -137,6 +138,7 @@ select
       then 'apply supabase/apply/fresh-install.sql'
     when to_regclass('public.audit_log') is null
       or to_regclass('public.vendor_memory') is null
+      or to_regclass('public.advance_requests') is null
       or not exists (select 1 from information_schema.columns
                      where table_schema='public' and table_name='expenses' and column_name='vendor')
       then 'apply supabase/apply/upgrade-hardening.sql'
@@ -161,7 +163,7 @@ applies and one that silently rolls back:
 Result interpretation:
 
 - `base_schema_applied = false` → project is empty → **fresh-install.sql**
-- base applied, anything else false → **upgrade-hardening.sql**
+- base applied, any hardening / AI / Bale-request check false → **upgrade-hardening.sql**
 - everything true → nothing to apply; go to step 5.
 
 ⚠️ **`fresh-install.sql` is not idempotent.** The base schema creates policies
@@ -203,7 +205,7 @@ npm run build:apply-sql
    still commits as a whole. Harmless.)
 5. Expect `Success. No rows returned` — this is DDL, not a query.
 
-The `upgrade-hardening.sql` bundle does four things:
+The `upgrade-hardening.sql` bundle includes the security and AI hardening plus the Bale request workflow:
 
 | Section | Effect |
 | --- | --- |
@@ -212,6 +214,7 @@ The `upgrade-hardening.sql` bundle does four things:
 | `20261006000000` §3 | creates `audit_log`; **drops and re-creates all 23 existing policies** with `TO authenticated` |
 | `20261006000000` §4 | pins `search_path` on `current_user_role`, `is_founder`, `is_supervisor_assigned` |
 | `20261006000001` | `expenses.vendor`, two indexes, `vendor_memory`, `record_vendor_outcome()`, drops the dead `ai_approval_suggestion` column |
+| `20261013000000` | Supervisor-submitted `advance_requests` with RLS, audit logging, Founder-only approval/rejection, and atomic payment-to-issued-advance RPC |
 
 §3 changes the *grantee* of every existing policy from `PUBLIC` (which includes
 `anon`) to `authenticated`. Signed-in behaviour is unchanged — the `USING`

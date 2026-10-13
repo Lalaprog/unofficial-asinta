@@ -63,7 +63,13 @@ describe('audit row building', () => {
 
 describe('audit table scope', () => {
   it('covers the money-moving tables', () => {
-    expect([...AUDITED_TABLES]).toEqual(['invoices', 'expenses', 'advances', 'payroll']);
+    expect([...AUDITED_TABLES]).toEqual([
+      'invoices',
+      'expenses',
+      'advances',
+      'payroll',
+      'advance_requests',
+    ]);
   });
 });
 

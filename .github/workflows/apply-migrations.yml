@@ -103,14 +103,16 @@ jobs:
           psql "$SUPABASE_DB_URL" -v ON_ERROR_STOP=1 -c "
             select
               to_regclass('public.expenses') is not null      as base_schema_applied,
-              to_regclass('public.audit_log') is not null     as hardening_applied,
-              to_regclass('public.vendor_memory') is not null as ai_draft_applied,
+              to_regclass('public.audit_log') is not null       as hardening_applied,
+              to_regclass('public.vendor_memory') is not null   as ai_draft_applied,
+              to_regclass('public.advance_requests') is not null as bale_requests_applied,
               (select public from storage.buckets where id = 'receipts') as receipts_bucket_public,
               case
                 when to_regclass('public.expenses') is null
                   then 'apply fresh-install'
                 when to_regclass('public.audit_log') is null
                   or to_regclass('public.vendor_memory') is null
+                  or to_regclass('public.advance_requests') is null
                   then 'apply upgrade-hardening'
                 else 'already migrated — run verify-live.sql'
               end as next_step;"
