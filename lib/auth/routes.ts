@@ -1,10 +1,11 @@
 export type AppRole = 'founder' | 'supervisor';
 
 /**
- * Routes that are reserved for Founder accounts. Shared by middleware and login redirects.
- * Note: `/settings` is accessible to both Founders (Firm Settings & Integrations) and
- * Supervisors (Supervisor Profile & Session Sync), with Founder-only integration cards
- * gated by `isFounder` and server-side `requireFounder` on all admin API routes.
+ * Routes that are Founder-only by default. `/advances` is mixed-use: Supervisors may
+ * access its requests view only; `canRoleAccessPath` checks the requested tab so the
+ * issued-ledger view stays Founder-only at the middleware boundary. RLS and Founder-only
+ * RPCs independently protect the underlying records and mutations. `/settings` is also
+ * shared; Founder-only integration cards use `isFounder` and server-side `requireFounder`.
  */
 export const FOUNDER_ONLY_ROUTES = [
   '/dashboard',
@@ -45,7 +46,13 @@ export function getSafeRedirectPath(value: string | null): string | null {
 export function canRoleAccessPath(role: AppRole, path: string): boolean {
   const safePath = getSafeRedirectPath(path);
   if (!safePath) return false;
+  if (role === 'founder') return true;
 
-  const pathname = new URL(safePath, 'https://bale.local').pathname;
-  return role === 'founder' || !isFounderOnlyPath(pathname);
+  const requestedUrl = new URL(safePath, 'https://bale.local');
+  if (requestedUrl.pathname === '/advances') {
+    const requestedTab = requestedUrl.searchParams.get('tab');
+    return requestedTab === null || requestedTab === 'requests';
+  }
+
+  return !isFounderOnlyPath(requestedUrl.pathname);
 }

@@ -1,6 +1,6 @@
 import { NextResponse, type NextRequest } from 'next/server';
 import { createMiddlewareSupabaseClient } from '@/lib/supabase/middleware';
-import { canRoleAccessPath, getSafeRedirectPath, isFounderOnlyPath, type AppRole } from '@/lib/auth/routes';
+import { canRoleAccessPath, getSafeRedirectPath, type AppRole } from '@/lib/auth/routes';
 import { isMfaEnforcementEnabled } from '@/lib/auth/mfa';
 
 /**
@@ -141,9 +141,13 @@ export async function middleware(request: NextRequest) {
     return redirectTo(request, '/', { error: 'invalid_role' });
   }
 
-  // Supervisors may only access the attendance terminal and project pages —
-  // they are never redirected into Founder-only routes.
-  if (role === 'supervisor' && isFounderOnlyPath(pathname)) {
+  // Supervisors can access attendance, assigned projects, profile settings, and
+  // only the Requests tab of /advances. The issued view is denied here as well
+  // as protected by database RLS and Founder-only RPCs.
+  if (
+    role === 'supervisor' &&
+    !canRoleAccessPath('supervisor', `${pathname}${request.nextUrl.search}`)
+  ) {
     return redirectTo(request, '/attendance');
   }
 

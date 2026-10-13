@@ -13,11 +13,11 @@ import {
   Banknote,
   CheckCircle2,
   CreditCard,
+  DraftingCompass,
   FolderKanban,
   HandCoins,
   Receipt,
   Send,
-  Sparkles,
   Wrench,
 } from 'lucide-react';
 import { Badge } from '@/components/ui/Badge';
@@ -50,22 +50,30 @@ interface SummaryCardProps {
 
 function SummaryCard({ title, value, icon, children }: SummaryCardProps) {
   return (
-    <Card className="h-full min-w-0 p-4 sm:p-5">
+    <Card className="relative h-full min-w-0 overflow-hidden border-[#e3ddd2] p-4 shadow-sm sm:p-5">
+      <div
+        aria-hidden="true"
+        className="absolute inset-x-0 top-0 h-[3px] bg-gradient-to-r from-brand/65 via-[#b5a68e]/50 to-transparent"
+      />
       <div className="flex items-start justify-between gap-3">
         <div className="min-w-0">
-          <h2 className="break-words text-xs font-semibold text-ink-secondary">{title}</h2>
-          <p className="mt-2 break-words text-2xl font-semibold tracking-tight text-navy tabular-nums sm:text-3xl">
+          <h2 className="break-words text-[10px] font-bold uppercase tracking-[0.13em] text-ink-secondary">
+            {title}
+          </h2>
+          <p className="mt-3 break-words text-2xl font-semibold tracking-tight text-navy tabular-nums sm:text-[28px]">
             {value}
           </p>
         </div>
         <div
           aria-hidden="true"
-          className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl border border-surface-border bg-surface-inset text-brand"
+          className="flex h-10 w-10 shrink-0 items-center justify-center rounded-[14px] border border-[#e8e1d4] bg-[#f7f5ef] text-brand"
         >
           {icon}
         </div>
       </div>
-      <div className="mt-3 space-y-1.5 text-xs leading-relaxed text-ink-secondary">{children}</div>
+      <div className="mt-3 space-y-1.5 border-t border-[#eee9df] pt-3 text-xs leading-relaxed text-ink-secondary">
+        {children}
+      </div>
     </Card>
   );
 }
@@ -113,7 +121,7 @@ function renderProjectSpend(project: ProjectFinancialSummary, formatPHP: (amount
             {project.isOverEstimate && ` · ${formatPHP(project.amountOverEstimate)} over`}
           </div>
           <div
-            className="mt-1.5 h-1.5 overflow-hidden rounded-full bg-surface-inset"
+            className="mt-1.5 h-1.5 overflow-hidden rounded-full bg-[#ece7dc]"
             role="progressbar"
             aria-label={`${project.name} recorded expenses versus estimate`}
             aria-valuemin={0}
@@ -224,18 +232,25 @@ export default function FounderDashboard() {
 
   return (
     <AppShell requireFounder={true}>
-      <div className="w-full space-y-5 lg:space-y-6">
-        <header className="blueprint-accent flex flex-col gap-3 border-b border-surface-border/60 pb-4 sm:flex-row sm:items-end sm:justify-between">
+      <div className="w-full space-y-6 lg:space-y-7">
+        <header className="blueprint-accent flex flex-col gap-5 overflow-hidden rounded-[22px] border border-[#ded7c9] bg-[#f8f6f0] p-5 shadow-sm sm:flex-row sm:items-end sm:justify-between sm:p-6 lg:p-7">
           <div className="min-w-0">
-            <h1 className="text-xl font-semibold tracking-tight text-navy sm:text-2xl">
-              Financial Overview
+            <div className="inline-flex items-center gap-2 rounded-full border border-[#e3dccd] bg-white/85 px-3 py-1 text-[9px] font-bold uppercase tracking-[0.16em] text-brand">
+              <DraftingCompass className="h-3.5 w-3.5" aria-hidden="true" />
+              Asinta Corp. · Founder desk
+            </div>
+            <h1 className="mt-3 text-2xl font-semibold tracking-tight text-navy sm:text-3xl">
+              Studio overview
             </h1>
-            <p className="mt-1 text-xs text-ink-secondary">
-              Founder snapshot · as of {formatDatePH(metrics.asOfDate)}
+            <p className="mt-1.5 max-w-2xl text-xs leading-relaxed text-ink-secondary sm:text-sm">
+              Client balances, workforce payments, project costs, and tools—all in one place.
+            </p>
+            <p className="mt-2 text-[11px] font-medium text-ink-muted">
+              Snapshot as of {formatDatePH(metrics.asOfDate)}
             </p>
           </div>
 
-          <div className="flex flex-wrap items-center gap-2">
+          <div className="relative z-10 flex shrink-0 flex-wrap items-center gap-2">
             <Link href="/invoices" prefetch={false}>
               <Button
                 type="button"
@@ -244,7 +259,7 @@ export default function FounderDashboard() {
                 className="min-h-11"
                 leftIcon={<Receipt className="h-3.5 w-3.5" />}
               >
-                New Invoice
+                New invoice
               </Button>
             </Link>
             <Link href="/expenses" prefetch={false}>
@@ -253,15 +268,18 @@ export default function FounderDashboard() {
                 variant="primary"
                 size="sm"
                 className="min-h-11"
-                leftIcon={<Sparkles className="h-3.5 w-3.5" />}
+                leftIcon={<CreditCard className="h-3.5 w-3.5" />}
               >
-                Record Expense
+                Record expense
               </Button>
             </Link>
           </div>
         </header>
 
-        <section aria-label="Financial summary" className="grid grid-cols-1 gap-3 sm:grid-cols-2 2xl:grid-cols-4">
+        <section
+          aria-label="Balanced studio summary"
+          className="grid grid-cols-1 gap-3 sm:grid-cols-2 xl:grid-cols-4"
+        >
           <SummaryCard
             title="Client balances due"
             value={formatPHP(metrics.receivables.outstanding)}
@@ -277,91 +295,125 @@ export default function FounderDashboard() {
                 <CheckCircle2 className="h-3.5 w-3.5 shrink-0" /> No overdue balances
               </p>
             )}
-            <Link href="/invoices" className="inline-flex min-h-10 items-center gap-1 font-semibold text-brand hover:underline">
-              Review invoices <ArrowRight className="h-3.5 w-3.5" />
+            <Link
+              href="/invoices"
+              className="inline-flex min-h-9 items-center gap-1 font-semibold text-brand hover:underline"
+            >
+              Open invoices <ArrowRight className="h-3.5 w-3.5" />
             </Link>
           </SummaryCard>
 
           <SummaryCard
-            title="Approved payroll to pay"
+            title="Workforce & pay"
             value={formatPHP(metrics.payroll.approvedUnpaid)}
             icon={<Banknote className="h-5 w-5" />}
           >
-            <p>{metrics.payroll.approvedUnpaidCount} approved unpaid payroll vouchers</p>
+            <p>{metrics.payroll.approvedUnpaidCount} approved payroll vouchers ready to pay</p>
             <p>
-              Needs review: {metrics.payroll.needsReviewCount} · {formatPHP(metrics.payroll.needsReview)}
+              {metrics.payroll.needsReviewCount} need review · {formatPHP(metrics.payroll.needsReview)} net pay
             </p>
             <p className="font-medium text-navy">
-              Open advances (issued balance): {formatPHP(metrics.advances.outstanding)}
+              Issued advances outstanding: {formatPHP(metrics.advances.outstanding)}
             </p>
-            <div className="border-t border-surface-border/60 pt-2">
-              <p className="font-medium text-navy">Bale requests · not yet issued</p>
-              <p>
-                {pendingAdvanceRequestCount} awaiting approval · {approvedAdvanceRequestCount} approved, awaiting payment
+            <div className="mt-1 rounded-lg border border-[#e8e1d4] bg-[#faf8f3] px-2.5 py-2">
+              <p className="text-[10px] font-bold uppercase tracking-wide text-ink-muted">
+                Bale requests · not yet issued
+              </p>
+              <p className="mt-0.5 text-[11px] leading-relaxed text-ink-secondary">
+                {pendingAdvanceRequestCount} awaiting approval · {approvedAdvanceRequestCount} awaiting payment
               </p>
               <Link
                 href="/advances?tab=requests"
-                className="inline-flex min-h-10 items-center gap-1 font-semibold text-brand hover:underline"
+                className="mt-1 inline-flex min-h-8 items-center gap-1 font-semibold text-brand hover:underline"
               >
-                Review request queue <ArrowRight className="h-3.5 w-3.5" />
+                Review requests <ArrowRight className="h-3.5 w-3.5" />
               </Link>
             </div>
-            <Link href="/payroll" className="inline-flex min-h-10 items-center gap-1 font-semibold text-brand hover:underline">
+            <Link
+              href="/payroll"
+              className="inline-flex min-h-9 items-center gap-1 font-semibold text-brand hover:underline"
+            >
               Open payroll <ArrowRight className="h-3.5 w-3.5" />
             </Link>
           </SummaryCard>
 
           <SummaryCard
-            title="Current project estimate vs spend"
+            title="Project costs recorded"
             value={formatPHP(metrics.projectRecordedExpensesTotal)}
             icon={<CreditCard className="h-5 w-5" />}
           >
-            <p>Recorded expenses across {currentProjectCount} current projects</p>
+            <p>Logged expenses across {currentProjectCount} current projects</p>
             <p className="break-words font-medium text-navy">
               Saved estimates: {formatPHP(metrics.projectBudgetEstimateTotal)}
-              {projectsWithoutEstimateCount > 0 &&
-                ` · ${projectsWithoutEstimateCount} not set`}
+              {projectsWithoutEstimateCount > 0 && ` · ${projectsWithoutEstimateCount} not set`}
             </p>
             <p className="text-[11px] text-ink-muted">
-                  Logged expense entries only; payroll has no project link.
+              Actual expense entries only; payroll is not linked to projects.
             </p>
+            <Link
+              href="/projects"
+              className="inline-flex min-h-9 items-center gap-1 font-semibold text-brand hover:underline"
+            >
+              View project breakdown <ArrowRight className="h-3.5 w-3.5" />
+            </Link>
           </SummaryCard>
 
           <SummaryCard
-            title="Tool units needing attention"
+            title="Tools needing attention"
             value={String(metrics.tools.attentionUnits)}
             icon={<Wrench className="h-5 w-5" />}
           >
             <p>
-              Needs repair: {metrics.tools.needsRepairUnits} · Damaged: {metrics.tools.damagedUnits}
+              {metrics.tools.needsRepairUnits} need repair · {metrics.tools.damagedUnits} damaged
             </p>
-            <p>{metrics.tools.totalUnits} total units in the inventory</p>
+            <p>{metrics.tools.totalUnits} units in inventory</p>
             <p>
               Central depot: {metrics.tools.depotUnits} units · {metrics.tools.depotAttentionUnits} need service
             </p>
-            <Link href="/tools" className="inline-flex min-h-10 items-center gap-1 font-semibold text-brand hover:underline">
+            <Link
+              href="/tools"
+              className="inline-flex min-h-9 items-center gap-1 font-semibold text-brand hover:underline"
+            >
               Review inventory <ArrowRight className="h-3.5 w-3.5" />
             </Link>
           </SummaryCard>
         </section>
 
-        <div className="grid grid-cols-1 gap-4 2xl:grid-cols-[minmax(18rem,0.8fr)_minmax(0,2fr)]">
-          <section className="min-w-0 overflow-hidden rounded-2xl border border-surface-border bg-white">
-            <div className="flex items-start justify-between gap-3 border-b border-surface-border/70 px-4 py-4 sm:px-5">
-              <div className="min-w-0">
-                <h2 className="text-base font-semibold text-navy">Needs attention</h2>
-                <p className="mt-1 text-xs text-ink-secondary">
-                  {attentionItemCount > 0
-                    ? `${attentionItemCount} areas need a follow-up`
-                    : 'No urgent items in the current ledger snapshot'}
-                </p>
+        <div className="grid grid-cols-1 gap-4 xl:grid-cols-[minmax(18rem,0.82fr)_minmax(0,2.18fr)]">
+          <section className="min-w-0 overflow-hidden rounded-2xl border border-[#e3ddd2] bg-white shadow-sm">
+            <div className="flex items-center justify-between gap-3 border-b border-[#e9e3d8] bg-[#fbfaf7] px-4 py-4 sm:px-5">
+              <div className="flex min-w-0 items-center gap-3">
+                <span
+                  className={`flex h-10 w-10 shrink-0 items-center justify-center rounded-[14px] border ${
+                    attentionItemCount > 0
+                      ? 'border-status-warning/20 bg-status-warning-bg text-status-warning'
+                      : 'border-status-success/20 bg-status-success-bg text-status-success'
+                  }`}
+                >
+                  {attentionItemCount > 0 ? (
+                    <AlertTriangle className="h-5 w-5" aria-hidden="true" />
+                  ) : (
+                    <CheckCircle2 className="h-5 w-5" aria-hidden="true" />
+                  )}
+                </span>
+                <div className="min-w-0">
+                  <p className="text-[9px] font-bold uppercase tracking-[0.16em] text-ink-muted">
+                    Follow-up board
+                  </p>
+                  <h2 className="mt-0.5 text-base font-semibold text-navy">Needs attention</h2>
+                  <p className="mt-1 text-xs leading-relaxed text-ink-secondary">
+                    {attentionItemCount > 0
+                      ? `${attentionItemCount} areas have an item to review`
+                      : 'No open follow-ups in the current snapshot'}
+                  </p>
+                </div>
               </div>
-              {attentionItemCount === 0 && (
-                <CheckCircle2 className="mt-0.5 h-5 w-5 shrink-0 text-status-success" aria-hidden="true" />
-              )}
+              <Badge size="sm" variant={attentionItemCount > 0 ? 'warning' : 'success'}>
+                {attentionItemCount} {attentionItemCount === 1 ? 'area' : 'areas'}
+              </Badge>
             </div>
 
-            <div className="divide-y divide-surface-border/60 px-4 sm:px-5">
+            <div className="divide-y divide-[#eee9df] px-4 sm:px-5">
               {metrics.receivables.overdueInvoiceCount > 0 && (
                 <div className="flex flex-col gap-2 py-3 sm:flex-row sm:items-center sm:justify-between">
                   <div className="flex min-w-0 items-start gap-2.5">
@@ -493,24 +545,51 @@ export default function FounderDashboard() {
               )}
 
               {attentionItemCount === 0 && (
-                <p className="py-4 text-sm text-ink-secondary">
-                  No overdue invoices, payroll reviews, open Bale requests, over-estimate projects, or tool service items.
-                </p>
+                <div className="py-4">
+                  <div className="flex items-start gap-3 rounded-xl border border-[#e8e1d4] bg-[#faf8f3] p-3.5">
+                    <CheckCircle2 className="mt-0.5 h-4 w-4 shrink-0 text-status-success" aria-hidden="true" />
+                    <div>
+                      <p className="text-sm font-semibold text-navy">All clear for now</p>
+                      <p className="mt-1 text-xs leading-relaxed text-ink-secondary">
+                        No overdue invoices, payroll reviews, open Bale requests, over-estimate projects, or tool-service items.
+                      </p>
+                    </div>
+                  </div>
+                </div>
               )}
             </div>
           </section>
 
-          <section className="min-w-0 overflow-hidden rounded-2xl border border-surface-border bg-white">
-            <div className="flex flex-col gap-2 border-b border-surface-border/70 px-4 py-4 sm:flex-row sm:items-end sm:justify-between sm:px-5">
-              <div className="min-w-0">
-                <h2 className="text-base font-semibold text-navy">Project estimates &amp; recorded expenses</h2>
-                <p className="mt-1 text-xs leading-relaxed text-ink-secondary">
-                  Logged expense entries only. Payroll has no project link, so it is not included in these comparisons.
-                </p>
+          <section className="min-w-0 overflow-hidden rounded-2xl border border-[#e3ddd2] bg-white shadow-sm">
+            <div className="flex flex-col gap-3 border-b border-[#e9e3d8] bg-[#fbfaf7] px-4 py-4 sm:flex-row sm:items-center sm:justify-between sm:px-5">
+              <div className="flex min-w-0 items-start gap-3">
+                <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-[14px] border border-[#e8e1d4] bg-white text-brand">
+                  <FolderKanban className="h-5 w-5" aria-hidden="true" />
+                </span>
+                <div className="min-w-0">
+                  <p className="text-[9px] font-bold uppercase tracking-[0.16em] text-ink-muted">
+                    Project register
+                  </p>
+                  <h2 className="mt-0.5 text-base font-semibold text-navy">
+                    Estimates &amp; recorded expenses
+                  </h2>
+                  <p className="mt-1 text-xs leading-relaxed text-ink-secondary">
+                    Logged expense entries only. Payroll has no project link, so it is not included in these comparisons.
+                  </p>
+                </div>
               </div>
-              <Link href="/projects" prefetch={false} className="inline-flex min-h-11 shrink-0 items-center gap-1 text-xs font-semibold text-brand hover:underline">
-                All projects <ArrowRight className="h-3.5 w-3.5" />
-              </Link>
+              <div className="flex shrink-0 items-center gap-2 sm:ml-3">
+                <Badge size="sm" variant="outline">
+                  {currentProjectCount} current
+                </Badge>
+                <Link
+                  href="/projects"
+                  prefetch={false}
+                  className="inline-flex min-h-10 items-center gap-1 rounded-lg border border-[#e3ddd2] bg-white px-3 text-xs font-semibold text-brand transition-colors hover:bg-[#f7f5ef]"
+                >
+                  All projects <ArrowRight className="h-3.5 w-3.5" />
+                </Link>
+              </div>
             </div>
 
             {metrics.projects.length === 0 ? (
@@ -521,8 +600,8 @@ export default function FounderDashboard() {
               </div>
             ) : (
               <>
-                <div className="hidden overflow-x-auto xl:block">
-                  <table className="w-full min-w-[900px] table-fixed text-left text-xs">
+                <div className="hidden overflow-x-auto 2xl:block">
+                  <table className="w-full min-w-[820px] table-fixed text-left text-xs">
                     <colgroup>
                       <col className="w-[24%]" />
                       <col className="w-[15%]" />
@@ -530,7 +609,7 @@ export default function FounderDashboard() {
                       <col className="w-[17%]" />
                       <col className="w-[25%]" />
                     </colgroup>
-                    <thead className="bg-surface/70 text-[11px] font-semibold uppercase tracking-wide text-ink-muted">
+                    <thead className="bg-[#f6f4ed] text-[10px] font-bold uppercase tracking-[0.1em] text-ink-muted">
                       <tr>
                         <th scope="col" className="px-4 py-3 font-semibold">Project</th>
                         <th scope="col" className="px-3 py-3 font-semibold">Estimate</th>
@@ -541,7 +620,7 @@ export default function FounderDashboard() {
                     </thead>
                     <tbody className="divide-y divide-surface-border/60">
                       {metrics.projects.map((project) => (
-                        <tr key={project.id} className="align-top transition-colors hover:bg-surface/40">
+                        <tr key={project.id} className="align-top transition-colors hover:bg-[#fbfaf7]">
                           <td className="px-4 py-3.5">
                             <Link href={`/projects/${project.id}`} className="break-words font-semibold text-navy hover:text-brand hover:underline">
                               {project.name}
@@ -576,9 +655,9 @@ export default function FounderDashboard() {
                   </table>
                 </div>
 
-                <div className="grid grid-cols-1 gap-3 p-3 sm:p-4 xl:hidden">
+                <div className="grid grid-cols-1 gap-3 p-3 sm:p-4 2xl:hidden">
                   {metrics.projects.map((project) => (
-                    <article key={project.id} className="min-w-0 rounded-xl border border-surface-border/80 bg-white p-3.5 sm:p-4">
+                    <article key={project.id} className="min-w-0 rounded-xl border border-[#e3ddd2] bg-white p-3.5 transition-colors hover:bg-[#fffefa] sm:p-4">
                       <div className="flex min-w-0 items-start justify-between gap-2">
                         <Link href={`/projects/${project.id}`} className="min-w-0 break-words text-sm font-semibold text-navy hover:text-brand hover:underline">
                           {project.name}
@@ -624,16 +703,31 @@ export default function FounderDashboard() {
           </section>
         </div>
 
-        <div className="flex flex-wrap items-center gap-x-2 gap-y-1 rounded-xl border border-surface-border/70 bg-white/70 px-3.5 py-3 text-[11px] leading-relaxed text-ink-secondary sm:px-4">
-          <span className="font-semibold text-navy">Metric notes:</span>
-          <span>Receivables exclude draft/cancelled invoices.</span>
-          <span aria-hidden="true">·</span>
-          <span>Issued advances are separate from net payroll.</span>
-          <span aria-hidden="true">·</span>
-          <span>Requests stay outside issued balances until paid.</span>
-          <span aria-hidden="true">·</span>
-          <span>Project costs show logged expenses, not an end-cost forecast; payroll has no project link.</span>
-        </div>
+        <aside
+          aria-label="How to read the dashboard figures"
+          className="rounded-2xl border border-[#ded7c9] bg-[#f8f6f0] p-4 sm:p-5"
+        >
+          <div className="flex items-center gap-2">
+            <DraftingCompass className="h-4 w-4 text-brand" aria-hidden="true" />
+            <h2 className="text-[10px] font-bold uppercase tracking-[0.15em] text-navy">
+              How to read this snapshot
+            </h2>
+          </div>
+          <ul className="mt-3 grid grid-cols-1 gap-3 text-[11px] leading-relaxed text-ink-secondary sm:grid-cols-2 2xl:grid-cols-4">
+            <li className="border-l border-[#cfc4b2] pl-3">
+              Receivables exclude draft and cancelled invoices.
+            </li>
+            <li className="border-l border-[#cfc4b2] pl-3">
+              Issued advances stay separate from net payroll deductions.
+            </li>
+            <li className="border-l border-[#cfc4b2] pl-3">
+              Bale requests do not affect issued balances until payment is confirmed.
+            </li>
+            <li className="border-l border-[#cfc4b2] pl-3">
+              Project costs are logged expenses only—no payroll allocation or end-cost forecast.
+            </li>
+          </ul>
+        </aside>
       </div>
 
       <Modal

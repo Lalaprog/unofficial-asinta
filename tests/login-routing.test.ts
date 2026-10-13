@@ -24,16 +24,22 @@ describe('safe redirect_to handling', () => {
 });
 
 describe('role-based path access', () => {
-  it('never allows Supervisors into Founder-only routes, while allowing /attendance, /projects, and /settings (Supervisor Profile)', () => {
+  it('keeps Founder-only pages restricted while allowing Supervisors into the role-scoped Bale requests page', () => {
     expect(isFounderOnlyPath('/dashboard')).toBe(true);
     expect(isFounderOnlyPath('/invoices')).toBe(true);
     expect(isFounderOnlyPath('/reminders')).toBe(true);
     expect(isFounderOnlyPath('/settings')).toBe(false);
+    expect(isFounderOnlyPath('/advances')).toBe(true);
     expect(canRoleAccessPath('supervisor', '/dashboard')).toBe(false);
     expect(canRoleAccessPath('supervisor', '/invoices')).toBe(false);
     expect(canRoleAccessPath('supervisor', '/attendance')).toBe(true);
     expect(canRoleAccessPath('supervisor', '/settings')).toBe(true);
+    expect(canRoleAccessPath('supervisor', '/advances')).toBe(true);
+    expect(canRoleAccessPath('supervisor', '/advances?tab=requests')).toBe(true);
+    expect(canRoleAccessPath('supervisor', '/advances?tab=issued')).toBe(false);
+    expect(canRoleAccessPath('supervisor', '/advances?tab=other')).toBe(false);
     expect(canRoleAccessPath('founder', '/dashboard')).toBe(true);
+    expect(canRoleAccessPath('founder', '/advances?tab=issued')).toBe(true);
     expect(canRoleAccessPath('founder', '/attendance')).toBe(true);
   });
 });
