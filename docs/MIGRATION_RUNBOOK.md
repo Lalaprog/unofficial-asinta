@@ -76,7 +76,7 @@ npm run build:apply-sql
 Use `./node_modules/.bin/tsc`, never `npx tsc` — the latter can resolve an
 unrelated `tsc` package from the registry.
 
-Expected: **22 test files, 270 tests, all passing** (plus a clean typecheck and lint).
+Expected: **22 test files, 278 tests, all passing** (plus a clean typecheck and lint).
 
 ### Re-applying the corrections
 
@@ -128,6 +128,14 @@ select
   to_regclass('public.audit_log') is not null as hardening_applied,
   to_regclass('public.vendor_memory') is not null as ai_draft_applied,
   to_regclass('public.advance_requests') is not null as bale_requests_applied,
+  to_regclass('public.user_notifications') is not null as bale_notifications_applied,
+  exists (
+    select 1 from pg_trigger
+    where tgname = 'notify_advance_request_event'
+      and tgrelid = to_regclass('public.advance_requests')
+      and not tgisinternal
+  ) as bale_notification_trigger_applied,
+  to_regprocedure('public.approve_advance_requests(uuid[])') is not null as batch_approval_rpc_applied,
   exists (
     select 1 from information_schema.columns
     where table_schema = 'public' and table_name = 'expenses' and column_name = 'vendor'
@@ -139,6 +147,14 @@ select
     when to_regclass('public.audit_log') is null
       or to_regclass('public.vendor_memory') is null
       or to_regclass('public.advance_requests') is null
+      or to_regclass('public.user_notifications') is null
+      or not exists (
+        select 1 from pg_trigger
+        where tgname = 'notify_advance_request_event'
+          and tgrelid = to_regclass('public.advance_requests')
+          and not tgisinternal
+      )
+      or to_regprocedure('public.approve_advance_requests(uuid[])') is null
       or not exists (select 1 from information_schema.columns
                      where table_schema='public' and table_name='expenses' and column_name='vendor')
       then 'apply supabase/apply/upgrade-hardening.sql'
@@ -163,7 +179,7 @@ applies and one that silently rolls back:
 Result interpretation:
 
 - `base_schema_applied = false` → project is empty → **fresh-install.sql**
-- base applied, any hardening / AI / Bale-request check false → **upgrade-hardening.sql**
+- base applied, any hardening / AI / Bale-request / notification-RPC check false → **upgrade-hardening.sql**
 - everything true → nothing to apply; go to step 5.
 
 ⚠️ **`fresh-install.sql` is not idempotent.** The base schema creates policies
@@ -205,7 +221,7 @@ npm run build:apply-sql
    still commits as a whole. Harmless.)
 5. Expect `Success. No rows returned` — this is DDL, not a query.
 
-The `upgrade-hardening.sql` bundle includes the security and AI hardening plus the Bale request workflow:
+The `upgrade-hardening.sql` bundle includes the security and AI hardening, the Bale request workflow, durable request notifications, and batch approval:
 
 | Section | Effect |
 | --- | --- |
@@ -215,6 +231,7 @@ The `upgrade-hardening.sql` bundle includes the security and AI hardening plus t
 | `20261006000000` §4 | pins `search_path` on `current_user_role`, `is_founder`, `is_supervisor_assigned` |
 | `20261006000001` | `expenses.vendor`, two indexes, `vendor_memory`, `record_vendor_outcome()`, drops the dead `ai_approval_suggestion` column |
 | `20261013000000` | Supervisor-submitted `advance_requests` with RLS, audit logging, Founder-only approval/rejection, and atomic payment-to-issued-advance RPC |
+| `20261013000001` | Recipient-only persistent request notifications, submission/status triggers, and Founder-only same-site batch approval (approval remains separate from payment) |
 
 §3 changes the *grantee* of every existing policy from `PUBLIC` (which includes
 `anon`) to `authenticated`. Signed-in behaviour is unchanged — the `USING`

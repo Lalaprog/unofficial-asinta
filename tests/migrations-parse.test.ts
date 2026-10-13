@@ -257,6 +257,67 @@ describe('Supervisor Bale requests remain separate until payment is confirmed', 
   });
 });
 
+describe('durable Bale request notifications and atomic batch approval', () => {
+  const name = '20261013000001_advance_request_notifications.sql';
+  const sql = readMigration(name);
+
+  it('stores per-recipient request event context and an unread timestamp', () => {
+    expect(sql).toMatch(/create table if not exists public\.user_notifications/i);
+    expect(sql).toMatch(/recipient_id\s+uuid\s+not null\s+references public\.users\(id\)/i);
+    expect(sql).toMatch(/event_type\s+text\s+not null\s+check/i);
+    expect(sql).toMatch(/advance_request_id\s+uuid\s+references public\.advance_requests/i);
+    expect(sql).toMatch(/worker_id\s+uuid\s+references public\.workers/i);
+    expect(sql).toMatch(/project_id\s+uuid\s+references public\.projects/i);
+    expect(sql).toMatch(/requested_amount\s+numeric\(10,\s*2\)\s+not null/i);
+    expect(sql).toMatch(/created_at\s+timestamptz\s+not null\s+default now\(\)/i);
+    expect(sql).toMatch(/read_at\s+timestamptz/i);
+    expect(sql).toMatch(/unique\s*\(recipient_id,\s*advance_request_id,\s*event_type\)/i);
+  });
+
+  it('restricts notification reads and read-state updates to their recipient', () => {
+    expect(sql).toMatch(/alter table public\.user_notifications enable row level security/i);
+    expect(sql).toMatch(/create policy "Recipients can read their own notifications"[\s\S]*?for select to authenticated\s+using \(recipient_id = auth\.uid\(\)\)/i);
+    expect(sql).toMatch(/create policy "Recipients can mark their own notifications read"[\s\S]*?for update to authenticated\s+using \(recipient_id = auth\.uid\(\)\)\s+with check \(recipient_id = auth\.uid\(\) and read_at is not null\)/i);
+    expect(sql).toMatch(/grant select on table public\.user_notifications to authenticated/i);
+    expect(sql).toMatch(/grant update \(read_at\) on table public\.user_notifications to authenticated/i);
+    expect(sql).toMatch(/revoke all privileges on table public\.user_notifications from public, anon, authenticated/i);
+  });
+
+  it('emits lifecycle events and backfills only unresolved requests', () => {
+    expect(sql).toMatch(/create or replace function public\.notify_advance_request_event\(\)[\s\S]*?security definer/i);
+    expect(sql).toMatch(/where app_user\.role = 'founder'/i);
+    expect(sql).toMatch(/when 'approved_pending_payment' then 'advance_request_approved'/i);
+    expect(sql).toMatch(/\) values \(\s*new\.submitted_by,\s*v_event_type/i);
+    expect(sql).toMatch(/'advance_request_rejected'/i);
+    expect(sql).toMatch(/'advance_request_issued'/i);
+    expect(sql).toMatch(/after insert or update of status on public\.advance_requests/i);
+    expect(sql).toMatch(/where request\.status = 'pending_approval'[\s\S]*?app_user\.role = 'founder'/i);
+    expect(sql).toMatch(/where request\.status = 'approved_pending_payment'/i);
+    expect(sql).not.toMatch(/where request\.status = 'rejected'[\s\S]*?insert into public\.user_notifications/i);
+  });
+
+  it('keeps batch approval Founder-only, transactional, same-site, and limited to 50', () => {
+    expect(sql).toMatch(/create or replace function public\.approve_advance_requests\(p_request_ids uuid\[\]\)[\s\S]*?if not public\.is_founder\(\)/i);
+    expect(sql).toMatch(/cardinality\(p_request_ids\) = 0/i);
+    expect(sql).toMatch(/v_requested_count > 50/i);
+    expect(sql).toMatch(/count\(distinct selected\.request_id\)/i);
+    expect(sql).toMatch(/order by request\.id\s+for update/i);
+    expect(sql).toMatch(/count\(distinct request\.project_id\)/i);
+    expect(sql).toMatch(/if v_project_count <> 1/i);
+    expect(sql).toMatch(/v_found_count <> v_requested_count/i);
+    expect(sql).toMatch(/request\.status <> 'pending_approval'/i);
+    expect(sql).toMatch(/set status = 'approved_pending_payment'[\s\S]*?approved_by = auth\.uid\(\)/i);
+    expect(sql).toMatch(/revoke all on function public\.approve_advance_requests\(uuid\[\]\) from public/i);
+    expect(sql).toMatch(/grant execute on function public\.approve_advance_requests\(uuid\[\]\) to authenticated/i);
+    expect(sql).not.toMatch(/insert into public\.advances/i);
+  });
+
+  it('includes this follow-up in the upgrade bundle source manifest', () => {
+    const upgrade = readFileSync(join(APPLY_DIR, 'upgrade-hardening.sql'), 'utf8');
+    expect(bundleSources(upgrade).map((source) => source.name)).toContain(name);
+  });
+});
+
 describe('every policy names its grantee', () => {
   it('has no policy anywhere that resolves to PUBLIC', async () => {
     const offenders: string[] = [];

@@ -10,6 +10,7 @@ import {
   Client,
   Advance,
   AdvanceRequest,
+  UserNotification,
   Attendance,
   Payroll,
   Tool,
@@ -33,6 +34,7 @@ interface DataStoreContextType {
   clients: Client[];
   advances: Advance[];
   advanceRequests: AdvanceRequest[];
+  userNotifications: UserNotification[];
   attendance: Attendance[];
   payroll: Payroll[];
   tools: Tool[];
@@ -84,7 +86,9 @@ interface DataStoreContextType {
     requested_amount: number;
   }) => Promise<AdvanceRequest | null>;
   reviewAdvanceRequest: (id: string, decision: 'approve' | 'reject') => Promise<boolean>;
+  approveAdvanceRequests: (ids: string[]) => Promise<boolean>;
   issueAdvanceRequest: (id: string) => Promise<boolean>;
+  markUserNotificationsRead: (ids: string[]) => Promise<boolean>;
   recordAdvanceDeduction: (id: string, deductionAmount: number) => Promise<boolean>;
   updateAdvanceStatus: (id: string, status: Advance['status']) => Promise<boolean>;
 
@@ -202,6 +206,11 @@ const mapAdvanceRequest = (row: any): AdvanceRequest => ({
   requested_amount: toNumber(row.requested_amount),
 });
 
+const mapUserNotification = (row: any): UserNotification => ({
+  ...row,
+  requested_amount: toNumber(row.requested_amount),
+});
+
 const mapAttendance = (row: any): Attendance => ({
   ...row,
   hours_worked: toNumber(row.hours_worked),
@@ -240,6 +249,7 @@ export const DataStoreProvider: React.FC<{ children: React.ReactNode }> = ({ chi
   const [clients, setClients] = useState<Client[]>([]);
   const [advances, setAdvances] = useState<Advance[]>([]);
   const [advanceRequests, setAdvanceRequests] = useState<AdvanceRequest[]>([]);
+  const [userNotifications, setUserNotifications] = useState<UserNotification[]>([]);
   const [attendance, setAttendance] = useState<Attendance[]>([]);
   const [payroll, setPayroll] = useState<Payroll[]>([]);
   const [tools, setTools] = useState<Tool[]>([]);
@@ -276,6 +286,7 @@ export const DataStoreProvider: React.FC<{ children: React.ReactNode }> = ({ chi
           supabase.from('sms_logs').select('*').order('sent_at', { ascending: false }),
           supabase.from('project_supervisors').select('*'),
           supabase.from('users').select('*').order('created_at', { ascending: true }),
+          supabase.from('user_notifications').select('*').order('created_at', { ascending: false }),
         ]);
 
         const firstError = results.find((r) => r.error)?.error as PostgrestError | undefined;
@@ -304,6 +315,7 @@ export const DataStoreProvider: React.FC<{ children: React.ReactNode }> = ({ chi
         const nextSmsLogs = results[10].data ?? [];
         const nextProjectSupervisors = results[11].data ?? [];
         const nextUsers = results[12].data ?? [];
+        const nextUserNotifications = (results[13].data ?? []).map(mapUserNotification);
 
         setProjects(nextProjects);
         setInvoices(nextInvoices);
@@ -312,6 +324,7 @@ export const DataStoreProvider: React.FC<{ children: React.ReactNode }> = ({ chi
         setClients(nextClients);
         setAdvances(nextAdvances);
         setAdvanceRequests(nextAdvanceRequests);
+        setUserNotifications(nextUserNotifications);
         setAttendance(nextAttendance);
         setPayroll(nextPayroll);
         setTools(nextTools);
@@ -332,6 +345,7 @@ export const DataStoreProvider: React.FC<{ children: React.ReactNode }> = ({ chi
                 clients: nextClients,
                 advances: nextAdvances,
                 advanceRequests: nextAdvanceRequests,
+                userNotifications: nextUserNotifications,
                 attendance: nextAttendance,
                 payroll: nextPayroll,
                 tools: nextTools,
@@ -368,6 +382,7 @@ export const DataStoreProvider: React.FC<{ children: React.ReactNode }> = ({ chi
     setClients([]);
     setAdvances([]);
     setAdvanceRequests([]);
+    setUserNotifications([]);
     setAttendance([]);
     setPayroll([]);
     setTools([]);
@@ -400,6 +415,7 @@ export const DataStoreProvider: React.FC<{ children: React.ReactNode }> = ({ chi
             setClients(cached.clients ?? []);
             setAdvances(cached.advances ?? []);
             setAdvanceRequests(cached.advanceRequests ?? []);
+            setUserNotifications(cached.userNotifications ?? []);
             setAttendance(cached.attendance ?? []);
             setPayroll(cached.payroll ?? []);
             setTools(cached.tools ?? []);
@@ -871,6 +887,64 @@ export const DataStoreProvider: React.FC<{ children: React.ReactNode }> = ({ chi
       decision === 'approve'
         ? 'Request approved. It is now waiting to be paid.'
         : 'Bale request rejected.'
+    );
+    return true;
+  };
+
+  const approveAdvanceRequests = async (ids: string[]): Promise<boolean> => {
+    const requestIds = Array.from(new Set(ids));
+    if (requestIds.length === 0 || requestIds.length !== ids.length) {
+      showToast('error', 'Select a unique set of requests before approving.');
+      return false;
+    }
+
+    const rows = await runMutation<unknown[]>('Approve selected Bale requests', (db) =>
+      db.rpc('approve_advance_requests', { p_request_ids: requestIds })
+    );
+    if (!rows) return false;
+
+    const mappedRows = rows.map(mapAdvanceRequest);
+    if (mappedRows.length !== requestIds.length) {
+      showToast('error', 'The batch could not be fully confirmed. Refresh the request list and try again.');
+      await refresh();
+      return false;
+    }
+
+    const updatedById = new Map(mappedRows.map((request) => [request.id, request]));
+    setAdvanceRequests((prev) =>
+      prev.map((request) => updatedById.get(request.id) ?? request)
+    );
+    showToast(
+      'success',
+      `${mappedRows.length} request${mappedRows.length === 1 ? '' : 's'} approved. Payment is still awaiting confirmation.`
+    );
+    return true;
+  };
+
+  const markUserNotificationsRead = async (ids: string[]): Promise<boolean> => {
+    const requestedIds = Array.from(new Set(ids)).filter((id) =>
+      userNotifications.some((notification) => notification.id === id && !notification.read_at)
+    );
+    if (requestedIds.length === 0) return true;
+
+    const rows = await runMutation<any[]>('Mark notifications as read', (db) =>
+      db
+        .from('user_notifications')
+        .update({ read_at: new Date().toISOString() })
+        .in('id', requestedIds)
+        .select('*')
+    );
+    if (!rows) return false;
+
+    const mappedRows = rows.map(mapUserNotification);
+    if (mappedRows.length !== requestedIds.length) {
+      showToast('error', 'Some alerts could not be marked read. Please refresh and try again.');
+      return false;
+    }
+
+    const updatedById = new Map(mappedRows.map((notification) => [notification.id, notification]));
+    setUserNotifications((previous) =>
+      previous.map((notification) => updatedById.get(notification.id) ?? notification)
     );
     return true;
   };
@@ -1465,6 +1539,7 @@ export const DataStoreProvider: React.FC<{ children: React.ReactNode }> = ({ chi
         clients,
         advances,
         advanceRequests,
+        userNotifications,
         attendance,
         payroll,
         tools,
@@ -1496,7 +1571,9 @@ export const DataStoreProvider: React.FC<{ children: React.ReactNode }> = ({ chi
         createAdvance,
         createAdvanceRequest,
         reviewAdvanceRequest,
+        approveAdvanceRequests,
         issueAdvanceRequest,
+        markUserNotificationsRead,
         recordAdvanceDeduction,
         updateAdvanceStatus,
         recordAttendanceBatch,

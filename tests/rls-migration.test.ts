@@ -109,6 +109,28 @@ describe('row level security coverage', () => {
   });
 });
 
+describe('user notifications are private to each recipient', () => {
+  const sql = readFileSync(
+    join(MIGRATIONS_DIR, '20261013000001_advance_request_notifications.sql'),
+    'utf8'
+  );
+
+  it('allows only recipient-scoped reads and read-state updates', () => {
+    const policies = [...sql.matchAll(/create policy "([^"]+)"\s+on public\.user_notifications for (select|update|insert|delete|all) to authenticated/gi)];
+    expect(policies.map((match) => match[2].toLowerCase()).sort()).toEqual(['select', 'update']);
+    expect(sql).toMatch(/using \(recipient_id = auth\.uid\(\)\)/i);
+    expect(sql).toMatch(/with check \(recipient_id = auth\.uid\(\) and read_at is not null\)/i);
+    expect(sql).toMatch(/grant update \(read_at\) on table public\.user_notifications to authenticated/i);
+    expect(sql).not.toMatch(/grant update on table public\.user_notifications to authenticated/i);
+  });
+
+  it('creates notifications through a trusted trigger, not client inserts', () => {
+    expect(sql).toMatch(/create trigger notify_advance_request_event\s+after insert or update of status/i);
+    expect(sql).toMatch(/create or replace function public\.notify_advance_request_event\(\)[\s\S]*?security definer/i);
+    expect(sql).not.toMatch(/grant insert on table public\.user_notifications/i);
+  });
+});
+
 describe('audit log is append-only', () => {
   const sql = allMigrationSql();
 
