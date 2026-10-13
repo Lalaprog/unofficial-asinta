@@ -39,6 +39,7 @@ import { formatPesoCompact } from '@/lib/email/format';
 
 interface NavbarProps {
   onToggleMobileMenu?: () => void;
+  showDesktopNavigation?: boolean;
 }
 
 interface ActionNotification {
@@ -276,7 +277,7 @@ const SUPERVISOR_TOP_LINKS = [
   { label: 'Assigned Projects', href: '/projects', tab: null, icon: FolderKanban },
 ];
 
-export const Navbar: React.FC<NavbarProps> = () => {
+export const Navbar: React.FC<NavbarProps> = ({ showDesktopNavigation = true }) => {
   const { user, logout, isFounder, isSupervisor } = useAuth();
   const {
     invoices,
@@ -759,7 +760,7 @@ export const Navbar: React.FC<NavbarProps> = () => {
             <div className="h-full w-1/2 bg-[#1B4978] animate-[asintaProgress_0.9s_ease-in-out_infinite]" />
           </div>
         )}
-        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 h-16 flex items-center justify-between gap-4">
+        <div className="w-full px-4 sm:px-6 lg:px-8 h-16 flex items-center justify-between gap-4">
           {/* Left: Official BALE System Mark (Asinta Corp. logo lives in the global Trademark Footer) */}
           <Link
             href={isFounder ? '/dashboard' : '/attendance'}
@@ -773,7 +774,8 @@ export const Navbar: React.FC<NavbarProps> = () => {
           </Link>
 
           {/* Center: Desktop Top Navigation (Dropdown Groups for Founder, Direct Tabs for Supervisor) */}
-          <nav className="hidden lg:flex items-center space-x-1.5" aria-label="Primary Navigation">
+          {showDesktopNavigation && (
+            <nav className="hidden lg:flex items-center space-x-1.5" aria-label="Primary Navigation">
             {isFounder ? (
               <>
                 <Link
@@ -893,7 +895,8 @@ export const Navbar: React.FC<NavbarProps> = () => {
                 );
               })
             )}
-          </nav>
+            </nav>
+          )}
 
           {/* Right: Notification Bell & Role Icon Account Menu */}
           <div className="flex items-center space-x-2 shrink-0">

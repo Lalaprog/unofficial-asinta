@@ -2,7 +2,7 @@
 
 import React, { useEffect, useState } from 'react';
 import Link from 'next/link';
-import { usePathname } from 'next/navigation';
+import { usePathname, useSearchParams } from 'next/navigation';
 import { useAuth } from '@/lib/auth/authContext';
 import {
   LayoutDashboard,
@@ -92,6 +92,7 @@ export const SUPERVISOR_NAV_GROUPS: NavGroup[] = [
 
 export const Sidebar: React.FC = () => {
   const pathname = usePathname();
+  const searchParams = useSearchParams();
   const { isFounder } = useAuth();
   const [collapsed, setCollapsed] = useState(false);
 
@@ -119,9 +120,9 @@ export const Sidebar: React.FC = () => {
 
   return (
     <aside
-      className={`hidden lg:flex flex-col ${
+      className={`sticky top-16 hidden lg:flex flex-col ${
         collapsed ? 'w-[68px]' : 'w-60'
-      } min-h-[calc(100vh-4rem)] bg-white border-r border-surface-border/80 p-3 select-none shrink-0 transition-all duration-200`}
+      } h-[calc(100dvh-7rem)] self-start bg-white border-r border-surface-border/80 p-3 select-none shrink-0 transition-all duration-200`}
     >
       {/* Collapse / Expand Rail Header */}
       <div
@@ -137,9 +138,10 @@ export const Sidebar: React.FC = () => {
         <button
           type="button"
           onClick={toggleCollapsed}
-          className="p-1.5 rounded-lg text-ink-secondary hover:text-navy hover:bg-surface-inset transition-colors"
+          className="inline-flex min-h-11 min-w-11 items-center justify-center rounded-lg text-ink-secondary hover:text-navy hover:bg-surface-inset focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand/25 transition-colors"
           title={collapsed ? 'Expand sidebar' : 'Collapse sidebar'}
           aria-label={collapsed ? 'Expand sidebar' : 'Collapse sidebar'}
+          aria-expanded={!collapsed}
         >
           {collapsed ? (
             <PanelLeftOpen className="w-4 h-4" />
@@ -161,12 +163,17 @@ export const Sidebar: React.FC = () => {
             <nav className="space-y-0.5">
               {group.items.map((item) => {
                 const Icon = item.icon;
+                const [hrefPath, queryString] = item.href.split('?');
+                const targetTab = new URLSearchParams(queryString || '').get('tab');
+                const currentTab = searchParams?.get('tab') || 'terminal';
                 const isActive =
-                  pathname === item.href ||
-                  (item.href !== '/dashboard' &&
-                    item.href !== '/attendance' &&
-                    !item.href.includes('?') &&
-                    pathname.startsWith(item.href));
+                  (pathname === hrefPath &&
+                    (hrefPath !== '/attendance' ||
+                      (targetTab ? currentTab === targetTab : isFounder || currentTab === 'terminal'))) ||
+                  (hrefPath !== '/dashboard' &&
+                    hrefPath !== '/attendance' &&
+                    !targetTab &&
+                    Boolean(pathname?.startsWith(`${hrefPath}/`)));
 
                 return (
                   <Link
