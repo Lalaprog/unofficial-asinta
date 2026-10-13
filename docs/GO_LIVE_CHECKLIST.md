@@ -86,7 +86,7 @@ If `communications applied` reads `false`, apply
 ## Step 3 — Apply the hardening bundle
 
 Apply **`upgrade-hardening.sql`**. It is wrapped in `begin; … commit;` and
-includes the security/AI hardening plus the Founder-reviewed Bale request workflow:
+includes the security/AI hardening, Founder-reviewed Bale request workflow, durable notifications, and site-scoped batch approval:
 
 | Section | Effect |
 | --- | --- |
@@ -96,6 +96,7 @@ includes the security/AI hardening plus the Founder-reviewed Bale request workfl
 | `20261006000000` §4 | pins `search_path` on `current_user_role`, `is_founder`, `is_supervisor_assigned` |
 | `20261006000001` | `expenses.vendor`, two indexes, `vendor_memory`, `record_vendor_outcome()`, drops the dead `ai_approval_suggestion` column |
 | `20261013000000` | Supervisor Bale requests, RLS + audit trail, Founder approve/reject, and atomic payment-to-issued-advance RPC |
+| `20261013000001` | Recipient-only persistent request notifications, status-event triggers, and Founder-only same-site batch approval (approval does not issue payment) |
 
 Expect `Success. No rows returned` — this is DDL, not a query.
 
@@ -111,7 +112,7 @@ test `SECURITY.md` §10 is still waiting for.
 ## Step 4 — Verify
 
 Run **`verify-live.sql`** (read-only). **Every row must say `PASS`.** It checks
-18 base tables exist, RLS is on everywhere, no policy is reachable by `anon`,
+19 tables exist, including durable request notifications; RLS is on everywhere, no policy is reachable by `anon`,
 no `USING (true)`, `audit_log` cannot be rewritten, the helpers pin
 `search_path`, the receipts bucket is private, no `receipt_url` still holds an
 `http(s)://` value, and there is at least one Founder profile.
@@ -199,7 +200,7 @@ the file. It reads policy grantees from the parse tree rather than from a
 regex, so an unscoped policy shows up as `ROLESPEC_PUBLIC` instead of matching
 a neighbouring line.
 
-Current suite: **22 test files, 270 tests, all passing** (typecheck, lint and
+Current suite: **22 test files, 278 tests, all passing** (typecheck, lint and
 `next build` too). Both defects were re-introduced into a scratch copy during
 development and each one turned the relevant test red, so these are not no-op
 assertions.

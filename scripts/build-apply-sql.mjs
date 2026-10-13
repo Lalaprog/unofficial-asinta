@@ -43,16 +43,18 @@ const BUNDLES = [
   },
   {
     file: 'upgrade-hardening.sql',
-    title: 'BALE — security, AI & advance-request updates (already-migrated project)',
+    title: 'BALE — security, AI & advance-workflow updates (already-migrated project)',
     description:
       'The 2026-10-06 security/AI hardening plus the 2026-10-13 Bale request\n' +
-      'workflow: private receipts + audit log, vendor memory, and Founder-reviewed\n' +
-      'advance requests kept separate from issued advances. Requires the base\n' +
-      'BALE schema and communications migration to already be present.',
+      'workflow and follow-up: private receipts + audit log, vendor memory,\n' +
+      'Founder-reviewed advances, durable per-user notifications, and atomic\n' +
+      'same-site batch approval. Requires the base BALE schema and communications\n' +
+      'migration to already be present.',
     include: (name) =>
       name === '20261006000000_security_hardening.sql' ||
       name === '20261006000001_ai_draft_support.sql' ||
-      name === '20261013000000_advance_requests.sql',
+      name === '20261013000000_advance_requests.sql' ||
+      name === '20261013000001_advance_request_notifications.sql',
   },
 ];
 

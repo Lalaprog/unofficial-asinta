@@ -53,6 +53,7 @@ interface ActionNotification {
   actionable?: boolean;
   priority?: number;
   dismissOnClick?: boolean;
+  notificationIds?: string[];
 }
 
 interface NavDropdownItem {
@@ -72,7 +73,7 @@ interface NotificationCardProps {
   item: ActionNotification;
   compact?: boolean;
   onOpen: (item: ActionNotification) => void;
-  onDismiss: (signature: string) => void;
+  onDismiss: (item: ActionNotification) => void;
 }
 
 function getNotificationTypeLabel(variant: ActionNotification['variant']): string {
@@ -97,7 +98,7 @@ const NotificationCard: React.FC<NotificationCardProps> = ({
           </Badge>
           <button
             type="button"
-            onClick={() => onDismiss(item.signature)}
+            onClick={() => onDismiss(item)}
             className="inline-flex min-h-11 min-w-11 shrink-0 items-center justify-center rounded-full text-ink-muted transition-colors hover:bg-surface-inset hover:text-navy focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand focus-visible:ring-offset-2"
             title="Dismiss notification"
             aria-label={`Dismiss ${item.title}`}
@@ -146,7 +147,7 @@ const NotificationCard: React.FC<NotificationCardProps> = ({
           </Badge>
           <button
             type="button"
-            onClick={() => onDismiss(item.signature)}
+            onClick={() => onDismiss(item)}
             className="inline-flex min-h-11 min-w-11 items-center justify-center rounded-lg border border-transparent text-ink-muted transition-colors hover:bg-white hover:text-navy focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand/25"
             title="Dismiss notification"
             aria-label={`Dismiss ${item.title}`}
@@ -286,7 +287,9 @@ export const Navbar: React.FC<NavbarProps> = ({ showDesktopNavigation = true }) 
     projects,
     workers,
     users,
+    userNotifications,
     getProjectsForSupervisor,
+    markUserNotificationsRead,
     refresh,
   } = useDataStore();
   const router = useRouter();
@@ -404,9 +407,13 @@ export const Navbar: React.FC<NavbarProps> = ({ showDesktopNavigation = true }) 
     }
   };
 
-  const dismissNotification = (signature: string) => {
-    if (!dismissedSignatures.includes(signature)) {
-      persistDismissed([...dismissedSignatures, signature]);
+  const dismissNotification = (item: ActionNotification) => {
+    if (item.notificationIds?.length) {
+      void markUserNotificationsRead(item.notificationIds);
+      return;
+    }
+    if (!dismissedSignatures.includes(item.signature)) {
+      persistDismissed([...dismissedSignatures, item.signature]);
     }
   };
 
@@ -422,8 +429,11 @@ export const Navbar: React.FC<NavbarProps> = ({ showDesktopNavigation = true }) 
   };
 
   const handleNotificationClick = (item: ActionNotification) => {
+    if (item.notificationIds?.length) {
+      void markUserNotificationsRead(item.notificationIds);
+    }
     if (item.dismissOnClick) {
-      dismissNotification(item.signature);
+      dismissNotification(item);
     }
     setShowNotifications(false);
     const [basePath, query] = item.href.split('?');
@@ -494,6 +504,46 @@ export const Navbar: React.FC<NavbarProps> = ({ showDesktopNavigation = true }) 
   const allNotifications: ActionNotification[] = [];
 
   if (isFounder) {
+    const pendingRequestsBySite = new Map<string, typeof userNotifications>();
+    userNotifications
+      .filter(
+        (notification) =>
+          notification.event_type === 'advance_request_submitted' &&
+          !notification.read_at &&
+          Boolean(notification.advance_request_id)
+      )
+      .forEach((notification) => {
+        const siteKey = notification.project_id || 'site-unknown';
+        const siteNotifications = pendingRequestsBySite.get(siteKey) ?? [];
+        siteNotifications.push(notification);
+        pendingRequestsBySite.set(siteKey, siteNotifications);
+      });
+
+    pendingRequestsBySite.forEach((siteNotifications, siteKey) => {
+      const siteId = siteKey === 'site-unknown' ? null : siteKey;
+      const siteName = projects.find((project) => project.id === siteId)?.name || 'Site';
+      const requestCount = siteNotifications.length;
+      const requestedTotal = siteNotifications.reduce(
+        (sum, notification) => sum + notification.requested_amount,
+        0
+      );
+      const eventIds = siteNotifications.map((notification) => notification.id).sort();
+      allNotifications.push({
+        id: `founder-bale-requests-${siteKey}`,
+        signature: `founder-bale-requests:${eventIds.join('|')}`,
+        title: requestCount === 1 ? `New Bale request · ${siteName}` : `${requestCount} new Bale requests · ${siteName}`,
+        description: `${requestCount} request${requestCount === 1 ? '' : 's'} totaling ${formatPHP(requestedTotal)} are awaiting review at this site.`,
+        actionLabel: 'Review site requests',
+        href: siteId
+          ? `/advances?tab=requests&site=${encodeURIComponent(siteId)}`
+          : '/advances?tab=requests',
+        variant: 'warning',
+        actionable: true,
+        priority: 1,
+        notificationIds: eventIds,
+      });
+    });
+
     const unverifiedSelfLogs = attendance.filter((a) => {
       if (a.is_founder_override) return false;
       if (a.status !== 'present' && a.status !== 'half_day') return false;
@@ -589,6 +639,59 @@ export const Navbar: React.FC<NavbarProps> = ({ showDesktopNavigation = true }) 
     });
 
   } else if (isSupervisor && user) {
+    userNotifications
+      .filter((notification) => notification.event_type !== 'advance_request_submitted' && !notification.read_at)
+      .forEach((notification) => {
+        const workerName = workers.find((worker) => worker.id === notification.worker_id)?.name || 'Worker';
+        const siteName = projects.find((project) => project.id === notification.project_id)?.name || 'your assigned site';
+        const eventCopy = {
+          advance_request_approved: {
+            title: 'Bale request approved',
+            message: 'was approved and is waiting for payment confirmation.',
+            actionLabel: 'View approved request',
+            variant: 'success' as const,
+          },
+          advance_request_rejected: {
+            title: 'Bale request not approved',
+            message: 'was not approved by the Founder.',
+            actionLabel: 'View request',
+            variant: 'danger' as const,
+          },
+          advance_request_issued: {
+            title: 'Bale payment confirmed',
+            message: 'was paid and recorded in Issued Advances.',
+            actionLabel: 'View issued request',
+            variant: 'info' as const,
+          },
+          advance_request_submitted: {
+            title: 'Bale request update',
+            message: 'has an update.',
+            actionLabel: 'View request',
+            variant: 'info' as const,
+          },
+        }[notification.event_type];
+        const requestQuery = notification.advance_request_id
+          ? `&request=${encodeURIComponent(notification.advance_request_id)}`
+          : '';
+        const createdDate = new Date(notification.created_at).toLocaleDateString('en-PH', {
+          month: 'short',
+          day: 'numeric',
+        });
+
+        allNotifications.push({
+          id: `supervisor-bale-${notification.id}`,
+          signature: `supervisor-bale:${notification.id}`,
+          title: eventCopy.title,
+          description: `${workerName}’s request for ${formatPHP(notification.requested_amount)} at ${siteName} ${eventCopy.message} ${createdDate}.`,
+          actionLabel: eventCopy.actionLabel,
+          href: `/advances?tab=requests${requestQuery}`,
+          variant: eventCopy.variant,
+          actionable: true,
+          priority: 1,
+          notificationIds: [notification.id],
+        });
+      });
+
     const assignedSites = getProjectsForSupervisor(user.id);
     const assignedSiteIds = new Set(assignedSites.map((p) => p.id));
     const loggedSiteIdsToday = new Set(
@@ -663,9 +766,17 @@ export const Navbar: React.FC<NavbarProps> = ({ showDesktopNavigation = true }) 
   const dismissedCount = allNotifications.length - visibleNotifications.length;
 
   const handleClearAll = () => {
-    const merged = Array.from(
-      new Set([...dismissedSignatures, ...allNotifications.map((n) => n.signature)])
-    );
+    const unreadNotificationIds = userNotifications
+      .filter((notification) => !notification.read_at)
+      .map((notification) => notification.id);
+    if (unreadNotificationIds.length > 0) {
+      void markUserNotificationsRead(unreadNotificationIds);
+    }
+
+    const localSignatures = allNotifications
+      .filter((notification) => !notification.notificationIds?.length)
+      .map((notification) => notification.signature);
+    const merged = Array.from(new Set([...dismissedSignatures, ...localSignatures]));
     persistDismissed(merged);
   };
 

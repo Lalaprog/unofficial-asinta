@@ -11,7 +11,7 @@
 -- WHAT YOU GET BACK — one grid, one row per item:
 --
 --   · what is already applied      (base schema / communications / hardening /
---                                   AI-draft support / Bale requests)
+--                                   AI-draft support / Bale requests / notifications)
 --   · the two ORDERING DEPENDENCIES, spelled out — getting either wrong makes
 --     the bundle abort and roll back, which is exactly the failure that looked
 --     like two unrelated bugs last time
@@ -96,8 +96,11 @@ declare
   v_hard      boolean;
   v_ai        boolean;
   v_vendor    boolean;
-  v_requests  boolean;
-  v_bucket    text;
+  v_requests       boolean;
+  v_notifications       boolean;
+  v_notification_trigger boolean;
+  v_batch_approval      boolean;
+  v_bucket              text;
   v_demo_auth bigint := 0;
   v_demo_prof bigint := 0;
   v_demo_data bigint := 0;
@@ -110,6 +113,14 @@ begin
   v_hard    := to_regclass('public.audit_log')           is not null;
   v_ai      := to_regclass('public.vendor_memory')       is not null;
   v_requests := to_regclass('public.advance_requests')   is not null;
+  v_notifications := to_regclass('public.user_notifications') is not null;
+  v_notification_trigger := exists (
+    select 1 from pg_trigger
+    where tgname = 'notify_advance_request_event'
+      and tgrelid = to_regclass('public.advance_requests')
+      and not tgisinternal
+  );
+  v_batch_approval := to_regprocedure('public.approve_advance_requests(uuid[])') is not null;
 
   select exists (
     select 1 from information_schema.columns
@@ -167,7 +178,8 @@ begin
   elsif not v_comm then
     v_next := '1) apply supabase/migrations/20260929000000_communications.sql, '
            || 'THEN 2) supabase/apply/upgrade-hardening.sql';
-  elsif not v_hard or not v_ai or not v_vendor or not v_requests then
+  elsif not v_hard or not v_ai or not v_vendor or not v_requests
+     or not v_notifications or not v_notification_trigger or not v_batch_approval then
     v_next := 'apply supabase/apply/upgrade-hardening.sql';
   else
     v_next := 'nothing to apply — run supabase/apply/verify-live.sql';
@@ -190,21 +202,24 @@ begin
     (5,  'expenses.vendor column',     v_vendor::text,    '20261006000001 — needed by vendor memory & duplicate detection'),
     (6,  'receipts bucket',            v_bucket,          'must read "private" after hardening'),
     (7,  'Bale request workflow',      v_requests::text,  '20261013000000 — public.advance_requests exists'),
+    (8,  'Bale notifications & batch approval',
+         (v_notifications and v_notification_trigger and v_batch_approval)::text,
+         '20261013000001 — notification table, request-event trigger, and batch RPC exist'),
 
-    (8,  'DEMO SEED: auth accounts',   v_demo_auth::text, 'accounts created by 20260913000002 (4 = all of them)'),
-    (9,  'DEMO SEED: profiles',        v_demo_prof::text, 'public.users rows for those accounts'),
-    (10, 'DEMO SEED: data rows',       v_demo_data::text, 'seeded clients/projects/workers/invoices/… (57 = all of them)'),
-    (11, 'DEMO SEED: exposure',        case when v_demo_auth > 0 then 'LIVE' else 'none' end, v_seed_risk),
+    (9,  'DEMO SEED: auth accounts',   v_demo_auth::text, 'accounts created by 20260913000002 (4 = all of them)'),
+    (10, 'DEMO SEED: profiles',        v_demo_prof::text, 'public.users rows for those accounts'),
+    (11, 'DEMO SEED: data rows',       v_demo_data::text, 'seeded clients/projects/workers/invoices/… (57 = all of them)'),
+    (12, 'DEMO SEED: exposure',        case when v_demo_auth > 0 then 'LIVE' else 'none' end, v_seed_risk),
 
-    (12, '>>> NEXT STEP',              v_next,            'do this one thing, then re-run this file'),
+    (13, '>>> NEXT STEP',              v_next,            'do this one thing, then re-run this file'),
 
-    (13, '>>> ORDER 1 (blocking)',     case when v_comm then 'satisfied' else 'NOT SATISFIED' end,
+    (14, '>>> ORDER 1 (blocking)',     case when v_comm then 'satisfied' else 'NOT SATISFIED' end,
          '20260929000000_communications.sql MUST run BEFORE supabase/apply/upgrade-hardening.sql. '
       || 'The hardening migration re-scopes policies on email_templates, email_logs and '
       || 'reminder_dispatches — three tables only that migration creates. If they are missing the '
       || 'bundle dies on: relation "public.email_templates" does not exist.'),
 
-    (14, '>>> ORDER 2 (blocking)',     case when v_base then 'upgrade-hardening' else 'fresh-install' end,
+    (15, '>>> ORDER 2 (blocking)',     case when v_base then 'upgrade-hardening' else 'fresh-install' end,
          'The two bundles are MUTUALLY EXCLUSIVE — never run both. fresh-install.sql is for an EMPTY '
       || 'project and is NOT idempotent (the base schema uses plain CREATE POLICY, so a second run '
       || 'fails on "policy already exists"). upgrade-hardening.sql REQUIRES the base schema to be '

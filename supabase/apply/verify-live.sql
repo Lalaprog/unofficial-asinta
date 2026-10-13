@@ -16,7 +16,8 @@ expected_tables(name) as (
   values ('users'), ('workers'), ('clients'), ('projects'), ('project_supervisors'),
          ('invoices'), ('expenses'), ('advances'), ('attendance'), ('payroll'),
          ('tools'), ('sms_logs'), ('email_logs'), ('email_templates'),
-         ('reminder_dispatches'), ('audit_log'), ('vendor_memory'), ('advance_requests')
+         ('reminder_dispatches'), ('audit_log'), ('vendor_memory'), ('advance_requests'),
+         ('user_notifications')
 ),
 missing_tables as (
   select e.name
@@ -78,19 +79,66 @@ url_style_receipts as (
 founder_profiles as (
   select count(*) as n from public.users where role = 'founder'
 ),
-orphan_profiles as (
+  orphan_profiles as (
   select count(*) as n
   from public.users u
   where not exists (select 1 from auth.users a where a.id = u.id)
+),
+advance_notification_objects as (
+  select
+    to_regclass('public.user_notifications') is not null as notification_table_present,
+    to_regprocedure('public.approve_advance_requests(uuid[])') is not null as batch_rpc_present,
+    exists (
+      select 1
+      from pg_trigger
+      where tgname = 'notify_advance_request_event'
+        and tgrelid = to_regclass('public.advance_requests')
+        and not tgisinternal
+    ) as event_trigger_present
+),
+notification_policy_check as (
+  select
+    count(*) as policy_count,
+    count(*) filter (
+      where roles::text not like '%authenticated%'
+        or cmd not in ('SELECT', 'UPDATE')
+        or (cmd = 'SELECT' and coalesce(qual, '') !~* 'recipient_id\s*=\s*auth\.uid\(\)')
+        or (cmd = 'UPDATE' and (
+          coalesce(qual, '') !~* 'recipient_id\s*=\s*auth\.uid\(\)'
+          or coalesce(with_check, '') !~* 'recipient_id\s*=\s*auth\.uid\(\)'
+          or coalesce(with_check, '') !~* 'read_at\s+is\s+not\s+null'
+        ))
+    ) as unsafe_count
+  from pg_policies
+  where schemaname = 'public' and tablename = 'user_notifications'
 )
 
 -- ── results: one row per check ────────────────────────────────────────────
 select 'base tables present' as check_name,
-       '18 tables' as expected,
+       '19 tables' as expected,
        case when (select count(*) from missing_tables) = 0
-            then 'all 18 present'
+            then 'all 19 present'
             else 'MISSING: ' || (select string_agg(name, ', ') from missing_tables) end as actual,
        case when (select count(*) from missing_tables) = 0 then 'PASS' else 'FAIL' end as status
+
+union all
+select 'Bale notification trigger and batch RPC installed',
+       'user_notifications + notification trigger + approve_advance_requests(uuid[])',
+       case when (select notification_table_present and batch_rpc_present and event_trigger_present
+                  from advance_notification_objects)
+            then 'notification table, event trigger, and RPC present'
+            else 'MISSING — apply supabase/apply/upgrade-hardening.sql' end,
+       case when (select notification_table_present and batch_rpc_present and event_trigger_present
+                  from advance_notification_objects) then 'PASS' else 'FAIL' end
+
+union all
+select 'Bale notification policies are recipient-only',
+       '2 authenticated policies: recipient SELECT and recipient read_at UPDATE',
+       case when (select policy_count = 2 and unsafe_count = 0 from notification_policy_check)
+            then 'exactly the two recipient-scoped policies are present'
+            else 'unsafe or missing policy — inspect public.user_notifications RLS' end,
+       case when (select policy_count = 2 and unsafe_count = 0 from notification_policy_check)
+            then 'PASS' else 'FAIL' end
 
 union all
 select 'RLS enabled on every public table',

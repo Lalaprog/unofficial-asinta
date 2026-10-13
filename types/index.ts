@@ -126,6 +126,24 @@ export interface AdvanceRequest {
   updated_at: string;
 }
 
+export type AdvanceRequestNotificationType =
+  | 'advance_request_submitted'
+  | 'advance_request_approved'
+  | 'advance_request_rejected'
+  | 'advance_request_issued';
+
+export interface UserNotification {
+  id: string;
+  recipient_id: string;
+  event_type: AdvanceRequestNotificationType;
+  advance_request_id: string | null;
+  worker_id: string | null;
+  project_id: string | null;
+  requested_amount: number;
+  created_at: string;
+  read_at: string | null;
+}
+
 export interface Advance {
   id: string;
   worker_id: string;
