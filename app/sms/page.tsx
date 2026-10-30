@@ -5,6 +5,7 @@ import { AppShell } from '@/components/layout/AppShell';
 import { useDataStore } from '@/lib/data/store';
 import { Send, Search, CheckCircle2, AlertCircle } from 'lucide-react';
 import { Button } from '@/components/ui/Button';
+import { FilterSummary } from '@/components/ui/FilterSummary';
 import { Badge } from '@/components/ui/Badge';
 import { Input, Textarea } from '@/components/ui/Input';
 import { Select } from '@/components/ui/Select';
@@ -239,12 +240,15 @@ export default function SMSPage() {
         {/* Search */}
         <div className="max-w-md">
           <Input
+            label="Search messages"
             placeholder="Search recipient, mobile number, or message..."
             value={searchQuery}
             onChange={(e) => setSearchQuery(e.target.value)}
             leftIcon={<Search className="w-4 h-4" />}
           />
         </div>
+
+        <FilterSummary count={filteredLogs.length} itemName="message" active={Boolean(searchQuery)} onClear={() => { setSearchQuery(''); }} />
 
         {/* Logs List */}
         <div className="bg-white rounded-xl border border-surface-border overflow-hidden">

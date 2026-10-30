@@ -25,6 +25,7 @@ import {
   Info,
 } from 'lucide-react';
 import { Button } from '@/components/ui/Button';
+import { FilterSummary } from '@/components/ui/FilterSummary';
 import { Badge } from '@/components/ui/Badge';
 import { Input, Textarea } from '@/components/ui/Input';
 import { Select } from '@/components/ui/Select';
@@ -753,6 +754,7 @@ export default function ExpensesPage() {
           </div>
 
           <Textarea
+            label="Describe the expense"
             placeholder={'e.g. 12 bags cement at JMC Hardware for Casa Batangas, 4800, kahapon, receipt na kay Danilo'}
             value={quickText}
             onChange={(event) => setQuickText(event.target.value)}
@@ -888,6 +890,7 @@ export default function ExpensesPage() {
         {/* Filters */}
         <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
           <Input
+            label="Search expenses"
             placeholder="Search expense description, notes, supplier..."
             value={searchQuery}
             onChange={(e) => setSearchQuery(e.target.value)}
@@ -895,6 +898,7 @@ export default function ExpensesPage() {
           />
 
           <Select
+            label="Category"
             value={categoryFilter}
             onChange={(e) => setCategoryFilter(e.target.value)}
             options={[
@@ -909,6 +913,7 @@ export default function ExpensesPage() {
           />
 
           <Select
+            label="Project"
             value={projectFilter}
             onChange={(e) => setProjectFilter(e.target.value)}
           >
@@ -920,6 +925,8 @@ export default function ExpensesPage() {
             ))}
           </Select>
         </div>
+
+        <FilterSummary count={filteredExpenses.length} itemName="expense" active={Boolean(searchQuery) || categoryFilter !== 'all' || projectFilter !== 'all'} onClear={() => { setSearchQuery(''); setCategoryFilter('all'); setProjectFilter('all'); }} />
 
         {/* Expenses List */}
         <div className="bg-white rounded-xl border border-surface-border overflow-hidden">

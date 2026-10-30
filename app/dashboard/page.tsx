@@ -646,7 +646,7 @@ export default function FounderDashboard() {
 
   return (
     <AppShell requireFounder={true}>
-      <div className="w-full space-y-6 lg:space-y-7">
+      <div className="dashboard-workspace w-full space-y-6 lg:space-y-7">
         {/* Header with subtle entrance */}
         <header
           style={{ '--rise-delay': '0ms' } as React.CSSProperties}
@@ -697,15 +697,11 @@ export default function FounderDashboard() {
                 All projects
               </Button>
             )}
-            <Link href="/invoices" prefetch={false}>
-              <Button type="button" variant="secondary" size="sm" className="min-h-11">
-                New invoice
-              </Button>
+            <Link href="/invoices" prefetch={false} className="inline-flex min-h-11 items-center justify-center rounded-lg border border-surface-border bg-white px-3 text-xs font-medium text-navy transition-colors hover:border-surface-borderHover focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand focus-visible:ring-offset-2">
+              Invoices
             </Link>
-            <Link href="/expenses" prefetch={false}>
-              <Button type="button" variant="primary" size="sm" className="min-h-11">
-                Record expense
-              </Button>
+            <Link href="/expenses" prefetch={false} className="inline-flex min-h-11 items-center justify-center rounded-lg border border-brand bg-brand px-3 text-xs font-medium text-white transition-colors hover:bg-brand-deep focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand focus-visible:ring-offset-2">
+              Expenses
             </Link>
           </div>
         </header>
@@ -713,7 +709,7 @@ export default function FounderDashboard() {
         {/* Top 4 KPI + Filter Cards */}
         <section
           aria-label="Balanced studio summary"
-          className="grid grid-cols-1 gap-3.5 sm:grid-cols-2 xl:grid-cols-4"
+          className="dashboard-summary-grid grid grid-cols-1 gap-3.5 sm:grid-cols-2"
         >
           {/* CARD 1: Client Balances Due */}
           <Card
@@ -1119,7 +1115,7 @@ export default function FounderDashboard() {
                     </button>
                   ) : (
                     <Badge size="sm" variant="outline">
-                      {currentProjectCount} active
+                      {currentProjectCount} current
                     </Badge>
                   )}
                 </div>
@@ -1149,16 +1145,15 @@ export default function FounderDashboard() {
 
                 {/* Constrained Scrollable Project List */}
                 <div
-                  role="listbox"
+                  role="group"
                   aria-label="Filter dashboard by project"
                   className="mt-2.5 max-h-[144px] space-y-1 overflow-y-auto pr-1"
                 >
                   <button
                     type="button"
-                    role="option"
-                    aria-selected={selectedProjectId === null}
+                    aria-pressed={selectedProjectId === null}
                     onClick={() => setSelectedProjectId(null)}
-                    className={`flex min-h-9 w-full items-center justify-between gap-2 rounded-lg border px-2.5 py-1.5 text-left text-xs transition-all duration-150 ${
+                    className={`flex min-h-9 w-full items-center justify-between gap-2 rounded-lg border px-2.5 py-1.5 text-left text-xs transition-all duration-150 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand focus-visible:ring-offset-2 ${
                       selectedProjectId === null
                         ? 'border-navy bg-navy text-white shadow-sm'
                         : 'border-[#e8e1d4] bg-white/90 text-navy hover:border-brand/40 hover:bg-[#faf8f3]'
@@ -1190,10 +1185,9 @@ export default function FounderDashboard() {
                       <button
                         key={project.id}
                         type="button"
-                        role="option"
-                        aria-selected={isSelected}
+                        aria-pressed={isSelected}
                         onClick={() => handleSelectProject(project.id)}
-                        className={`flex min-h-9 w-full items-center justify-between gap-2 rounded-lg border px-2.5 py-1.5 text-left text-xs transition-all duration-150 ${
+                        className={`flex min-h-9 w-full items-center justify-between gap-2 rounded-lg border px-2.5 py-1.5 text-left text-xs transition-all duration-150 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand focus-visible:ring-offset-2 ${
                           isSelected
                             ? 'border-navy bg-navy text-white shadow-sm'
                             : 'border-[#e8e1d4] bg-white/90 text-navy hover:border-brand/40 hover:bg-[#faf8f3]'
@@ -1243,7 +1237,7 @@ export default function FounderDashboard() {
         {/* Bottom Panels: Needs Attention (with Tools Needing Attention) + Project Register */}
         <div
           style={{ '--rise-delay': '275ms' } as React.CSSProperties}
-          className="animate-card-rise grid grid-cols-1 gap-4 xl:grid-cols-[minmax(18rem,0.86fr)_minmax(0,2.14fr)]"
+          className="dashboard-detail-grid animate-card-rise grid grid-cols-1 gap-4"
         >
           {/* FOLLOW-UP BOARD: Needs Attention (Includes Tools Needing Attention) */}
           <section className="relative min-w-0 overflow-hidden rounded-2xl border border-[#e3ddd2] bg-white shadow-sm">
@@ -1489,7 +1483,7 @@ export default function FounderDashboard() {
           </section>
 
           {/* PROJECT REGISTER */}
-          <section className="relative min-w-0 overflow-hidden rounded-2xl border border-[#e3ddd2] bg-white shadow-sm">
+          <section className="dashboard-register relative min-w-0 overflow-hidden rounded-2xl border border-[#e3ddd2] bg-white shadow-sm">
             <ProjectRegisterWatermark />
 
             <div className="relative z-10 flex flex-col gap-3 border-b border-[#e9e3d8] bg-[#fbfaf7] px-4 py-4 sm:flex-row sm:items-center sm:justify-between sm:px-5">
@@ -1501,7 +1495,7 @@ export default function FounderDashboard() {
                   Estimates &amp; recorded expenses
                 </h2>
                 <p className="mt-1 text-xs leading-relaxed text-ink-secondary">
-                  Logged expense entries only. Click any project row or use the filter card above to focus the dashboard.
+                  Logged expense entries only. Open a project name for details, or use Focus scope to filter this dashboard.
                 </p>
               </div>
               <div className="flex shrink-0 flex-wrap items-center gap-2 sm:ml-3">
@@ -1538,7 +1532,7 @@ export default function FounderDashboard() {
               </div>
             ) : (
               <div key={`register-${scopeKey}`} className="animate-scope-refresh relative z-10">
-                <div className="hidden overflow-x-auto 2xl:block">
+                <div className="dashboard-register-table hidden overflow-x-auto">
                   <table className="w-full min-w-[820px] table-fixed text-left text-xs">
                     <colgroup>
                       <col className="w-[24%]" />
@@ -1616,7 +1610,7 @@ export default function FounderDashboard() {
                   </table>
                 </div>
 
-                <div className="grid grid-cols-1 gap-3 p-3 sm:p-4 2xl:hidden">
+                <div className="dashboard-register-cards grid grid-cols-1 gap-3 p-3 sm:p-4">
                   {scopedProjects.map((project) => {
                     const isSelected = selectedProjectId === project.id;
                     return (

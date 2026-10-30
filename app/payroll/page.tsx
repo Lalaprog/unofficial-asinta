@@ -12,6 +12,7 @@ import {
   Check,
 } from 'lucide-react';
 import { Button } from '@/components/ui/Button';
+import { FilterSummary } from '@/components/ui/FilterSummary';
 import { Badge } from '@/components/ui/Badge';
 import { Input } from '@/components/ui/Input';
 import { Select } from '@/components/ui/Select';
@@ -166,17 +167,17 @@ export default function PayrollPage() {
         {/* Top Summary Cards */}
         <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 auto-rows-fr">
           <div className="h-full p-4 sm:p-5 rounded-xl bg-white border border-surface-border flex flex-col justify-between">
-            <div className="text-xs font-medium text-ink-secondary truncate">Total Net Payroll</div>
-            <div className="text-2xl font-bold text-navy mt-1 tabular-nums truncate">{formatPHP(totalNetDisbursement)}</div>
+            <div className="text-xs font-medium text-ink-secondary">Total Net Payroll</div>
+            <div className="text-2xl font-bold text-navy mt-1 tabular-nums break-words">{formatPHP(totalNetDisbursement)}</div>
           </div>
 
           <div className="h-full p-4 sm:p-5 rounded-xl bg-white border border-surface-border flex flex-col justify-between">
-            <div className="text-xs font-medium text-ink-secondary truncate">Bale Deductions Recovered</div>
-            <div className="text-2xl font-bold text-status-success mt-1 tabular-nums truncate">{formatPHP(totalBaleRecovered)}</div>
+            <div className="text-xs font-medium text-ink-secondary">Bale Deductions Recovered</div>
+            <div className="text-2xl font-bold text-status-success mt-1 tabular-nums break-words">{formatPHP(totalBaleRecovered)}</div>
           </div>
 
           <div className="h-full p-4 sm:p-5 rounded-xl bg-white border border-surface-border flex flex-col justify-between">
-            <div className="text-xs font-medium text-ink-secondary truncate">Pending Founder Approval</div>
+            <div className="text-xs font-medium text-ink-secondary">Pending Founder Approval</div>
             <div className="text-2xl font-bold text-status-warning mt-1 tabular-nums">
               {filteredPayroll.filter((p) => p.status === 'draft' || p.status === 'reviewed').length}
             </div>
@@ -184,9 +185,10 @@ export default function PayrollPage() {
         </div>
 
         {/* Filters */}
-        <div className="flex flex-col sm:flex-row flex-wrap items-center gap-3">
+        <div className="flex flex-col sm:flex-row flex-wrap sm:items-end gap-3">
           <div className="w-full sm:w-80">
             <Input
+              label="Search payroll"
               placeholder="Search worker, position, or project..."
               value={searchQuery}
               onChange={(e) => setSearchQuery(e.target.value)}
@@ -196,6 +198,7 @@ export default function PayrollPage() {
 
           <div className="w-full sm:w-64">
             <Select
+              label="Project"
               value={projectFilter}
               onChange={(e) => setProjectFilter(e.target.value)}
               options={[
@@ -210,17 +213,21 @@ export default function PayrollPage() {
 
           <div className="w-full sm:w-48">
             <Select
+              label="Status"
               value={statusFilter}
               onChange={(e) => setStatusFilter(e.target.value)}
               options={[
                 { label: 'All Statuses', value: 'all' },
                 { label: 'Draft', value: 'draft' },
+                { label: 'Reviewed', value: 'reviewed' },
                 { label: 'Approved', value: 'approved' },
                 { label: 'Paid', value: 'paid' },
               ]}
             />
           </div>
         </div>
+
+        <FilterSummary count={filteredPayroll.length} itemName="payroll" active={Boolean(searchQuery) || projectFilter !== 'all' || statusFilter !== 'all'} onClear={() => { setSearchQuery(''); setProjectFilter('all'); setStatusFilter('all'); }} />
 
         {/* Payroll Table */}
         <div className="bg-white rounded-xl border border-surface-border overflow-hidden">

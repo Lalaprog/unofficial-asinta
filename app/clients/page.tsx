@@ -14,6 +14,7 @@ import {
   Trash2,
 } from 'lucide-react';
 import { Button } from '@/components/ui/Button';
+import { FilterSummary } from '@/components/ui/FilterSummary';
 import { Badge } from '@/components/ui/Badge';
 import { Input } from '@/components/ui/Input';
 import { Modal } from '@/components/ui/Modal';
@@ -113,12 +114,15 @@ export default function ClientsPage() {
         {/* Search */}
         <div className="max-w-md">
           <Input
+            label="Search clients"
             placeholder="Search client name, representative, address..."
             value={searchQuery}
             onChange={(e) => setSearchQuery(e.target.value)}
             leftIcon={<Search className="w-4 h-4" />}
           />
         </div>
+
+        <FilterSummary count={filteredClients.length} itemName="client" active={Boolean(searchQuery)} onClear={() => { setSearchQuery(''); }} />
 
         {/* Client Cards Grid */}
         <div className="grid grid-cols-1 md:grid-cols-2 gap-4 auto-rows-fr">

@@ -1145,10 +1145,11 @@ function AttendancePageInner() {
         {activeTab === 'terminal' && (
           <div className="rounded-xl border border-surface-border bg-white p-3 sm:p-3.5 grid grid-cols-1 md:grid-cols-2 gap-2.5 md:gap-3 items-center">
             <div>
-              <label className="text-xs font-semibold text-ink-secondary block mb-1.5">
+              <label htmlFor="attendance-project" className="text-xs font-semibold text-ink-secondary block mb-1.5">
                 Project Site
               </label>
               <Select
+                id="attendance-project"
                 value={selectedProjectId}
                 disabled={isSubmitting}
                 onChange={(e) => setSelectedProjectId(e.target.value)}
@@ -1166,9 +1167,9 @@ function AttendancePageInner() {
             </div>
 
             <div>
-              <label className="text-xs font-semibold text-ink-secondary block mb-1.5">
+              <span className="text-xs font-semibold text-ink-secondary block mb-1.5">
                 Roll Call Date
-              </label>
+              </span>
               <div className="flex flex-wrap items-center gap-2">
                 <Button
                   type="button"
@@ -1193,6 +1194,7 @@ function AttendancePageInner() {
                 {isFounder && (
                   <Input
                     type="date"
+                    aria-label="Roll call date"
                     value={selectedDate}
                     max={today}
                     disabled={isSubmitting}
@@ -1755,6 +1757,7 @@ function AttendancePageInner() {
               <div className="flex items-center gap-2 lg:hidden">
                 <div className="min-w-0 flex-1">
                   <Input
+                    aria-label="Search attendance history"
                     placeholder="Search workers, sites, notes..."
                     value={historySearchQuery}
                     onChange={(e) => setHistorySearchQuery(e.target.value)}
@@ -2206,6 +2209,7 @@ function AttendancePageInner() {
               <div className="flex flex-col sm:flex-row items-center gap-2 w-full sm:w-auto">
                 <div className="w-full sm:w-64">
                   <Input
+                    aria-label="Search workforce"
                     placeholder="Search worker name or craft..."
                     value={workforceSearch}
                     onChange={(e) => setWorkforceSearch(e.target.value)}
@@ -2214,6 +2218,7 @@ function AttendancePageInner() {
                 </div>
                 <div className="w-full sm:w-52">
                   <Select
+                    aria-label="Filter workforce by craft group"
                     value={workforceCraftFilter}
                     onChange={(e) => setWorkforceCraftFilter(e.target.value)}
                     options={[
