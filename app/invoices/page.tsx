@@ -18,10 +18,13 @@ import {
 } from 'lucide-react';
 import { Button } from '@/components/ui/Button';
 import { FilterSummary } from '@/components/ui/FilterSummary';
+import { WorkspaceHeader } from '@/components/ui/WorkspaceHeader';
+import { WorkspaceFilters } from '@/components/ui/WorkspaceFilters';
 import { Badge } from '@/components/ui/Badge';
 import { Input, Textarea } from '@/components/ui/Input';
 import { Select } from '@/components/ui/Select';
 import { Modal } from '@/components/ui/Modal';
+import { useToast } from '@/components/ui/Toast';
 import { AsintaEmblem, AsintaWordmark } from '@/components/ui/AsintaLogo';
 import { RequestPaymentModal } from '@/components/email/RequestPaymentModal';
 import { EmailHistoryModal } from '@/components/email/EmailHistoryModal';
@@ -44,6 +47,11 @@ const today = () => new Date().toISOString().split('T')[0];
 const defaultDueDate = () => new Date(Date.now() + 15 * 86400000).toISOString().split('T')[0];
 
 export default function InvoicesPage() {
+  const { showToast } = useToast();
+  const [isCreating, setIsCreating] = useState(false);
+  const [isRecordingPayment, setIsRecordingPayment] = useState(false);
+  const createLock = React.useRef(false);
+  const paymentLock = React.useRef(false);
   const {
     invoices,
     projects,
@@ -152,48 +160,67 @@ export default function InvoicesPage() {
 
   const handleCreateSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!formData.project_id || !formData.amount) return;
-
-    const issueYear = Number(formData.issue_date.slice(0, 4)) || new Date().getFullYear();
-    const invoiceNumber = getNextInvoiceNumber(invoices, issueYear);
-    const created = await createInvoice({
-      invoice_number: invoiceNumber,
-      project_id: formData.project_id,
-      client_id: formData.client_id,
-      amount: parseFloat(formData.amount),
-      amount_paid: 0,
-      issue_date: formData.issue_date,
-      due_date: formData.due_date,
-      status: formData.status,
-      notes: formData.notes,
-      automatic_reminders_enabled: false,
-      reminders_paused_until: null,
-    });
-
-    if (created) {
-      setIsCreateModalOpen(false);
-      const nextIssueDate = today();
-      const nextYear = Number(nextIssueDate.slice(0, 4));
-      setFormData({
-        invoice_number: getNextInvoiceNumber([...invoices, created], nextYear),
-        project_id: '',
-        client_id: '',
-        amount: '',
-        issue_date: nextIssueDate,
-        due_date: defaultDueDate(),
-        notes: '',
-        status: 'pending',
+    if (createLock.current || !formData.project_id || !formData.amount) return;
+    createLock.current = true;
+    setIsCreating(true);
+    try {
+      const issueYear = Number(formData.issue_date.slice(0, 4)) || new Date().getFullYear();
+      const invoiceNumber = getNextInvoiceNumber(invoices, issueYear);
+      const created = await createInvoice({
+        invoice_number: invoiceNumber,
+        project_id: formData.project_id,
+        client_id: formData.client_id,
+        amount: parseFloat(formData.amount),
+        amount_paid: 0,
+        issue_date: formData.issue_date,
+        due_date: formData.due_date,
+        status: formData.status,
+        notes: formData.notes,
+        automatic_reminders_enabled: false,
+        reminders_paused_until: null,
       });
+
+      if (created) {
+        showToast('success', 'Invoice created.');
+        setIsCreateModalOpen(false);
+        const nextIssueDate = today();
+        const nextYear = Number(nextIssueDate.slice(0, 4));
+        setFormData({
+          invoice_number: getNextInvoiceNumber([...invoices, created], nextYear),
+          project_id: '',
+          client_id: '',
+          amount: '',
+          issue_date: nextIssueDate,
+          due_date: defaultDueDate(),
+          notes: '',
+          status: 'pending',
+        });
+      }
+    } catch {
+      showToast('error', 'Could not confirm whether the invoice was created. Refresh and check the invoice list before trying again.');
+    } finally {
+      createLock.current = false;
+      setIsCreating(false);
     }
   };
 
   const handleRecordPayment = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!selectedInvoice || !paymentAmount) return;
-    const success = await recordInvoicePayment(selectedInvoice.id, parseFloat(paymentAmount));
-    if (success) {
-      setIsPaymentModalOpen(false);
-      setPaymentAmount('');
+    if (paymentLock.current || !selectedInvoice || !paymentAmount) return;
+    paymentLock.current = true;
+    setIsRecordingPayment(true);
+    try {
+      const success = await recordInvoicePayment(selectedInvoice.id, parseFloat(paymentAmount));
+      if (success) {
+        showToast('success', 'Payment recorded.');
+        setIsPaymentModalOpen(false);
+        setPaymentAmount('');
+      }
+    } catch {
+      showToast('error', 'Could not confirm whether the payment was recorded. Refresh and check the invoice before trying again.');
+    } finally {
+      paymentLock.current = false;
+      setIsRecordingPayment(false);
     }
   };
 
@@ -217,64 +244,59 @@ export default function InvoicesPage() {
   return (
     <AppShell requireFounder={true}>
       <div className="space-y-6">
-        {/* Header */}
-        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pb-3 border-b border-surface-border/60">
-          <div>
-            <h1 className="text-xl sm:text-2xl font-semibold text-navy tracking-tight">
-              Invoices &amp; Billing
-            </h1>
-            <p className="text-xs text-ink-secondary mt-0.5">
-              Client progress billing, collections, and payment reminders
-            </p>
+        <WorkspaceHeader
+          eyebrow="Client billing"
+          title="Invoices & Billing"
+          description="Review progress billing, outstanding balances and client follow-ups."
+          action={
+            <Button
+              variant="primary"
+              size="md"
+              onClick={() => {
+                const issueYear = Number(formData.issue_date.slice(0, 4)) || new Date().getFullYear();
+                setFormData((current) => ({ ...current, invoice_number: getNextInvoiceNumber(invoices, issueYear) }));
+                setIsCreateModalOpen(true);
+              }}
+              leftIcon={<Plus className="w-4 h-4" />}
+            >
+              New Invoice
+            </Button>
+          }
+        />
+
+        <WorkspaceFilters
+          title="Find an invoice"
+          summary={<FilterSummary count={filteredInvoices.length} itemName="invoice" active={Boolean(searchQuery) || statusFilter !== 'all'} onClear={() => { setSearchQuery(''); setStatusFilter('all'); }} />}
+        >
+          <div className="flex flex-col sm:flex-row sm:items-end gap-3">
+            <div className="w-full sm:w-80">
+              <Input
+                label="Search invoices"
+                placeholder="Search invoice number, client, project..."
+                value={searchQuery}
+                onChange={(e) => setSearchQuery(e.target.value)}
+                leftIcon={<Search className="w-4 h-4" />}
+              />
+            </div>
+
+            <div className="w-full sm:w-48">
+              <Select
+                label="Status"
+                value={statusFilter}
+                onChange={(e) => setStatusFilter(e.target.value)}
+                options={[
+                  { label: 'All Statuses', value: 'all' },
+                  { label: 'Pending', value: 'pending' },
+                  { label: 'Partially Paid', value: 'partially_paid' },
+                  { label: 'Paid', value: 'paid' },
+                  { label: 'Overdue', value: 'overdue' },
+                  { label: 'Draft', value: 'draft' },
+                  { label: 'Cancelled', value: 'cancelled' },
+                ]}
+              />
+            </div>
           </div>
-
-          <Button
-            variant="primary"
-            size="sm"
-            onClick={() => {
-              const issueYear = Number(formData.issue_date.slice(0, 4)) || new Date().getFullYear();
-              setFormData((current) => ({
-                ...current,
-                invoice_number: getNextInvoiceNumber(invoices, issueYear),
-              }));
-              setIsCreateModalOpen(true);
-            }}
-            leftIcon={<Plus className="w-4 h-4" />}
-          >
-            New Invoice
-          </Button>
-        </div>
-
-        {/* Filters */}
-        <div className="flex flex-col sm:flex-row sm:items-end gap-3">
-          <div className="w-full sm:w-80">
-            <Input
-              label="Search invoices"
-              placeholder="Search invoice number, client, project..."
-              value={searchQuery}
-              onChange={(e) => setSearchQuery(e.target.value)}
-              leftIcon={<Search className="w-4 h-4" />}
-            />
-          </div>
-
-          <div className="w-full sm:w-48">
-            <Select
-              label="Status"
-              value={statusFilter}
-              onChange={(e) => setStatusFilter(e.target.value)}
-              options={[
-                { label: 'All Statuses', value: 'all' },
-                { label: 'Pending', value: 'pending' },
-                { label: 'Partially Paid', value: 'partially_paid' },
-                { label: 'Paid', value: 'paid' },
-                { label: 'Overdue', value: 'overdue' },
-                { label: 'Draft', value: 'draft' },
-              ]}
-            />
-          </div>
-        </div>
-
-        <FilterSummary count={filteredInvoices.length} itemName="invoice" active={Boolean(searchQuery) || statusFilter !== 'all'} onClear={() => { setSearchQuery(''); setStatusFilter('all'); }} />
+        </WorkspaceFilters>
 
         {/* Invoices List / Table */}
         <div className="bg-white rounded-xl border border-surface-border overflow-hidden">
@@ -330,11 +352,9 @@ export default function InvoicesPage() {
                     </div>
 
                     <div className="col-span-2 sm:col-span-1">
-                      <div className="text-ink-secondary">Total / Balance</div>
-                      <div className="font-bold text-navy mt-0.5">{formatPHP(inv.amount)}</div>
-                      {balance > 0 && (
-                        <div className="text-[11px] text-status-warning font-medium">Bal: {formatPHP(balance)}</div>
-                      )}
+                      <div className="text-ink-secondary">Invoice total</div>
+                      <div className="font-bold tabular-nums text-navy mt-0.5">{formatPHP(inv.amount)}</div>
+                      <div className="text-[11px] font-medium text-ink-secondary">Balance: {formatPHP(Math.max(0, balance))}</div>
                     </div>
                   </div>
 
@@ -443,7 +463,7 @@ export default function InvoicesPage() {
 
             {filteredInvoices.length === 0 && (
               <div className="p-12 text-center text-xs text-ink-secondary">
-                No invoices found matching current criteria.
+                {invoices.length === 0 ? 'No invoices have been recorded yet.' : 'No invoices match the current search or filters. Clear filters to see all invoices.'}
               </div>
             )}
           </div>
@@ -454,6 +474,9 @@ export default function InvoicesPage() {
       <Modal
         isOpen={isCreateModalOpen}
         onClose={() => setIsCreateModalOpen(false)}
+        dismissOnBackdrop={!isCreating}
+        dismissOnEscape={!isCreating}
+        showCloseButton={!isCreating}
         title="Create Milestone Progress Invoice"
         description="Generate a new progress billing statement for Asinta Architects."
         maxWidth="lg"
@@ -493,6 +516,8 @@ export default function InvoicesPage() {
             <Input
               label="Invoice Amount (PHP ₱)"
               type="number"
+              min="0.01"
+              step="0.01"
               placeholder="1500000"
               value={formData.amount}
               onChange={(e) => setFormData({ ...formData, amount: e.target.value })}
@@ -523,11 +548,11 @@ export default function InvoicesPage() {
           </div>
 
           <div className="pt-4 flex justify-end space-x-2">
-            <Button variant="secondary" onClick={() => setIsCreateModalOpen(false)}>
+            <Button type="button" variant="secondary" onClick={() => setIsCreateModalOpen(false)} disabled={isCreating}>
               Cancel
             </Button>
-            <Button variant="primary" type="submit">
-              Generate Invoice
+            <Button variant="primary" type="submit" isLoading={isCreating}>
+              {isCreating ? 'Creating invoice…' : 'Generate Invoice'}
             </Button>
           </div>
         </form>
@@ -537,6 +562,9 @@ export default function InvoicesPage() {
       <Modal
         isOpen={isPaymentModalOpen}
         onClose={() => setIsPaymentModalOpen(false)}
+        dismissOnBackdrop={!isRecordingPayment}
+        dismissOnEscape={!isRecordingPayment}
+        showCloseButton={!isRecordingPayment}
         title="Record Client Payment"
         description="Log partial or full settlement for progress billing."
       >
@@ -544,6 +572,9 @@ export default function InvoicesPage() {
           <form onSubmit={handleRecordPayment} className="space-y-4 text-xs">
             <div className="p-3 rounded-xl bg-surface-inset border border-surface-border space-y-1">
               <div className="font-bold text-navy font-mono">{selectedInvoice.invoice_number}</div>
+              <div className="break-words text-ink-secondary">
+                {projects.find((project) => project.id === selectedInvoice.project_id)?.name || 'Project unavailable'} · {clients.find((client) => client.id === selectedInvoice.client_id)?.name || 'Client unavailable'}
+              </div>
               <div className="text-ink-secondary">
                 Total: {formatPHP(selectedInvoice.amount)} · Currently Paid: {formatPHP(selectedInvoice.amount_paid)}
               </div>
@@ -558,16 +589,17 @@ export default function InvoicesPage() {
               value={paymentAmount}
               onChange={(e) => setPaymentAmount(e.target.value)}
               required
-              min="1"
+              min="0.01"
+              step="0.01"
               max={selectedInvoice.amount - selectedInvoice.amount_paid}
             />
 
             <div className="pt-2 flex justify-end space-x-2">
-              <Button variant="secondary" onClick={() => setIsPaymentModalOpen(false)}>
+              <Button type="button" variant="secondary" onClick={() => setIsPaymentModalOpen(false)} disabled={isRecordingPayment}>
                 Cancel
               </Button>
-              <Button variant="primary" type="submit">
-                Confirm Payment Receipt
+              <Button variant="primary" type="submit" isLoading={isRecordingPayment}>
+                {isRecordingPayment ? 'Recording payment…' : 'Confirm Payment Receipt'}
               </Button>
             </div>
           </form>

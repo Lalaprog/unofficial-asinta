@@ -26,6 +26,8 @@ import {
 } from 'lucide-react';
 import { Button } from '@/components/ui/Button';
 import { FilterSummary } from '@/components/ui/FilterSummary';
+import { WorkspaceHeader } from '@/components/ui/WorkspaceHeader';
+import { WorkspaceFilters } from '@/components/ui/WorkspaceFilters';
 import { Badge } from '@/components/ui/Badge';
 import { Input, Textarea } from '@/components/ui/Input';
 import { Select } from '@/components/ui/Select';
@@ -47,6 +49,7 @@ import {
   type ExpenseWarningSummary,
 } from '@/lib/expenses/anomalies';
 import { EXPENSE_CATEGORY_LABELS } from '@/lib/ai/categories';
+import { resolveReceiptForSubmission } from '@/lib/expenses/receiptSubmission';
 
 export default function ExpensesPage() {
   const { user } = useAuth();
@@ -112,6 +115,7 @@ export default function ExpensesPage() {
   const recorderRef = React.useRef<MediaRecorder | null>(null);
   const recordedChunksRef = React.useRef<Blob[]>([]);
   const [isSubmitting, setIsSubmitting] = useState(false);
+  const expenseSubmitLock = React.useRef(false);
 
   // Bale confirmation. A detected advance is NEVER created automatically —
   // the Founder must name the recipient first.
@@ -152,7 +156,8 @@ export default function ExpensesPage() {
     const matchesSearch =
       exp.description.toLowerCase().includes(searchQuery.toLowerCase()) ||
       proj?.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
-      (exp.notes && exp.notes.toLowerCase().includes(searchQuery.toLowerCase()));
+      (exp.notes && exp.notes.toLowerCase().includes(searchQuery.toLowerCase())) ||
+      (exp.vendor && exp.vendor.toLowerCase().includes(searchQuery.toLowerCase()));
 
     const matchesCategory = categoryFilter === 'all' || exp.category === categoryFilter;
     const matchesProject = projectFilter === 'all' || exp.project_id === projectFilter;
@@ -203,116 +208,132 @@ export default function ExpensesPage() {
 
   const handleAddSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!formData.project_id || !formData.description || !formData.amount) return;
+    if (expenseSubmitLock.current || isUploadingReceipt || !formData.project_id || !formData.description || !formData.amount) return;
     if (!user) {
       showToast('error', 'You must be signed in to record expenses.');
       return;
     }
 
+    expenseSubmitLock.current = true;
     setIsSubmitting(true);
-    const amountNum = parseFloat(formData.amount);
+    try {
+      const amountNum = parseFloat(formData.amount);
 
-    // A receipt captured for the AI read is uploaded now, not earlier: an
-    // abandoned draft must not leave an orphan object in the bucket.
-    let receiptPath = formData.receipt_url || null;
-    if (!receiptPath && pendingReceiptFile) {
-      receiptPath = await uploadReceiptFile(pendingReceiptFile);
-    }
+      // A receipt captured for the AI read is uploaded now, not earlier: an
+      // abandoned draft must not leave an orphan object in the bucket.
+      const receipt = await resolveReceiptForSubmission(formData.receipt_url, pendingReceiptFile, uploadReceiptFile);
+      if (!receipt.ok) {
+        showToast('error', 'The expense was not saved because its receipt could not be uploaded. Your entry is still here.');
+        return;
+      }
+      const receiptPath = receipt.path;
+      if (!formData.receipt_url && receiptPath) {
+        // Reuse the uploaded object if the expense write fails and the user retries.
+        setFormData((previous) => ({ ...previous, receipt_url: receiptPath }));
+      }
 
-    /**
-     * `ai_confirmed` means "the suggestion we showed is the category that was
-     * saved". That is true either because the Founder pressed Accept, or
-     * because they left the prefilled value untouched — both are the suggestion
-     * being applied. It is never set just because a suggestion existed.
-     */
-    const suggestionApplied = Boolean(aiResult && (aiAccepted || aiResult.category === formData.category));
+      /**
+       * `ai_confirmed` means "the suggestion we showed is the category that was
+       * saved". That is true either because the Founder pressed Accept, or
+       * because they left the prefilled value untouched — both are the suggestion
+       * being applied. It is never set just because a suggestion existed.
+       */
+      const suggestionApplied = Boolean(aiResult && (aiAccepted || aiResult.category === formData.category));
 
-    const newExp = await createExpense({
-      project_id: formData.project_id,
-      description: formData.description,
-      category: formData.category,
-      amount: amountNum,
-      expense_date: formData.expense_date,
-      receipt_url: receiptPath,
-      notes: formData.notes || null,
-      vendor: formData.vendor.trim() || null,
-      ai_category_suggestion: aiResult?.category || null,
-      ai_bale_detection: aiResult?.isBale || false,
-      ai_confirmed: suggestionApplied,
-      created_by: user.id,
-    });
+      const newExp = await createExpense({
+        project_id: formData.project_id,
+        description: formData.description,
+        category: formData.category,
+        amount: amountNum,
+        expense_date: formData.expense_date,
+        receipt_url: receiptPath,
+        notes: formData.notes || null,
+        vendor: formData.vendor.trim() || null,
+        ai_category_suggestion: aiResult?.category || null,
+        ai_bale_detection: aiResult?.isBale || false,
+        ai_confirmed: suggestionApplied,
+        created_by: user.id,
+      });
 
-    if (newExp) {
-      // Track A: record what the Founder actually kept versus what we showed.
-      // Counters only — no embeddings, and a failure is reported rather than
-      // silently dropping the firm's history for this supplier.
-      if (newExp.vendor && aiResult?.category) {
-        try {
-          const memoryResponse = await fetch('/api/ai/vendor-memory', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-              vendor: newExp.vendor,
-              suggestedCategory: aiResult.category,
-              finalCategory: newExp.category,
-            }),
-          });
-          if (!memoryResponse.ok) {
-            const body = await memoryResponse.json().catch(() => null);
+      if (newExp) {
+        showToast('success', 'Expense recorded.');
+        // Track A: record what the Founder actually kept versus what we showed.
+        // Counters only — no embeddings, and a failure is reported rather than
+        // silently dropping the firm's history for this supplier.
+        if (newExp.vendor && aiResult?.category) {
+          try {
+            const memoryResponse = await fetch('/api/ai/vendor-memory', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({
+                vendor: newExp.vendor,
+                suggestedCategory: aiResult.category,
+                finalCategory: newExp.category,
+              }),
+            });
+            if (!memoryResponse.ok) {
+              const body = await memoryResponse.json().catch(() => null);
+              showToast(
+                'error',
+                body?.error ||
+                  'The expense was saved, but the supplier history was not updated.'
+              );
+            }
+          } catch {
             showToast(
               'error',
-              body?.error ||
-                'The expense was saved, but the supplier history was not updated.'
+              'The expense was saved, but the supplier history could not be updated (network error).'
             );
           }
-        } catch {
-          showToast(
-            'error',
-            'The expense was saved, but the supplier history could not be updated (network error).'
-          );
         }
-      }
 
-      // A detected bale is a *proposal*, not a write. The Founder chooses the
-      // recipient in a follow-up dialog; nothing is deducted automatically.
-      if (aiResult?.isBale) {
-        setBalePrompt({
-          description: formData.description,
-          amount: amountNum,
-          projectId: formData.project_id,
-          expenseDate: formData.expense_date,
+        // A detected bale is a *proposal*, not a write. The Founder chooses the
+        // recipient in a follow-up dialog; nothing is deducted automatically.
+        if (aiResult?.isBale) {
+          setBalePrompt({
+            description: formData.description,
+            amount: amountNum,
+            projectId: formData.project_id,
+            expenseDate: formData.expense_date,
+          });
+          setBaleWorkerId('');
+        }
+
+        setIsAddModalOpen(false);
+        setFormData({
+          project_id: '',
+          description: '',
+          amount: '',
+          category: 'materials',
+          expense_date: new Date().toISOString().split('T')[0],
+          notes: '',
+          receipt_url: null,
+          vendor: '',
         });
-        setBaleWorkerId('');
+        setAiResult(null);
+        setAiAccepted(false);
+        setReceiptFileName(null);
+        setDraft(null);
+        setDraftWarnings(null);
+        setDraftInputKind(null);
+        setDraftModel(null);
+        setDraftTranscript(null);
+        setDraftExtractedText(null);
+        setContextWarnings([]);
+        setPendingReceiptFile(null);
+        setPendingReceiptPreview((previous) => {
+          if (previous) URL.revokeObjectURL(previous);
+          return null;
+        });
+      } else {
+        showToast('error', 'Expense save was not confirmed. Check the ledger before trying again; your entry is still here.');
       }
-
-      setIsAddModalOpen(false);
-      setFormData({
-        project_id: '',
-        description: '',
-        amount: '',
-        category: 'materials',
-        expense_date: new Date().toISOString().split('T')[0],
-        notes: '',
-        receipt_url: null,
-        vendor: '',
-      });
-      setAiResult(null);
-      setAiAccepted(false);
-      setReceiptFileName(null);
-      setDraft(null);
-      setDraftWarnings(null);
-      setDraftInputKind(null);
-      setDraftModel(null);
-      setDraftTranscript(null);
-      setDraftExtractedText(null);
-      setContextWarnings([]);
-      setPendingReceiptFile(null);
-      setPendingReceiptPreview((previous) => {
-        if (previous) URL.revokeObjectURL(previous);
-        return null;
-      });
+    } catch {
+      showToast('error', 'Could not confirm whether the expense was saved. Refresh the ledger and check before trying again.');
+    } finally {
+      expenseSubmitLock.current = false;
+      setIsSubmitting(false);
     }
-    setIsSubmitting(false);
   };
 
   const handleDismissBalePrompt = () => {
@@ -366,8 +387,15 @@ export default function ExpensesPage() {
       if (path) {
         setFormData((prev) => ({ ...prev, receipt_url: path }));
         setReceiptFileName(file.name);
+        setPendingReceiptFile(null);
+        setPendingReceiptPreview((previous) => {
+          if (previous) URL.revokeObjectURL(previous);
+          return null;
+        });
         showToast('success', 'Receipt photo uploaded to private storage.');
       }
+    } catch {
+      showToast('error', 'The receipt upload could not be confirmed. Check your connection and try again.');
     } finally {
       setIsUploadingReceipt(false);
       // Allow re-selecting the same file after a failure.
@@ -701,31 +729,26 @@ export default function ExpensesPage() {
   const handleRemoveReceipt = () => {
     setFormData((previous) => ({ ...previous, receipt_url: null }));
     setReceiptFileName(null);
+    setPendingReceiptFile(null);
+    setPendingReceiptPreview((previous) => {
+      if (previous) URL.revokeObjectURL(previous);
+      return null;
+    });
   };
 
   return (
     <AppShell requireFounder={true}>
       <div className="space-y-6">
-        {/* Header */}
-        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pb-3 border-b border-surface-border/60">
-          <div>
-            <h1 className="text-xl sm:text-2xl font-semibold text-navy tracking-tight">
-              Site Expenses
-            </h1>
-            <p className="text-xs text-ink-secondary mt-0.5">
-              Materials, equipment, and operational disbursements
-            </p>
-          </div>
-
-          <Button
-            variant="primary"
-            size="md"
-            onClick={() => setIsAddModalOpen(true)}
-            leftIcon={<Plus className="w-4 h-4" />}
-          >
-            Record Expense
-          </Button>
-        </div>
+        <WorkspaceHeader
+          eyebrow="Project ledger"
+          title="Site Expenses"
+          description="Record and review materials, equipment and other site disbursements."
+          action={
+            <Button variant="primary" size="md" onClick={() => setIsAddModalOpen(true)} leftIcon={<Plus className="w-4 h-4" />}>
+              Record Expense
+            </Button>
+          }
+        />
 
         {/* ------------------------------------------------------------------
             TRACK E / B / D — one messy line, a receipt photo, or a voice note.
@@ -773,14 +796,14 @@ export default function ExpensesPage() {
               Draft expense
             </Button>
 
-            <label className="inline-flex cursor-pointer items-center gap-2 rounded-xl border border-surface-border bg-surface-inset px-3 py-2 text-[11px] font-semibold text-navy transition-all hover:bg-slate-200">
+            <label className="inline-flex min-h-11 cursor-pointer items-center gap-2 rounded-xl border border-surface-border bg-surface-inset px-3 py-2 text-[11px] font-semibold text-navy transition-all hover:bg-slate-200 focus-within:ring-2 focus-within:ring-brand focus-within:ring-offset-2">
               <ScanLine className="h-3.5 w-3.5" />
               <span>{isDrafting ? 'Reading…' : 'Scan a receipt photo'}</span>
               <input
                 type="file"
                 accept="image/*"
                 capture="environment"
-                className="hidden"
+                className="sr-only"
                 disabled={isDrafting}
                 onChange={(event) => {
                   const file = event.target.files?.[0];
@@ -887,46 +910,48 @@ export default function ExpensesPage() {
           </div>
         )}
 
-        {/* Filters */}
-        <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
-          <Input
-            label="Search expenses"
-            placeholder="Search expense description, notes, supplier..."
-            value={searchQuery}
-            onChange={(e) => setSearchQuery(e.target.value)}
-            leftIcon={<Search className="w-4 h-4" />}
-          />
+        <WorkspaceFilters
+          title="Find an expense"
+          summary={<FilterSummary count={filteredExpenses.length} itemName="expense" active={Boolean(searchQuery) || categoryFilter !== 'all' || projectFilter !== 'all'} onClear={() => { setSearchQuery(''); setCategoryFilter('all'); setProjectFilter('all'); }} />}
+        >
+          <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+            <Input
+              label="Search expenses"
+              placeholder="Search expense description, notes, supplier..."
+              value={searchQuery}
+              onChange={(e) => setSearchQuery(e.target.value)}
+              leftIcon={<Search className="w-4 h-4" />}
+            />
 
-          <Select
-            label="Category"
-            value={categoryFilter}
-            onChange={(e) => setCategoryFilter(e.target.value)}
-            options={[
-              { label: 'All Categories', value: 'all' },
-              { label: 'Materials', value: 'materials' },
-              { label: 'Labor', value: 'labor' },
-              { label: 'Equipment', value: 'equipment' },
-              { label: 'Permits', value: 'permits' },
-              { label: 'Transportation', value: 'transportation' },
-              { label: 'Other', value: 'other' },
-            ]}
-          />
+            <Select
+              label="Category"
+              value={categoryFilter}
+              onChange={(e) => setCategoryFilter(e.target.value)}
+              options={[
+                { label: 'All Categories', value: 'all' },
+                { label: 'Materials', value: 'materials' },
+                { label: 'Labor', value: 'labor' },
+                { label: 'Equipment', value: 'equipment' },
+                { label: 'Permits', value: 'permits' },
+                { label: 'Transportation', value: 'transportation' },
+                { label: 'Other', value: 'other' },
+              ]}
+            />
 
-          <Select
-            label="Project"
-            value={projectFilter}
-            onChange={(e) => setProjectFilter(e.target.value)}
-          >
-            <option value="all">All Project Sites</option>
-            {projects.map((p) => (
-              <option key={p.id} value={p.id}>
-                {p.name}
-              </option>
-            ))}
-          </Select>
-        </div>
-
-        <FilterSummary count={filteredExpenses.length} itemName="expense" active={Boolean(searchQuery) || categoryFilter !== 'all' || projectFilter !== 'all'} onClear={() => { setSearchQuery(''); setCategoryFilter('all'); setProjectFilter('all'); }} />
+            <Select
+              label="Project"
+              value={projectFilter}
+              onChange={(e) => setProjectFilter(e.target.value)}
+            >
+              <option value="all">All Project Sites</option>
+              {projects.map((p) => (
+                <option key={p.id} value={p.id}>
+                  {p.name}
+                </option>
+              ))}
+            </Select>
+          </div>
+        </WorkspaceFilters>
 
         {/* Expenses List */}
         <div className="bg-white rounded-xl border border-surface-border overflow-hidden">
@@ -1066,6 +1091,9 @@ export default function ExpensesPage() {
       <Modal
         isOpen={isAddModalOpen}
         onClose={() => setIsAddModalOpen(false)}
+        dismissOnBackdrop={!isSubmitting && !isUploadingReceipt}
+        dismissOnEscape={!isSubmitting && !isUploadingReceipt}
+        showCloseButton={!isSubmitting && !isUploadingReceipt}
         title="Record Site Expense"
         description="Enter the details. Suggestions may come from the Groq model or the built-in rules — you confirm every field."
         maxWidth="lg"
@@ -1189,8 +1217,11 @@ export default function ExpensesPage() {
                     className="mt-2 max-h-56 w-full rounded-lg object-contain"
                   />
                   <p className="mt-1 text-[10px] text-ink-muted">
-                    This photo is uploaded to private storage only when you save the expense.
+                    {formData.receipt_url ? 'The photo has been uploaded to private storage.' : 'This photo is uploaded to private storage only when you save the expense.'}
                   </p>
+                  <button type="button" onClick={handleRemoveReceipt} className="mt-1 min-h-11 rounded-lg px-2 text-xs font-semibold text-status-danger hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand">
+                    Remove receipt photo
+                  </button>
                 </div>
               )}
 
@@ -1246,7 +1277,7 @@ export default function ExpensesPage() {
 
           <div className="space-y-1">
             <div className="flex items-center justify-between">
-              <label className="text-xs font-semibold text-ink-secondary">
+              <label htmlFor="expense-description" className="text-xs font-semibold text-ink-secondary">
                 Expense Description
               </label>
               <button
@@ -1260,6 +1291,7 @@ export default function ExpensesPage() {
               </button>
             </div>
             <Input
+              id="expense-description"
               placeholder="e.g. Advance cash ₱3,000 for Danilo Magpantay emergency medical"
               value={formData.description}
               onChange={(e) => setFormData({ ...formData, description: e.target.value })}
@@ -1272,6 +1304,8 @@ export default function ExpensesPage() {
             <Input
               label="Amount (PHP ₱)"
               type="number"
+              min="0.01"
+              step="0.01"
               placeholder="5000"
               value={formData.amount}
               onChange={(e) => setFormData({ ...formData, amount: e.target.value })}
@@ -1383,10 +1417,10 @@ export default function ExpensesPage() {
             </Select>
 
             <div>
-              <label className="text-xs font-semibold text-ink-secondary block mb-1.5">
+              <span className="text-xs font-semibold text-ink-secondary block mb-1.5">
                 Receipt / Invoice Photo
-              </label>
-              <label className="flex items-center justify-center gap-2 p-2.5 rounded-xl bg-surface-inset border border-surface-border hover:bg-slate-200 cursor-pointer text-xs font-semibold text-navy transition-colors">
+              </span>
+              <label className="flex items-center justify-center gap-2 p-2.5 rounded-xl bg-surface-inset border border-surface-border hover:bg-slate-200 cursor-pointer text-xs font-semibold text-navy transition-colors focus-within:ring-2 focus-within:ring-brand focus-within:ring-offset-2">
                 {isUploadingReceipt ? (
                   <>
                     <Loader2 className="w-4 h-4 animate-spin" />
@@ -1402,7 +1436,7 @@ export default function ExpensesPage() {
                   type="file"
                   accept="image/*"
                   capture="environment"
-                  className="hidden"
+                  className="sr-only"
                   onChange={handleReceiptUpload}
                   disabled={isUploadingReceipt}
                 />
@@ -1436,11 +1470,11 @@ export default function ExpensesPage() {
           />
 
           <div className="pt-4 flex justify-end space-x-2">
-            <Button variant="secondary" onClick={() => setIsAddModalOpen(false)} disabled={isSubmitting}>
+            <Button type="button" variant="secondary" onClick={() => setIsAddModalOpen(false)} disabled={isSubmitting || isUploadingReceipt}>
               Cancel
             </Button>
-            <Button variant="primary" type="submit" isLoading={isSubmitting}>
-              Confirm & Save Expense
+            <Button variant="primary" type="submit" isLoading={isSubmitting} disabled={isUploadingReceipt}>
+              {isSubmitting ? 'Saving expense…' : isUploadingReceipt ? 'Uploading receipt…' : 'Confirm & Save Expense'}
             </Button>
           </div>
         </form>
