@@ -16,14 +16,21 @@ import {
 } from 'lucide-react';
 import { Button } from '@/components/ui/Button';
 import { FilterSummary } from '@/components/ui/FilterSummary';
+import { WorkspaceHeader } from '@/components/ui/WorkspaceHeader';
+import { WorkspaceFilters } from '@/components/ui/WorkspaceFilters';
 import { Badge } from '@/components/ui/Badge';
 import { Input } from '@/components/ui/Input';
 import { Select } from '@/components/ui/Select';
 import { Modal } from '@/components/ui/Modal';
+import { useToast } from '@/components/ui/Toast';
 import { formatPesoCompact } from '@/lib/email/format';
+import { getBudgetSummary } from '@/lib/projects/budgetSummary';
 
 export default function ProjectsPage() {
   const { isFounder, isSupervisor, user } = useAuth();
+  const { showToast } = useToast();
+  const [isCreating, setIsCreating] = useState(false);
+  const creatingRef = React.useRef(false);
   const {
     projects,
     clients,
@@ -65,87 +72,86 @@ export default function ProjectsPage() {
 
   const handleCreateSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!formData.name || !formData.client_id || !formData.budget_estimate) return;
-
-    const created = await createProject({
-      name: formData.name,
-      client_id: formData.client_id,
-      location: formData.location || 'Batangas',
-      budget_estimate: parseFloat(formData.budget_estimate),
-      status: formData.status,
-      start_date: formData.start_date,
-      target_completion_date: formData.target_completion_date,
-    });
-
-    if (created) {
-      setIsCreateModalOpen(false);
-      setFormData({
-        name: '',
-        client_id: '',
-        location: '',
-        budget_estimate: '',
-        status: 'active',
-        start_date: new Date().toISOString().split('T')[0],
-        target_completion_date: '2026-12-31',
+    if (creatingRef.current || !formData.name || !formData.client_id || !formData.budget_estimate) return;
+    creatingRef.current = true;
+    setIsCreating(true);
+    try {
+      const created = await createProject({
+        name: formData.name,
+        client_id: formData.client_id,
+        location: formData.location || 'Batangas',
+        budget_estimate: parseFloat(formData.budget_estimate),
+        status: formData.status,
+        start_date: formData.start_date,
+        target_completion_date: formData.target_completion_date,
       });
+
+      if (created) {
+        showToast('success', 'Project created.');
+        setIsCreateModalOpen(false);
+        setFormData({
+          name: '',
+          client_id: '',
+          location: '',
+          budget_estimate: '',
+          status: 'active',
+          start_date: new Date().toISOString().split('T')[0],
+          target_completion_date: '2026-12-31',
+        });
+      }
+    } catch {
+      showToast('error', 'Could not confirm whether the project was created. Refresh and check the project list before trying again.');
+    } finally {
+      creatingRef.current = false;
+      setIsCreating(false);
     }
   };
 
   return (
     <AppShell>
       <div className="space-y-6">
-        {/* Header */}
-        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pb-3 border-b border-surface-border/60">
-          <div>
-            <h1 className="text-xl sm:text-2xl font-semibold text-navy tracking-tight">
-              {isFounder ? 'Project Sites' : 'Assigned Projects'}
-            </h1>
-            <p className="text-xs text-ink-secondary mt-0.5">
-              Browse project sites and their recorded costs
-            </p>
-          </div>
-
-          {isFounder && (
-            <Button
-              variant="primary"
-              size="sm"
-              onClick={() => setIsCreateModalOpen(true)}
-              leftIcon={<Plus className="w-4 h-4" />}
-            >
+        <WorkspaceHeader
+          eyebrow="Projects & sites"
+          title={isFounder ? 'Project Sites' : 'Assigned Projects'}
+          description={isFounder ? 'Review your sites, estimates, recorded costs and client billing.' : 'Find your assigned sites and open their details.'}
+          action={isFounder ? (
+            <Button variant="primary" size="md" onClick={() => setIsCreateModalOpen(true)} leftIcon={<Plus className="w-4 h-4" />}>
               New Project
             </Button>
-          )}
-        </div>
+          ) : undefined}
+        />
 
-        {/* Filters */}
-        <div className="flex flex-col sm:flex-row sm:items-end gap-3">
-          <div className="w-full sm:w-72">
-            <Input
-              label="Search projects"
-              placeholder="Search projects or locations..."
-              value={searchQuery}
-              onChange={(e) => setSearchQuery(e.target.value)}
-              leftIcon={<Search className="w-4 h-4" />}
-            />
+        <WorkspaceFilters
+          title="Find a project"
+          summary={<FilterSummary count={filteredProjects.length} itemName="project" active={Boolean(searchQuery) || statusFilter !== 'all'} onClear={() => { setSearchQuery(''); setStatusFilter('all'); }} />}
+        >
+          <div className="flex flex-col sm:flex-row sm:items-end gap-3">
+            <div className="w-full sm:w-72">
+              <Input
+                label="Search projects"
+                placeholder="Search projects or locations..."
+                value={searchQuery}
+                onChange={(e) => setSearchQuery(e.target.value)}
+                leftIcon={<Search className="w-4 h-4" />}
+              />
+            </div>
+
+            <div className="w-full sm:w-48">
+              <Select
+                label="Status"
+                value={statusFilter}
+                onChange={(e) => setStatusFilter(e.target.value)}
+                options={[
+                  { label: 'All Statuses', value: 'all' },
+                  { label: 'Active', value: 'active' },
+                  { label: 'Planning', value: 'planning' },
+                  { label: 'On Hold', value: 'on_hold' },
+                  { label: 'Completed', value: 'completed' },
+                ]}
+              />
+            </div>
           </div>
-
-          <div className="w-full sm:w-48">
-            <Select
-              label="Status"
-              value={statusFilter}
-              onChange={(e) => setStatusFilter(e.target.value)}
-              options={[
-                { label: 'All Statuses', value: 'all' },
-                { label: 'Active', value: 'active' },
-                { label: 'Planning', value: 'planning' },
-                { label: 'On Hold', value: 'on_hold' },
-                { label: 'Completed', value: 'completed' },
-              ]}
-            />
-          </div>
-        </div>
-
-        <FilterSummary count={filteredProjects.length} itemName="project" active={Boolean(searchQuery) || statusFilter !== 'all'} onClear={() => { setSearchQuery(''); setStatusFilter('all'); }} />
+        </WorkspaceFilters>
 
         {/* Projects Cards Grid */}
         <div className="grid grid-cols-1 md:grid-cols-2 gap-4 auto-rows-fr">
@@ -157,7 +163,7 @@ export default function ProjectsPage() {
             const totalInvoiced = projInvoices.reduce((sum, i) => sum + Number(i.amount || 0), 0);
             const totalCollected = projInvoices.reduce((sum, i) => sum + Number(i.amount_paid || 0), 0);
             const totalExp = projExpenses.reduce((sum, e) => sum + Number(e.amount || 0), 0);
-            const remainingBudget = Math.max(0, proj.budget_estimate - totalExp);
+            const budget = getBudgetSummary(Number(proj.budget_estimate), totalExp);
 
             const statusBadgeVariant =
               proj.status === 'active'
@@ -177,11 +183,11 @@ export default function ProjectsPage() {
                   {/* Top line */}
                   <div className="flex items-start justify-between gap-3">
                     <div className="space-y-1 min-w-0 flex-1">
-                      <div className="text-xs font-medium text-ink-secondary truncate">
+                      <div className="text-xs font-medium text-ink-secondary break-words">
                         {client?.name || 'Private Client'}
                       </div>
                       <h3
-                        className="text-lg font-bold text-navy group-hover:text-navy-light transition-colors truncate"
+                        className="text-lg font-bold text-navy group-hover:text-navy-light transition-colors break-words"
                         title={proj.name}
                       >
                         {proj.name}
@@ -196,7 +202,7 @@ export default function ProjectsPage() {
                   <div className="mt-4 space-y-2 text-xs text-ink-secondary">
                     <div className="flex items-center space-x-2 min-w-0">
                       <MapPin className="w-3.5 h-3.5 text-navy shrink-0" />
-                      <span className="truncate">{proj.location}</span>
+                      <span className="break-words">{proj.location}</span>
                     </div>
                     <div className="flex items-center space-x-2">
                       <Calendar className="w-3.5 h-3.5 text-navy shrink-0" />
@@ -224,30 +230,39 @@ export default function ProjectsPage() {
                         <span className="font-semibold text-navy">{formatPHP(totalExp)}</span>
                       </div>
 
-                      {/* Progress bar */}
-                      <div className="w-full h-2 bg-slate-200 rounded-full overflow-hidden mt-2">
-                        <div
-                          className="h-full bg-navy"
-                          style={{
-                            width: `${Math.min(100, (totalExp / (proj.budget_estimate || 1)) * 100)}%`,
-                          }}
-                        />
-                      </div>
-                      <div className="flex justify-between text-[10px] text-ink-secondary">
-                        <span>Cost Consumed: {Math.round((totalExp / (proj.budget_estimate || 1)) * 100)}%</span>
-                        <span>Remaining: {formatPHP(remainingBudget)}</span>
-                      </div>
+                      <p className="text-[11px] leading-relaxed text-ink-secondary">Invoice totals include all recorded statuses, including drafts and cancelled invoices.</p>
+                      {budget.percent === null ? (
+                        <p className="text-xs font-semibold text-ink-secondary">Budget usage unavailable — no estimate set.</p>
+                      ) : (
+                        <div className="space-y-1.5">
+                          <div className="flex flex-wrap justify-between gap-1 text-xs text-ink-secondary">
+                            <span>Recorded costs: {Math.round(budget.percent)}% of estimate</span>
+                            <span className={budget.over ? 'font-semibold text-status-danger' : ''}>
+                              {budget.over ? `${formatPHP(budget.over)} over estimate` : `${formatPHP(budget.remaining ?? 0)} remaining`}
+                            </span>
+                          </div>
+                          <div
+                            role="progressbar"
+                            aria-label={`Recorded costs for ${proj.name} as a percentage of its estimate`}
+                            aria-valuemin={0}
+                            aria-valuemax={100}
+                            aria-valuenow={Math.round(budget.barPercent)}
+                            aria-valuetext={`${Math.round(budget.percent)}% of estimate used`}
+                            className="h-2 w-full overflow-hidden rounded-full bg-slate-200"
+                          >
+                            <div className={`h-full ${budget.over ? 'bg-status-danger' : 'bg-brand'}`} style={{ width: `${budget.barPercent}%` }} />
+                          </div>
+                        </div>
+                      )}
                     </div>
                   )}
                 </div>
 
                 {/* Footer action */}
                 <div className="mt-6 pt-4 border-t border-surface-border/60 flex items-center justify-between">
-                  <Link href={`/projects/${proj.id}`} prefetch={false} className="w-full">
-                    <Button variant="secondary" size="sm" className="w-full justify-between">
-                      <span>{isFounder ? 'View Project Ledger & Site Details' : 'View Site Roster & Details'}</span>
-                      <ArrowRight className="w-3.5 h-3.5" />
-                    </Button>
+                  <Link href={`/projects/${proj.id}`} prefetch={false} className="inline-flex min-h-11 w-full items-center justify-between gap-2 rounded-lg border border-surface-border bg-white px-3 text-xs font-semibold text-navy transition-colors hover:border-brand/40 hover:bg-surface-inset focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand focus-visible:ring-offset-2">
+                    <span>{isFounder ? 'View Project Ledger & Site Details' : 'View Site Roster & Details'}</span>
+                    <ArrowRight className="w-3.5 h-3.5 shrink-0" />
                   </Link>
                 </div>
               </div>
@@ -270,6 +285,9 @@ export default function ProjectsPage() {
       <Modal
         isOpen={isCreateModalOpen}
         onClose={() => setIsCreateModalOpen(false)}
+        dismissOnBackdrop={!isCreating}
+        dismissOnEscape={!isCreating}
+        showCloseButton={!isCreating}
         title="Create New Project"
         description="Initialize an architectural or design-build project in Batangas."
         maxWidth="lg"
@@ -309,6 +327,8 @@ export default function ProjectsPage() {
             <Input
               label="Budget Estimate (PHP ₱)"
               type="number"
+              min="0"
+              step="0.01"
               placeholder="8500000"
               value={formData.budget_estimate}
               onChange={(e) => setFormData({ ...formData, budget_estimate: e.target.value })}
@@ -345,11 +365,11 @@ export default function ProjectsPage() {
           </div>
 
           <div className="pt-4 flex justify-end space-x-2">
-            <Button variant="secondary" onClick={() => setIsCreateModalOpen(false)}>
+            <Button type="button" variant="secondary" onClick={() => setIsCreateModalOpen(false)} disabled={isCreating}>
               Cancel
             </Button>
-            <Button variant="primary" type="submit">
-              Create Project
+            <Button variant="primary" type="submit" isLoading={isCreating}>
+              {isCreating ? 'Creating project…' : 'Create Project'}
             </Button>
           </div>
         </form>

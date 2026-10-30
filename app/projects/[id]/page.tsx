@@ -25,7 +25,8 @@ import { ConfirmDialog } from '@/components/ui/ConfirmDialog';
 import { Input } from '@/components/ui/Input';
 import { Select } from '@/components/ui/Select';
 import { ProjectStatus } from '@/types';
-import { formatPesoCompact } from '@/lib/email/format';
+import { formatPesoCompact, formatPeso } from '@/lib/email/format';
+import { getBudgetSummary } from '@/lib/projects/budgetSummary';
 
 export default function ProjectDetailPage() {
   const params = useParams();
@@ -90,7 +91,7 @@ export default function ProjectDetailPage() {
   const totalInvoiced = projInvoices.reduce((sum, i) => sum + Number(i.amount || 0), 0);
   const totalCollected = projInvoices.reduce((sum, i) => sum + Number(i.amount_paid || 0), 0);
   const totalExpenses = projExpenses.reduce((sum, e) => sum + Number(e.amount || 0), 0);
-  const budgetConsumedPercent = Math.round((totalExpenses / (project.budget_estimate || 1)) * 100);
+  const budget = getBudgetSummary(Number(project.budget_estimate), totalExpenses);
 
   const handleUpdate = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -218,27 +219,27 @@ export default function ProjectDetailPage() {
                 <div className="p-4 rounded-xl bg-white border border-surface-border">
                   <div className="text-xs font-medium text-ink-secondary">Budget Estimate</div>
                   <div className="text-xl font-bold text-navy mt-1">{formatPHP(project.budget_estimate)}</div>
-                  <div className="text-[11px] text-ink-muted mt-0.5">Contract Total</div>
+                  <div className="text-[11px] text-ink-muted mt-0.5">Saved estimate</div>
                 </div>
 
                 <div className="p-4 rounded-xl bg-white border border-surface-border">
-                  <div className="text-xs font-medium text-ink-secondary">Progress Invoiced</div>
+                  <div className="text-xs font-medium text-ink-secondary">Invoice totals</div>
                   <div className="text-xl font-bold text-navy mt-1">{formatPHP(totalInvoiced)}</div>
-                  <div className="text-[11px] text-status-success mt-0.5">{formatPHP(totalCollected)} Collected</div>
+                  <div className="text-[11px] text-ink-secondary mt-0.5">{formatPHP(totalCollected)} collected · includes all invoice statuses</div>
                 </div>
 
                 <div className="p-4 rounded-xl bg-white border border-surface-border">
                   <div className="text-xs font-medium text-ink-secondary">Site Expenses</div>
                   <div className="text-xl font-bold text-navy mt-1">{formatPHP(totalExpenses)}</div>
-                  <div className="text-[11px] text-ink-secondary mt-0.5">{budgetConsumedPercent}% of Budget</div>
+                  <div className="text-[11px] text-ink-secondary mt-0.5">{budget.percent === null ? 'No estimate set' : `${Math.round(budget.percent)}% of estimate`}</div>
                 </div>
 
                 <div className="p-4 rounded-xl bg-white border border-surface-border">
-                  <div className="text-xs font-medium text-ink-secondary">Net Collected Margin</div>
-                  <div className="text-xl font-bold text-status-success mt-1">
-                    {formatPHP(Math.max(0, totalCollected - totalExpenses))}
+                  <div className="text-xs font-medium text-ink-secondary">Collected less recorded expenses</div>
+                  <div className={`text-xl font-bold mt-1 ${totalCollected - totalExpenses < 0 ? 'text-status-danger' : 'text-navy'}`}>
+                    {formatPeso(totalCollected - totalExpenses)}
                   </div>
-                  <div className="text-[11px] text-ink-secondary mt-0.5">Realized cash margin</div>
+                  <div className="text-[11px] text-ink-secondary mt-0.5">Not profit; excludes unrecorded costs and other payments.</div>
                 </div>
               </div>
             )}
