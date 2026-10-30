@@ -13,6 +13,7 @@ import {
   TrendingDown,
 } from 'lucide-react';
 import { Button } from '@/components/ui/Button';
+import { FilterSummary } from '@/components/ui/FilterSummary';
 import { Badge } from '@/components/ui/Badge';
 import { Input } from '@/components/ui/Input';
 import { Select } from '@/components/ui/Select';
@@ -244,9 +245,10 @@ function IssuedAdvancesPanel() {
         </div>
 
         {/* Filters */}
-        <div className="flex flex-col sm:flex-row flex-wrap items-center gap-3">
+        <div className="flex flex-col sm:flex-row flex-wrap sm:items-end gap-3">
           <div className="w-full sm:w-80">
             <Input
+              label="Search advances"
               placeholder="Search worker name, reason, project..."
               value={searchQuery}
               onChange={(e) => setSearchQuery(e.target.value)}
@@ -256,6 +258,7 @@ function IssuedAdvancesPanel() {
 
           <div className="w-full sm:w-64">
             <Select
+              label="Project"
               value={projectFilter}
               onChange={(e) => setProjectFilter(e.target.value)}
               options={[
@@ -270,6 +273,7 @@ function IssuedAdvancesPanel() {
 
           <div className="w-full sm:w-48">
             <Select
+              label="Status"
               value={statusFilter}
               onChange={(e) => setStatusFilter(e.target.value)}
               options={[
@@ -281,6 +285,8 @@ function IssuedAdvancesPanel() {
             />
           </div>
         </div>
+
+        <FilterSummary count={filteredAdvances.length} itemName="advance" active={Boolean(searchQuery) || projectFilter !== 'all' || statusFilter !== 'all'} onClear={() => { setSearchQuery(''); setProjectFilter('all'); setStatusFilter('all'); }} />
 
         {/* Advances List */}
         <div className="bg-white rounded-xl border border-surface-border overflow-hidden">

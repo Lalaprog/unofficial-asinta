@@ -12,6 +12,7 @@ import {
   Trash2,
 } from 'lucide-react';
 import { Button } from '@/components/ui/Button';
+import { FilterSummary } from '@/components/ui/FilterSummary';
 import { Badge } from '@/components/ui/Badge';
 import { Input } from '@/components/ui/Input';
 import { Select } from '@/components/ui/Select';
@@ -117,9 +118,10 @@ export default function ToolsPage() {
         </div>
 
         {/* Filters */}
-        <div className="flex flex-col sm:flex-row items-center gap-3">
+        <div className="flex flex-col sm:flex-row sm:items-end gap-3">
           <div className="w-full sm:w-80">
             <Input
+              label="Search tools"
               placeholder="Search tool name, brand, model..."
               value={searchQuery}
               onChange={(e) => setSearchQuery(e.target.value)}
@@ -129,6 +131,7 @@ export default function ToolsPage() {
 
           <div className="w-full sm:w-48">
             <Select
+              label="Condition"
               value={conditionFilter}
               onChange={(e) => setConditionFilter(e.target.value)}
               options={[
@@ -142,6 +145,8 @@ export default function ToolsPage() {
             />
           </div>
         </div>
+
+        <FilterSummary count={filteredTools.length} itemName="tool" active={Boolean(searchQuery) || conditionFilter !== 'all'} onClear={() => { setSearchQuery(''); setConditionFilter('all'); }} />
 
         {/* Tools Grid */}
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6 auto-rows-fr">

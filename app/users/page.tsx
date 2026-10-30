@@ -19,6 +19,7 @@ import {
   RefreshCw,
 } from 'lucide-react';
 import { Button } from '@/components/ui/Button';
+import { FilterSummary } from '@/components/ui/FilterSummary';
 import { Badge } from '@/components/ui/Badge';
 import { Input } from '@/components/ui/Input';
 import { Select } from '@/components/ui/Select';
@@ -347,9 +348,10 @@ export default function UsersPage() {
         )}
 
         {/* Search & Filters */}
-        <div className="flex flex-col sm:flex-row items-center gap-3">
+        <div className="flex flex-col sm:flex-row sm:items-end gap-3">
           <div className="w-full sm:w-80">
             <Input
+              label="Search accounts"
               placeholder="Search team member name or email..."
               value={searchQuery}
               onChange={(e) => setSearchQuery(e.target.value)}
@@ -359,6 +361,7 @@ export default function UsersPage() {
 
           <div className="w-full sm:w-48">
             <Select
+              label="Role"
               value={roleFilter}
               onChange={(e) => setRoleFilter(e.target.value)}
               options={[
@@ -369,6 +372,8 @@ export default function UsersPage() {
             />
           </div>
         </div>
+
+        <FilterSummary count={filteredUsers.length} itemName="account" active={Boolean(searchQuery) || roleFilter !== 'all'} onClear={() => { setSearchQuery(''); setRoleFilter('all'); }} />
 
         {/* Users Cards Grid */}
         <div className="grid grid-cols-1 md:grid-cols-2 gap-4 auto-rows-fr">

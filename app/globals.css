@@ -288,6 +288,22 @@
   }
 }
 
+/* Dashboard grids respond to available workspace width, not viewport width:
+   the desktop navigation rail otherwise squeezes four cards too early. */
+.dashboard-workspace { container: dashboard / inline-size; }
+.dashboard-register { container: register / inline-size; }
+
+@container dashboard (min-width: 70rem) {
+  .dashboard-summary-grid { grid-template-columns: repeat(4, minmax(0, 1fr)); }
+}
+@container dashboard (min-width: 62rem) {
+  .dashboard-detail-grid { grid-template-columns: minmax(18rem, 0.86fr) minmax(0, 2.14fr); }
+}
+@container register (min-width: 52rem) {
+  .dashboard-register-table { display: block; }
+  .dashboard-register-cards { display: none; }
+}
+
 /* Print styling for Payslips and Invoices */
 @media print {
   body {

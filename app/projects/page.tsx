@@ -15,6 +15,7 @@ import {
   ArrowRight,
 } from 'lucide-react';
 import { Button } from '@/components/ui/Button';
+import { FilterSummary } from '@/components/ui/FilterSummary';
 import { Badge } from '@/components/ui/Badge';
 import { Input } from '@/components/ui/Input';
 import { Select } from '@/components/ui/Select';
@@ -100,7 +101,7 @@ export default function ProjectsPage() {
               {isFounder ? 'Project Sites' : 'Assigned Projects'}
             </h1>
             <p className="text-xs text-ink-secondary mt-0.5">
-              {filteredProjects.length} active &amp; registered construction sites
+              Browse project sites and their recorded costs
             </p>
           </div>
 
@@ -117,9 +118,10 @@ export default function ProjectsPage() {
         </div>
 
         {/* Filters */}
-        <div className="flex flex-col sm:flex-row items-center gap-3">
+        <div className="flex flex-col sm:flex-row sm:items-end gap-3">
           <div className="w-full sm:w-72">
             <Input
+              label="Search projects"
               placeholder="Search projects or locations..."
               value={searchQuery}
               onChange={(e) => setSearchQuery(e.target.value)}
@@ -129,6 +131,7 @@ export default function ProjectsPage() {
 
           <div className="w-full sm:w-48">
             <Select
+              label="Status"
               value={statusFilter}
               onChange={(e) => setStatusFilter(e.target.value)}
               options={[
@@ -141,6 +144,8 @@ export default function ProjectsPage() {
             />
           </div>
         </div>
+
+        <FilterSummary count={filteredProjects.length} itemName="project" active={Boolean(searchQuery) || statusFilter !== 'all'} onClear={() => { setSearchQuery(''); setStatusFilter('all'); }} />
 
         {/* Projects Cards Grid */}
         <div className="grid grid-cols-1 md:grid-cols-2 gap-4 auto-rows-fr">
@@ -253,9 +258,9 @@ export default function ProjectsPage() {
         {filteredProjects.length === 0 && (
           <div className="p-12 text-center bg-white rounded-xl border border-surface-border text-ink-secondary">
             <FolderKanban className="w-10 h-10 mx-auto text-ink-muted mb-2" />
-            <div className="font-bold text-navy text-sm">No Projects Found</div>
+            <div className="font-bold text-navy text-sm">No projects to show</div>
             <div className="text-xs text-ink-secondary mt-1">
-              Try adjusting your filter or search query.
+              {accessibleProjects.length === 0 ? 'There are no projects available to you yet.' : 'No project matches the current search or filters. Clear filters to see all projects.'}
             </div>
           </div>
         )}

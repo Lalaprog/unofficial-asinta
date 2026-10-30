@@ -17,6 +17,7 @@ import {
   MoreHorizontal,
 } from 'lucide-react';
 import { Button } from '@/components/ui/Button';
+import { FilterSummary } from '@/components/ui/FilterSummary';
 import { Badge } from '@/components/ui/Badge';
 import { Input, Textarea } from '@/components/ui/Input';
 import { Select } from '@/components/ui/Select';
@@ -245,9 +246,10 @@ export default function InvoicesPage() {
         </div>
 
         {/* Filters */}
-        <div className="flex flex-col sm:flex-row items-center gap-3">
+        <div className="flex flex-col sm:flex-row sm:items-end gap-3">
           <div className="w-full sm:w-80">
             <Input
+              label="Search invoices"
               placeholder="Search invoice number, client, project..."
               value={searchQuery}
               onChange={(e) => setSearchQuery(e.target.value)}
@@ -257,6 +259,7 @@ export default function InvoicesPage() {
 
           <div className="w-full sm:w-48">
             <Select
+              label="Status"
               value={statusFilter}
               onChange={(e) => setStatusFilter(e.target.value)}
               options={[
@@ -270,6 +273,8 @@ export default function InvoicesPage() {
             />
           </div>
         </div>
+
+        <FilterSummary count={filteredInvoices.length} itemName="invoice" active={Boolean(searchQuery) || statusFilter !== 'all'} onClear={() => { setSearchQuery(''); setStatusFilter('all'); }} />
 
         {/* Invoices List / Table */}
         <div className="bg-white rounded-xl border border-surface-border overflow-hidden">
