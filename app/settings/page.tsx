@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import { AppShell } from '@/components/layout/AppShell';
 import { useDataStore } from '@/lib/data/store';
 import { useAuth } from '@/lib/auth/authContext';
@@ -12,6 +12,7 @@ import { AsintaEmblem, AsintaWordmark } from '@/components/ui/AsintaLogo';
 import { TemplateEditorCard } from '@/components/email/TemplateEditorCard';
 import { TestEmailCard } from '@/components/email/TestEmailCard';
 import { MfaCard } from '@/components/auth/MfaCard';
+import { WorkspaceHeader } from '@/components/ui/WorkspaceHeader';
 
 interface IntegrationStatus {
   groqModel?: string;
@@ -34,54 +35,48 @@ interface IntegrationStatus {
 
 export default function SettingsPage() {
   const { user, isFounder, isSupervisor } = useAuth();
-  const { refresh, isLoading, isLoaded, workers, getProjectsForSupervisor } = useDataStore();
+  const { refresh, isLoading, isLoaded, loadError, workers, getProjectsForSupervisor } = useDataStore();
 
   const assignedProjects = isSupervisor && user ? getProjectsForSupervisor(user.id) : [];
-  const linkedWorker = user
-    ? workers.find(
-        (w) =>
-          w.active &&
-          (w.id === user.id || w.name.trim().toLowerCase() === user.name.trim().toLowerCase())
-      )
-    : undefined;
+  // A matching name is not proof that a roster row belongs to this account.
+  const linkedWorker = user ? workers.find((w) => w.active && w.id === user.id) : undefined;
+  const possibleNameMatch = !linkedWorker && user && workers.some((w) => w.active && w.name.trim().toLowerCase() === user.name.trim().toLowerCase());
 
   const [isResyncing, setIsResyncing] = useState(false);
   const [integrationStatus, setIntegrationStatus] = useState<IntegrationStatus | null>(null);
+  const [statusState, setStatusState] = useState<'loading' | 'ready' | 'error'>('loading');
+  const [statusAttempt, setStatusAttempt] = useState(0);
+  const smsTestLock = useRef(false);
+  const syncLock = useRef(false);
   const [testPhone, setTestPhone] = useState('');
   const [isTestingSms, setIsTestingSms] = useState(false);
   const [smsTestResult, setSmsTestResult] = useState<{ accepted?: boolean; error?: string; note?: string; providerMessageId?: string | null } | null>(null);
 
   useEffect(() => {
     let active = true;
-
+    setStatusState('loading');
+    setIntegrationStatus(null);
     fetch('/api/integrations/status', { cache: 'no-store' })
       .then((response) => {
         if (!response.ok) throw new Error('Unable to load integration status');
         return response.json() as Promise<IntegrationStatus>;
       })
       .then((status) => {
-        if (active) setIntegrationStatus(status);
+        if (active) { setIntegrationStatus(status); setStatusState('ready'); }
       })
       .catch(() => {
-        if (active) {
-          setIntegrationStatus({
-            groqConfigured: false,
-            philsmsConfigured: false,
-            supabaseConfigured: false,
-            smtpConfigured: false,
-            automaticRemindersEnabled: false,
-          });
-        }
+        if (active) { setIntegrationStatus(null); setStatusState('error'); }
       });
 
     return () => {
       active = false;
     };
-  }, []);
+  }, [statusAttempt]);
 
   const handleSmsTest = async (event: React.FormEvent<HTMLFormElement>) => {
     event.preventDefault();
-    if (isTestingSms) return;
+    if (smsTestLock.current) return;
+    smsTestLock.current = true;
     setIsTestingSms(true);
     setSmsTestResult(null);
     try {
@@ -93,34 +88,33 @@ export default function SettingsPage() {
       const result = await response.json();
       setSmsTestResult(result);
     } catch {
-      setSmsTestResult({ error: 'Could not contact the BALE server. No result was confirmed.' });
+      setSmsTestResult({ error: 'Test outcome is unconfirmed. Check the provider before retrying; the message may have been sent.' });
     } finally {
+      smsTestLock.current = false;
       setIsTestingSms(false);
     }
   };
 
   const handleResyncData = async () => {
+    if (syncLock.current) return;
+    syncLock.current = true;
     setIsResyncing(true);
-    await refresh();
-    setIsResyncing(false);
+    try { await refresh(); } finally { syncLock.current = false; setIsResyncing(false); }
   };
 
   return (
     <AppShell>
       <div className="space-y-6 max-w-4xl">
-        {/* Header */}
-        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pb-3 border-b border-surface-border/60">
-          <div>
-            <h1 className="text-xl sm:text-2xl font-semibold text-navy tracking-tight">
-              {isFounder ? 'Firm Settings' : 'Supervisor Profile'}
-            </h1>
-            <p className="text-xs text-ink-secondary mt-0.5">
-              {isFounder
-                ? 'Studio profile, two-factor security, and service integrations'
-                : 'Account details, assigned sites, and payroll roster status'}
-            </p>
+        <WorkspaceHeader eyebrow={isFounder ? 'Administration' : 'Your account'}
+          title={isFounder ? 'Firm Settings' : 'Supervisor Profile'}
+          description={isFounder ? 'Review security, integrations and communication settings.' : 'Review account details, assigned sites and roster status.'}
+        />
+        {statusState === 'error' && (
+          <div role="alert" className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-status-warning/30 bg-status-warning-bg p-4 text-xs text-navy">
+            <span>Integration and session settings could not be checked. Their current status is unknown.</span>
+            <Button type="button" variant="secondary" size="sm" onClick={() => setStatusAttempt((n) => n + 1)}>Retry status check</Button>
           </div>
-        </div>
+        )}
 
         {/* Supervisor Account Profile Card */}
         {isSupervisor && user && (
@@ -183,11 +177,11 @@ export default function SettingsPage() {
                   <div className="text-ink-secondary">
                     {linkedWorker
                       ? `Enrolled on the workforce roster as ${linkedWorker.position} (₱${linkedWorker.pay_rate}/${linkedWorker.pay_rate_type === 'hourly' ? 'hr' : 'day'}).`
-                      : 'Not yet enrolled as a worker on the daily roster. You can include yourself directly from the Attendance Terminal.'}
+                      : possibleNameMatch ? 'A roster entry has the same name, but its account link is unconfirmed. Ask a Founder to verify the record.' : 'No active roster entry linked to this account. Ask a Founder to verify payroll inclusion.'}
                   </div>
                 </div>
                 <Badge variant={linkedWorker ? 'success' : 'neutral'} size="sm">
-                  {linkedWorker ? 'Enrolled in Payroll' : 'Account Only'}
+                  {linkedWorker ? 'Linked to active roster' : 'No confirmed link'}
                 </Badge>
               </div>
             </CardContent>
@@ -268,7 +262,7 @@ export default function SettingsPage() {
                       size="sm"
                     >
                       {!integrationStatus
-                        ? 'Checking'
+                        ? statusState === 'loading' ? 'Checking' : 'Unknown'
                         : integrationStatus.groqConfigured
                           ? 'Configured'
                           : 'Not Configured'}
@@ -303,7 +297,7 @@ export default function SettingsPage() {
                   <div className="text-[11px] text-ink-muted">
                     Founder two-factor enforcement:{' '}
                     <span className="font-semibold text-navy">
-                      {integrationStatus?.mfaEnforcedForFounders ? 'enabled' : 'not enabled (enrolment available)'}
+                      {!integrationStatus ? 'unknown' : integrationStatus.mfaEnforcedForFounders ? 'enabled' : 'not enabled (enrolment available)'}
                     </span>
                   </div>
                   <div className="text-[11px] text-ink-muted">
@@ -320,14 +314,14 @@ export default function SettingsPage() {
                       size="sm"
                     >
                       {!integrationStatus
-                        ? 'Checking'
+                        ? statusState === 'loading' ? 'Checking' : 'Unknown'
                         : integrationStatus.philsmsConfigured
                           ? 'Configured'
                           : 'Simulation Mode'}
                     </Badge>
                   </div>
                   <div className="text-ink-secondary">
-                    Sender ID: <span className="font-mono text-navy font-semibold">{integrationStatus?.philsmsSenderId || 'PhilSMS'}</span>
+                    Sender ID: <span className="font-mono text-navy font-semibold">{integrationStatus?.philsmsSenderId || 'Unknown'}</span>
                   </div>
                   <div className="text-[11px] text-ink-muted">
                     Configured means the key exists; it does not mean a message was accepted or delivered.
@@ -349,7 +343,7 @@ export default function SettingsPage() {
                         Send Test SMS
                       </Button>
                     </div>
-                    <p className="text-[11px] text-ink-muted">This sends a billable message. Use a number you control. Gateway acceptance is not the same as delivery.</p>
+                    <p className="text-[11px] text-ink-muted">This sends a billable message to a number you control. Acceptance is not delivery. If the result is unconfirmed, check PhilSMS before retrying; test messages are not recorded in the SMS dispatch log.</p>
                     {smsTestResult && (
                       <div role="status" className={`rounded-lg border p-3 text-[11px] ${smsTestResult.accepted ? 'border-status-success/20 bg-status-success-bg text-status-success' : 'border-status-danger/20 bg-status-danger-bg text-status-danger'}`}>
                         <strong>{smsTestResult.accepted ? 'PhilSMS API accepted the test' : 'Test not confirmed'}</strong>
@@ -369,7 +363,7 @@ export default function SettingsPage() {
                       size="sm"
                     >
                       {!integrationStatus
-                        ? 'Checking'
+                        ? statusState === 'loading' ? 'Checking' : 'Unknown'
                         : integrationStatus.smtpConfigured
                           ? 'Configured'
                           : 'Not configured'}
@@ -392,7 +386,7 @@ export default function SettingsPage() {
                       size="sm"
                     >
                       {!integrationStatus
-                        ? 'Checking'
+                        ? statusState === 'loading' ? 'Checking' : 'Unknown'
                         : integrationStatus.automaticRemindersEnabled
                           ? 'Enabled globally'
                           : 'Disabled (default)'}
@@ -435,7 +429,7 @@ export default function SettingsPage() {
                   size="sm"
                 >
                   {!integrationStatus
-                    ? 'Checking'
+                    ? statusState === 'loading' ? 'Checking' : 'Unknown'
                     : integrationStatus.supabaseConfigured
                       ? 'Configured'
                       : 'Local Dev Default'}
@@ -450,7 +444,7 @@ export default function SettingsPage() {
               <div className="text-[11px] text-ink-secondary">
                 Ledger status:{' '}
                 <span className="font-semibold text-navy">
-                  {isLoading ? 'Synchronizing…' : isLoaded ? 'Synchronized' : 'Not loaded'}
+                  {isLoading ? 'Refreshing…' : loadError ? 'Refresh incomplete — check the error above' : isLoaded ? 'Loaded (may include cached data)' : 'Not loaded'}
                 </span>
               </div>
             </div>
@@ -477,15 +471,15 @@ export default function SettingsPage() {
               <div className="font-bold text-navy">Session Security Policy</div>
               <div className="text-ink-secondary">
                 <span className="font-mono font-semibold text-navy">
-                  {integrationStatus?.sessionPolicy?.idleMinutes ?? 20} min idle
+                  {integrationStatus?.sessionPolicy ? `${integrationStatus.sessionPolicy.idleMinutes} min idle` : 'Idle limit unknown'}
                 </span>
                 {' · '}
                 <span className="font-mono font-semibold text-navy">
-                  {integrationStatus?.sessionPolicy?.absoluteHours ?? 8} h max session
+                  {integrationStatus?.sessionPolicy ? `${integrationStatus.sessionPolicy.absoluteHours} h max session` : 'Session limit unknown'}
                 </span>
                 {' · '}
                 <span className="font-mono font-semibold text-navy">
-                  {integrationStatus?.sessionPolicy?.warningSeconds ?? 120} s warning
+                  {integrationStatus?.sessionPolicy ? `${integrationStatus.sessionPolicy.warningSeconds} s warning` : 'Warning interval unknown'}
                 </span>
               </div>
             </div>
