@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useState } from 'react';
+import React, { useRef, useState } from 'react';
 import { AppShell } from '@/components/layout/AppShell';
 import { useDataStore } from '@/lib/data/store';
 import { Client } from '@/types';
@@ -19,10 +19,19 @@ import { Badge } from '@/components/ui/Badge';
 import { Input } from '@/components/ui/Input';
 import { Modal } from '@/components/ui/Modal';
 import { EmptyState } from '@/components/ui/EmptyState';
-import { ConfirmDialog } from '@/components/ui/ConfirmDialog';
+import { WorkspaceHeader } from '@/components/ui/WorkspaceHeader';
+import { WorkspaceFilters } from '@/components/ui/WorkspaceFilters';
+import { useToast } from '@/components/ui/Toast';
+import { formatPeso } from '@/lib/email/format';
+import { normalizeClientForm } from '@/lib/clients/form';
 
 export default function ClientsPage() {
-  const { clients, projects, invoices, createClient, updateClient, deleteClient } = useDataStore();
+  const { clients, projects, invoices, createClient, updateClient, deleteClient, refresh } = useDataStore();
+  const { showToast } = useToast();
+  const [isSaving, setIsSaving] = useState(false);
+  const [isDeleting, setIsDeleting] = useState(false);
+  const saveLock = useRef(false);
+  const deleteLock = useRef(false);
 
   const [searchQuery, setSearchQuery] = useState('');
   const [isAddModalOpen, setIsAddModalOpen] = useState(false);
@@ -45,84 +54,73 @@ export default function ClientsPage() {
       c.address.toLowerCase().includes(searchQuery.toLowerCase())
   );
 
-  const handleAddSubmit = async (e: React.FormEvent) => {
+  const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!formData.name) return;
-
-    const created = await createClient({
-      name: formData.name,
-      contact_person: formData.contact_person || formData.name,
-      phone: formData.phone || '+63 917 000 0000',
-      email: formData.email || 'client@asinta.ph',
-      address: formData.address || 'Batangas',
-    });
-
-    if (created) {
-      setIsAddModalOpen(false);
-      setFormData({ name: '', contact_person: '', phone: '', email: '', address: '' });
+    if (saveLock.current || (isEditModalOpen && !selectedClient)) return;
+    const payload = normalizeClientForm(formData);
+    if (!payload) {
+      showToast('error', 'Complete every field with the client’s actual contact details.');
+      return;
     }
-  };
-
-  const handleEditSubmit = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!selectedClient) return;
-
-    const updated = await updateClient(selectedClient.id, formData);
-    if (updated) {
-      setIsEditModalOpen(false);
+    saveLock.current = true;
+    setIsSaving(true);
+    try {
+      const saved = isEditModalOpen && selectedClient
+        ? await updateClient(selectedClient.id, payload)
+        : await createClient(payload);
+      if (saved) {
+        showToast('success', isEditModalOpen ? 'Client updated.' : 'Client added.');
+        setIsAddModalOpen(false);
+        setIsEditModalOpen(false);
+        setFormData({ name: '', contact_person: '', phone: '', email: '', address: '' });
+      } else {
+        showToast('error', 'Save not confirmed. Refresh and check the client directory before retrying.');
+      }
+    } catch {
+      showToast('error', 'Save not confirmed. Refresh and check the client directory before retrying.');
+    } finally {
+      saveLock.current = false;
+      setIsSaving(false);
     }
-  };
-
-  const handleDelete = async (id: string, name: string) => {
-    setPendingDelete({ id, name });
   };
 
   const confirmDelete = async () => {
-    if (!pendingDelete) return;
-    const target = pendingDelete;
-    setPendingDelete(null);
-    await deleteClient(target.id);
+    if (!pendingDelete || deleteLock.current) return;
+    deleteLock.current = true;
+    setIsDeleting(true);
+    try {
+      if (await deleteClient(pendingDelete.id)) {
+        showToast('success', 'Client removed.');
+        setPendingDelete(null);
+      } else {
+        showToast('error', 'Removal not confirmed. Check linked projects and invoices, then refresh before retrying.');
+        await refresh();
+      }
+    } catch {
+      showToast('error', 'Removal not confirmed. Refresh the directory before retrying.');
+    } finally {
+      deleteLock.current = false;
+      setIsDeleting(false);
+    }
   };
 
   return (
     <AppShell requireFounder={true}>
       <div className="space-y-6">
-        {/* Header */}
-        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pb-3 border-b border-surface-border/60">
-          <div>
-            <h1 className="text-xl sm:text-2xl font-semibold text-navy tracking-tight">
-              Client Directory
-            </h1>
-            <p className="text-xs text-ink-secondary mt-0.5">
-              {clients.length} registered client accounts
-            </p>
+        <WorkspaceHeader
+          eyebrow="Client billing"
+          title="Client Directory"
+          description={`${clients.length} client account(s). Review contacts, projects and billing at a glance.`}
+          action={<Button variant="primary" size="sm" onClick={() => {
+            setFormData({ name: '', contact_person: '', phone: '', email: '', address: '' });
+            setIsAddModalOpen(true);
+          }} leftIcon={<Plus className="w-4 h-4" />}>Add Client</Button>}
+        />
+        <WorkspaceFilters title="Find clients" summary={<FilterSummary count={filteredClients.length} itemName="client" active={Boolean(searchQuery)} onClear={() => setSearchQuery('')} />}>
+          <div className="max-w-md">
+            <Input label="Search clients" placeholder="Search client name, representative, address..." value={searchQuery} onChange={(e) => setSearchQuery(e.target.value)} leftIcon={<Search className="w-4 h-4" />} />
           </div>
-
-          <Button
-            variant="primary"
-            size="sm"
-            onClick={() => {
-              setFormData({ name: '', contact_person: '', phone: '', email: '', address: '' });
-              setIsAddModalOpen(true);
-            }}
-            leftIcon={<Plus className="w-4 h-4" />}
-          >
-            Add Client
-          </Button>
-        </div>
-
-        {/* Search */}
-        <div className="max-w-md">
-          <Input
-            label="Search clients"
-            placeholder="Search client name, representative, address..."
-            value={searchQuery}
-            onChange={(e) => setSearchQuery(e.target.value)}
-            leftIcon={<Search className="w-4 h-4" />}
-          />
-        </div>
-
-        <FilterSummary count={filteredClients.length} itemName="client" active={Boolean(searchQuery)} onClear={() => { setSearchQuery(''); }} />
+        </WorkspaceFilters>
 
         {/* Client Cards Grid */}
         <div className="grid grid-cols-1 md:grid-cols-2 gap-4 auto-rows-fr">
@@ -170,7 +168,7 @@ export default function ClientsPage() {
                         type="button"
                         aria-label={`Delete ${client.name}`}
                         title="Delete client"
-                        onClick={() => handleDelete(client.id, client.name)}
+                        onClick={() => setPendingDelete({ id: client.id, name: client.name })}
                         className="min-h-11 min-w-11 sm:min-h-9 sm:min-w-9 inline-flex items-center justify-center rounded-lg text-status-danger hover:bg-status-danger-bg focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-status-danger/25"
                       >
                         <Trash2 className="w-4 h-4" />
@@ -199,6 +197,7 @@ export default function ClientsPage() {
                     <div className="text-xs font-medium text-ink-secondary mb-1.5">
                       Engaged Projects ({clientProjects.length})
                     </div>
+                    {clientProjects.length === 0 && <p className="text-xs text-ink-muted">No projects linked.</p>}
                     <div className="space-y-1">
                       {clientProjects.map((p) => (
                         <div
@@ -219,11 +218,11 @@ export default function ClientsPage() {
                 <div className="mt-6 pt-4 border-t border-surface-border/60 flex items-center justify-between text-xs">
                   <div>
                     <div className="text-ink-secondary">Total Invoiced</div>
-                    <div className="font-bold text-navy text-sm">₱{totalBilled.toLocaleString()}</div>
+                    <div className="font-bold text-navy text-sm">{formatPeso(totalBilled)}</div>
                   </div>
                   <div className="text-right">
                     <div className="text-ink-secondary">Total Settled</div>
-                    <div className="font-bold text-status-success text-sm">₱{totalPaid.toLocaleString()}</div>
+                    <div className="font-bold text-status-success text-sm">{formatPeso(totalPaid)}</div>
                   </div>
                 </div>
               </div>
@@ -244,7 +243,7 @@ export default function ClientsPage() {
                     <Button
                       variant="primary"
                       size="sm"
-                      onClick={() => setIsAddModalOpen(true)}
+                      onClick={() => { setFormData({ name: '', contact_person: '', phone: '', email: '', address: '' }); setIsAddModalOpen(true); }}
                       leftIcon={<Plus className="w-3.5 h-3.5" />}
                     >
                       Register Client
@@ -264,10 +263,13 @@ export default function ClientsPage() {
           setIsAddModalOpen(false);
           setIsEditModalOpen(false);
         }}
+        dismissOnBackdrop={!isSaving}
+        dismissOnEscape={!isSaving}
+        showCloseButton={!isSaving}
         title={isEditModalOpen ? 'Edit Client Record' : 'Register New Client'}
         description="Maintain client contact information and project linkages."
       >
-        <form onSubmit={isEditModalOpen ? handleEditSubmit : handleAddSubmit} className="space-y-4 text-xs">
+        <form onSubmit={handleSubmit} className="space-y-4 text-xs">
           <Input
             label="Client / Company Name"
             placeholder="e.g. Dr. Eduardo & Maria Laurel"
@@ -284,7 +286,7 @@ export default function ClientsPage() {
             required
           />
 
-          <div className="grid grid-cols-2 gap-4">
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
             <Input
               label="Contact Number"
               placeholder="+63 917 842 1190"
@@ -313,7 +315,9 @@ export default function ClientsPage() {
 
           <div className="pt-3 flex justify-end space-x-2">
             <Button
+              type="button"
               variant="secondary"
+              disabled={isSaving}
               onClick={() => {
                 setIsAddModalOpen(false);
                 setIsEditModalOpen(false);
@@ -321,22 +325,21 @@ export default function ClientsPage() {
             >
               Cancel
             </Button>
-            <Button variant="primary" type="submit">
-              {isEditModalOpen ? 'Save Changes' : 'Create Client'}
+            <Button variant="primary" type="submit" isLoading={isSaving}>
+              {isSaving ? 'Saving…' : isEditModalOpen ? 'Save Changes' : 'Create Client'}
             </Button>
           </div>
         </form>
       </Modal>
 
-      <ConfirmDialog
-        isOpen={Boolean(pendingDelete)}
-        title="Remove client"
-        message={pendingDelete ? `Remove ${pendingDelete.name}? This cannot be undone.` : ''}
-        confirmLabel="Remove client"
-        destructive
-        onConfirm={confirmDelete}
-        onCancel={() => setPendingDelete(null)}
-      />
+      <Modal isOpen={Boolean(pendingDelete)} onClose={() => setPendingDelete(null)}
+        title="Remove client" description={pendingDelete ? `Remove ${pendingDelete.name}? Linked projects or invoices may prevent removal. This cannot be undone.` : ''}
+        role="alertdialog" maxWidth="sm" dismissOnBackdrop={false} dismissOnEscape={!isDeleting} showCloseButton={!isDeleting}>
+        <div className="flex justify-end gap-2">
+          <Button type="button" variant="ghost" disabled={isDeleting} onClick={() => setPendingDelete(null)}>Cancel</Button>
+          <Button type="button" variant="danger" isLoading={isDeleting} onClick={confirmDelete}>{isDeleting ? 'Removing…' : 'Remove client'}</Button>
+        </div>
+      </Modal>
     </AppShell>
   );
 }

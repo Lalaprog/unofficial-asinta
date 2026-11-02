@@ -564,6 +564,7 @@ export default function FounderDashboard() {
   const [smsModalOpen, setSmsModalOpen] = useState(false);
   const [selectedInvoiceForSMS, setSelectedInvoiceForSMS] = useState<Invoice | null>(null);
   const [smsSending, setSmsSending] = useState(false);
+  const smsSendLock = useRef(false);
   const [smsSuccessMessage, setSmsSuccessMessage] = useState<string | null>(null);
 
   const formatPHP = formatPeso;
@@ -589,20 +590,16 @@ export default function FounderDashboard() {
   };
 
   const handleSendInvoiceSMS = async () => {
-    if (!selectedInvoiceForSMS) return;
+    if (!selectedInvoiceForSMS || smsSendLock.current) return;
+    smsSendLock.current = true;
     setSmsSending(true);
-
-    const sent = await sendSMS({
-      invoiceId: selectedInvoiceForSMS.id,
-      message: buildSmsPreviewMessage(selectedInvoiceForSMS),
-    });
-    setSmsSending(false);
-    if (!sent) return;
-    setSmsSuccessMessage('Reminder handed to the PhilSMS gateway — see the SMS log for its status.');
-    setTimeout(() => {
-      setSmsModalOpen(false);
-      setSmsSuccessMessage(null);
-    }, 1800);
+    try {
+      const sent = await sendSMS({ invoiceId: selectedInvoiceForSMS.id, message: buildSmsPreviewMessage(selectedInvoiceForSMS) });
+      if (sent) setSmsSuccessMessage('Reminder handed to the PhilSMS gateway — see the SMS log for its status.');
+    } finally {
+      smsSendLock.current = false;
+      setSmsSending(false);
+    }
   };
 
   const activeProject = metrics.selectedProject;
@@ -1719,14 +1716,18 @@ export default function FounderDashboard() {
       <Modal
         isOpen={smsModalOpen}
         onClose={() => setSmsModalOpen(false)}
+        dismissOnBackdrop={!smsSending}
+        dismissOnEscape={!smsSending}
+        showCloseButton={!smsSending}
         title="Send Payment Reminder (PhilSMS)"
-        description="Deliver an instant SMS reminder to the client for this overdue invoice."
+        description="Review the reminder before sending it for this overdue invoice."
       >
         {selectedInvoiceForSMS && (
           <div className="space-y-4 text-xs">
             {smsSuccessMessage ? (
               <div className="rounded-xl border border-status-success/20 bg-status-success-bg p-4 text-center font-medium text-status-success">
                 {smsSuccessMessage}
+                <div className="mt-3"><Button type="button" variant="secondary" size="sm" onClick={() => setSmsModalOpen(false)}>Done</Button></div>
               </div>
             ) : (
               <>
@@ -1760,8 +1761,9 @@ export default function FounderDashboard() {
                   </div>
                 </div>
 
+                <p className="text-ink-secondary">If sending is unconfirmed, check the dispatch log and provider before retrying; it may have been sent.</p>
                 <div className="flex flex-col-reverse gap-2 pt-2 sm:flex-row sm:justify-end">
-                  <Button type="button" variant="secondary" onClick={() => setSmsModalOpen(false)}>
+                  <Button type="button" variant="secondary" disabled={smsSending} onClick={() => setSmsModalOpen(false)}>
                     Cancel
                   </Button>
                   <Button

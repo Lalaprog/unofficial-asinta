@@ -36,6 +36,8 @@ export interface DeliverAndLogSMSParams {
 export interface DeliverAndLogSMSResult {
   success: boolean;
   simulated: boolean;
+  uncertain: boolean;
+  logUpdateFailed?: boolean;
   statusLabel: string;
   error: string | null;
   providerStatus: string | null;
@@ -68,6 +70,7 @@ export async function deliverAndLogSMS(
     return {
       success: false,
       simulated: false,
+      uncertain: false,
       statusLabel: 'Not sent (could not record the attempt)',
       error: 'Failed to record the SMS attempt — no message was sent.',
       providerStatus: null,
@@ -86,6 +89,7 @@ export async function deliverAndLogSMS(
 
   const simulated = Boolean(result.simulated);
   const success = Boolean(result.success) && !simulated;
+  const uncertain = !success && !simulated && Boolean(result.uncertain);
 
   const update = success
     ? {
@@ -96,14 +100,14 @@ export async function deliverAndLogSMS(
         updated_at: new Date().toISOString(),
       }
     : {
-        status: 'failed',
+        status: uncertain ? 'pending' : 'failed',
         simulated,
-        provider_status: simulated ? 'simulation' : result.providerStatus || 'failed',
+        provider_status: simulated ? 'simulation' : uncertain ? 'unconfirmed' : result.providerStatus || 'failed',
         error_message: result.error || 'Unknown gateway failure',
         updated_at: new Date().toISOString(),
       };
 
-  const { data: finalLog } = await params.db
+  const { data: finalLog, error: updateError } = await params.db
     .from('sms_logs')
     .update(update)
     .eq('id', pendingLog.id)
@@ -115,7 +119,9 @@ export async function deliverAndLogSMS(
   return {
     success,
     simulated,
-    statusLabel: success ? 'Sent' : simulated ? 'Not sent (simulation mode)' : 'Failed',
+    uncertain,
+    logUpdateFailed: Boolean(updateError || !finalLog),
+    statusLabel: success ? 'Sent' : simulated ? 'Not sent (simulation mode)' : uncertain ? 'Unconfirmed' : 'Failed',
     error,
     providerStatus: update.provider_status ?? null,
     providerMessageId: success ? result.messageId || null : null,

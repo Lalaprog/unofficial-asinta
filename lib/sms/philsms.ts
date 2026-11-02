@@ -9,6 +9,8 @@ export interface SendSMSResult {
   success: boolean;
   /** true when the gateway is not configured and the message was NOT actually sent */
   simulated?: boolean;
+  /** The provider may have accepted the request; do not blindly retry. */
+  uncertain?: boolean;
   messageId?: string;
   providerStatus?: string;
   error?: string;
@@ -53,7 +55,8 @@ export async function sendPhilSMS({ phone, message }: SendSMSParams): Promise<Se
       return {
         success: false,
         providerStatus,
-        error: `PhilSMS rejected the request (HTTP ${response.status})${detail ? `: ${detail}` : '.'}`,
+        uncertain: response.status >= 500 || response.status === 408,
+        error: `PhilSMS returned HTTP ${response.status}${detail ? `: ${detail}` : '.'}`,
       };
     }
 
@@ -63,6 +66,8 @@ export async function sendPhilSMS({ phone, message }: SendSMSParams): Promise<Se
       return {
         success: false,
         providerStatus,
+        // An unsuccessful/unknown body is not proof the provider did not accept it.
+        uncertain: true,
         error: detail || 'PhilSMS did not confirm acceptance (missing or unsuccessful provider status).',
       };
     }
@@ -74,6 +79,6 @@ export async function sendPhilSMS({ phone, message }: SendSMSParams): Promise<Se
     };
   } catch (e: any) {
     console.error('PhilSMS gateway request failed:', e);
-    return { success: false, error: e?.message || 'PhilSMS gateway network error.' };
+    return { success: false, uncertain: true, error: e?.message || 'PhilSMS gateway network error.' };
   }
 }

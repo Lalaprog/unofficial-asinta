@@ -1370,6 +1370,8 @@ export const DataStoreProvider: React.FC<{ children: React.ReactNode }> = ({ chi
       const result: {
         success?: boolean;
         simulated?: boolean;
+        uncertain?: boolean;
+        logUpdateFailed?: boolean;
         error?: string | null;
         log?: SMSLog | null;
       } | null = await res.json().catch(() => null);
@@ -1383,17 +1385,26 @@ export const DataStoreProvider: React.FC<{ children: React.ReactNode }> = ({ chi
         setSmsLogs((prev) => [logRow, ...prev.filter((l) => l.id !== logRow.id)]);
       }
 
+      if (!result) {
+        showToast('error', 'SMS outcome is unconfirmed. Check the provider and dispatch history before retrying.');
+        return false;
+      }
+      if (result?.logUpdateFailed) {
+        showToast('error', 'SMS log update was not confirmed. Check the provider and dispatch history before retrying.');
+      }
       if (result?.simulated) {
         showToast(
           'info',
           'PHILSMS_API_KEY is not configured — the message was logged in simulation mode and has not left the server.'
         );
+      } else if (result?.uncertain) {
+        showToast('error', 'SMS outcome is unconfirmed. Check the provider and dispatch history before retrying; the message may have been sent.');
       } else if (!result?.success) {
         showToast('error', `SMS dispatch failed: ${result?.error || 'gateway error'}`);
       }
       return Boolean(result?.success);
     } catch (e: any) {
-      showToast('error', `SMS dispatch failed: ${e?.message || 'network error'}`);
+      showToast('error', `SMS outcome not confirmed: ${e?.message || 'network error'}. Check the provider and dispatch history before retrying.`);
       return false;
     }
   };

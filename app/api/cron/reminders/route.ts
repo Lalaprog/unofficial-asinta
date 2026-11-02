@@ -10,7 +10,6 @@ import {
   getManilaClock,
   isAuthorizedCronRequest,
   isGlobalAutomaticRemindersEnabled,
-  isRetryableSmsFailure,
   isWithinSendingHours,
 } from '@/lib/reminders/scheduler';
 
@@ -143,41 +142,36 @@ async function runReminderCron(req: NextRequest) {
         .eq('idempotency_key', idempotencyKey)
         .maybeSingle();
 
-      let dispatchId: string | null = null;
+      // An unsuccessful response can still follow provider acceptance. Never
+      // replay a recorded key automatically, including legacy failed rows.
       if (existing) {
-        const retryable = existing.status === 'failed' && isRetryableSmsFailure(existing.error_message);
-        if (!retryable) {
-          record.outcome = 'duplicate_skipped';
-          record.previousStatus = existing.status;
-          skipped += 1;
-          results.push(record);
-          continue;
-        }
-        dispatchId = existing.id;
-        await db.from('reminder_dispatches').update({ status: 'pending', error_message: null }).eq('id', existing.id);
-      } else {
-        const { data: inserted, error: insertError } = await db
-          .from('reminder_dispatches')
-          .insert({
-            invoice_id: invoice.id,
-            channel: 'sms',
-            reminder_type: reminderType,
-            scheduled_date: todayIso,
-            idempotency_key: idempotencyKey,
-            status: 'pending',
-          })
-          .select('id')
-          .single();
-
-        if (insertError || !inserted) {
-          // Unique-key race with an overlapping run — treat as duplicate.
-          record.outcome = 'duplicate_skipped';
-          skipped += 1;
-          results.push(record);
-          continue;
-        }
-        dispatchId = inserted.id;
+        record.outcome = 'duplicate_skipped';
+        record.previousStatus = existing.status;
+        skipped += 1;
+        results.push(record);
+        continue;
       }
+      const { data: inserted, error: insertError } = await db
+        .from('reminder_dispatches')
+        .insert({
+          invoice_id: invoice.id,
+          channel: 'sms',
+          reminder_type: reminderType,
+          scheduled_date: todayIso,
+          idempotency_key: idempotencyKey,
+          status: 'pending',
+        })
+        .select('id')
+        .single();
+      if (insertError || !inserted) {
+        // Unique-key race with an overlapping run, or an insert failure:
+        // fail closed instead of sending without an idempotency record.
+        record.outcome = 'duplicate_skipped';
+        skipped += 1;
+        results.push(record);
+        continue;
+      }
+      const dispatchId = inserted.id;
 
       // Latest SUCCESSFUL initial-request email (accepted or truly delivered).
       const { data: emailLog } = await db
@@ -229,15 +223,15 @@ async function runReminderCron(req: NextRequest) {
         const errorMessage = outcome.error || 'Unknown gateway failure';
         await db
           .from('reminder_dispatches')
-          .update({ status: 'failed', error_message: errorMessage })
+          .update({ status: outcome.uncertain ? 'pending' : 'failed', error_message: errorMessage })
           .eq('id', dispatchId);
-        record.outcome = 'failed';
+        record.outcome = outcome.uncertain ? 'unconfirmed' : 'failed';
         record.reason = errorMessage;
         failed += 1;
       }
       results.push(record);
     } catch {
-      record.outcome = 'failed';
+      record.outcome = 'unconfirmed';
       record.reason = 'unexpected_error';
       failed += 1;
       results.push(record);

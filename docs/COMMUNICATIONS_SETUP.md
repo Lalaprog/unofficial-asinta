@@ -307,7 +307,20 @@ your **domain host** (where your DNS records live):
   reason) is recorded in the `reminder_dispatches` table.
 - **Duplicate protection:** each reminder has a unique key
   (`invoice + channel + type + date`) enforced by the database, so running
-  the cron twice can never send the same reminder twice.
+  the cron will not resend an existing key, including failed or pending attempts.
+  A timeout, provider server error, missing provider response, or interrupted
+  request can leave the outcome **unconfirmed** even if the provider accepted
+  it. Check PhilSMS and the SMS/dispatch logs before any manual retry. Automatic
+  retries for the same key are intentionally disabled, including legacy failed
+  rows; this can leave a reminder unsent and requires operator review. Later
+  scheduled dates and manual sends use different attempts and can still send.
+  Pause or disable the invoice (or the global switch) while investigating.
+  For deployment, pause the cron until all old server instances have been
+  replaced: older code can still retry failed keys during a rolling rollout.
+  Manual sends are not idempotent and are not deduplicated against scheduled
+  sends or other dates. Review the current balance and message before sending;
+  eligibility is checked again server-side, but editable message text is not
+  revalidated against balance changes made concurrently.
 
 ### Vercel Cron example
 
@@ -403,7 +416,7 @@ snapshot; editing the template only affects future emails.
 | Cron returns 401 | The `Authorization: Bearer …` header doesn't match `CRON_SECRET` exactly, or `CRON_SECRET` is unset (the route fails closed). |
 | SMS shows "Simulation mode" | `PHILSMS_API_KEY` is empty. That is intentional and safe; add the key for live sends. |
 | PhilSMS failure | Check the error stored on the SMS log (invalid number, unapproved sender ID, or account balance). |
-| "duplicate_skipped" in cron results | Working as designed — that reminder was already dispatched for that date. |
+| "duplicate_skipped" in cron results | An attempt or skip for that key already exists; it may be pending, failed, skipped or sent. Inspect the dispatch and provider before deciding what to do. |
 | Cron reports `automatic_reminders_globally_disabled` | `AUTOMATIC_REMINDERS_ENABLED` is not `true`. Enable it only after §19.9. |
 
 ---

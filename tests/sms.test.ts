@@ -21,12 +21,12 @@ describe('reminder SMS wording', () => {
   it('uses the "emailed on" wording only when a successful email exists', () => {
     const withEmail = buildReminderSMS({ ...BASE, paymentRequestSentDate: '2026-01-06T02:00:00Z' });
     expect(withEmail).toContain('Please refer to the Request for Payment emailed on Jan 6, 2026.');
-    expect(withEmail).not.toContain('previously provided');
+    expect(withEmail).not.toContain('Please review the payment details for this invoice.');
   });
 
   it('falls back honestly when no successful email record exists', () => {
     const withoutEmail = buildReminderSMS({ ...BASE, paymentRequestSentDate: null });
-    expect(withoutEmail).toContain('Please refer to the Request for Payment previously provided to you.');
+    expect(withoutEmail).toContain('Please review the payment details for this invoice.');
     expect(withoutEmail).not.toContain('emailed on');
   });
 
@@ -172,5 +172,18 @@ describe('honest gateway statuses', () => {
     expect(formatDateForSMS('2026-01-20')).toBe('Jan 20, 2026');
     // 16:30 UTC = 00:30 next day in Manila
     expect(formatDateForSMS('2026-01-19T16:30:00Z')).toBe('Jan 20, 2026');
+  });
+});
+
+describe('uncertain gateway outcomes', () => {
+  afterEach(() => { vi.unstubAllEnvs(); vi.unstubAllGlobals(); });
+  it('does not claim a timeout or server error means no SMS was accepted', async () => {
+    vi.stubEnv('PHILSMS_API_KEY', 'test');
+    vi.stubGlobal('fetch', vi.fn().mockRejectedValue(new Error('timeout')));
+    expect((await sendPhilSMS({ recipient: 'X', phone: '+639178421190', message: 'test' })).uncertain).toBe(true);
+    vi.stubGlobal('fetch', vi.fn(async () => ({ ok: false, status: 503, json: async () => ({}) })));
+    expect((await sendPhilSMS({ recipient: 'X', phone: '+639178421190', message: 'test' })).uncertain).toBe(true);
+    vi.stubGlobal('fetch', vi.fn(async () => ({ ok: true, status: 200, json: async () => ({}) })));
+    expect((await sendPhilSMS({ recipient: 'X', phone: '+639178421190', message: 'test' })).uncertain).toBe(true);
   });
 });

@@ -56,14 +56,17 @@ export async function POST(req: NextRequest) {
     if (invoiceId) {
       const { data: invoice } = await supabase
         .from('invoices')
-        .select('id, client_id, status')
+        .select('id, client_id, status, amount, amount_paid')
         .eq('id', invoiceId)
         .maybeSingle();
       if (!invoice) {
         return NextResponse.json({ error: 'Invoice not found' }, { status: 404 });
       }
-      if (invoice.status === 'cancelled') {
-        return NextResponse.json({ error: 'This invoice is cancelled — reminders cannot be sent for it' }, { status: 422 });
+      const amount = Number(invoice.amount);
+      const paid = Number(invoice.amount_paid);
+      if (['cancelled', 'paid', 'draft'].includes(invoice.status) ||
+          !Number.isFinite(amount) || !Number.isFinite(paid) || amount - paid <= 0) {
+        return NextResponse.json({ error: 'This invoice is not eligible for a payment reminder. Refresh its status and balance.' }, { status: 422 });
       }
       resolvedClientId = invoice.client_id;
     }
@@ -103,6 +106,8 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({
       success: outcome.success,
       simulated: outcome.simulated,
+      uncertain: outcome.uncertain,
+      logUpdateFailed: outcome.logUpdateFailed,
       statusLabel: outcome.statusLabel,
       error: outcome.error,
       log: outcome.log,

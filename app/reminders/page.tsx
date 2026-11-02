@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { AppShell } from '@/components/layout/AppShell';
 import { useDataStore } from '@/lib/data/store';
 import {
@@ -15,6 +15,8 @@ import { Button } from '@/components/ui/Button';
 import { Badge } from '@/components/ui/Badge';
 import { Textarea } from '@/components/ui/Input';
 import { Modal } from '@/components/ui/Modal';
+import { WorkspaceHeader } from '@/components/ui/WorkspaceHeader';
+import { useToast } from '@/components/ui/Toast';
 import { createClient } from '@/lib/supabase/client';
 import { buildReminderSMS, estimateSMSSegments } from '@/lib/sms/templates';
 import { formatPeso, formatDatePH } from '@/lib/email/format';
@@ -53,9 +55,13 @@ const TYPE_VARIANTS: Record<ScheduledReminderType, 'info' | 'warning' | 'danger'
 export default function RemindersPage() {
   const { invoices, clients, projects, smsLogs, sendSMS, updateInvoice } = useDataStore();
   const supabase = useMemo(() => createClient(), []);
+  const { showToast } = useToast();
+  const sendLock = useRef(false);
+  const toggleLock = useRef(false);
 
   const todayIso = getManilaClock().dateIso;
   const [emailDates, setEmailDates] = useState<Record<string, string>>({});
+  const [emailLookupFailed, setEmailLookupFailed] = useState(false);
   const [dismissed, setDismissed] = useState<Set<string>>(new Set());
   const [status, setStatus] = useState<IntegrationStatus | null>(null);
   const [sendingId, setSendingId] = useState<string | null>(null);
@@ -105,10 +111,11 @@ export default function RemindersPage() {
       inv.amount - inv.amount_paid > 0
   );
 
-  // Latest successful Request for Payment email per queued invoice.
+  // Track the actual queue membership, not merely the invoice count.
+  const queueIds = queue.map((inv) => inv.id).sort().join(',');
   useEffect(() => {
-    const ids = queue.map((inv) => inv.id);
-    if (ids.length === 0) return;
+    const ids = queueIds ? queueIds.split(',') : [];
+    if (ids.length === 0) { setEmailDates({}); setEmailLookupFailed(false); return; }
     let active = true;
 
     supabase
@@ -118,24 +125,25 @@ export default function RemindersPage() {
       .eq('template_type', 'initial_request')
       .in('status', ['accepted', 'delivered'])
       .order('sent_at', { ascending: false })
-      .then(({ data }: { data: Array<{ invoice_id: string; sent_at: string | null }> | null }) => {
-        if (!active || !data) return;
+      .then(({ data, error }: { data: Array<{ invoice_id: string; sent_at: string | null }> | null; error: unknown }) => {
+        if (!active) return;
+        if (error || !data) { setEmailDates({}); setEmailLookupFailed(true); return; }
+        setEmailLookupFailed(false);
         const latest: Record<string, string> = {};
         for (const row of data) {
           if (row.sent_at && !latest[row.invoice_id]) latest[row.invoice_id] = row.sent_at;
         }
         setEmailDates(latest);
-      });
+      }, () => { if (active) { setEmailDates({}); setEmailLookupFailed(true); } });
 
     return () => {
       active = false;
     };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [invoices.length, supabase]);
+  }, [queueIds, supabase]);
 
   const latestSmsDate = (invoiceId: string): string | null => {
     const log = smsLogs.find(
-      (l) => l.invoice_id === invoiceId && (l.status === 'sent' || l.status === 'delivered')
+      (l) => l.invoice_id === invoiceId && !l.simulated && (l.status === 'sent' || l.status === 'delivered')
     );
     return log?.sent_at || null;
   };
@@ -155,73 +163,55 @@ export default function RemindersPage() {
   };
 
   const handleApproveAndSend = async (inv: Invoice, message: string) => {
+    if (sendLock.current || !confirmed || !message.trim()) return;
+    sendLock.current = true;
     setSendingId(inv.id);
-    const sent = await sendSMS({ invoiceId: inv.id, message });
-    setSendingId(null);
-    if (sent && editInvoice?.id === inv.id) {
-      setSentNotice(true);
-      setTimeout(() => {
-        setEditInvoice(null);
-        setSentNotice(false);
-        setConfirmed(false);
-      }, 1400);
+    try {
+      if (await sendSMS({ invoiceId: inv.id, message })) setSentNotice(true);
+      else setConfirmed(false);
+    } finally {
+      sendLock.current = false;
+      setSendingId(null);
     }
   };
 
-  const handlePause = async (inv: Invoice, days: number) => {
+  const changeReminderSetting = async (inv: Invoice, patch: Partial<Invoice>, successMessage: string) => {
+    if (toggleLock.current) return;
+    toggleLock.current = true;
     setTogglingId(inv.id);
-    await updateInvoice(inv.id, {
-      reminders_paused_until: new Date(Date.now() + days * 86_400_000).toISOString(),
-    });
-    setTogglingId(null);
+    try {
+      if (await updateInvoice(inv.id, patch)) showToast('success', successMessage);
+      else showToast('error', 'Change not confirmed. Refresh the invoice before retrying.');
+    } finally {
+      toggleLock.current = false;
+      setTogglingId(null);
+    }
   };
-
-  const handleResume = async (inv: Invoice) => {
-    setTogglingId(inv.id);
-    await updateInvoice(inv.id, { reminders_paused_until: null });
-    setTogglingId(null);
-  };
-
-  const handleToggleAutomatic = async (inv: Invoice) => {
-    setTogglingId(inv.id);
-    await updateInvoice(inv.id, {
-      automatic_reminders_enabled: !inv.automatic_reminders_enabled,
-    });
-    setTogglingId(null);
-  };
+  const handlePause = (inv: Invoice, days: number) => changeReminderSetting(inv, {
+    reminders_paused_until: new Date(Date.now() + days * 86_400_000).toISOString(),
+  }, 'Reminders paused for 7 days.');
+  const handleResume = (inv: Invoice) => changeReminderSetting(inv, { reminders_paused_until: null }, 'Reminder pause removed.');
+  const handleToggleAutomatic = (inv: Invoice) => changeReminderSetting(inv, {
+    automatic_reminders_enabled: !inv.automatic_reminders_enabled,
+  }, inv.automatic_reminders_enabled ? 'Automatic reminders disabled for this invoice.' : 'Automatic reminders enabled for this invoice.');
 
   return (
     <AppShell requireFounder={true}>
       <div className="space-y-6">
-        {/* Header */}
-        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pb-3 border-b border-surface-border/60">
-          <div>
-            <h1 className="text-xl sm:text-2xl font-semibold text-navy tracking-tight">
-              Reminder Queue
-            </h1>
-            <p className="text-xs text-ink-secondary mt-0.5">
-              Upcoming, due, and overdue client billing follow-ups
-            </p>
-          </div>
-
-          <div className="flex items-center gap-2">
-            <Badge variant={status?.automaticRemindersEnabled ? 'success' : 'neutral'} size="sm">
-              {status === null
-                ? 'Checking…'
-                : status.automaticRemindersEnabled
-                  ? 'Auto Reminders: ON'
-                  : 'Manual Approval Only'}
-            </Badge>
-          </div>
-        </div>
+        <WorkspaceHeader eyebrow="Client communications" title="Reminder Queue"
+          description="Review upcoming, due and overdue invoices before contacting clients."
+          action={<Badge variant={status?.automaticRemindersEnabled ? 'success' : 'neutral'} size="sm">
+            {status === null ? 'Automatic reminder status unavailable' : status.automaticRemindersEnabled ? 'Auto reminders: ON' : 'Automatic reminders: OFF'}
+          </Badge>}
+        />
+        {dismissed.size > 0 && <div className="text-xs text-ink-secondary">{dismissed.size} reminder(s) hidden in this session. <button type="button" className="font-semibold text-navy underline" onClick={() => setDismissed(new Set())}>Restore hidden reminders</button></div>}
 
         {/* Queue */}
         <div className="space-y-4">
           {queue.length === 0 && (
             <div className="p-12 text-center text-xs text-ink-secondary bg-white rounded-xl border border-surface-border">
               <BellRing className="w-8 h-8 mx-auto mb-3 text-ink-muted" />
-              No invoices currently need a reminder. Approaching, due, and overdue invoices with a
-              balance will appear here automatically.
+              No reminders in this view. Eligible invoices appear here unless paused or hidden in this session.
             </div>
           )}
 
@@ -248,13 +238,13 @@ export default function RemindersPage() {
                         {TYPE_LABELS[type]}
                       </Badge>
                       {inv.automatic_reminders_enabled && (
-                        <Badge variant="info" size="sm">Automatically scheduled</Badge>
+                        <Badge variant="info" size="sm">Auto enabled for invoice</Badge>
                       )}
                     </div>
                     <div className="text-xs text-ink-secondary">
-                      <span className="font-semibold text-navy">{client?.name}</span>
+                      <span className="font-semibold text-navy">{client?.name || 'Client unavailable'}</span>
                       {client?.contact_person ? ` · ${client.contact_person}` : ''} ·{' '}
-                      {project?.name}
+                      {project?.name || 'Project unavailable'}
                     </div>
                     <div className="text-xs text-ink-secondary">
                       Balance{' '}
@@ -263,9 +253,9 @@ export default function RemindersPage() {
                     </div>
                     <div className="text-[11px] text-ink-muted">
                       Latest successful email:{' '}
-                      {emailDates[inv.id] ? formatDatePH(emailDates[inv.id]) : 'none on record'} ·
-                      Latest SMS: {lastSms ? formatDatePH(lastSms) : 'none'} · Next scheduled
-                      reminder: {formatDatePH(next.dateIso)} ({TYPE_LABELS[next.type]})
+                      {emailLookupFailed ? 'could not verify' : emailDates[inv.id] ? formatDatePH(emailDates[inv.id]) : 'none on record'} ·
+                      Latest accepted SMS: {lastSms ? formatDatePH(lastSms) : 'none on record'} · Next eligible
+                      date (if enabled): {formatDatePH(next.dateIso)} ({TYPE_LABELS[next.type]})
                     </div>
                   </div>
 
@@ -301,13 +291,14 @@ export default function RemindersPage() {
                       onClick={() => setDismissed((prev) => new Set([...prev, inv.id]))}
                       leftIcon={<XCircle className="w-3.5 h-3.5" />}
                     >
-                      Dismiss
+                      Hide for now
                     </Button>
                     <Button
                       variant="ghost"
                       size="sm"
                       onClick={() => handlePause(inv, 7)}
                       isLoading={togglingId === inv.id}
+                      disabled={Boolean(togglingId)}
                       leftIcon={<PauseCircle className="w-3.5 h-3.5" />}
                     >
                       Pause 7 days
@@ -327,7 +318,7 @@ export default function RemindersPage() {
                     type="button"
                     onClick={() => handleToggleAutomatic(inv)}
                     className="text-navy font-semibold hover:underline text-left"
-                    disabled={togglingId === inv.id}
+                    disabled={Boolean(togglingId)}
                   >
                     {inv.automatic_reminders_enabled
                       ? 'Disable automatic reminders for this invoice'
@@ -363,6 +354,7 @@ export default function RemindersPage() {
                       size="sm"
                       onClick={() => handleResume(inv)}
                       isLoading={togglingId === inv.id}
+                      disabled={Boolean(togglingId)}
                       leftIcon={<PlayCircle className="w-3.5 h-3.5" />}
                     >
                       Resume Reminders
@@ -379,6 +371,9 @@ export default function RemindersPage() {
       <Modal
         isOpen={Boolean(editInvoice)}
         onClose={() => setEditInvoice(null)}
+        dismissOnBackdrop={!sendingId}
+        dismissOnEscape={!sendingId}
+        showCloseButton={!sendingId}
         title="Approve Payment Reminder SMS"
         description="Review and edit the reminder before Founder-approved dispatch."
         maxWidth="xl"
@@ -389,6 +384,7 @@ export default function RemindersPage() {
               <div className="p-4 rounded-xl bg-status-success-bg border border-status-success/20 text-status-success text-center font-bold flex items-center justify-center space-x-2">
                 <CheckCircle2 className="w-5 h-5 text-status-success" />
                 <span>Reminder handed to the gateway — check the SMS log for its status.</span>
+                <Button type="button" variant="secondary" size="sm" onClick={() => { setEditInvoice(null); setSentNotice(false); }}>Done</Button>
               </div>
             ) : (
               <>
@@ -416,7 +412,9 @@ export default function RemindersPage() {
                   label="Message"
                   rows={5}
                   value={editMessage}
-                  onChange={(e) => setEditMessage(e.target.value)}
+                  onChange={(e) => { setEditMessage(e.target.value); setConfirmed(false); }}
+                  maxLength={1000}
+                  disabled={Boolean(sendingId)}
                 />
 
                 {(() => {
@@ -429,10 +427,12 @@ export default function RemindersPage() {
                   );
                 })()}
 
+                <p className="text-ink-secondary">If a send is unconfirmed, check the dispatch log and provider before retrying; it may already have been sent.</p>
                 <label className="flex items-start space-x-2.5 cursor-pointer p-3 rounded-xl bg-surface-inset/50 border border-surface-border">
                   <input
                     type="checkbox"
                     checked={confirmed}
+                    disabled={Boolean(sendingId)}
                     onChange={(e) => setConfirmed(e.target.checked)}
                     className="mt-0.5 w-4 h-4 rounded border-surface-border text-navy focus:ring-navy/30"
                   />

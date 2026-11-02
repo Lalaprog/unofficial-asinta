@@ -76,6 +76,8 @@ export default function InvoicesPage() {
   const [selectedInvoice, setSelectedInvoice] = useState<Invoice | null>(null);
   const [paymentAmount, setPaymentAmount] = useState('');
   const [smsSending, setSmsSending] = useState(false);
+  const smsSendLock = React.useRef(false);
+  const smsPrepareVersion = React.useRef(0);
   const [smsSuccess, setSmsSuccess] = useState<string | null>(null);
   const [smsMessage, setSmsMessage] = useState('');
   const supabaseBrowser = useMemo(() => createSupabaseBrowserClient(), []);
@@ -86,7 +88,7 @@ export default function InvoicesPage() {
    * "emailed on …" when a real email log exists.
    */
   const openSmsModal = async (inv: Invoice) => {
-    setSelectedInvoice(inv);
+    const version = ++smsPrepareVersion.current;
     setSmsSuccess(null);
 
     const client = clients.find((c) => c.id === inv.client_id);
@@ -108,6 +110,8 @@ export default function InvoicesPage() {
       emailedOn = null;
     }
 
+    if (version !== smsPrepareVersion.current) return;
+    setSelectedInvoice(inv);
     setSmsMessage(
       buildReminderSMS({
         contactPerson: client?.contact_person,
@@ -225,19 +229,15 @@ export default function InvoicesPage() {
   };
 
   const handleSendPhilSMS = async () => {
-    if (!selectedInvoice || !smsMessage.trim() || smsSending) return;
+    if (!selectedInvoice || !smsMessage.trim() || smsSendLock.current) return;
+    smsSendLock.current = true;
     setSmsSending(true);
-
-    // The server resolves the authoritative recipient from the invoice's
-    // client record — no phone number is submitted from the browser.
-    const sent = await sendSMS({ invoiceId: selectedInvoice.id, message: smsMessage.trim() });
-    setSmsSending(false);
-    if (sent) {
-      setSmsSuccess('The SMS was handed to the PhilSMS gateway. Check the SMS log for its status.');
-      setTimeout(() => {
-        setIsSmsModalOpen(false);
-        setSmsSuccess(null);
-      }, 1800);
+    try {
+      const sent = await sendSMS({ invoiceId: selectedInvoice.id, message: smsMessage.trim() });
+      if (sent) setSmsSuccess('The SMS was handed to the PhilSMS gateway. Check the SMS log for its status.');
+    } finally {
+      smsSendLock.current = false;
+      setSmsSending(false);
     }
   };
 
@@ -756,8 +756,11 @@ export default function InvoicesPage() {
       <Modal
         isOpen={isSmsModalOpen}
         onClose={() => setIsSmsModalOpen(false)}
+        dismissOnBackdrop={!smsSending}
+        dismissOnEscape={!smsSending}
+        showCloseButton={!smsSending}
         title="Send PhilSMS Payment Notification"
-        description="Transmit automated SMS reminder directly to client."
+        description="Review the reminder before sending it to the client."
       >
         {selectedInvoice && (
           <div className="space-y-4 text-xs">
@@ -765,6 +768,7 @@ export default function InvoicesPage() {
               <div className="p-4 rounded-xl bg-status-success-bg border border-status-success/20 text-status-success text-center font-semibold">
                 <CheckCircle2 className="w-8 h-8 mx-auto mb-2 text-status-success" />
                 {smsSuccess}
+                <div className="mt-3"><Button type="button" variant="secondary" size="sm" onClick={() => setIsSmsModalOpen(false)}>Done</Button></div>
               </div>
             ) : (
               <>
@@ -795,6 +799,7 @@ export default function InvoicesPage() {
                   rows={5}
                   value={smsMessage}
                   onChange={(e) => setSmsMessage(e.target.value)}
+                  maxLength={1000}
                 />
 
                 {(() => {
@@ -807,8 +812,9 @@ export default function InvoicesPage() {
                   );
                 })()}
 
+                <p className="text-ink-secondary">If sending is unconfirmed, check the dispatch log and provider before retrying; it may have been sent.</p>
                 <div className="pt-2 flex justify-end space-x-2">
-                  <Button variant="secondary" onClick={() => setIsSmsModalOpen(false)} disabled={smsSending}>
+                  <Button type="button" variant="secondary" onClick={() => setIsSmsModalOpen(false)} disabled={smsSending}>
                     Cancel
                   </Button>
                   <Button

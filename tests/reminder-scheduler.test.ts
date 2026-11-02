@@ -8,7 +8,6 @@ import {
   getManilaClock,
   isAuthorizedCronRequest,
   isGlobalAutomaticRemindersEnabled,
-  isRetryableSmsFailure,
   isWithinSendingHours,
   nextEligibleReminder,
 } from '@/lib/reminders/scheduler';
@@ -116,13 +115,7 @@ describe('duplicate protection', () => {
     expect(a).toBe('inv-1:sms:due_today:2026-01-20');
   });
 
-  it('only retries genuinely temporary failures', () => {
-    expect(isRetryableSmsFailure('PhilSMS gateway network error.')).toBe(true);
-    expect(isRetryableSmsFailure('Request timed out')).toBe(true);
-    expect(isRetryableSmsFailure('PhilSMS gateway rejected the request (HTTP 500).')).toBe(true);
-    expect(isRetryableSmsFailure('invalid recipient number')).toBe(false);
-    expect(isRetryableSmsFailure(null)).toBe(false);
-  });
+
 });
 
 describe('Manila timezone and sending hours', () => {

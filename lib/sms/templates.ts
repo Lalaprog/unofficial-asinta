@@ -53,7 +53,7 @@ export function buildReminderSMS(data: ReminderSMSData): string {
 
   const emailReference = data.paymentRequestSentDate
     ? `Please refer to the Request for Payment emailed on ${formatDateForSMS(data.paymentRequestSentDate)}.`
-    : 'Please refer to the Request for Payment previously provided to you.';
+    : 'Please review the payment details for this invoice.';
 
   return (
     `Dear ${clientName}, this is a gentle reminder regarding ${data.invoiceNumber} for ${data.projectName}. ` +
