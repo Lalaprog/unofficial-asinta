@@ -208,6 +208,12 @@ export const AppShell: React.FC<AppShellProps> = ({ children, requireFounder = f
 
   return (
     <div className="min-h-[100lvh] bg-surface flex flex-col antialiased">
+      <a
+        href="#workspace-main"
+        className="sr-only focus:not-sr-only focus:fixed focus:left-4 focus:top-4 focus:z-[100] focus:rounded-lg focus:bg-navy focus:px-4 focus:py-3 focus:font-bold focus:text-white focus:ring-2 focus:ring-brand focus:ring-offset-2"
+      >
+        Skip to main content
+      </a>
       <Suspense fallback={null}>
         <Navbar showDesktopNavigation={false} />
       </Suspense>
@@ -233,7 +239,7 @@ export const AppShell: React.FC<AppShellProps> = ({ children, requireFounder = f
         <Suspense fallback={null}>
           <Sidebar />
         </Suspense>
-        <main className="flex-1 min-w-0 w-full overflow-x-hidden px-4 sm:px-6 lg:px-8 py-6 lg:pb-14">
+        <main id="workspace-main" tabIndex={-1} className="flex-1 min-w-0 w-full overflow-x-hidden px-4 sm:px-6 lg:px-8 py-6 lg:pb-14">
           <div className="w-full min-w-0">
             <PasswordSetupGate>{children}</PasswordSetupGate>
           </div>

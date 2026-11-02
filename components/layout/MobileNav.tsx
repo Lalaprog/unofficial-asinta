@@ -4,23 +4,14 @@ import React, { useState, useEffect } from 'react';
 import Link from 'next/link';
 import { usePathname, useSearchParams } from 'next/navigation';
 import { useAuth } from '@/lib/auth/authContext';
+import { MobileWorkspaceLauncher } from './MobileWorkspaceLauncher';
 import {
   LayoutDashboard,
   FolderKanban,
-  Receipt,
-  CreditCard,
   UserCheck,
   History,
   UserPlus,
-  HandCoins,
   Banknote,
-  Users,
-  Wrench,
-  MessageSquareShare,
-  CalendarClock,
-  Settings,
-  ShieldCheck,
-  X,
   LayoutGrid,
 } from 'lucide-react';
 
@@ -28,39 +19,6 @@ interface MobileNavProps {
   isOpen?: boolean;
   onClose?: () => void;
 }
-
-const FOUNDER_APP_GRID_SECTIONS = [
-  {
-    label: 'Studio & Workforce',
-    items: [
-      { label: 'Overview', href: '/dashboard', icon: LayoutDashboard },
-      { label: 'Projects', href: '/projects', icon: FolderKanban },
-      { label: 'Roll Call', href: '/attendance', icon: UserCheck },
-      { label: 'History', href: '/attendance?tab=history', icon: History },
-      { label: 'Workforce', href: '/attendance?tab=workforce', icon: UserPlus },
-      { label: 'Payroll', href: '/payroll', icon: Banknote },
-    ],
-  },
-  {
-    label: 'Receivables & Ledger',
-    items: [
-      { label: 'Invoices', href: '/invoices', icon: Receipt },
-      { label: 'Clients', href: '/clients', icon: Users },
-      { label: 'Expenses', href: '/expenses', icon: CreditCard },
-      { label: 'Worker Bale', href: '/advances', icon: HandCoins },
-      { label: 'Reminders', href: '/reminders', icon: CalendarClock },
-      { label: 'PhilSMS', href: '/sms', icon: MessageSquareShare },
-    ],
-  },
-  {
-    label: 'Equipment & Administration',
-    items: [
-      { label: 'Tools', href: '/tools', icon: Wrench },
-      { label: 'Team', href: '/users', icon: ShieldCheck },
-      { label: 'Settings', href: '/settings', icon: Settings },
-    ],
-  },
-];
 
 export const MobileNav: React.FC<MobileNavProps> = () => {
   const pathname = usePathname();
@@ -76,6 +34,16 @@ export const MobileNav: React.FC<MobileNavProps> = () => {
     setPendingHref(null);
     setIsSheetOpen(false);
   }, [pathname, urlTab]);
+
+  useEffect(() => {
+    // A sheet opened on mobile must not remain over the desktop workspace
+    // after a resize or device rotation.
+    const desktop = window.matchMedia('(min-width: 1024px)');
+    const onChange = () => { if (desktop.matches) setIsSheetOpen(false); };
+    onChange();
+    desktop.addEventListener('change', onChange);
+    return () => desktop.removeEventListener('change', onChange);
+  }, []);
 
   useEffect(() => {
     const onTabEvent = (e: Event) => {
@@ -168,6 +136,7 @@ export const MobileNav: React.FC<MobileNavProps> = () => {
                 key={item.href}
                 href={item.href}
                 onClick={(e) => handleNavClick(e, item.href)}
+                aria-current={active ? 'page' : undefined}
                 className={`flex min-h-11 flex-col items-center justify-center py-1.5 px-1 rounded-xl transition-colors duration-150 active:scale-95 ${
                   active
                     ? 'bg-brand text-white'
@@ -190,7 +159,9 @@ export const MobileNav: React.FC<MobileNavProps> = () => {
           {isFounder && (
             <button
               type="button"
-              onClick={() => setIsSheetOpen(!isSheetOpen)}
+              onClick={() => setIsSheetOpen(true)}
+              aria-haspopup="dialog"
+              aria-expanded={isSheetOpen}
               className={`flex min-h-11 flex-col items-center justify-center py-1.5 px-1 rounded-xl transition-colors duration-150 active:scale-95 ${
                 isSheetOpen
                   ? 'bg-brand text-white'
@@ -208,76 +179,13 @@ export const MobileNav: React.FC<MobileNavProps> = () => {
         </div>
       </nav>
 
-      {/* Founder Slide-Up Bottom Sheet App Grid */}
-      {isFounder && isSheetOpen && (
-        <div className="fixed inset-0 z-50 lg:hidden flex flex-col justify-end">
-          <div
-            className="fixed inset-0 bg-navy/35 backdrop-blur-xs transition-opacity animate-in fade-in duration-150"
-            onClick={() => setIsSheetOpen(false)}
-          />
-
-          <div className="relative z-10 w-full max-w-lg mx-auto bg-surface rounded-t-3xl border-t border-surface-border shadow-[0_-12px_36px_rgba(11,31,58,0.18)] p-4 pb-[calc(env(safe-area-inset-bottom)+1.5rem)] space-y-3.5 animate-sheet-up">
-            <div className="flex items-center justify-between px-1">
-              <div>
-                <h3 className="text-sm font-extrabold text-navy tracking-tight">
-                  Workspace Modules
-                </h3>
-                <p className="text-[11px] text-ink-secondary">
-                  Tap any module to switch views
-                </p>
-              </div>
-              <button
-                type="button"
-                onClick={() => setIsSheetOpen(false)}
-                className="w-8 h-8 rounded-xl bg-white border border-surface-border text-ink-secondary hover:text-navy flex items-center justify-center active:scale-95 transition-all"
-                aria-label="Close workspace launcher"
-              >
-                <X className="w-4 h-4" />
-              </button>
-            </div>
-
-            <div className="space-y-3">
-              {FOUNDER_APP_GRID_SECTIONS.map((section) => (
-                <div
-                  key={section.label}
-                  className="bg-white rounded-2xl p-2.5 border border-surface-border/80 shadow-xs"
-                >
-                  <div className="text-[10px] font-extrabold uppercase tracking-wider text-ink-muted px-1.5 mb-1.5">
-                    {section.label}
-                  </div>
-                  <div className="grid grid-cols-3 gap-1.5">
-                    {section.items.map((item) => {
-                      const Icon = item.icon;
-                      const active = isHrefActive(item.href);
-
-                      return (
-                        <Link
-                          key={item.href}
-                          href={item.href}
-                          onClick={(e) => handleNavClick(e, item.href)}
-                          className={`flex flex-col items-center justify-center py-2 px-1.5 rounded-xl text-center transition-all active:scale-95 ${
-                            active
-                              ? 'bg-brand text-white'
-                              : 'bg-surface/60 text-navy hover:bg-surface-inset'
-                          }`}
-                        >
-                          <Icon
-                            className={`w-4 h-4 mb-1 ${
-                              active ? 'text-white' : 'text-navy'
-                            }`}
-                          />
-                          <span className="text-[11px] font-bold truncate max-w-full">
-                            {item.label}
-                          </span>
-                        </Link>
-                      );
-                    })}
-                  </div>
-                </div>
-              ))}
-            </div>
-          </div>
-        </div>
+      {isFounder && (
+        <MobileWorkspaceLauncher
+          isOpen={isSheetOpen}
+          onClose={() => setIsSheetOpen(false)}
+          isHrefActive={isHrefActive}
+          onNavigate={handleNavClick}
+        />
       )}
     </>
   );

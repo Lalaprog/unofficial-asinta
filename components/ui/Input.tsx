@@ -15,7 +15,7 @@ export interface InputProps extends React.InputHTMLAttributes<HTMLInputElement> 
 const LABEL_CLASSES = 'text-xs font-semibold text-ink-secondary';
 
 export const Input = React.forwardRef<HTMLInputElement, InputProps>(
-  ({ className, label, error, hint, leftIcon, rightIcon, id, ...props }, ref) => {
+  ({ className, label, error, hint, leftIcon, rightIcon, id, 'aria-describedby': callerDescription, 'aria-invalid': callerInvalid, ...props }, ref) => {
     // useId guarantees a unique id per field. The previous label-derived id
     // produced duplicate DOM ids whenever a page reused a label ("Start Date").
     const generatedId = useId();
@@ -23,7 +23,7 @@ export const Input = React.forwardRef<HTMLInputElement, InputProps>(
     const errorId = `${inputId}-error`;
     const hintId = `${inputId}-hint`;
     const describedBy =
-      [error ? errorId : null, !error && hint ? hintId : null].filter(Boolean).join(' ') || undefined;
+      [callerDescription, error ? errorId : null, !error && hint ? hintId : null].filter(Boolean).join(' ') || undefined;
 
     return (
       <div className="w-full flex flex-col space-y-1.5">
@@ -37,7 +37,7 @@ export const Input = React.forwardRef<HTMLInputElement, InputProps>(
           <input
             id={inputId}
             ref={ref}
-            aria-invalid={error ? true : undefined}
+            aria-invalid={error ? true : callerInvalid}
             aria-describedby={describedBy}
             className={twMerge(
               clsx(
@@ -77,13 +77,13 @@ export interface TextareaProps extends React.TextareaHTMLAttributes<HTMLTextArea
 }
 
 export const Textarea = React.forwardRef<HTMLTextAreaElement, TextareaProps>(
-  ({ className, label, error, hint, id, ...props }, ref) => {
+  ({ className, label, error, hint, id, 'aria-describedby': callerDescription, 'aria-invalid': callerInvalid, ...props }, ref) => {
     const generatedId = useId();
     const inputId = id || generatedId;
     const errorId = `${inputId}-error`;
     const hintId = `${inputId}-hint`;
     const describedBy =
-      [error ? errorId : null, !error && hint ? hintId : null].filter(Boolean).join(' ') || undefined;
+      [callerDescription, error ? errorId : null, !error && hint ? hintId : null].filter(Boolean).join(' ') || undefined;
 
     return (
       <div className="w-full flex flex-col space-y-1.5">
@@ -95,7 +95,7 @@ export const Textarea = React.forwardRef<HTMLTextAreaElement, TextareaProps>(
         <textarea
           id={inputId}
           ref={ref}
-          aria-invalid={error ? true : undefined}
+          aria-invalid={error ? true : callerInvalid}
           aria-describedby={describedBy}
           className={twMerge(
             clsx(

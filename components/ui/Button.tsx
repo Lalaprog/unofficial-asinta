@@ -54,7 +54,7 @@ export const Button = React.forwardRef<HTMLButtonElement, ButtonProps>(
         disabled={disabled || isLoading}
         className={twMerge(
           clsx(
-            'inline-flex items-center justify-center font-sans transition-colors duration-150 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand/25 focus-visible:ring-offset-2 disabled:opacity-50 disabled:pointer-events-none select-none cursor-pointer',
+            'inline-flex items-center justify-center font-sans transition-colors duration-150 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand focus-visible:ring-offset-2 disabled:opacity-50 disabled:pointer-events-none select-none cursor-pointer',
             sizeClasses[size],
             variantClasses[variant],
             className

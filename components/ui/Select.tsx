@@ -12,13 +12,13 @@ export interface SelectProps extends React.SelectHTMLAttributes<HTMLSelectElemen
 }
 
 export const Select = React.forwardRef<HTMLSelectElement, SelectProps>(
-  ({ className, label, error, hint, options, children, id, ...props }, ref) => {
+  ({ className, label, error, hint, options, children, id, 'aria-describedby': callerDescription, 'aria-invalid': callerInvalid, ...props }, ref) => {
     const generatedId = useId();
     const selectId = id || generatedId;
     const errorId = `${selectId}-error`;
     const hintId = `${selectId}-hint`;
     const describedBy =
-      [error ? errorId : null, !error && hint ? hintId : null].filter(Boolean).join(' ') || undefined;
+      [callerDescription, error ? errorId : null, !error && hint ? hintId : null].filter(Boolean).join(' ') || undefined;
 
     return (
       <div className="w-full flex flex-col space-y-1.5">
@@ -34,7 +34,7 @@ export const Select = React.forwardRef<HTMLSelectElement, SelectProps>(
           <select
             id={selectId}
             ref={ref}
-            aria-invalid={error ? true : undefined}
+            aria-invalid={error ? true : callerInvalid}
             aria-describedby={describedBy}
             className={twMerge(
               clsx(
