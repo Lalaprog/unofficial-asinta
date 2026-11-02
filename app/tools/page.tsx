@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useState } from 'react';
+import React, { useRef, useState } from 'react';
 import { AppShell } from '@/components/layout/AppShell';
 import { useDataStore } from '@/lib/data/store';
 import { Tool, ToolCondition } from '@/types';
@@ -18,10 +18,18 @@ import { Input } from '@/components/ui/Input';
 import { Select } from '@/components/ui/Select';
 import { Modal } from '@/components/ui/Modal';
 import { EmptyState } from '@/components/ui/EmptyState';
-import { ConfirmDialog } from '@/components/ui/ConfirmDialog';
+import { WorkspaceHeader } from '@/components/ui/WorkspaceHeader';
+import { WorkspaceFilters } from '@/components/ui/WorkspaceFilters';
+import { useToast } from '@/components/ui/Toast';
+import { parseToolQuantity } from '@/lib/tools/validation';
 
 export default function ToolsPage() {
-  const { tools, projects, createTool, updateTool, deleteTool } = useDataStore();
+  const { tools, projects, createTool, updateTool, deleteTool, refresh } = useDataStore();
+  const { showToast } = useToast();
+  const [isSaving, setIsSaving] = useState(false);
+  const [isDeleting, setIsDeleting] = useState(false);
+  const saveLock = useRef(false);
+  const deleteLock = useRef(false);
 
   const [searchQuery, setSearchQuery] = useState('');
   const [conditionFilter, setConditionFilter] = useState<string>('all');
@@ -46,107 +54,84 @@ export default function ToolsPage() {
     return matchesSearch && matchesCondition;
   });
 
-  const handleAddSubmit = async (e: React.FormEvent) => {
+  const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!formData.name) return;
-
-    const created = await createTool({
-      name: formData.name,
-      quantity: parseInt(formData.quantity) || 1,
-      condition: formData.condition,
-      project_id: formData.project_id || null,
-    });
-
-    if (created) {
-      setIsAddModalOpen(false);
-      setFormData({ name: '', quantity: '1', condition: 'excellent', project_id: '' });
+    if (saveLock.current || (isEditModalOpen && !selectedTool)) return;
+    const quantity = parseToolQuantity(formData.quantity);
+    if (!formData.name.trim() || quantity === null) {
+      showToast('error', 'Enter a tool name and a whole-number quantity of zero or more.');
+      return;
     }
-  };
-
-  const handleEditSubmit = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!selectedTool) return;
-
-    const updated = await updateTool(selectedTool.id, {
-      name: formData.name,
-      quantity: parseInt(formData.quantity) || 1,
-      condition: formData.condition,
-      project_id: formData.project_id || null,
-    });
-
-    if (updated) {
-      setIsEditModalOpen(false);
+    saveLock.current = true;
+    setIsSaving(true);
+    try {
+      const payload = { name: formData.name.trim(), quantity, condition: formData.condition, project_id: formData.project_id || null };
+      const saved = isEditModalOpen && selectedTool
+        ? await updateTool(selectedTool.id, payload)
+        : await createTool(payload);
+      if (saved) {
+        showToast('success', isEditModalOpen ? 'Equipment record updated.' : 'Equipment added to inventory.');
+        setIsAddModalOpen(false);
+        setIsEditModalOpen(false);
+        setFormData({ name: '', quantity: '1', condition: 'excellent', project_id: '' });
+      } else {
+        showToast('error', 'Save not confirmed. Refresh and check inventory before retrying.');
+      }
+    } catch {
+      showToast('error', 'Save not confirmed. Refresh and check inventory before retrying.');
+    } finally {
+      saveLock.current = false;
+      setIsSaving(false);
     }
-  };
-
-  const handleDelete = async (id: string, name: string) => {
-    setPendingDelete({ id, name });
   };
 
   const confirmDelete = async () => {
-    if (!pendingDelete) return;
-    const target = pendingDelete;
-    setPendingDelete(null);
-    await deleteTool(target.id);
+    if (!pendingDelete || deleteLock.current) return;
+    deleteLock.current = true;
+    setIsDeleting(true);
+    try {
+      const deleted = await deleteTool(pendingDelete.id);
+      if (deleted) {
+        showToast('success', 'Equipment removed.');
+        setPendingDelete(null);
+      } else {
+        showToast('error', 'Removal not confirmed. Refresh and check inventory before retrying.');
+        await refresh();
+      }
+    } catch {
+      showToast('error', 'Removal not confirmed. Refresh and check inventory before retrying.');
+    } finally {
+      deleteLock.current = false;
+      setIsDeleting(false);
+    }
   };
 
   return (
     <AppShell requireFounder={true}>
       <div className="space-y-6">
-        {/* Header */}
-        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pb-3 border-b border-surface-border/60">
-          <div>
-            <h1 className="text-xl sm:text-2xl font-semibold text-navy tracking-tight">
-              Tools &amp; Equipment
-            </h1>
-            <p className="text-xs text-ink-secondary mt-0.5">
-              {tools.length} logged site tools and plant items
-            </p>
+        <WorkspaceHeader
+          eyebrow="Equipment"
+          title="Tools & Equipment"
+          description={`${tools.length} equipment record(s). Track condition and where each item is assigned.`}
+          action={<Button variant="primary" size="sm" onClick={() => {
+            setFormData({ name: '', quantity: '1', condition: 'excellent', project_id: '' });
+            setIsAddModalOpen(true);
+          }} leftIcon={<Plus className="w-4 h-4" />}>Add Tool</Button>}
+        />
+        <WorkspaceFilters title="Find equipment" summary={<FilterSummary count={filteredTools.length} itemName="tool" active={Boolean(searchQuery) || conditionFilter !== 'all'} onClear={() => { setSearchQuery(''); setConditionFilter('all'); }} />}>
+          <div className="flex flex-col sm:flex-row sm:items-end gap-3">
+            <div className="w-full sm:w-80">
+              <Input label="Search tools" placeholder="Search tool or project name" value={searchQuery} onChange={(e) => setSearchQuery(e.target.value)} leftIcon={<Search className="w-4 h-4" />} />
+            </div>
+            <div className="w-full sm:w-48">
+              <Select label="Condition" value={conditionFilter} onChange={(e) => setConditionFilter(e.target.value)} options={[
+                { label: 'All Conditions', value: 'all' }, { label: 'Excellent', value: 'excellent' },
+                { label: 'Good', value: 'good' }, { label: 'Fair', value: 'fair' },
+                { label: 'Needs Repair', value: 'needs_repair' }, { label: 'Damaged', value: 'damaged' },
+              ]} />
+            </div>
           </div>
-
-          <Button
-            variant="primary"
-            size="sm"
-            onClick={() => {
-              setFormData({ name: '', quantity: '1', condition: 'excellent', project_id: '' });
-              setIsAddModalOpen(true);
-            }}
-            leftIcon={<Plus className="w-4 h-4" />}
-          >
-            Add Tool
-          </Button>
-        </div>
-
-        {/* Filters */}
-        <div className="flex flex-col sm:flex-row sm:items-end gap-3">
-          <div className="w-full sm:w-80">
-            <Input
-              label="Search tools"
-              placeholder="Search tool name, brand, model..."
-              value={searchQuery}
-              onChange={(e) => setSearchQuery(e.target.value)}
-              leftIcon={<Search className="w-4 h-4" />}
-            />
-          </div>
-
-          <div className="w-full sm:w-48">
-            <Select
-              label="Condition"
-              value={conditionFilter}
-              onChange={(e) => setConditionFilter(e.target.value)}
-              options={[
-                { label: 'All Conditions', value: 'all' },
-                { label: 'Excellent', value: 'excellent' },
-                { label: 'Good', value: 'good' },
-                { label: 'Fair', value: 'fair' },
-                { label: 'Needs Repair', value: 'needs_repair' },
-                { label: 'Damaged', value: 'damaged' },
-              ]}
-            />
-          </div>
-        </div>
-
-        <FilterSummary count={filteredTools.length} itemName="tool" active={Boolean(searchQuery) || conditionFilter !== 'all'} onClear={() => { setSearchQuery(''); setConditionFilter('all'); }} />
+        </WorkspaceFilters>
 
         {/* Tools Grid */}
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6 auto-rows-fr">
@@ -196,7 +181,7 @@ export default function ToolsPage() {
                         type="button"
                         aria-label={`Delete ${tool.name}`}
                         title="Delete tool"
-                        onClick={() => handleDelete(tool.id, tool.name)}
+                        onClick={() => setPendingDelete({ id: tool.id, name: tool.name })}
                         className="min-h-11 min-w-11 sm:min-h-9 sm:min-w-9 inline-flex items-center justify-center rounded-lg text-status-danger hover:bg-status-danger-bg focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-status-danger/25"
                       >
                         <Trash2 className="w-4 h-4" />
@@ -217,7 +202,7 @@ export default function ToolsPage() {
                       Current Site Deployment
                     </div>
                     <div className="font-semibold text-navy mt-0.5">
-                      {proj ? proj.name : 'Asinta Studio Central Depot'}
+                      {proj ? proj.name : tool.project_id ? 'Assigned project unavailable' : 'Asinta Studio Central Depot'}
                     </div>
                   </div>
                 </div>
@@ -246,7 +231,7 @@ export default function ToolsPage() {
                     <Button
                       variant="primary"
                       size="sm"
-                      onClick={() => setIsAddModalOpen(true)}
+                      onClick={() => { setFormData({ name: '', quantity: '1', condition: 'excellent', project_id: '' }); setIsAddModalOpen(true); }}
                       leftIcon={<Plus className="w-3.5 h-3.5" />}
                     >
                       Register Tool
@@ -266,10 +251,13 @@ export default function ToolsPage() {
           setIsAddModalOpen(false);
           setIsEditModalOpen(false);
         }}
+        dismissOnBackdrop={!isSaving}
+        dismissOnEscape={!isSaving}
+        showCloseButton={!isSaving}
         title={isEditModalOpen ? 'Update Equipment Record' : 'Register New Tool / Machine'}
         description="Track site equipment location and maintenance state."
       >
-        <form onSubmit={isEditModalOpen ? handleEditSubmit : handleAddSubmit} className="space-y-4 text-xs">
+        <form onSubmit={handleSubmit} className="space-y-4 text-xs">
           <Input
             label="Tool / Equipment Description"
             placeholder="e.g. Bosch Rotary Hammer Drill SDS-Plus"
@@ -282,7 +270,8 @@ export default function ToolsPage() {
             <Input
               label="Quantity (Units)"
               type="number"
-              min="1"
+              min="0"
+              step="1"
               value={formData.quantity}
               onChange={(e) => setFormData({ ...formData, quantity: e.target.value })}
               required
@@ -307,6 +296,9 @@ export default function ToolsPage() {
             onChange={(e) => setFormData({ ...formData, project_id: e.target.value })}
           >
             <option value="">Asinta Studio Central Depot (Batangas)</option>
+            {formData.project_id && !projects.some((project) => project.id === formData.project_id) && (
+              <option value={formData.project_id}>Assigned project unavailable</option>
+            )}
             {projects.map((p) => (
               <option key={p.id} value={p.id}>
                 {p.name}
@@ -316,7 +308,9 @@ export default function ToolsPage() {
 
           <div className="pt-3 flex justify-end space-x-2">
             <Button
+              type="button"
               variant="secondary"
+              disabled={isSaving}
               onClick={() => {
                 setIsAddModalOpen(false);
                 setIsEditModalOpen(false);
@@ -324,22 +318,29 @@ export default function ToolsPage() {
             >
               Cancel
             </Button>
-            <Button variant="primary" type="submit">
-              {isEditModalOpen ? 'Save Tool' : 'Add to Inventory'}
+            <Button variant="primary" type="submit" isLoading={isSaving}>
+              {isSaving ? 'Saving…' : isEditModalOpen ? 'Save Tool' : 'Add to Inventory'}
             </Button>
           </div>
         </form>
       </Modal>
 
-      <ConfirmDialog
+      <Modal
         isOpen={Boolean(pendingDelete)}
+        onClose={() => setPendingDelete(null)}
         title="Remove equipment"
-        message={pendingDelete ? `Remove ${pendingDelete.name}? This cannot be undone.` : ''}
-        confirmLabel="Remove tool"
-        destructive
-        onConfirm={confirmDelete}
-        onCancel={() => setPendingDelete(null)}
-      />
+        description={pendingDelete ? `Remove ${pendingDelete.name}? This cannot be undone.` : ''}
+        role="alertdialog"
+        maxWidth="sm"
+        dismissOnBackdrop={false}
+        dismissOnEscape={!isDeleting}
+        showCloseButton={!isDeleting}
+      >
+        <div className="flex justify-end gap-2">
+          <Button type="button" variant="ghost" disabled={isDeleting} onClick={() => setPendingDelete(null)}>Cancel</Button>
+          <Button type="button" variant="danger" isLoading={isDeleting} onClick={confirmDelete}>{isDeleting ? 'Removing…' : 'Remove tool'}</Button>
+        </div>
+      </Modal>
     </AppShell>
   );
 }

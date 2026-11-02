@@ -30,6 +30,7 @@
     "tailwind-merge": "^3.0.1"
   },
   "devDependencies": {
+    "@electric-sql/pglite": "^0.3.16",
     "@types/node": "^22.13.4",
     "@types/nodemailer": "^8.0.2",
     "@types/react": "^18.3.18",

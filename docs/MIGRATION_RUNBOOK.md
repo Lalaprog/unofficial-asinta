@@ -1,5 +1,7 @@
 # Applying the BALE migrations to a live Supabase project
 
+> **Payroll/Bale deployment:** the current bundles include a breaking financial-write migration. Follow [ATOMIC_PAYROLL_ROLLOUT.md](ATOMIC_PAYROLL_ROLLOUT.md) for staging, maintenance, reconciliation and recovery before applying them. A committed migration is not undone by the bundle transaction.
+
 Written for project `mchkdkjntnbwrgmyobpd`. Everything here is read-only until
 step 4, and step 4 is reversible via the transaction the bundle runs inside.
 

@@ -961,55 +961,29 @@ export const DataStoreProvider: React.FC<{ children: React.ReactNode }> = ({ chi
   };
 
   const recordAdvanceDeduction = async (id: string, deductionAmount: number): Promise<boolean> => {
-    const adv = advances.find((a) => a.id === id);
-    if (!adv) {
-      showToast('error', 'Advance record not found in the current ledger snapshot.');
-      return false;
-    }
-    const newDeducted = round2(
-      Math.min(adv.amount, Number(adv.amount_deducted) + Number(deductionAmount || 0))
-    );
-    const newStatus: Advance['status'] =
-      newDeducted >= adv.amount ? 'fully_deducted' : 'partially_deducted';
     const row = await runMutation('Record advance deduction', (db) =>
-      db
-        .from('advances')
-        .update({ amount_deducted: newDeducted, status: newStatus })
-        .eq('id', id)
-        .select()
-        .single()
+      db.rpc('record_advance_deduction_atomic', { p_advance_id: id, p_amount: deductionAmount })
     );
-    const mapped = row ? mapAdvance(row) : null;
-    if (mapped) {
+    if (row) {
+      const mapped = mapAdvance(row);
       setAdvances((prev) => prev.map((a) => (a.id === id ? mapped : a)));
-      await recordAudit({
-        action: 'update',
-        table: 'advances',
-        recordId: id,
-        before: adv as unknown as Record<string, unknown>,
-        after: mapped as unknown as Record<string, unknown>,
-      });
     }
-    return Boolean(mapped);
+    // A lost response may hide a committed manual deduction. Refresh before
+    // any retry; unlike payroll payment, manual deductions are not idempotent.
+    await refresh();
+    return Boolean(row);
   };
 
   const updateAdvanceStatus = async (id: string, status: Advance['status']): Promise<boolean> => {
-    const before = advances.find((a) => a.id === id) ?? null;
     const row = await runMutation('Update advance status', (db) =>
-      db.from('advances').update({ status }).eq('id', id).select().single()
+      db.rpc('set_advance_status_atomic', { p_advance_id: id, p_status: status })
     );
-    const mapped = row ? mapAdvance(row) : null;
-    if (mapped) {
+    if (row) {
+      const mapped = mapAdvance(row);
       setAdvances((prev) => prev.map((a) => (a.id === id ? mapped : a)));
-      await recordAudit({
-        action: 'update',
-        table: 'advances',
-        recordId: id,
-        before: before as unknown as Record<string, unknown> | null,
-        after: mapped as unknown as Record<string, unknown>,
-      });
     }
-    return Boolean(mapped);
+    await refresh();
+    return Boolean(row);
   };
 
   // --- ATTENDANCE ACTIONS ---
@@ -1329,44 +1303,21 @@ export const DataStoreProvider: React.FC<{ children: React.ReactNode }> = ({ chi
   };
 
   const updatePayrollStatus = async (id: string, status: Payroll['status']): Promise<boolean> => {
-    const payItem = payroll.find((p) => p.id === id);
-    if (!payItem) {
-      showToast('error', 'Payroll record not found in the current ledger snapshot.');
-      return false;
-    }
-
-    // Automatically deduct from the worker's active bale when marking as paid.
-    if (status === 'paid' && payItem.bale_deduction > 0) {
-      const activeBales = advances.filter(
-        (a) =>
-          a.worker_id === payItem.worker_id &&
-          (a.status === 'active' || a.status === 'partially_deducted')
-      );
-      let remToDeduct = payItem.bale_deduction;
-      for (const adv of activeBales) {
-        if (remToDeduct <= 0) break;
-        const curBalance = adv.amount - adv.amount_deducted;
-        const deductThis = Math.min(remToDeduct, curBalance);
-        await recordAdvanceDeduction(adv.id, deductThis);
-        remToDeduct -= deductThis;
-      }
-    }
-
-    const row = await runMutation('Update payroll status', (db) =>
-      db.from('payroll').update({ status }).eq('id', id).select().single()
+    // No client-side fallback: if the transactional migration is missing, fail
+    // closed rather than recording only one side of a financial transaction.
+    const result = await runMutation<{ payroll: any; advances: any[]; outcome: string }>(
+      'Update payroll status', (db) =>
+        db.rpc('set_payroll_status_atomic', { p_payroll_id: id, p_status: status })
     );
-    const mapped = row ? mapPayroll(row) : null;
-    if (mapped) {
+    if (result?.payroll) {
+      const mapped = mapPayroll(result.payroll);
       setPayroll((prev) => prev.map((p) => (p.id === id ? mapped : p)));
-      await recordAudit({
-        action: 'update',
-        table: 'payroll',
-        recordId: id,
-        before: payItem as unknown as Record<string, unknown>,
-        after: mapped as unknown as Record<string, unknown>,
-      });
+      const changed = (result.advances || []).map(mapAdvance);
+      setAdvances((prev) => prev.map((a) => changed.find((updated) => updated.id === a.id) || a));
     }
-    return Boolean(mapped);
+    // Also refresh after an unconfirmed response, which may have committed.
+    await refresh();
+    return Boolean(result?.payroll);
   };
 
   // --- TOOLS ACTIONS ---
