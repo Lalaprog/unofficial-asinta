@@ -35,17 +35,17 @@ export const Button = React.forwardRef<HTMLButtonElement, ButtonProps>(
 
     const variantClasses = {
       primary:
-        'bg-brand text-white hover:bg-brand-deep border border-brand transition-colors',
+        'bg-brand text-white hover:bg-brand-deep border border-brand',
       secondary:
-        'bg-white text-navy hover:bg-surface-elevated border border-surface-border hover:border-surface-borderHover transition-colors',
+        'bg-white text-navy hover:bg-surface-elevated border border-surface-border hover:border-surface-borderHover',
       outline:
-        'bg-transparent text-navy hover:bg-white border border-surface-border hover:border-brand/40 transition-colors',
+        'bg-transparent text-navy hover:bg-white border border-surface-border hover:border-brand/40',
       danger:
-        'bg-status-danger text-white hover:bg-red-700 border border-status-danger transition-colors',
+        'bg-status-danger text-white hover:bg-red-700 border border-status-danger',
       ghost:
-        'bg-transparent text-ink-secondary hover:text-navy hover:bg-surface-inset border border-transparent transition-colors',
+        'bg-transparent text-ink-secondary hover:text-navy hover:bg-surface-inset border border-transparent',
       soft:
-        'bg-surface-inset text-navy hover:bg-slate-200 border border-surface-border transition-colors',
+        'bg-surface-inset text-navy hover:bg-slate-200 border border-surface-border',
     };
 
     return (
@@ -54,7 +54,7 @@ export const Button = React.forwardRef<HTMLButtonElement, ButtonProps>(
         disabled={disabled || isLoading}
         className={twMerge(
           clsx(
-            'inline-flex items-center justify-center font-sans transition-colors duration-150 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand focus-visible:ring-offset-2 disabled:opacity-50 disabled:pointer-events-none select-none cursor-pointer',
+            'inline-flex items-center justify-center font-sans transition-[color,background-color,border-color,box-shadow,transform] duration-150 motion-safe:active:scale-[0.98] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand focus-visible:ring-offset-2 disabled:opacity-50 disabled:pointer-events-none select-none cursor-pointer',
             sizeClasses[size],
             variantClasses[variant],
             className
