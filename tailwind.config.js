@@ -55,7 +55,8 @@ module.exports = {
         status: {
           success: '#0D7A53',
           'success-bg': '#E8F6F0',
-          warning: '#B55B09',
+          // 4.95:1 against warning-bg; white on this token is 5.38:1.
+          warning: '#A85308',
           'warning-bg': '#FEF4E8',
           danger: '#C52828',
           'danger-bg': '#FDECEC',

@@ -180,7 +180,7 @@ export default function LoginPage() {
         </div>
       </div>
 
-      <div className="flex-1 flex items-center justify-center relative z-10 my-auto">
+      <main className="flex-1 flex items-center justify-center relative z-10 my-auto">
         <div className="w-full max-w-4xl grid grid-cols-1 lg:grid-cols-12 rounded-2xl sm:rounded-3xl bg-white border border-surface-border shadow-[0_20px_50px_rgba(11,31,58,0.10)] overflow-hidden animate-page-enter">
           {/* Mobile Architectural Showcase Header (Visible on phones & tablets) */}
           <div className="lg:hidden bg-gradient-to-br from-[#0B1F3A] via-[#132C4E] to-[#1B4978] text-white p-5 relative overflow-hidden">
@@ -261,9 +261,9 @@ export default function LoginPage() {
               </div>
 
               <div className="space-y-2">
-                <h1 className="text-2xl font-extrabold tracking-tight text-white leading-snug">
+                <p className="text-2xl font-extrabold tracking-tight text-white leading-snug">
                   Architecture curated to your style — built with quality and precision.
-                </h1>
+                </p>
                 <p className="text-xs text-white/75 leading-relaxed pt-1">
                   Unified project billing, site expense ledger, daily workforce attendance, and automated payroll.
                 </p>
@@ -283,9 +283,9 @@ export default function LoginPage() {
               <div className="hidden lg:block mb-2">
                 <AsintaWordmark height={20} />
               </div>
-              <h2 className="text-lg font-extrabold text-navy tracking-tight">
+              <h1 className="text-lg font-extrabold text-navy tracking-tight">
                 Sign in to your account
-              </h2>
+              </h1>
               <p className="text-xs text-ink-secondary mt-0.5">
                 Enter your studio or field supervisor credentials below
               </p>
@@ -305,7 +305,6 @@ export default function LoginPage() {
             {mfaChallenge ? (
               <form
                 onSubmit={handleVerifyMfa}
-                autoComplete="off"
                 className="space-y-5 animate-page-enter"
               >
                 <div className="flex items-center justify-between">
@@ -323,7 +322,7 @@ export default function LoginPage() {
                 </p>
 
                 {mfaError && (
-                  <div className="p-3.5 rounded-xl bg-status-danger-bg border border-status-danger/20 text-status-danger text-xs flex items-start space-x-2.5">
+                  <div role="alert" className="p-3.5 rounded-xl bg-status-danger-bg border border-status-danger/20 text-status-danger text-xs flex items-start space-x-2.5">
                     <AlertCircle className="w-4 h-4 shrink-0 mt-0.5" />
                     <span>{mfaError}</span>
                   </div>
@@ -333,7 +332,7 @@ export default function LoginPage() {
                   label="6-Digit Authenticator Code"
                   type="text"
                   inputMode="numeric"
-                  autoComplete="off"
+                  autoComplete="one-time-code"
                   autoCorrect="off"
                   autoCapitalize="none"
                   spellCheck={false}
@@ -383,11 +382,10 @@ export default function LoginPage() {
             ) : (
               <form
                 onSubmit={handleSubmit}
-                autoComplete="off"
                 className="space-y-4"
               >
                 {error && (
-                  <div className="p-3.5 rounded-xl bg-status-danger-bg border border-status-danger/20 text-status-danger text-xs flex items-start space-x-2.5">
+                  <div role="alert" className="p-3.5 rounded-xl bg-status-danger-bg border border-status-danger/20 text-status-danger text-xs flex items-start space-x-2.5">
                     <AlertCircle className="w-4 h-4 shrink-0 mt-0.5" />
                     <span>{error}</span>
                   </div>
@@ -397,7 +395,7 @@ export default function LoginPage() {
                   label="Work Email"
                   type="email"
                   name="bale_work_email"
-                  autoComplete="off"
+                  autoComplete="username"
                   autoCorrect="off"
                   autoCapitalize="none"
                   spellCheck={false}
@@ -413,7 +411,7 @@ export default function LoginPage() {
                     label="Password"
                     type={showPassword ? 'text' : 'password'}
                     name="bale_work_password"
-                    autoComplete="new-password"
+                    autoComplete="current-password"
                     autoCorrect="off"
                     autoCapitalize="none"
                     spellCheck={false}
@@ -421,12 +419,13 @@ export default function LoginPage() {
                     value={password}
                     onChange={(event) => setPassword(event.target.value)}
                     leftIcon={<Lock className="w-4 h-4" />}
+                    className="pr-14"
                     required
                   />
                   <button
                     type="button"
                     onClick={() => setShowPassword(!showPassword)}
-                    className="absolute right-3 top-[32px] text-ink-muted hover:text-navy p-1"
+                    className="absolute right-0 top-[23px] inline-flex h-11 w-11 items-center justify-center rounded-lg text-ink-muted hover:text-navy focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand focus-visible:ring-inset"
                     aria-label={showPassword ? 'Hide password' : 'Show password'}
                   >
                     {showPassword ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
@@ -448,7 +447,7 @@ export default function LoginPage() {
             )}
           </div>
         </div>
-      </div>
+      </main>
 
       {/* Bottom Trademark Footer */}
       <div className="relative z-10 pt-5 flex items-center justify-center gap-2 text-xs text-ink-secondary">

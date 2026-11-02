@@ -703,7 +703,7 @@ export function AdvanceRequestsPanel() {
                       type="button"
                       onClick={() => toggleSiteExpanded(group.siteId)}
                       aria-expanded={groupIsExpanded}
-                      className="inline-flex min-h-11 min-w-0 flex-1 items-center gap-2 rounded-lg text-left text-sm font-semibold text-navy focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand/25"
+                      className="inline-flex min-h-11 min-w-0 flex-1 items-center gap-2 rounded-lg text-left text-sm font-semibold text-navy focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand"
                     >
                       <ChevronDown
                         className={`h-4 w-4 shrink-0 text-ink-muted transition-transform ${

@@ -128,7 +128,7 @@ const NotificationCard: React.FC<NotificationCardProps> = ({
         <button
           type="button"
           onClick={() => onOpen(item)}
-          className="min-w-0 flex-1 whitespace-normal rounded-md text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand/25"
+          className="min-w-0 flex-1 whitespace-normal rounded-md text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand"
         >
           <span className="block break-words font-semibold leading-snug text-navy">
             {item.title}
@@ -148,7 +148,7 @@ const NotificationCard: React.FC<NotificationCardProps> = ({
           <button
             type="button"
             onClick={() => onDismiss(item)}
-            className="inline-flex min-h-11 min-w-11 items-center justify-center rounded-lg border border-transparent text-ink-muted transition-colors hover:bg-white hover:text-navy focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand/25"
+            className="inline-flex min-h-11 min-w-11 items-center justify-center rounded-lg border border-transparent text-ink-muted transition-colors hover:bg-white hover:text-navy focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand"
             title="Dismiss notification"
             aria-label={`Dismiss ${item.title}`}
           >

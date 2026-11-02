@@ -155,13 +155,13 @@ export const Sidebar: React.FC = () => {
                     [group.id]: !isExpanded,
                   }))
                 }
-                className={`flex min-h-11 w-full items-center justify-between gap-2 rounded-xl px-2.5 text-left text-[11px] font-bold uppercase tracking-wide transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand/25 ${
+                className={`flex min-h-11 w-full items-center justify-between gap-2 rounded-xl px-2.5 text-left text-[11px] font-bold uppercase tracking-wide transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand ${
                   groupHasActiveItem
                     ? 'text-navy hover:bg-surface-inset'
                     : 'text-ink-secondary hover:bg-surface-inset hover:text-navy'
                 }`}
                 aria-expanded={isExpanded}
-                aria-controls={`sidebar-group-${group.id}`}
+                aria-controls={isExpanded ? `sidebar-group-${group.id}` : undefined}
               >
                 <span className="truncate">{group.title}</span>
                 <ChevronDown
@@ -180,7 +180,7 @@ export const Sidebar: React.FC = () => {
                         key={item.href}
                         href={item.href}
                         aria-current={isActive ? 'page' : undefined}
-                        className={`group ml-1 flex min-h-10 items-center gap-2.5 rounded-lg px-3 text-xs font-medium transition-colors ${
+                        className={`group ml-1 flex min-h-10 items-center gap-2.5 rounded-lg px-3 text-xs font-medium transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand focus-visible:ring-inset ${
                           isActive
                             ? 'bg-navy text-white'
                             : 'text-ink-secondary hover:bg-surface-inset hover:text-navy'
