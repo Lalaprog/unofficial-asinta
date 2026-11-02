@@ -161,7 +161,7 @@ export default function PayrollPage() {
       const success = await updatePayrollStatus(pendingPayAction.pay.id, pendingPayAction.status);
       if (success) {
         showToast('success', pendingPayAction.status === 'paid'
-          ? 'Payroll status updated. Check the advance ledger for deductions.'
+          ? 'Payroll payment and Bale deductions recorded.'
           : 'Payroll voucher approved.');
         setPendingPayAction(null);
       } else {
@@ -477,7 +477,7 @@ export default function PayrollPage() {
             </div>
             {pendingPayAction.status === 'paid' && pendingPayAction.pay.bale_deduction > 0 && (
               <p className="rounded-xl border border-status-warning/25 bg-status-warning-bg px-3 py-2.5 leading-relaxed text-ink-secondary">
-                Payment status and Bale deductions are saved separately. A voucher may be marked paid even if a deduction fails, or deductions may be recorded before the status update fails. Check both ledgers after this action and reconcile any uncertain result before retrying.
+                Payment status and Bale deductions are recorded together. If the current active Bale balance is insufficient, the payment cannot be recorded. If the result is unconfirmed, refresh and check both ledgers before retrying; historical payments may still need reconciliation.
               </p>
             )}
             <div className="flex flex-col-reverse gap-2 sm:flex-row sm:justify-end">

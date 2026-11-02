@@ -96,6 +96,17 @@ advance_notification_objects as (
         and not tgisinternal
     ) as event_trigger_present
 ),
+payroll_atomic_checks as (
+  select
+    to_regprocedure('public.set_payroll_status_atomic(uuid,text)') as payroll_rpc,
+    to_regprocedure('public.record_advance_deduction_atomic(uuid,numeric)') as deduction_rpc,
+    to_regprocedure('public.set_advance_status_atomic(uuid,text)') as status_rpc,
+    exists (select 1 from pg_trigger where tgname = 'guard_payroll_finalized_fields'
+      and tgrelid = to_regclass('public.payroll') and tgenabled <> 'D' and not tgisinternal) as guard_present,
+    coalesce(not has_column_privilege('authenticated', to_regclass('public.payroll'), 'status', 'UPDATE'), false) as payroll_status_protected,
+    coalesce(not has_any_column_privilege('authenticated', to_regclass('public.advances'), 'UPDATE'), false) as advances_protected,
+    coalesce(has_column_privilege('authenticated', to_regclass('public.payroll'), 'gross_pay', 'UPDATE'), false) as draft_updates_allowed
+),
 notification_policy_check as (
   select
     count(*) as policy_count,
@@ -130,6 +141,29 @@ select 'Bale notification trigger and batch RPC installed',
             else 'MISSING — apply supabase/apply/upgrade-hardening.sql' end,
        case when (select notification_table_present and batch_rpc_present and event_trigger_present
                   from advance_notification_objects) then 'PASS' else 'FAIL' end
+
+union all
+select 'atomic payroll protections installed',
+       '3 authenticated-only RPCs, finalized guard, protected status and Bale updates',
+       case when (select payroll_rpc is not null and deduction_rpc is not null and status_rpc is not null
+          and coalesce(has_function_privilege('authenticated', payroll_rpc, 'EXECUTE'), false)
+          and coalesce(has_function_privilege('authenticated', deduction_rpc, 'EXECUTE'), false)
+          and coalesce(has_function_privilege('authenticated', status_rpc, 'EXECUTE'), false)
+          and not coalesce(has_function_privilege('anon', payroll_rpc, 'EXECUTE'), true)
+          and not coalesce(has_function_privilege('anon', deduction_rpc, 'EXECUTE'), true)
+          and not coalesce(has_function_privilege('anon', status_rpc, 'EXECUTE'), true)
+          and guard_present and payroll_status_protected and advances_protected and draft_updates_allowed
+          from payroll_atomic_checks) then 'RPCs, permissions and guard present'
+       else 'MISSING or unsafe — inspect 20261102000000 migration and role grants' end,
+       case when (select payroll_rpc is not null and deduction_rpc is not null and status_rpc is not null
+          and coalesce(has_function_privilege('authenticated', payroll_rpc, 'EXECUTE'), false)
+          and coalesce(has_function_privilege('authenticated', deduction_rpc, 'EXECUTE'), false)
+          and coalesce(has_function_privilege('authenticated', status_rpc, 'EXECUTE'), false)
+          and not coalesce(has_function_privilege('anon', payroll_rpc, 'EXECUTE'), true)
+          and not coalesce(has_function_privilege('anon', deduction_rpc, 'EXECUTE'), true)
+          and not coalesce(has_function_privilege('anon', status_rpc, 'EXECUTE'), true)
+          and guard_present and payroll_status_protected and advances_protected and draft_updates_allowed
+          from payroll_atomic_checks) then 'PASS' else 'FAIL' end
 
 union all
 select 'Bale notification policies are recipient-only',

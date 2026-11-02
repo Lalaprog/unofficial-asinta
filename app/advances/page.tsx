@@ -204,10 +204,10 @@ function IssuedAdvancesPanel() {
         setIsDeductModalOpen(false);
         setDeductionAmount('');
       } else {
-        showToast('error', 'Deduction not confirmed. Check the advance balance before trying again.');
+        showToast('error', 'Deduction not confirmed. Close this dialog and check the refreshed balance and audit history before retrying; manual deductions can be duplicated.');
       }
     } catch {
-      showToast('error', 'Deduction not confirmed. Check the advance balance before trying again.');
+      showToast('error', 'Deduction not confirmed. Close this dialog and check the refreshed balance and audit history before retrying; manual deductions can be duplicated.');
     } finally {
       deductLock.current = false;
       setIsDeducting(false);
@@ -481,7 +481,7 @@ function IssuedAdvancesPanel() {
         dismissOnEscape={!isDeducting}
         showCloseButton={!isDeducting}
         title="Record Manual Bale Repayment / Deduction"
-        description="Manually deduct an amount from this worker's active bale balance."
+        description="Manually deduct an amount from this worker's active bale balance. If the result is unconfirmed, check the balance and audit history before retrying."
       >
         {selectedAdvance && (
           <form onSubmit={handleDeductSubmit} className="space-y-4 text-xs">
