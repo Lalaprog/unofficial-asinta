@@ -221,9 +221,3 @@ export function isAuthorizedCronRequest(
   }
   return mismatch === 0;
 }
-
-/** Error strings from the SMS gateway that are worth retrying on later runs. */
-export function isRetryableSmsFailure(errorMessage: string | null | undefined): boolean {
-  if (!errorMessage) return false;
-  return /network|timeout|timed out|HTTP 5\d\d|temporar|unavailable/i.test(errorMessage);
-}

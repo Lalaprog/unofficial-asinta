@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { AppShell } from '@/components/layout/AppShell';
 import { useDataStore } from '@/lib/data/store';
 import { Send, Search, CheckCircle2, AlertCircle } from 'lucide-react';
@@ -10,6 +10,8 @@ import { Badge } from '@/components/ui/Badge';
 import { Input, Textarea } from '@/components/ui/Input';
 import { Select } from '@/components/ui/Select';
 import { Modal } from '@/components/ui/Modal';
+import { WorkspaceHeader } from '@/components/ui/WorkspaceHeader';
+import { WorkspaceFilters } from '@/components/ui/WorkspaceFilters';
 import { createClient } from '@/lib/supabase/client';
 import { buildReminderSMS, detectReminderType, estimateSMSSegments } from '@/lib/sms/templates';
 import { formatPeso, formatDatePH } from '@/lib/email/format';
@@ -35,7 +37,7 @@ function smsStatusBadge(log: SMSLog): { label: string; variant: 'success' | 'war
     case 'sent':
       return { label: 'Sent', variant: 'success' };
     case 'pending':
-      return { label: 'Queued', variant: 'warning' };
+      return { label: 'Pending / unconfirmed', variant: 'warning' };
     case 'failed':
     default:
       return { label: 'Failed', variant: 'danger' };
@@ -60,6 +62,19 @@ export default function SMSPage() {
   const [isSending, setIsSending] = useState(false);
   const [confirmed, setConfirmed] = useState(false);
   const [successNotice, setSuccessNotice] = useState(false);
+  const [emailLookupFailed, setEmailLookupFailed] = useState(false);
+  const prepareVersion = useRef(0);
+  const sendLock = useRef(false);
+  const closeComposer = () => {
+    prepareVersion.current += 1;
+    setIsComposeModalOpen(false);
+    setSelectedInvoiceId('');
+    setMessage('');
+    setConfirmed(false);
+    setSuccessNotice(false);
+    setIsPreparing(false);
+    setEmailLookupFailed(false);
+  };
 
   useEffect(() => {
     let active = true;
@@ -69,7 +84,7 @@ export default function SMSPage() {
         if (active) setGatewayStatus(status);
       })
       .catch(() => {
-        if (active) setGatewayStatus({ philsmsConfigured: false });
+        if (active) setGatewayStatus(null);
       });
     return () => {
       active = false;
@@ -100,16 +115,19 @@ export default function SMSPage() {
 
   /** Auto-populates the composer from the selected invoice. */
   const handleInvoiceSelect = async (invoiceId: string) => {
+    const version = ++prepareVersion.current;
     setSelectedInvoiceId(invoiceId);
+    setMessage('');
+    setEmailLookupFailed(false);
     setConfirmed(false);
     setLatestEmailDate(null);
     if (!invoiceId) {
-      setMessage('');
+      setIsPreparing(false);
       return;
     }
 
     const invoice = invoices.find((i) => i.id === invoiceId);
-    if (!invoice) return;
+    if (!invoice) { setIsPreparing(false); return; }
     const client = clients.find((c) => c.id === invoice.client_id);
     const project = projects.find((p) => p.id === invoice.project_id);
 
@@ -118,7 +136,7 @@ export default function SMSPage() {
     try {
       // Only a genuinely successful (accepted/delivered) initial-request
       // email may be referenced with an "emailed on" date.
-      const { data } = await supabase
+      const { data, error } = await supabase
         .from('email_logs')
         .select('sent_at')
         .eq('invoice_id', invoiceId)
@@ -127,10 +145,12 @@ export default function SMSPage() {
         .order('sent_at', { ascending: false })
         .limit(1)
         .maybeSingle();
+      if (error) throw error;
       emailedOn = (data as { sent_at: string | null } | null)?.sent_at ?? null;
     } catch {
-      emailedOn = null;
+      if (version === prepareVersion.current) setEmailLookupFailed(true);
     }
+    if (version !== prepareVersion.current) return;
 
     const todayIso = getManilaClock().dateIso;
     const type = detectReminderType(invoice.due_date, todayIso);
@@ -152,20 +172,17 @@ export default function SMSPage() {
 
   const handleComposeSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!selectedInvoiceId || !message.trim() || !confirmed || isSending) return;
-
+    if (!selectedInvoiceId || !message.trim() || !confirmed || isPreparing || sendLock.current) return;
+    sendLock.current = true;
     setIsSending(true);
-    const sent = await sendSMS({ invoiceId: selectedInvoiceId, message: message.trim() });
-    setIsSending(false);
-    if (!sent) return;
-    setSuccessNotice(true);
-    setTimeout(() => {
-      setIsComposeModalOpen(false);
-      setSuccessNotice(false);
-      setSelectedInvoiceId('');
-      setMessage('');
-      setConfirmed(false);
-    }, 1500);
+    try {
+      const sent = await sendSMS({ invoiceId: selectedInvoiceId, message: message.trim() });
+      if (sent) setSuccessNotice(true);
+      else setConfirmed(false);
+    } finally {
+      sendLock.current = false;
+      setIsSending(false);
+    }
   };
 
   const segmentEstimate = estimateSMSSegments(message);
@@ -173,26 +190,10 @@ export default function SMSPage() {
   return (
     <AppShell requireFounder={true}>
       <div className="space-y-6">
-        {/* Header */}
-        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pb-3 border-b border-surface-border/60">
-          <div>
-            <h1 className="text-xl sm:text-2xl font-semibold text-navy tracking-tight">
-              PhilSMS Dispatch Log
-            </h1>
-            <p className="text-xs text-ink-secondary mt-0.5">
-              Client SMS reminders and gateway delivery history
-            </p>
-          </div>
-
-          <Button
-            variant="primary"
-            size="sm"
-            onClick={() => setIsComposeModalOpen(true)}
-            leftIcon={<Send className="w-4 h-4" />}
-          >
-            Compose SMS
-          </Button>
-        </div>
+        <WorkspaceHeader eyebrow="Client communications" title="PhilSMS Dispatch Log"
+          description="Review reminder attempts and provider statuses before sending another message."
+          action={<Button variant="primary" size="sm" onClick={() => setIsComposeModalOpen(true)} leftIcon={<Send className="w-4 h-4" />}>Compose SMS</Button>}
+        />
 
         {/* SMS Status Cards — honest statuses only */}
         <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
@@ -200,7 +201,7 @@ export default function SMSPage() {
             <div className="text-xs font-medium text-ink-secondary">PhilSMS Gateway Status</div>
             <div className="text-xl font-bold text-navy mt-1 flex items-center gap-2">
               {!gatewayStatus ? (
-                'Checking…'
+                'Status unavailable'
               ) : gatewayStatus.philsmsConfigured ? (
                 <>
                   <span className="w-2.5 h-2.5 rounded-full bg-status-success" />
@@ -214,8 +215,8 @@ export default function SMSPage() {
               )}
             </div>
             <div className="text-[11px] text-ink-muted mt-0.5">
-              {gatewayStatus?.philsmsConfigured
-                ? 'An API key is present. Sends are handed to PhilSMS.'
+              {gatewayStatus === null ? 'Could not confirm gateway configuration.' : gatewayStatus.philsmsConfigured
+                ? 'An API key is present. Acceptance and delivery are separate.'
                 : 'No API key — messages are logged only and never leave the server.'}
             </div>
           </div>
@@ -237,18 +238,11 @@ export default function SMSPage() {
           </div>
         </div>
 
-        {/* Search */}
-        <div className="max-w-md">
-          <Input
-            label="Search messages"
-            placeholder="Search recipient, mobile number, or message..."
-            value={searchQuery}
-            onChange={(e) => setSearchQuery(e.target.value)}
-            leftIcon={<Search className="w-4 h-4" />}
-          />
-        </div>
-
-        <FilterSummary count={filteredLogs.length} itemName="message" active={Boolean(searchQuery)} onClear={() => { setSearchQuery(''); }} />
+        <WorkspaceFilters title="Find messages" summary={<FilterSummary count={filteredLogs.length} itemName="message" active={Boolean(searchQuery)} onClear={() => setSearchQuery('')} />}>
+          <div className="max-w-md">
+            <Input label="Search messages" placeholder="Search recipient, mobile number, or message..." value={searchQuery} onChange={(e) => setSearchQuery(e.target.value)} leftIcon={<Search className="w-4 h-4" />} />
+          </div>
+        </WorkspaceFilters>
 
         {/* Logs List */}
         <div className="bg-white rounded-xl border border-surface-border overflow-hidden">
@@ -322,7 +316,10 @@ export default function SMSPage() {
       {/* COMPOSE SMS MODAL */}
       <Modal
         isOpen={isComposeModalOpen}
-        onClose={() => setIsComposeModalOpen(false)}
+        onClose={closeComposer}
+        dismissOnBackdrop={!isSending}
+        dismissOnEscape={!isSending}
+        showCloseButton={!isSending}
         title="Compose SMS Payment Reminder"
         description="Select an invoice — the recipient, balance, and wording auto-populate and can be edited before sending."
         maxWidth="xl"
@@ -331,13 +328,15 @@ export default function SMSPage() {
           {successNotice ? (
             <div className="p-4 rounded-xl bg-status-success-bg border border-status-success/20 text-status-success text-center font-bold flex items-center justify-center space-x-2">
               <CheckCircle2 className="w-5 h-5 text-status-success" />
-              <span>SMS handed to the gateway — see the dispatch log for its honest status.</span>
+              <span>SMS handed to the gateway — see the dispatch log for its status.</span>
+              <Button type="button" variant="secondary" size="sm" onClick={closeComposer}>Done</Button>
             </div>
           ) : (
             <>
               <Select
                 label="Invoice (recipient is resolved from the invoice's client)"
                 value={selectedInvoiceId}
+                disabled={isSending}
                 onChange={(e) => handleInvoiceSelect(e.target.value)}
                 required
               >
@@ -399,7 +398,7 @@ export default function SMSPage() {
                   <div>
                     <div className="text-ink-secondary">Latest Successful Email</div>
                     <div className="font-semibold text-navy mt-0.5">
-                      {latestEmailDate ? formatDatePH(latestEmailDate) : 'None on record'}
+                      {emailLookupFailed ? 'Could not verify' : latestEmailDate ? formatDatePH(latestEmailDate) : 'None on record'}
                     </div>
                   </div>
                 </div>
@@ -410,7 +409,9 @@ export default function SMSPage() {
                 rows={5}
                 placeholder="Select an invoice to auto-populate the reminder message…"
                 value={message}
-                onChange={(e) => setMessage(e.target.value)}
+                onChange={(e) => { setMessage(e.target.value); setConfirmed(false); }}
+                maxLength={1000}
+                disabled={isPreparing || isSending}
                 required
               />
 
@@ -419,10 +420,12 @@ export default function SMSPage() {
                 {segmentEstimate.segments} SMS segment{segmentEstimate.segments === 1 ? '' : 's'}
               </div>
 
+              <p className="text-ink-secondary">If a send is unconfirmed, check the dispatch log and provider before retrying; it may already have been sent.</p>
               <label className="flex items-start space-x-2.5 cursor-pointer p-3 rounded-xl bg-surface-inset/50 border border-surface-border">
                 <input
                   type="checkbox"
                   checked={confirmed}
+                  disabled={isPreparing || isSending}
                   onChange={(e) => setConfirmed(e.target.checked)}
                   className="mt-0.5 w-4 h-4 rounded border-surface-border text-navy focus:ring-navy/30"
                 />
@@ -442,7 +445,7 @@ export default function SMSPage() {
               <div className="pt-3 flex justify-end space-x-2">
                 <Button
                   variant="secondary"
-                  onClick={() => setIsComposeModalOpen(false)}
+                  onClick={closeComposer}
                   type="button"
                   disabled={isSending}
                 >
@@ -452,7 +455,7 @@ export default function SMSPage() {
                   type="submit"
                   variant="primary"
                   isLoading={isSending}
-                  disabled={!selectedInvoiceId || !message.trim() || !confirmed || isSending}
+                  disabled={!selectedInvoiceId || !message.trim() || !confirmed || isSending || isPreparing}
                   leftIcon={!isSending ? <Send className="w-3.5 h-3.5" /> : undefined}
                 >
                   Confirm &amp; Send SMS

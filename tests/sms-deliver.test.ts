@@ -86,3 +86,26 @@ describe('deliverAndLogSMS', () => {
     expect(outcome.success).toBe(false);
   });
 });
+
+describe('uncertain delivery', () => {
+  it('leaves an unconfirmed attempt pending with a visible reason', async () => {
+    const db = createFakeDb();
+    const outcome = await deliverAndLogSMS({ db, ...base, send: async () => ({ success: false, uncertain: true, error: 'timeout' }) });
+    expect(outcome.uncertain).toBe(true);
+    expect(outcome.success).toBe(false);
+    expect(db.tables.sms_logs[0]).toMatchObject({ status: 'pending', provider_status: 'unconfirmed', error_message: 'timeout' });
+  });
+
+  it('reports a failed final log write even when the provider accepted', async () => {
+    const db = {
+      from: () => ({
+        insert: () => ({ select: () => ({ single: async () => ({ data: { id: 'pending-1', status: 'pending' }, error: null }) }) }),
+        update: () => ({ eq: () => ({ select: () => ({ single: async () => ({ data: null, error: { message: 'write failed' } }) }) }) }),
+      }),
+    };
+    const outcome = await deliverAndLogSMS({ db, ...base, send: async () => ({ success: true, messageId: 'accepted' }) });
+    expect(outcome.success).toBe(true);
+    expect(outcome.logUpdateFailed).toBe(true);
+    expect(outcome.log?.status).toBe('pending');
+  });
+});
