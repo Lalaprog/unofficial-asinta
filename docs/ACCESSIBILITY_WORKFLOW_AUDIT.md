@@ -8,6 +8,8 @@ This is a working checklist, **not a WCAG 2.2 AA conformance claim**. Module usa
 - The actual mobile launcher component was rendered inside a temporary isolated browser fixture (not an authenticated workspace): at 320×480 it scrolled to the last link, kept keyboard focus inside the dialog, wrapped Tab and Shift+Tab, closed with Escape and returned focus. It also opened at 375×812. A tagged axe scan of the fixture reported no violations. This does not establish that the full workspace is accessible.
 - Automated regression tests check launcher dialog semantics, focus behavior and desktop resize; form errors preserve external descriptions; semantic status foreground/background token pairs meet a 4.5:1 contrast calculation. Token checks do not cover alpha, gradients, custom colors or every rendered state.
 - Added a skip link, clearer keyboard focus styling, an operable scrollable launcher, improved sign-in field autocomplete/error announcement, and corrected the warning token's insufficient contrast on its standard background.
+- Follow-up project pass: rendered the real project list/create and detail/edit components in an isolated Chromium fixture with synthetic in-memory data and network calls disabled. At 320×480, 375×812 and 1440×900 the list had no document-level horizontal overflow; tagged axe checks reported no violations on the list or the sampled create/edit dialogs. Exercised missing fields, date-order validation, zero budget and a simulated create. This did not test real authentication, storage, permissions, failure recovery or a complete keyboard/screen-reader audit.
+- Fixed project form date, field validation, in-flight locks and deletion confirmation issues found by inspection; local component and helper tests cover synthetic success, invalid input, pending operations, zero-row responses and lost responses. Remaining low-contrast focus rings found by source inspection were strengthened. These targeted checks do not establish cross-module conformance.
 
 ## Remaining: authenticated staging and user review
 
@@ -35,5 +37,5 @@ Across the modules, test desktop, tablet and phone widths; 200% and 400% browser
 ## Known limitations for follow-up
 
 - The existing `InspectGuard` intercepts context-menu and some browser shortcuts outside form fields. This can interfere with browser/assistive workflows and should be reviewed with the product owner; it is not a reliable security boundary. This pass did not remove it.
-- Only the sign-in page and an isolated launcher fixture were run in a browser here. There was no authenticated cross-module audit, real-user study, full keyboard/zoom/contrast audit, hosted migration verification or live provider test.
+- Only the sign-in page and isolated launcher/project fixtures were run in a browser here. There was no authenticated cross-module audit, real-user study, full keyboard/zoom/contrast audit, hosted migration verification or live provider test.
 - Separate payroll/Bale reconciliation and rollout, SMS operations rollout, and team-account migration/Auth verification remain as described in their operations guides.

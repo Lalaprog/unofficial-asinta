@@ -12,6 +12,8 @@ interface ConfirmDialogProps {
   cancelLabel?: string;
   /** Renders the confirm action in the destructive style. */
   destructive?: boolean;
+  /** Keep the dialog and controls locked while an action is being confirmed. */
+  isPending?: boolean;
   onConfirm: () => void;
   onCancel: () => void;
 }
@@ -28,6 +30,7 @@ export const ConfirmDialog: React.FC<ConfirmDialogProps> = ({
   confirmLabel = 'Confirm',
   cancelLabel = 'Cancel',
   destructive = false,
+  isPending = false,
   onConfirm,
   onCancel,
 }) => {
@@ -42,9 +45,11 @@ export const ConfirmDialog: React.FC<ConfirmDialogProps> = ({
       maxWidth="sm"
       role="alertdialog"
       dismissOnBackdrop={false}
+      dismissOnEscape={!isPending}
+      showCloseButton={!isPending}
     >
       <div className="flex items-center justify-end gap-2 pt-1">
-        <Button type="button" variant="ghost" size="sm" onClick={onCancel}>
+        <Button type="button" variant="ghost" size="sm" onClick={onCancel} disabled={isPending}>
           {cancelLabel}
         </Button>
         <Button
@@ -52,6 +57,7 @@ export const ConfirmDialog: React.FC<ConfirmDialogProps> = ({
           variant={destructive ? 'danger' : 'primary'}
           size="sm"
           onClick={onConfirm}
+          isLoading={isPending}
         >
           {confirmLabel}
         </Button>

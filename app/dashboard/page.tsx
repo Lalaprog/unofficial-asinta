@@ -1311,7 +1311,7 @@ export default function FounderDashboard() {
               {metrics.payroll.needsReviewCount > 0 && (
                 <Link
                   href="/payroll"
-                  className="group/link flex min-h-14 items-center justify-between gap-3 py-3 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand/25"
+                  className="group/link flex min-h-14 items-center justify-between gap-3 py-3 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand"
                 >
                   <div className="flex min-w-0 items-start gap-2.5">
                     <span
@@ -1335,7 +1335,7 @@ export default function FounderDashboard() {
               {pendingAdvanceRequestCount > 0 && (
                 <Link
                   href="/advances?tab=requests"
-                  className="group/link flex min-h-14 items-center justify-between gap-3 py-3 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand/25"
+                  className="group/link flex min-h-14 items-center justify-between gap-3 py-3 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand"
                 >
                   <div className="flex min-w-0 items-start gap-2.5">
                     <span
@@ -1359,7 +1359,7 @@ export default function FounderDashboard() {
               {approvedAdvanceRequestCount > 0 && (
                 <Link
                   href="/advances?tab=requests"
-                  className="group/link flex min-h-14 items-center justify-between gap-3 py-3 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand/25"
+                  className="group/link flex min-h-14 items-center justify-between gap-3 py-3 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand"
                 >
                   <div className="flex min-w-0 items-start gap-2.5">
                     <span
@@ -1383,7 +1383,7 @@ export default function FounderDashboard() {
               {metrics.projectsOverEstimate.length > 0 && (
                 <Link
                   href="/projects"
-                  className="group/link flex min-h-14 items-center justify-between gap-3 py-3 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand/25"
+                  className="group/link flex min-h-14 items-center justify-between gap-3 py-3 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand"
                 >
                   <div className="flex min-w-0 items-start gap-2.5">
                     <span
@@ -1412,7 +1412,7 @@ export default function FounderDashboard() {
               {metrics.tools.attentionUnits > 0 && (
                 <Link
                   href="/tools"
-                  className="group/link flex min-h-14 items-center justify-between gap-3 py-3 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand/25"
+                  className="group/link flex min-h-14 items-center justify-between gap-3 py-3 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand"
                 >
                   <div className="flex min-w-0 items-start gap-2.5">
                     <span

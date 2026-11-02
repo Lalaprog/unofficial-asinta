@@ -160,7 +160,7 @@ export default function ClientsPage() {
                           });
                           setIsEditModalOpen(true);
                         }}
-                        className="min-h-11 min-w-11 sm:min-h-9 sm:min-w-9 inline-flex items-center justify-center rounded-lg text-ink-secondary hover:text-navy hover:bg-surface-inset focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand/25"
+                        className="min-h-11 min-w-11 sm:min-h-9 sm:min-w-9 inline-flex items-center justify-center rounded-lg text-ink-secondary hover:text-navy hover:bg-surface-inset focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand"
                       >
                         <Edit2 className="w-4 h-4" />
                       </button>
@@ -169,7 +169,7 @@ export default function ClientsPage() {
                         aria-label={`Delete ${client.name}`}
                         title="Delete client"
                         onClick={() => setPendingDelete({ id: client.id, name: client.name })}
-                        className="min-h-11 min-w-11 sm:min-h-9 sm:min-w-9 inline-flex items-center justify-center rounded-lg text-status-danger hover:bg-status-danger-bg focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-status-danger/25"
+                        className="min-h-11 min-w-11 sm:min-h-9 sm:min-w-9 inline-flex items-center justify-center rounded-lg text-status-danger hover:bg-status-danger-bg focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-status-danger"
                       >
                         <Trash2 className="w-4 h-4" />
                       </button>

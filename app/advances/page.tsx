@@ -64,7 +64,7 @@ function AdvancesPageContent() {
               aria-controls="advances-panel"
               aria-pressed={activeTab === 'requests'}
               onClick={() => selectTab('requests')}
-              className={`min-h-11 rounded-lg px-4 text-xs font-semibold transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand/25 ${
+              className={`min-h-11 rounded-lg px-4 text-xs font-semibold transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand ${
                 activeTab === 'requests'
                   ? 'bg-navy text-white'
                   : 'border border-surface-border bg-white text-ink-secondary hover:bg-surface-inset hover:text-navy'
@@ -78,7 +78,7 @@ function AdvancesPageContent() {
               aria-controls="advances-panel"
               aria-pressed={activeTab === 'issued'}
               onClick={() => selectTab('issued')}
-              className={`min-h-11 rounded-lg px-4 text-xs font-semibold transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand/25 ${
+              className={`min-h-11 rounded-lg px-4 text-xs font-semibold transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand ${
                 activeTab === 'issued'
                   ? 'bg-navy text-white'
                   : 'border border-surface-border bg-white text-ink-secondary hover:bg-surface-inset hover:text-navy'

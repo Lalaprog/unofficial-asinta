@@ -25,6 +25,7 @@ import { Modal } from '@/components/ui/Modal';
 import { useToast } from '@/components/ui/Toast';
 import { formatPesoCompact } from '@/lib/email/format';
 import { getBudgetSummary } from '@/lib/projects/budgetSummary';
+import { localDateInputValue, validateProjectForm } from '@/lib/projects/form';
 
 export default function ProjectsPage() {
   const { isFounder, isSupervisor, user } = useAuth();
@@ -43,6 +44,7 @@ export default function ProjectsPage() {
   const [searchQuery, setSearchQuery] = useState('');
   const [statusFilter, setStatusFilter] = useState<string>('all');
   const [isCreateModalOpen, setIsCreateModalOpen] = useState(false);
+  const [showFormErrors, setShowFormErrors] = useState(false);
 
   // Form state
   const [formData, setFormData] = useState({
@@ -51,9 +53,11 @@ export default function ProjectsPage() {
     location: '',
     budget_estimate: '',
     status: 'active' as ProjectStatus,
-    start_date: new Date().toISOString().split('T')[0],
-    target_completion_date: '2026-12-31',
+    start_date: localDateInputValue(),
+    target_completion_date: '',
   });
+
+  const projectValidation = validateProjectForm(formData, formData.client_id);
 
   // Filter projects by role
   const accessibleProjects = isSupervisor && user
@@ -72,15 +76,18 @@ export default function ProjectsPage() {
 
   const handleCreateSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (creatingRef.current || !formData.name || !formData.client_id || !formData.budget_estimate) return;
+    if (creatingRef.current) return;
+    setShowFormErrors(true);
+    const { errors, normalized } = validateProjectForm(formData, formData.client_id);
+    if (Object.keys(errors).length > 0) return;
     creatingRef.current = true;
     setIsCreating(true);
     try {
       const created = await createProject({
-        name: formData.name,
+        name: normalized.name,
         client_id: formData.client_id,
-        location: formData.location || 'Batangas',
-        budget_estimate: parseFloat(formData.budget_estimate),
+        location: normalized.location,
+        budget_estimate: normalized.budget,
         status: formData.status,
         start_date: formData.start_date,
         target_completion_date: formData.target_completion_date,
@@ -89,14 +96,15 @@ export default function ProjectsPage() {
       if (created) {
         showToast('success', 'Project created.');
         setIsCreateModalOpen(false);
+        setShowFormErrors(false);
         setFormData({
           name: '',
           client_id: '',
           location: '',
           budget_estimate: '',
           status: 'active',
-          start_date: new Date().toISOString().split('T')[0],
-          target_completion_date: '2026-12-31',
+          start_date: localDateInputValue(),
+          target_completion_date: '',
         });
       }
     } catch {
@@ -292,86 +300,97 @@ export default function ProjectsPage() {
         description="Initialize an architectural or design-build project in Batangas."
         maxWidth="lg"
       >
-        <form onSubmit={handleCreateSubmit} className="space-y-4 text-xs">
-          <Input
-            label="Project Name"
-            placeholder="e.g. Batangas Modern Villa & Pavilion"
-            value={formData.name}
-            onChange={(e) => setFormData({ ...formData, name: e.target.value })}
-            required
-          />
-
-          <Select
-            label="Client"
-            value={formData.client_id}
-            onChange={(e) => setFormData({ ...formData, client_id: e.target.value })}
-            required
-          >
-            <option value="">Select an existing client...</option>
-            {clients.map((c) => (
-              <option key={c.id} value={c.id}>
-                {c.name} ({c.contact_person})
-              </option>
-            ))}
-          </Select>
-
-          <Input
-            label="Site Location"
-            placeholder="e.g. Ayala Greenfield Estates, Calamba / Sto. Tomas"
-            value={formData.location}
-            onChange={(e) => setFormData({ ...formData, location: e.target.value })}
-            required
-          />
-
-          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+        <form onSubmit={handleCreateSubmit} noValidate className="space-y-4 text-xs">
+          {showFormErrors && Object.keys(projectValidation.errors).length > 0 && (
+            <p role="alert" className="text-xs font-semibold text-status-danger">Please correct the highlighted project fields.</p>
+          )}
+          <fieldset disabled={isCreating} className="space-y-4">
             <Input
-              label="Budget Estimate (PHP ₱)"
-              type="number"
-              min="0"
-              step="0.01"
-              placeholder="8500000"
-              value={formData.budget_estimate}
-              onChange={(e) => setFormData({ ...formData, budget_estimate: e.target.value })}
+              label="Project Name"
+              error={showFormErrors ? projectValidation.errors.name : undefined}
+              placeholder="e.g. Batangas Modern Villa & Pavilion"
+              value={formData.name}
+              onChange={(e) => setFormData({ ...formData, name: e.target.value })}
               required
             />
 
             <Select
-              label="Initial Status"
-              value={formData.status}
-              onChange={(e) => setFormData({ ...formData, status: e.target.value as ProjectStatus })}
+              label="Client"
+              error={showFormErrors ? projectValidation.errors.client_id : undefined}
+              value={formData.client_id}
+              onChange={(e) => setFormData({ ...formData, client_id: e.target.value })}
+              required
             >
-              <option value="planning">Planning & Design</option>
-              <option value="active">Active Construction</option>
-              <option value="on_hold">On Hold</option>
+              <option value="">Select an existing client...</option>
+              {clients.map((c) => (
+                <option key={c.id} value={c.id}>
+                  {c.name} ({c.contact_person})
+                </option>
+              ))}
             </Select>
-          </div>
 
-          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
             <Input
-              label="Start Date"
-              type="date"
-              value={formData.start_date}
-              onChange={(e) => setFormData({ ...formData, start_date: e.target.value })}
+              label="Site Location"
+              error={showFormErrors ? projectValidation.errors.location : undefined}
+              placeholder="e.g. Ayala Greenfield Estates, Calamba / Sto. Tomas"
+              value={formData.location}
+              onChange={(e) => setFormData({ ...formData, location: e.target.value })}
               required
             />
 
-            <Input
-              label="Target Completion Date"
-              type="date"
-              value={formData.target_completion_date}
-              onChange={(e) => setFormData({ ...formData, target_completion_date: e.target.value })}
-              required
-            />
-          </div>
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+              <Input
+                label="Budget Estimate (PHP ₱)"
+                error={showFormErrors ? projectValidation.errors.budget_estimate : undefined}
+                type="number"
+                min="0"
+                step="0.01"
+                placeholder="8500000"
+                value={formData.budget_estimate}
+                onChange={(e) => setFormData({ ...formData, budget_estimate: e.target.value })}
+                required
+              />
 
-          <div className="pt-4 flex justify-end space-x-2">
-            <Button type="button" variant="secondary" onClick={() => setIsCreateModalOpen(false)} disabled={isCreating}>
-              Cancel
-            </Button>
-            <Button variant="primary" type="submit" isLoading={isCreating}>
-              {isCreating ? 'Creating project…' : 'Create Project'}
-            </Button>
-          </div>
+              <Select
+                label="Initial Status"
+                value={formData.status}
+                onChange={(e) => setFormData({ ...formData, status: e.target.value as ProjectStatus })}
+              >
+                <option value="planning">Planning & Design</option>
+                <option value="active">Active Construction</option>
+                <option value="on_hold">On Hold</option>
+              </Select>
+            </div>
+
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+              <Input
+                label="Start Date"
+                error={showFormErrors ? projectValidation.errors.start_date : undefined}
+                type="date"
+                value={formData.start_date}
+                onChange={(e) => setFormData({ ...formData, start_date: e.target.value })}
+                required
+              />
+
+              <Input
+                label="Target Completion Date"
+                error={showFormErrors ? projectValidation.errors.target_completion_date : undefined}
+                type="date"
+                value={formData.target_completion_date}
+                onChange={(e) => setFormData({ ...formData, target_completion_date: e.target.value })}
+                required
+              />
+            </div>
+
+            <div className="pt-4 flex justify-end space-x-2">
+              <Button type="button" variant="secondary" onClick={() => setIsCreateModalOpen(false)} disabled={isCreating}>
+                Cancel
+              </Button>
+              <Button variant="primary" type="submit" isLoading={isCreating}>
+                {isCreating ? 'Creating project…' : 'Create Project'}
+              </Button>
+            </div>
+          </fieldset>
         </form>
       </Modal>
     </AppShell>
