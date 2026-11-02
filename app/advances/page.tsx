@@ -14,11 +14,14 @@ import {
 } from 'lucide-react';
 import { Button } from '@/components/ui/Button';
 import { FilterSummary } from '@/components/ui/FilterSummary';
+import { WorkspaceHeader } from '@/components/ui/WorkspaceHeader';
+import { WorkspaceFilters } from '@/components/ui/WorkspaceFilters';
+import { useToast } from '@/components/ui/Toast';
 import { Badge } from '@/components/ui/Badge';
 import { Input } from '@/components/ui/Input';
 import { Select } from '@/components/ui/Select';
 import { Modal } from '@/components/ui/Modal';
-import { formatPesoCompact } from '@/lib/email/format';
+import { formatPeso, formatPesoCompact } from '@/lib/email/format';
 
 export default function AdvancesPage() {
   return (
@@ -47,25 +50,19 @@ function AdvancesPageContent() {
   return (
     <AppShell>
       <div className="w-full space-y-5">
-        <header className="flex flex-col gap-2 border-b border-surface-border/60 pb-4">
-          <h1 className="text-xl font-semibold tracking-tight text-navy sm:text-2xl">
-            {isFounder ? 'Bale Requests & Advances' : 'Bale Requests'}
-          </h1>
-          <p className="text-xs leading-relaxed text-ink-secondary">
-            {isFounder
-              ? 'Review worker requests and keep issued advance balances separate.'
-              : 'Submit a worker’s requested amount for Founder review.'}
-          </p>
-        </header>
+        <WorkspaceHeader
+          eyebrow="Workforce & pay"
+          title={isFounder ? 'Bale Requests & Advances' : 'Bale Requests'}
+          description={isFounder ? 'Review worker requests and keep issued advance balances separate.' : 'Submit a worker’s requested amount for Founder review.'}
+        />
 
         {isFounder && (
-          <div className="flex flex-wrap gap-2" role="tablist" aria-label="Bale request and advance views">
+          <div className="flex flex-wrap gap-2" role="group" aria-label="Bale request and advance views">
             <button
               type="button"
-              role="tab"
               id="advances-requests-tab"
               aria-controls="advances-panel"
-              aria-selected={activeTab === 'requests'}
+              aria-pressed={activeTab === 'requests'}
               onClick={() => selectTab('requests')}
               className={`min-h-11 rounded-lg px-4 text-xs font-semibold transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand/25 ${
                 activeTab === 'requests'
@@ -77,10 +74,9 @@ function AdvancesPageContent() {
             </button>
             <button
               type="button"
-              role="tab"
               id="advances-issued-tab"
               aria-controls="advances-panel"
-              aria-selected={activeTab === 'issued'}
+              aria-pressed={activeTab === 'issued'}
               onClick={() => selectTab('issued')}
               className={`min-h-11 rounded-lg px-4 text-xs font-semibold transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand/25 ${
                 activeTab === 'issued'
@@ -95,15 +91,7 @@ function AdvancesPageContent() {
 
         <div
           id="advances-panel"
-          role={isFounder ? 'tabpanel' : undefined}
-          aria-labelledby={
-            isFounder
-              ? activeTab === 'requests'
-                ? 'advances-requests-tab'
-                : 'advances-issued-tab'
-              : undefined
-          }
-          tabIndex={isFounder ? 0 : undefined}
+          aria-label={isFounder ? (activeTab === 'requests' ? 'Requests' : 'Issued advances') : undefined}
         >
           {activeTab === 'requests' ? <AdvanceRequestsPanel /> : <IssuedAdvancesPanel />}
         </div>
@@ -113,6 +101,11 @@ function AdvancesPageContent() {
 }
 
 function IssuedAdvancesPanel() {
+  const { showToast } = useToast();
+  const [isAdding, setIsAdding] = useState(false);
+  const [isDeducting, setIsDeducting] = useState(false);
+  const addLock = React.useRef(false);
+  const deductLock = React.useRef(false);
   const {
     advances,
     workers,
@@ -166,36 +159,58 @@ function IssuedAdvancesPanel() {
 
   const handleAddSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!formData.worker_id || !formData.project_id || !formData.amount) return;
-
-    const created = await createAdvance({
-      worker_id: formData.worker_id,
-      project_id: formData.project_id,
-      amount: parseFloat(formData.amount),
-      reason: formData.reason || 'Personal cash advance (Bale)',
-      date: formData.date,
-    });
-
-    if (created) {
-      setIsAddModalOpen(false);
-      setFormData({
-        worker_id: '',
-        project_id: '',
-        amount: '',
-        reason: '',
-        date: new Date().toISOString().split('T')[0],
+    if (addLock.current || !formData.worker_id || !formData.project_id || !formData.amount) return;
+    addLock.current = true;
+    setIsAdding(true);
+    try {
+      const created = await createAdvance({
+        worker_id: formData.worker_id,
+        project_id: formData.project_id,
+        amount: parseFloat(formData.amount),
+        reason: formData.reason || 'Personal cash advance (Bale)',
+        date: formData.date,
       });
+
+      if (created) {
+        showToast('success', 'Advance recorded.');
+        setIsAddModalOpen(false);
+        setFormData({
+          worker_id: '',
+          project_id: '',
+          amount: '',
+          reason: '',
+          date: new Date().toISOString().split('T')[0],
+        });
+      } else {
+        showToast('error', 'Advance not confirmed. Check the ledger before trying again.');
+      }
+    } catch {
+      showToast('error', 'Advance not confirmed. Check the ledger before trying again.');
+    } finally {
+      addLock.current = false;
+      setIsAdding(false);
     }
   };
 
   const handleDeductSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!selectedAdvance || !deductionAmount) return;
-
-    const success = await recordAdvanceDeduction(selectedAdvance.id, parseFloat(deductionAmount));
-    if (success) {
-      setIsDeductModalOpen(false);
-      setDeductionAmount('');
+    if (deductLock.current || !selectedAdvance || !deductionAmount) return;
+    deductLock.current = true;
+    setIsDeducting(true);
+    try {
+      const success = await recordAdvanceDeduction(selectedAdvance.id, parseFloat(deductionAmount));
+      if (success) {
+        showToast('success', 'Deduction recorded.');
+        setIsDeductModalOpen(false);
+        setDeductionAmount('');
+      } else {
+        showToast('error', 'Deduction not confirmed. Check the advance balance before trying again.');
+      }
+    } catch {
+      showToast('error', 'Deduction not confirmed. Check the advance balance before trying again.');
+    } finally {
+      deductLock.current = false;
+      setIsDeducting(false);
     }
   };
 
@@ -208,7 +223,7 @@ function IssuedAdvancesPanel() {
               Worker Advances (&ldquo;Bale&rdquo;)
             </h2>
             <p className="text-xs text-ink-secondary mt-0.5">
-              Cash advances and automatic payroll deduction balances
+              Track issued advances, recorded deductions and outstanding balances
             </p>
           </div>
 
@@ -225,68 +240,70 @@ function IssuedAdvancesPanel() {
         {/* Bale Overview Cards */}
         <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 auto-rows-fr">
           <div className="h-full p-4 sm:p-5 rounded-xl bg-white border border-surface-border flex flex-col justify-between">
-            <div className="text-xs font-medium text-ink-secondary truncate">Active Bale Balance</div>
-            <div className="text-2xl font-bold text-navy mt-1 tabular-nums truncate">{formatPHP(totalOutstandingBale)}</div>
+            <div className="text-xs font-medium text-ink-secondary">Active Bale Balance</div>
+            <div className="text-2xl font-bold text-navy mt-1 tabular-nums break-words">{formatPHP(totalOutstandingBale)}</div>
           </div>
 
           <div className="h-full p-4 sm:p-5 rounded-xl bg-white border border-surface-border flex flex-col justify-between">
-            <div className="text-xs font-medium text-ink-secondary truncate">Workers with Advances</div>
+            <div className="text-xs font-medium text-ink-secondary">Workers with Advances</div>
             <div className="text-2xl font-bold text-navy mt-1 tabular-nums">
               {new Set(projectScopedAdvances.filter((a) => a.status === 'active' || a.status === 'partially_deducted').map((a) => a.worker_id)).size}
             </div>
           </div>
 
           <div className="h-full p-4 sm:p-5 rounded-xl bg-white border border-surface-border flex flex-col justify-between">
-            <div className="text-xs font-medium text-ink-secondary truncate">Total Repaid to Date</div>
-            <div className="text-2xl font-bold text-status-success mt-1 tabular-nums truncate">
+            <div className="text-xs font-medium text-ink-secondary">Deductions recorded (all statuses)</div>
+            <div className="text-2xl font-bold text-status-success mt-1 tabular-nums break-words">
               {formatPHP(projectScopedAdvances.reduce((sum, a) => sum + Number(a.amount_deducted || 0), 0))}
             </div>
           </div>
         </div>
 
-        {/* Filters */}
-        <div className="flex flex-col sm:flex-row flex-wrap sm:items-end gap-3">
-          <div className="w-full sm:w-80">
-            <Input
-              label="Search advances"
-              placeholder="Search worker name, reason, project..."
-              value={searchQuery}
-              onChange={(e) => setSearchQuery(e.target.value)}
-              leftIcon={<Search className="w-4 h-4" />}
-            />
-          </div>
+        <p className="text-xs leading-relaxed text-ink-secondary">Summary reflects the selected project; search and status filters apply to the list below.</p>
 
-          <div className="w-full sm:w-64">
-            <Select
-              label="Project"
-              value={projectFilter}
-              onChange={(e) => setProjectFilter(e.target.value)}
-              options={[
-                { label: 'All Project Sites', value: 'all' },
-                ...projects.map((p) => ({
-                  label: `${p.name} (${p.location.split(',')[0]})`,
-                  value: p.id,
-                })),
-              ]}
-            />
-          </div>
+        <WorkspaceFilters title="Find an issued advance" summary={<FilterSummary count={filteredAdvances.length} itemName="advance" active={Boolean(searchQuery) || projectFilter !== 'all' || statusFilter !== 'all'} onClear={() => { setSearchQuery(''); setProjectFilter('all'); setStatusFilter('all'); }} />}>
+          <div className="flex flex-col sm:flex-row flex-wrap sm:items-end gap-3">
+            <div className="w-full sm:w-80">
+              <Input
+                label="Search advances"
+                placeholder="Search worker name, reason, project..."
+                value={searchQuery}
+                onChange={(e) => setSearchQuery(e.target.value)}
+                leftIcon={<Search className="w-4 h-4" />}
+              />
+            </div>
 
-          <div className="w-full sm:w-48">
-            <Select
-              label="Status"
-              value={statusFilter}
-              onChange={(e) => setStatusFilter(e.target.value)}
-              options={[
-                { label: 'All Statuses', value: 'all' },
-                { label: 'Active', value: 'active' },
-                { label: 'Partially Deducted', value: 'partially_deducted' },
-                { label: 'Fully Deducted', value: 'fully_deducted' },
-              ]}
-            />
-          </div>
-        </div>
+            <div className="w-full sm:w-64">
+              <Select
+                label="Project"
+                value={projectFilter}
+                onChange={(e) => setProjectFilter(e.target.value)}
+                options={[
+                  { label: 'All Project Sites', value: 'all' },
+                  ...projects.map((p) => ({
+                    label: `${p.name} (${p.location.split(',')[0]})`,
+                    value: p.id,
+                  })),
+                ]}
+              />
+            </div>
 
-        <FilterSummary count={filteredAdvances.length} itemName="advance" active={Boolean(searchQuery) || projectFilter !== 'all' || statusFilter !== 'all'} onClear={() => { setSearchQuery(''); setProjectFilter('all'); setStatusFilter('all'); }} />
+            <div className="w-full sm:w-48">
+              <Select
+                label="Status"
+                value={statusFilter}
+                onChange={(e) => setStatusFilter(e.target.value)}
+                options={[
+                  { label: 'All Statuses', value: 'all' },
+                  { label: 'Active', value: 'active' },
+                  { label: 'Partially Deducted', value: 'partially_deducted' },
+                  { label: 'Fully Deducted', value: 'fully_deducted' },
+                  { label: 'Cancelled', value: 'cancelled' },
+                ]}
+              />
+            </div>
+          </div>
+        </WorkspaceFilters>
 
         {/* Advances List */}
         <div className="bg-white rounded-xl border border-surface-border overflow-hidden">
@@ -329,20 +346,20 @@ function IssuedAdvancesPanel() {
                   <div className="grid grid-cols-2 sm:grid-cols-3 gap-4 text-xs py-2 lg:py-0">
                     <div>
                       <div className="text-ink-secondary">Original Advance</div>
-                      <div className="font-bold text-navy text-sm mt-0.5">{formatPHP(adv.amount)}</div>
+                      <div className="font-bold text-navy text-sm mt-0.5">{formatPeso(adv.amount)}</div>
                     </div>
 
                     <div>
                       <div className="text-ink-secondary">Deducted</div>
                       <div className="font-semibold text-status-success text-sm mt-0.5">
-                        {formatPHP(adv.amount_deducted)}
+                        {formatPeso(adv.amount_deducted)}
                       </div>
                     </div>
 
                     <div>
                       <div className="text-ink-secondary">Remaining Balance</div>
                       <div className={`font-bold text-sm mt-0.5 ${balance > 0 ? 'text-status-warning' : 'text-slate-400'}`}>
-                        {formatPHP(balance)}
+                        {formatPeso(balance)}
                       </div>
                     </div>
                   </div>
@@ -355,7 +372,7 @@ function IssuedAdvancesPanel() {
                         size="sm"
                         onClick={() => {
                           setSelectedAdvance(adv);
-                          setDeductionAmount(String(Math.min(balance, 1500)));
+                          setDeductionAmount('');
                           setIsDeductModalOpen(true);
                         }}
                         leftIcon={<TrendingDown className="w-3.5 h-3.5" />}
@@ -370,7 +387,7 @@ function IssuedAdvancesPanel() {
 
             {filteredAdvances.length === 0 && (
               <div className="p-12 text-center text-xs text-ink-secondary">
-                No advances found matching current criteria.
+                {advances.length === 0 ? 'No issued advances have been recorded yet.' : 'No advances match the current search or filters. Clear filters to see all advances.'}
               </div>
             )}
           </div>
@@ -380,6 +397,9 @@ function IssuedAdvancesPanel() {
       <Modal
         isOpen={isAddModalOpen}
         onClose={() => setIsAddModalOpen(false)}
+        dismissOnBackdrop={!isAdding}
+        dismissOnEscape={!isAdding}
+        showCloseButton={!isAdding}
         title="Record Worker Advance (Bale)"
         description="Log an advance disbursement. This will be automatically factored into upcoming payroll deductions."
         maxWidth="lg"
@@ -417,6 +437,8 @@ function IssuedAdvancesPanel() {
             <Input
               label="Advance Amount (PHP ₱)"
               type="number"
+              min="0.01"
+              step="0.01"
               placeholder="2000"
               value={formData.amount}
               onChange={(e) => setFormData({ ...formData, amount: e.target.value })}
@@ -441,11 +463,11 @@ function IssuedAdvancesPanel() {
           />
 
           <div className="pt-3 flex justify-end space-x-2">
-            <Button variant="secondary" onClick={() => setIsAddModalOpen(false)}>
+            <Button type="button" variant="secondary" onClick={() => setIsAddModalOpen(false)} disabled={isAdding}>
               Cancel
             </Button>
-            <Button variant="primary" type="submit">
-              Log Advance into Ledger
+            <Button variant="primary" type="submit" isLoading={isAdding}>
+              {isAdding ? 'Recording advance…' : 'Log Advance into Ledger'}
             </Button>
           </div>
         </form>
@@ -455,6 +477,9 @@ function IssuedAdvancesPanel() {
       <Modal
         isOpen={isDeductModalOpen}
         onClose={() => setIsDeductModalOpen(false)}
+        dismissOnBackdrop={!isDeducting}
+        dismissOnEscape={!isDeducting}
+        showCloseButton={!isDeducting}
         title="Record Manual Bale Repayment / Deduction"
         description="Manually deduct an amount from this worker's active bale balance."
       >
@@ -465,10 +490,10 @@ function IssuedAdvancesPanel() {
                 {workers.find((w) => w.id === selectedAdvance.worker_id)?.name}
               </div>
               <div className="text-ink-secondary">
-                Original Advance: {formatPHP(selectedAdvance.amount)}
+                Original Advance: {formatPeso(selectedAdvance.amount)}
               </div>
               <div className="font-semibold text-status-warning">
-                Outstanding Balance: {formatPHP(selectedAdvance.amount - selectedAdvance.amount_deducted)}
+                Outstanding Balance: {formatPeso(selectedAdvance.amount - selectedAdvance.amount_deducted)}
               </div>
             </div>
 
@@ -478,16 +503,17 @@ function IssuedAdvancesPanel() {
               value={deductionAmount}
               onChange={(e) => setDeductionAmount(e.target.value)}
               required
-              min="1"
+              min="0.01"
+              step="0.01"
               max={selectedAdvance.amount - selectedAdvance.amount_deducted}
             />
 
             <div className="pt-2 flex justify-end space-x-2">
-              <Button variant="secondary" onClick={() => setIsDeductModalOpen(false)}>
+              <Button type="button" variant="secondary" onClick={() => setIsDeductModalOpen(false)} disabled={isDeducting}>
                 Cancel
               </Button>
-              <Button variant="primary" type="submit">
-                Apply Deduction
+              <Button variant="primary" type="submit" isLoading={isDeducting}>
+                {isDeducting ? 'Recording deduction…' : 'Apply Deduction'}
               </Button>
             </div>
           </form>
