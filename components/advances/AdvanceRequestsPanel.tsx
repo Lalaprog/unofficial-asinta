@@ -5,7 +5,8 @@ import { useRouter, useSearchParams } from 'next/navigation';
 import { useAuth } from '@/lib/auth/authContext';
 import { useDataStore } from '@/lib/data/store';
 import type { AdvanceRequest, AdvanceRequestStatus } from '@/types';
-import { formatDatePH, formatPesoCompact } from '@/lib/email/format';
+import { formatDatePH, formatPeso, formatPesoCompact } from '@/lib/email/format';
+import { useToast } from '@/components/ui/Toast';
 import { Badge } from '@/components/ui/Badge';
 import { Button } from '@/components/ui/Button';
 import { Card } from '@/components/ui/Card';
@@ -40,6 +41,10 @@ const MAX_BATCH_APPROVAL_SIZE = 50;
 
 export function AdvanceRequestsPanel() {
   const { user, isFounder, isSupervisor } = useAuth();
+  const { showToast } = useToast();
+  const submitLock = React.useRef(false);
+  const batchLock = React.useRef(false);
+  const actionLock = React.useRef(false);
   const {
     advanceRequests,
     projects,
@@ -257,13 +262,22 @@ export function AdvanceRequestsPanel() {
 
   const handleApproveSelected = async () => {
     const requestIds = selectedRequests.map((request) => request.id);
-    if (requestIds.length === 0 || requestIds.length > MAX_BATCH_APPROVAL_SIZE) return;
+    if (batchLock.current || requestIds.length === 0 || requestIds.length > MAX_BATCH_APPROVAL_SIZE) return;
+    batchLock.current = true;
     setIsApprovingBatch(true);
-    const approved = await approveAdvanceRequests(requestIds);
-    setIsApprovingBatch(false);
-    if (approved) {
-      setIsBatchApprovalOpen(false);
-      setRequestSelection({ siteId: null, ids: [] });
+    try {
+      const approved = await approveAdvanceRequests(requestIds);
+      if (approved) {
+        setIsBatchApprovalOpen(false);
+        setRequestSelection({ siteId: null, ids: [] });
+      } else {
+        showToast('error', 'Approval not confirmed. Check the request statuses before retrying.');
+      }
+    } catch {
+      showToast('error', 'Approval not confirmed. Check the request statuses before retrying.');
+    } finally {
+      batchLock.current = false;
+      setIsApprovingBatch(false);
     }
   };
 
@@ -277,30 +291,54 @@ export function AdvanceRequestsPanel() {
   const handleSubmitRequest = async (event: React.FormEvent) => {
     event.preventDefault();
     const amount = Number(requestedAmount);
-    if (!selectedWorkerId || !selectedProjectId || !Number.isFinite(amount) || amount <= 0) return;
-
+    if (submitLock.current || !selectedWorkerId || !selectedProjectId || !Number.isFinite(amount) || amount <= 0) return;
+    submitLock.current = true;
     setIsSubmitting(true);
-    const created = await createAdvanceRequest({
-      worker_id: selectedWorkerId,
-      project_id: selectedProjectId,
-      requested_amount: amount,
-    });
-    setIsSubmitting(false);
-    if (created) setRequestModalOpen(false);
+    try {
+      const created = await createAdvanceRequest({
+        worker_id: selectedWorkerId,
+        project_id: selectedProjectId,
+        requested_amount: amount,
+      });
+      if (created) setRequestModalOpen(false);
+      else showToast('error', 'Request submission not confirmed. Check the request list before retrying.');
+    } catch {
+      showToast('error', 'Request submission not confirmed. Check the request list before retrying.');
+    } finally {
+      submitLock.current = false;
+      setIsSubmitting(false);
+    }
   };
 
   const handleReview = async (id: string, decision: 'approve' | 'reject') => {
+    if (actionLock.current) return;
+    actionLock.current = true;
     setActioningRequestId(id);
-    await reviewAdvanceRequest(id, decision);
-    setActioningRequestId(null);
+    try {
+      const success = await reviewAdvanceRequest(id, decision);
+      if (!success) showToast('error', 'Review not confirmed. Check the request status before retrying.');
+    } catch {
+      showToast('error', 'Review not confirmed. Check the request status before retrying.');
+    } finally {
+      actionLock.current = false;
+      setActioningRequestId(null);
+    }
   };
 
   const handleIssue = async () => {
-    if (!requestToIssue) return;
+    if (!requestToIssue || actionLock.current) return;
+    actionLock.current = true;
     setActioningRequestId(requestToIssue);
-    const issued = await issueAdvanceRequest(requestToIssue);
-    setActioningRequestId(null);
-    if (issued) setRequestToIssue(null);
+    try {
+      const issued = await issueAdvanceRequest(requestToIssue);
+      if (issued) setRequestToIssue(null);
+      else showToast('error', 'Payment confirmation not confirmed. Check the request and advance ledger before retrying.');
+    } catch {
+      showToast('error', 'Payment confirmation not confirmed. Check the request and advance ledger before retrying.');
+    } finally {
+      actionLock.current = false;
+      setActioningRequestId(null);
+    }
   };
 
   const renderRequestRow = (request: AdvanceRequest) => {
@@ -330,7 +368,7 @@ export function AdvanceRequestsPanel() {
                 checked={isSelected}
                 disabled={selectionDisabled}
                 onChange={(event) => toggleRequestSelection(request, event.target.checked)}
-                aria-label={`Select ${worker?.name || 'worker'} request for ${formatPesoCompact(request.requested_amount)}`}
+                aria-label={`Select ${worker?.name || 'worker'} request for ${formatPeso(request.requested_amount)}`}
                 className="h-4 w-4 rounded border-surface-border text-brand focus:ring-brand disabled:cursor-not-allowed"
               />
             </label>
@@ -357,7 +395,7 @@ export function AdvanceRequestsPanel() {
 
         <div className="flex flex-col gap-3 sm:items-end">
           <p className="text-base font-semibold tabular-nums text-navy">
-            {formatPesoCompact(request.requested_amount)}
+            {formatPeso(request.requested_amount)}
           </p>
           {isFounder && request.status === 'pending_approval' && (
             <div className="flex flex-wrap gap-2">
@@ -491,6 +529,9 @@ export function AdvanceRequestsPanel() {
       )}
 
       {isFounder && (
+        <p className="text-xs leading-relaxed text-ink-secondary">Summary covers all sites and is not affected by the request filters below.</p>
+      )}
+      {isFounder && (
         <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
           <Card className="flex items-center justify-between gap-3 p-4">
             <div>
@@ -606,7 +647,7 @@ export function AdvanceRequestsPanel() {
                   {selectedRequests.length} pending request{selectedRequests.length === 1 ? '' : 's'} selected at {selectedSiteName}
                 </p>
                 <p className="mt-1 text-xs tabular-nums text-ink-secondary">
-                  Selected total: {formatPesoCompact(selectedRequestTotal)} · up to {MAX_BATCH_APPROVAL_SIZE} requests per batch
+                  Selected total: {formatPeso(selectedRequestTotal)} · up to {MAX_BATCH_APPROVAL_SIZE} requests per batch
                 </p>
               </div>
               <div className="flex shrink-0 flex-wrap gap-2">
@@ -739,6 +780,9 @@ export function AdvanceRequestsPanel() {
         onClose={() => {
           if (!isApprovingBatch) setIsBatchApprovalOpen(false);
         }}
+        dismissOnBackdrop={!isApprovingBatch}
+        dismissOnEscape={!isApprovingBatch}
+        showCloseButton={!isApprovingBatch}
         title="Approve selected Bale requests?"
         description="Review this same-site batch before approving. No payment will be recorded."
         maxWidth="md"
@@ -758,7 +802,7 @@ export function AdvanceRequestsPanel() {
                 <div>
                   <dt className="text-[11px] font-medium text-ink-secondary">Total requested</dt>
                   <dd className="mt-1 break-words text-base font-semibold tabular-nums text-navy">
-                    {formatPesoCompact(selectedRequestTotal)}
+                    {formatPeso(selectedRequestTotal)}
                   </dd>
                 </div>
               </dl>
@@ -767,7 +811,7 @@ export function AdvanceRequestsPanel() {
                 <ul className="mt-1 space-y-1 text-xs text-navy">
                   {selectedRequests.slice(0, 5).map((request) => (
                     <li key={request.id} className="break-words">
-                      {workers.find((worker) => worker.id === request.worker_id)?.name || 'Worker'} · {formatPesoCompact(request.requested_amount)}
+                      {workers.find((worker) => worker.id === request.worker_id)?.name || 'Worker'} · {formatPeso(request.requested_amount)}
                     </li>
                   ))}
                 </ul>
@@ -808,6 +852,9 @@ export function AdvanceRequestsPanel() {
       <Modal
         isOpen={requestModalOpen}
         onClose={() => setRequestModalOpen(false)}
+        dismissOnBackdrop={!isSubmitting}
+        dismissOnEscape={!isSubmitting}
+        showCloseButton={!isSubmitting}
         title="New Bale Request"
         description="Choose the worker and amount requested. Your assigned project is attached automatically when there is one, or select a site if you supervise multiple projects."
         maxWidth="md"
@@ -866,11 +913,11 @@ export function AdvanceRequestsPanel() {
           </p>
 
           <div className="flex flex-col-reverse gap-2 pt-2 sm:flex-row sm:justify-end">
-            <Button type="button" variant="secondary" onClick={() => setRequestModalOpen(false)}>
+            <Button type="button" variant="secondary" onClick={() => setRequestModalOpen(false)} disabled={isSubmitting}>
               Cancel
             </Button>
             <Button type="submit" variant="primary" isLoading={isSubmitting}>
-              Send to Founder
+              {isSubmitting ? 'Sending request…' : 'Send to Founder'}
             </Button>
           </div>
         </form>
@@ -879,6 +926,9 @@ export function AdvanceRequestsPanel() {
       <Modal
         isOpen={Boolean(requestToIssue)}
         onClose={() => setRequestToIssue(null)}
+        dismissOnBackdrop={!actioningRequestId}
+        dismissOnEscape={!actioningRequestId}
+        showCloseButton={!actioningRequestId}
         title="Confirm Bale payment"
         description="Use this only after the requested amount has actually been given to the worker."
       >
@@ -892,11 +942,11 @@ export function AdvanceRequestsPanel() {
               <div className="rounded-xl border border-surface-border bg-surface-inset p-3.5">
                 <div className="font-semibold text-navy">{worker?.name || 'Worker'}</div>
                 <div className="mt-1 text-ink-secondary">
-                  {formatPesoCompact(request.requested_amount)} · {projects.find((project) => project.id === request.project_id)?.name || 'Project'}
+                  {formatPeso(request.requested_amount)} · {projects.find((project) => project.id === request.project_id)?.name || 'Project'}
                 </div>
               </div>
               <div className="flex flex-col-reverse gap-2 sm:flex-row sm:justify-end">
-                <Button type="button" variant="secondary" onClick={() => setRequestToIssue(null)}>
+                <Button type="button" variant="secondary" onClick={() => setRequestToIssue(null)} disabled={Boolean(actioningRequestId)}>
                   Not yet
                 </Button>
                 <Button

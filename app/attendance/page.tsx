@@ -696,7 +696,7 @@ function AttendancePageInner() {
           setDraftStorageStatus('error');
         }
       }
-      showToast('success', 'Attendance saved and synced to Payroll.');
+      showToast('success', 'Attendance saved. Supervisor self-attendance may still require Founder review before payroll.');
     } else {
       setAttendanceSaveFailed(true);
     }
@@ -1010,7 +1010,7 @@ function AttendancePageInner() {
         <div className="blueprint-accent flex flex-col gap-3 border-b border-surface-border/60 pb-3 sm:flex-row sm:items-center sm:justify-between">
           <div className="min-w-0">
             <div className="flex items-center gap-2.5">
-              <h1 className="text-xl sm:text-2xl font-semibold text-navy tracking-tight truncate">
+              <h1 className="text-xl sm:text-2xl font-semibold text-navy tracking-tight break-words">
                 {activeTab === 'history'
                   ? 'Attendance History'
                   : activeTab === 'workforce'
@@ -1018,7 +1018,7 @@ function AttendancePageInner() {
                     : 'Daily Roll Call'}
               </h1>
             </div>
-            <p className="text-xs text-ink-secondary mt-0.5 truncate">
+            <p className="text-xs text-ink-secondary mt-0.5 leading-relaxed">
               {activeTab === 'history'
                 ? 'Submitted daily attendance logs & approval status'
                 : activeTab === 'workforce'
@@ -1030,15 +1030,9 @@ function AttendancePageInner() {
           {activeTab === 'workforce' && (
             <div className="flex flex-wrap gap-2">
               {isSupervisor && (
-                <Link href="/advances?tab=requests" prefetch={false}>
-                  <Button
-                    type="button"
-                    variant="secondary"
-                    size="sm"
-                    leftIcon={<HandCoins className="h-4 w-4" />}
-                  >
-                    Bale Requests
-                  </Button>
+                <Link href="/advances?tab=requests" prefetch={false} className="inline-flex min-h-11 items-center gap-2 rounded-lg border border-surface-border bg-white px-3 text-xs font-medium text-navy hover:bg-surface-inset focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand focus-visible:ring-offset-2">
+                  <HandCoins className="h-4 w-4" aria-hidden="true" />
+                  Bale Requests
                 </Link>
               )}
               <Button
@@ -1643,6 +1637,7 @@ function AttendancePageInner() {
                                       <div className="mt-2">
                                         <Input
                                           id={`attendance-note-${worker.id}`}
+                                          aria-label={`Activity note for ${worker.name}`}
                                           placeholder="Activity note (e.g. 2F slab rebar, went home at noon)..."
                                           value={currentDraft.notes}
                                           onChange={(e) =>
@@ -1691,7 +1686,7 @@ function AttendancePageInner() {
                 <div>
                   {attendanceSaveFailed ? (
                     <span className="text-status-warning">
-                      Attendance wasn&apos;t submitted. Your selections remain in the draft; retry when ready.
+                      Attendance submission could not be confirmed. Your selections remain in the draft; check the saved records before retrying.
                     </span>
                   ) : uncheckedCount > 0 ? (
                     <span>
