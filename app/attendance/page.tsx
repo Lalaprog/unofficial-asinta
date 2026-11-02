@@ -1404,7 +1404,7 @@ function AttendancePageInner() {
                         type="button"
                         onClick={() => toggleGroupCollapse(groupKey)}
                         aria-expanded={!isCollapsed}
-                        className="flex min-h-11 w-full min-w-0 items-center gap-2.5 rounded-md text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand/25"
+                        className="flex min-h-11 w-full min-w-0 items-center gap-2.5 rounded-md text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand"
                       >
                         {isCollapsed ? (
                           <ChevronRight className="h-4 w-4 shrink-0 text-ink-secondary" />
@@ -1437,7 +1437,7 @@ function AttendancePageInner() {
                           <button
                             type="button"
                             onClick={() => handleMarkCrewPresent(groupWorkers)}
-                            className="inline-flex min-h-11 w-fit max-w-full shrink-0 items-center rounded-lg px-2 text-xs font-semibold text-brand transition-colors hover:bg-brand/5 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand/25"
+                            className="inline-flex min-h-11 w-fit max-w-full shrink-0 items-center rounded-lg px-2 text-xs font-semibold text-brand transition-colors hover:bg-brand/5 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand"
                           >
                             Mark remaining present
                           </button>
@@ -1583,7 +1583,7 @@ function AttendancePageInner() {
                                               )
                                             }
                                             aria-pressed={active}
-                                            className={`inline-flex min-h-11 min-w-0 w-full items-center justify-center whitespace-nowrap rounded-md px-1 text-[10px] font-medium leading-tight transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand/25 sm:min-h-12 sm:px-1.5 sm:text-[11px] ${
+                                            className={`inline-flex min-h-11 min-w-0 w-full items-center justify-center whitespace-nowrap rounded-md px-1 text-[10px] font-medium leading-tight transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand sm:min-h-12 sm:px-1.5 sm:text-[11px] ${
                                               active
                                                 ? status.activeClass
                                                 : 'text-ink-secondary hover:bg-white hover:text-navy'
@@ -1601,7 +1601,7 @@ function AttendancePageInner() {
                                         onClick={() => toggleNoteInput(worker.id)}
                                         aria-expanded={showNoteBox}
                                         aria-controls={`attendance-note-${worker.id}`}
-                                        className={`inline-flex min-h-11 w-fit max-w-full items-center justify-center gap-2 rounded-lg border px-3 text-xs font-semibold transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand/25 ${
+                                        className={`inline-flex min-h-11 w-fit max-w-full items-center justify-center gap-2 rounded-lg border px-3 text-xs font-semibold transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand ${
                                           currentDraft.notes
                                             ? 'border-brand/30 bg-brand/5 text-brand'
                                             : 'border-surface-border bg-white text-ink-secondary hover:bg-surface-inset hover:text-navy'

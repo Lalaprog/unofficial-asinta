@@ -29,10 +29,10 @@ interface ModalProps {
 
 const FOCUSABLE_SELECTOR = [
   'a[href]',
-  'button:not([disabled])',
-  'textarea:not([disabled])',
-  'input:not([disabled])',
-  'select:not([disabled])',
+  'button:not(:disabled)',
+  'textarea:not(:disabled)',
+  'input:not(:disabled)',
+  'select:not(:disabled)',
   '[tabindex]:not([tabindex="-1"])',
 ].join(', ');
 
@@ -82,7 +82,7 @@ export const Modal: React.FC<ModalProps> = ({
       if (active && panel.contains(active)) return;
 
       const firstInput = panel.querySelector<HTMLElement>(
-        'input:not([disabled]):not([type="hidden"]), select:not([disabled]), textarea:not([disabled])'
+        'input:not(:disabled):not([type="hidden"]), select:not(:disabled), textarea:not(:disabled)'
       );
       if (firstInput && firstInput.offsetParent !== null) {
         firstInput.focus();

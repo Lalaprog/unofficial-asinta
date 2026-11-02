@@ -27,6 +27,8 @@ import { Select } from '@/components/ui/Select';
 import { ProjectStatus } from '@/types';
 import { formatPesoCompact, formatPeso } from '@/lib/email/format';
 import { getBudgetSummary } from '@/lib/projects/budgetSummary';
+import { validateProjectForm } from '@/lib/projects/form';
+import { useToast } from '@/components/ui/Toast';
 
 export default function ProjectDetailPage() {
   const params = useParams();
@@ -34,6 +36,7 @@ export default function ProjectDetailPage() {
   const id = params?.id as string;
 
   const { isFounder } = useAuth();
+  const { showToast } = useToast();
   const {
     projects,
     clients,
@@ -64,10 +67,15 @@ export default function ProjectDetailPage() {
   const [activeTab, setActiveTab] = useState<'overview' | 'invoices' | 'expenses' | 'tools' | 'attendance'>('overview');
   const [isEditModalOpen, setIsEditModalOpen] = useState(false);
   const [isDeleteDialogOpen, setIsDeleteDialogOpen] = useState(false);
+  const [isSaving, setIsSaving] = useState(false);
+  const [isDeleting, setIsDeleting] = useState(false);
+  const [showFormErrors, setShowFormErrors] = useState(false);
+  const saveLock = React.useRef(false);
+  const deleteLock = React.useRef(false);
   const [editFormData, setEditFormData] = useState({
     name: project?.name || '',
     location: project?.location || '',
-    budget_estimate: project?.budget_estimate ? String(project.budget_estimate) : '',
+    budget_estimate: project?.budget_estimate != null ? String(project.budget_estimate) : '',
     status: (project?.status || 'active') as ProjectStatus,
     start_date: project?.start_date || '',
     target_completion_date: project?.target_completion_date || '',
@@ -93,30 +101,60 @@ export default function ProjectDetailPage() {
   const totalExpenses = projExpenses.reduce((sum, e) => sum + Number(e.amount || 0), 0);
   const budget = getBudgetSummary(Number(project.budget_estimate), totalExpenses);
 
+  const projectValidation = validateProjectForm(editFormData);
+
   const handleUpdate = async (e: React.FormEvent) => {
     e.preventDefault();
-    const updated = await updateProject(id, {
-      name: editFormData.name,
-      location: editFormData.location,
-      budget_estimate: parseFloat(editFormData.budget_estimate),
-      status: editFormData.status,
-      start_date: editFormData.start_date,
-      target_completion_date: editFormData.target_completion_date,
-    });
-    if (updated) {
-      setIsEditModalOpen(false);
+    if (saveLock.current) return;
+    setShowFormErrors(true);
+    const { errors, normalized } = validateProjectForm(editFormData);
+    if (Object.keys(errors).length > 0) return;
+    saveLock.current = true;
+    setIsSaving(true);
+    try {
+      const updated = await updateProject(id, {
+        name: normalized.name,
+        location: normalized.location,
+        budget_estimate: normalized.budget,
+        status: normalized.status,
+        start_date: normalized.start_date,
+        target_completion_date: normalized.target_completion_date,
+      });
+      if (updated) {
+        setIsEditModalOpen(false);
+        setShowFormErrors(false);
+        showToast('success', 'Project updated.');
+      }
+    } catch {
+      showToast('error', 'Project update was not confirmed. Refresh and check the project before retrying.');
+    } finally {
+      saveLock.current = false;
+      setIsSaving(false);
     }
   };
 
-  const handleDelete = () => {
-    setIsDeleteDialogOpen(true);
-  };
+  const handleDelete = () => setIsDeleteDialogOpen(true);
 
   const confirmDelete = async () => {
-    setIsDeleteDialogOpen(false);
-    const success = await deleteProject(id);
-    if (success) {
-      router.push('/projects');
+    if (deleteLock.current) return;
+    deleteLock.current = true;
+    setIsDeleting(true);
+    try {
+      const success = await deleteProject(id);
+      if (success) {
+        setIsDeleteDialogOpen(false);
+        router.push('/projects');
+      } else {
+        // A network failure may have committed. Do not keep an immediate retry
+        // button open; check the current list before attempting another removal.
+        setIsDeleteDialogOpen(false);
+      }
+    } catch {
+      setIsDeleteDialogOpen(false);
+      showToast('error', 'Project deletion was not confirmed. Refresh and check the project list before retrying.');
+    } finally {
+      deleteLock.current = false;
+      setIsDeleting(false);
     }
   };
 
@@ -170,13 +208,14 @@ export default function ProjectDetailPage() {
                       start_date: project.start_date,
                       target_completion_date: project.target_completion_date,
                     });
+                    setShowFormErrors(false);
                     setIsEditModalOpen(true);
                   }}
                   leftIcon={<Edit2 className="w-3.5 h-3.5" />}
                 >
                   Edit Project
                 </Button>
-                <Button variant="outline" size="sm" onClick={handleDelete} className="text-status-danger hover:bg-status-danger-bg">
+                <Button variant="outline" size="sm" onClick={handleDelete} aria-label={`Delete ${project.name}`} className="min-w-11 text-status-danger hover:bg-status-danger-bg">
                   <Trash2 className="w-3.5 h-3.5" />
                 </Button>
               </div>
@@ -512,69 +551,84 @@ export default function ProjectDetailPage() {
       <Modal
         isOpen={isEditModalOpen}
         onClose={() => setIsEditModalOpen(false)}
+        dismissOnBackdrop={!isSaving}
+        dismissOnEscape={!isSaving}
+        showCloseButton={!isSaving}
         title="Edit Project Details"
         description="Update project milestones and budget allocation."
       >
-        <form onSubmit={handleUpdate} className="space-y-4 text-xs">
-          <Input
-            label="Project Name"
-            value={editFormData.name}
-            onChange={(e) => setEditFormData({ ...editFormData, name: e.target.value })}
-            required
-          />
-
-          <Input
-            label="Location"
-            value={editFormData.location}
-            onChange={(e) => setEditFormData({ ...editFormData, location: e.target.value })}
-            required
-          />
-
-          <div className="grid grid-cols-2 gap-4">
+        <form onSubmit={handleUpdate} noValidate className="space-y-4 text-xs">
+          {showFormErrors && Object.keys(projectValidation.errors).length > 0 && (
+            <p role="alert" className="text-xs font-semibold text-status-danger">Please correct the highlighted project fields.</p>
+          )}
+          <fieldset disabled={isSaving} className="space-y-4">
             <Input
-              label="Budget Estimate"
-              type="number"
-              value={editFormData.budget_estimate}
-              onChange={(e) => setEditFormData({ ...editFormData, budget_estimate: e.target.value })}
+              label="Project Name"
+              error={showFormErrors ? projectValidation.errors.name : undefined}
+              value={editFormData.name}
+              onChange={(e) => setEditFormData({ ...editFormData, name: e.target.value })}
               required
             />
 
-            <Select
-              label="Status"
-              value={editFormData.status}
-              onChange={(e) => setEditFormData({ ...editFormData, status: e.target.value as ProjectStatus })}
-            >
-              <option value="planning">Planning</option>
-              <option value="active">Active</option>
-              <option value="on_hold">On Hold</option>
-              <option value="completed">Completed</option>
-              <option value="cancelled">Cancelled</option>
-            </Select>
-          </div>
-
-          <div className="grid grid-cols-2 gap-4">
             <Input
-              label="Start Date"
-              type="date"
-              value={editFormData.start_date}
-              onChange={(e) => setEditFormData({ ...editFormData, start_date: e.target.value })}
+              label="Location"
+              error={showFormErrors ? projectValidation.errors.location : undefined}
+              value={editFormData.location}
+              onChange={(e) => setEditFormData({ ...editFormData, location: e.target.value })}
+              required
             />
-            <Input
-              label="Target Completion Date"
-              type="date"
-              value={editFormData.target_completion_date}
-              onChange={(e) => setEditFormData({ ...editFormData, target_completion_date: e.target.value })}
-            />
-          </div>
 
-          <div className="pt-3 flex justify-end space-x-2">
-            <Button variant="secondary" onClick={() => setIsEditModalOpen(false)}>
-              Cancel
-            </Button>
-            <Button variant="primary" type="submit">
-              Save Changes
-            </Button>
-          </div>
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+              <Input
+                label="Budget Estimate"
+                error={showFormErrors ? projectValidation.errors.budget_estimate : undefined}
+                type="number"
+                min="0"
+                step="0.01"
+                value={editFormData.budget_estimate}
+                onChange={(e) => setEditFormData({ ...editFormData, budget_estimate: e.target.value })}
+                required
+              />
+
+              <Select
+                label="Status"
+                value={editFormData.status}
+                onChange={(e) => setEditFormData({ ...editFormData, status: e.target.value as ProjectStatus })}
+              >
+                <option value="planning">Planning</option>
+                <option value="active">Active</option>
+                <option value="on_hold">On Hold</option>
+                <option value="completed">Completed</option>
+                <option value="cancelled">Cancelled</option>
+              </Select>
+            </div>
+
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+              <Input
+                label="Start Date"
+                error={showFormErrors ? projectValidation.errors.start_date : undefined}
+                type="date"
+                value={editFormData.start_date}
+                onChange={(e) => setEditFormData({ ...editFormData, start_date: e.target.value })}
+              />
+              <Input
+                label="Target Completion Date"
+                error={showFormErrors ? projectValidation.errors.target_completion_date : undefined}
+                type="date"
+                value={editFormData.target_completion_date}
+                onChange={(e) => setEditFormData({ ...editFormData, target_completion_date: e.target.value })}
+              />
+            </div>
+
+            <div className="pt-3 flex justify-end space-x-2">
+              <Button type="button" variant="secondary" onClick={() => setIsEditModalOpen(false)} disabled={isSaving}>
+                Cancel
+              </Button>
+              <Button variant="primary" type="submit" isLoading={isSaving}>
+                {isSaving ? 'Saving changes…' : 'Save Changes'}
+              </Button>
+            </div>
+          </fieldset>
         </form>
       </Modal>
 
@@ -582,8 +636,9 @@ export default function ProjectDetailPage() {
         isOpen={isDeleteDialogOpen}
         title="Delete project"
         message={`Delete ${project.name}? This cannot be undone.`}
-        confirmLabel="Delete project"
         destructive
+        isPending={isDeleting}
+        confirmLabel={isDeleting ? "Deleting…" : "Delete project"}
         onConfirm={confirmDelete}
         onCancel={() => setIsDeleteDialogOpen(false)}
       />

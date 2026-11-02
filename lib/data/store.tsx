@@ -24,6 +24,7 @@ import { createClient as createSupabaseClient } from '@/lib/supabase/client';
 import { useAuth } from '@/lib/auth/authContext';
 import { useToast } from '@/components/ui/Toast';
 import { writeAuditEntry, auditFailureMessage, type AuditEntry } from '@/lib/audit/log';
+import { confirmProjectDeletion } from '@/lib/projects/delete';
 
 interface DataStoreContextType {
   // State (loaded from live Supabase PostgreSQL)
@@ -488,18 +489,19 @@ export const DataStoreProvider: React.FC<{ children: React.ReactNode }> = ({ chi
   // toasts and returns the resulting row (or null).
   // -------------------------------------------------------------------------
   const runMutation = useCallback(
-    async <T,>(label: string, fn: (client: SupabaseClient) => PromiseLike<{ data: T | null; error: PostgrestError | null }>): Promise<T | null> => {
+    async <T,>(label: string, fn: (client: SupabaseClient) => PromiseLike<{ data: T | null; error: PostgrestError | null }>, unconfirmedMessage?: string): Promise<T | null> => {
       try {
         const { data, error } = await fn(supabase);
         if (error) {
           console.error(`${label} failed:`, error.message);
-          showToast('error', `${label} failed: ${error.message}`);
+          showToast('error', unconfirmedMessage || `${label} failed: ${error.message}`);
           return null;
         }
+        if (data === null && unconfirmedMessage) showToast('error', unconfirmedMessage);
         return data;
       } catch (e: any) {
         console.error(`${label} threw:`, e);
-        showToast('error', `${label} failed: ${e?.message || 'Supabase request error'}`);
+        showToast('error', unconfirmedMessage || `${label} failed: ${e?.message || 'Supabase request error'}`);
         return null;
       }
     },
@@ -531,7 +533,8 @@ export const DataStoreProvider: React.FC<{ children: React.ReactNode }> = ({ chi
   // --- PROJECT ACTIONS ---
   const createProject = async (data: Omit<Project, 'id' | 'created_at'>): Promise<Project | null> => {
     const row = await runMutation('Create project', (db) =>
-      db.from('projects').insert(data).select().single()
+      db.from('projects').insert(data).select().single(),
+      'Project creation was not confirmed. Refresh and check the project list before retrying.'
     );
     const mapped = row ? mapProject(row) : null;
     if (mapped) setProjects((prev) => [mapped, ...prev]);
@@ -540,7 +543,8 @@ export const DataStoreProvider: React.FC<{ children: React.ReactNode }> = ({ chi
 
   const updateProject = async (id: string, data: Partial<Project>): Promise<Project | null> => {
     const row = await runMutation('Update project', (db) =>
-      db.from('projects').update(data).eq('id', id).select().single()
+      db.from('projects').update(data).eq('id', id).select().single(),
+      'Project update was not confirmed. Refresh and check the project before retrying.'
     );
     const mapped = row ? mapProject(row) : null;
     if (mapped) setProjects((prev) => prev.map((p) => (p.id === id ? mapped : p)));
@@ -548,15 +552,17 @@ export const DataStoreProvider: React.FC<{ children: React.ReactNode }> = ({ chi
   };
 
   const deleteProject = async (id: string): Promise<boolean> => {
-    const ok = await runMutation('Delete project', async (db) => {
-      const { error } = await db.from('projects').delete().eq('id', id);
-      return { data: !error, error };
-    });
-    if (ok) {
-      setProjects((prev) => prev.filter((p) => p.id !== id));
-      return true;
+    // Require the deleted row before changing local state: a zero-row response
+    // (including one caused by RLS) does not prove anything was removed.
+    const result = await confirmProjectDeletion(id, () =>
+      supabase.from('projects').delete().eq('id', id).select('id').maybeSingle()
+    );
+    if (!result.confirmed) {
+      showToast('error', result.error || 'Project deletion was not confirmed.');
+      return false;
     }
-    return false;
+    setProjects((prev) => prev.filter((p) => p.id !== id));
+    return true;
   };
 
   const getProjectById = (id: string) => projects.find((p) => p.id === id);
