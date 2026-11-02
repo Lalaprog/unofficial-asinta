@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useState } from 'react';
+import React, { useRef, useState } from 'react';
 import { AppShell } from '@/components/layout/AppShell';
 import { useDataStore } from '@/lib/data/store';
 import { useAuth } from '@/lib/auth/authContext';
@@ -26,12 +26,16 @@ import { Select } from '@/components/ui/Select';
 import { Modal } from '@/components/ui/Modal';
 import { EmptyState } from '@/components/ui/EmptyState';
 import { useToast } from '@/components/ui/Toast';
-import { generateTemporaryPassword } from '@/lib/users/admin';
+import { generateTemporaryPassword, validatePasswordStrength } from '@/lib/users/admin';
+import { WorkspaceHeader } from '@/components/ui/WorkspaceHeader';
+import { WorkspaceFilters } from '@/components/ui/WorkspaceFilters';
 
 export default function UsersPage() {
   const { user: currentUser } = useAuth();
   const { users, workers, projects, projectSupervisors, refresh } = useDataStore();
   const { showToast } = useToast();
+  const mutationLock = useRef(false);
+  const [actionWarnings, setActionWarnings] = useState<string[]>([]);
 
   const [searchQuery, setSearchQuery] = useState('');
   const [roleFilter, setRoleFilter] = useState<string>('all');
@@ -67,6 +71,7 @@ export default function UsersPage() {
   const [editAssignedProjects, setEditAssignedProjects] = useState<string[]>([]);
   const [editIncludeInPayroll, setEditIncludeInPayroll] = useState(false);
   const [editPayRate, setEditPayRate] = useState('1200');
+  const [editPayRateType, setEditPayRateType] = useState<'daily' | 'hourly'>('daily');
   const [editContactNumber, setEditContactNumber] = useState('');
   const [editResetPassword, setEditResetPassword] = useState('');
   const [isUpdating, setIsUpdating] = useState(false);
@@ -110,7 +115,11 @@ export default function UsersPage() {
 
   const handleCreateSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (isCreating) return;
+    if (mutationLock.current) return;
+    if (newName.trim().length < 2) { showToast('error', 'Full name must be at least 2 characters.'); return; }
+    const passwordCheck = validatePasswordStrength(newTempPassword.trim());
+    if (!passwordCheck.valid) { showToast('error', passwordCheck.error || 'Temporary password is too weak.'); return; }
+    mutationLock.current = true;
     setIsCreating(true);
     try {
       const response = await fetch('/api/users', {
@@ -123,7 +132,7 @@ export default function UsersPage() {
           temporaryPassword: newTempPassword,
           assignedProjectIds: newRole === 'supervisor' ? newAssignedProjects : [],
           includeInPayroll: newRole === 'supervisor' && newIncludeInPayroll,
-          payRate: parseFloat(newPayRate) || 1200,
+          payRate: newPayRate.trim() === '' ? null : Number(newPayRate),
           payRateType: 'daily',
           contactNumber: newContactNumber,
           sendWelcomeEmail,
@@ -135,6 +144,7 @@ export default function UsersPage() {
         return;
       }
 
+      setActionWarnings([...(result.warnings || []), ...(result.auditWarning ? ['Audit entry was not confirmed. Review the account and audit trail.'] : [])]);
       setProvisionedCredentials({
         name: result.user.name,
         email: result.user.email,
@@ -145,11 +155,12 @@ export default function UsersPage() {
       });
       setCopiedCreds(false);
       setIsCreateOpen(false);
-      showToast('success', `Provisioned ${result.user.name} (${result.user.role}).`);
+      showToast(result.warnings?.length || result.auditWarning ? 'info' : 'success', result.warnings?.length || result.auditWarning ? 'Account created with issues. Review the warnings below.' : `Provisioned ${result.user.name} (${result.user.role}).`);
       await refresh();
     } catch {
-      showToast('error', 'Could not contact the BALE server to create the account.');
+      showToast('error', 'Account creation was not confirmed. Check Team Accounts and Supabase Auth before retrying; an account may already exist.');
     } finally {
+      mutationLock.current = false;
       setIsCreating(false);
     }
   };
@@ -164,8 +175,9 @@ export default function UsersPage() {
     setEditName(u.name);
     setEditRole(u.role);
     setEditAssignedProjects(currentAssigned);
-    setEditIncludeInPayroll(linkedWorker ? Boolean(linkedWorker.active) : true);
+    setEditIncludeInPayroll(Boolean(linkedWorker?.active));
     setEditPayRate(String(linkedWorker?.pay_rate ?? 1200));
+    setEditPayRateType(linkedWorker?.pay_rate_type === 'hourly' ? 'hourly' : 'daily');
     setEditContactNumber(
       linkedWorker?.contact_number && linkedWorker.contact_number !== '—'
         ? linkedWorker.contact_number
@@ -177,7 +189,13 @@ export default function UsersPage() {
 
   const handleEditSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!editingUser || isUpdating) return;
+    if (!editingUser || mutationLock.current) return;
+    if (editName.trim().length < 2) { showToast('error', 'Full name must be at least 2 characters.'); return; }
+    if (editResetPassword.trim()) {
+      const check = validatePasswordStrength(editResetPassword.trim());
+      if (!check.valid) { showToast('error', check.error || 'Temporary password is too weak.'); return; }
+    }
+    mutationLock.current = true;
     setIsUpdating(true);
     try {
       const response = await fetch('/api/users', {
@@ -189,8 +207,8 @@ export default function UsersPage() {
           role: editRole,
           assignedProjectIds: editRole === 'supervisor' ? editAssignedProjects : [],
           includeInPayroll: editRole === 'supervisor' && editIncludeInPayroll,
-          payRate: parseFloat(editPayRate) || 1200,
-          payRateType: 'daily',
+          payRate: editPayRate.trim() === '' ? null : Number(editPayRate),
+          payRateType: editPayRateType,
           contactNumber: editContactNumber,
           ...(editResetPassword.trim() ? { resetTemporaryPassword: editResetPassword.trim() } : {}),
         }),
@@ -201,6 +219,8 @@ export default function UsersPage() {
         return;
       }
 
+      setActionWarnings([...(result.warnings || []), ...(result.auditWarning ? ['Audit entry was not confirmed. Review the account and audit trail.'] : [])]);
+      if (editResetPassword.trim() && !result.temporaryPassword) setProvisionedCredentials(null);
       if (result.temporaryPassword) {
         setProvisionedCredentials({
           name: result.user.name,
@@ -213,17 +233,19 @@ export default function UsersPage() {
       }
 
       setEditingUser(null);
-      showToast('success', `Updated account settings for ${result.user.name}.`);
+      showToast(result.warnings?.length || result.auditWarning ? 'info' : 'success', result.warnings?.length || result.auditWarning ? 'Some account changes need review. See the warnings below.' : `Updated account settings for ${result.user.name}.`);
       await refresh();
     } catch {
-      showToast('error', 'Could not contact the BALE server to update the account.');
+      showToast('error', 'Update not confirmed. Check the account, Auth, assignments and roster before retrying; some changes may have applied.');
     } finally {
+      mutationLock.current = false;
       setIsUpdating(false);
     }
   };
 
   const handleDeleteConfirm = async () => {
-    if (!editingUser || isDeleting) return;
+    if (!editingUser || mutationLock.current) return;
+    mutationLock.current = true;
     setIsDeleting(true);
     try {
       const response = await fetch(`/api/users?id=${encodeURIComponent(editingUser.id)}`, {
@@ -231,17 +253,20 @@ export default function UsersPage() {
       });
       const result = await response.json();
       if (!response.ok || !result.ok) {
+        if (result.auditWarning) setActionWarnings(['The removal audit entry was not confirmed. Review the audit trail.']);
         showToast('error', result.error || 'Could not delete team account.');
         return;
       }
 
-      showToast('success', `Deleted account ${editingUser.name} (${editingUser.email}).`);
+      setActionWarnings(result.auditWarning ? ['Account removal audit entry was not confirmed. Review the audit trail.'] : []);
+      showToast(result.auditWarning ? 'info' : 'success', result.auditWarning ? 'Account removed, but its audit entry needs review.' : `Removed account ${editingUser.name}.`);
       setEditingUser(null);
       setConfirmingDeleteInModal(false);
       await refresh();
     } catch {
-      showToast('error', 'Could not contact the BALE server to delete the account.');
+      showToast('error', 'Removal not confirmed. Check Supabase Auth and the account, assignments and roster before retrying.');
     } finally {
+      mutationLock.current = false;
       setIsDeleting(false);
     }
   };
@@ -269,26 +294,20 @@ export default function UsersPage() {
   return (
     <AppShell requireFounder={true}>
       <div className="space-y-6">
-        {/* Header */}
-        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pb-3 border-b border-surface-border/60">
-          <div>
-            <h1 className="text-xl sm:text-2xl font-semibold text-navy tracking-tight">
-              Team Accounts
-            </h1>
-            <p className="text-xs text-ink-secondary mt-0.5">
-              Provision Founder &amp; Supervisor accounts and site assignments
-            </p>
+        <WorkspaceHeader eyebrow="Administration" title="Team Accounts"
+          description="Manage Founder and Supervisor access, assigned sites and payroll roster links."
+          action={<Button variant="primary" size="sm" onClick={openCreateModal} leftIcon={<UserPlus className="w-4 h-4" />}>Add Member</Button>}
+        />
+        <p className="rounded-xl border border-status-warning/25 bg-status-warning-bg px-4 py-3 text-xs text-ink-secondary">
+          Coordinate Founder account changes one at a time. Last-Founder checks do not protect against simultaneous changes from different sessions.
+        </p>
+        {actionWarnings.length > 0 && (
+          <div role="alert" className="rounded-xl border border-status-warning/30 bg-status-warning-bg p-4 text-xs text-navy space-y-2">
+            <p className="font-bold">Some changes need review</p>
+            <ul className="list-disc space-y-1 pl-4">{actionWarnings.map((warning, index) => <li key={index}>{warning}</li>)}</ul>
+            <Button type="button" variant="secondary" size="sm" onClick={() => setActionWarnings([])}>Dismiss warnings</Button>
           </div>
-
-          <Button
-            variant="primary"
-            size="sm"
-            onClick={openCreateModal}
-            leftIcon={<UserPlus className="w-4 h-4" />}
-          >
-            Add Member
-          </Button>
-        </div>
+        )}
 
         {/* One-time Provisioned Credentials Banner */}
         {provisionedCredentials && (
@@ -339,6 +358,7 @@ export default function UsersPage() {
               </span>
             </div>
 
+            <p className="text-ink-secondary">Share credentials securely, then dismiss this card. Avoid exposing the password in screenshots or chat.</p>
             {provisionedCredentials.emailNote && (
               <div className="text-[11px] text-ink-secondary">
                 {provisionedCredentials.emailNote}
@@ -347,7 +367,7 @@ export default function UsersPage() {
           </div>
         )}
 
-        {/* Search & Filters */}
+        <WorkspaceFilters title="Find team accounts" summary={<FilterSummary count={filteredUsers.length} itemName="account" active={Boolean(searchQuery) || roleFilter !== 'all'} onClear={() => { setSearchQuery(''); setRoleFilter('all'); }} />}>
         <div className="flex flex-col sm:flex-row sm:items-end gap-3">
           <div className="w-full sm:w-80">
             <Input
@@ -373,7 +393,7 @@ export default function UsersPage() {
           </div>
         </div>
 
-        <FilterSummary count={filteredUsers.length} itemName="account" active={Boolean(searchQuery) || roleFilter !== 'all'} onClear={() => { setSearchQuery(''); setRoleFilter('all'); }} />
+        </WorkspaceFilters>
 
         {/* Users Cards Grid */}
         <div className="grid grid-cols-1 md:grid-cols-2 gap-4 auto-rows-fr">
@@ -429,7 +449,7 @@ export default function UsersPage() {
                       </span>
                       {linkedWorker && (
                         <Badge variant="success" size="sm">
-                          Payroll Roster · ₱{linkedWorker.pay_rate}/day
+                          Payroll Roster · ₱{linkedWorker.pay_rate}/{linkedWorker.pay_rate_type === 'hourly' ? 'hr' : 'day'}
                         </Badge>
                       )}
                     </div>
@@ -501,6 +521,9 @@ export default function UsersPage() {
       <Modal
         isOpen={isCreateOpen}
         onClose={() => setIsCreateOpen(false)}
+        dismissOnBackdrop={!isCreating}
+        dismissOnEscape={!isCreating}
+        showCloseButton={!isCreating}
         title="Provision New Team Account"
         description="Create a real BALE user with a temporary password. The user will be required to set their own personal password on first sign-in."
         maxWidth="lg"
@@ -592,7 +615,8 @@ export default function UsersPage() {
                       label="Daily Rate (PHP ₱)"
                       type="number"
                       min="0"
-                      step="50"
+                      step="0.01"
+                      max="99999999.99"
                       value={newPayRate}
                       onChange={(e) => setNewPayRate(e.target.value)}
                       required
@@ -615,6 +639,7 @@ export default function UsersPage() {
             </label>
             <div className="flex items-center gap-2">
               <Input
+                aria-label="Temporary first-sign-in password"
                 value={newTempPassword}
                 onChange={(e) => setNewTempPassword(e.target.value)}
                 required
@@ -644,13 +669,13 @@ export default function UsersPage() {
             <div className="space-y-0.5">
               <div className="font-bold text-navy">Send welcome email via Firm SMTP (when configured)</div>
               <div className="text-[11px] text-ink-secondary">
-                Emails the temporary password to the user&apos;s inbox so logging in also verifies email ownership. You will also get a copyable credential card on screen.
+                Requests a welcome email containing the temporary password. SMTP acceptance does not verify ownership or guarantee delivery. You will also get a copyable credential card.
               </div>
             </div>
           </label>
 
           <div className="pt-3 flex justify-end space-x-2">
-            <Button type="button" variant="secondary" onClick={() => setIsCreateOpen(false)}>
+            <Button type="button" variant="secondary" disabled={isCreating} onClick={() => setIsCreateOpen(false)}>
               Cancel
             </Button>
             <Button type="submit" variant="primary" isLoading={isCreating}>
@@ -667,6 +692,9 @@ export default function UsersPage() {
           setEditingUser(null);
           setConfirmingDeleteInModal(false);
         }}
+        dismissOnBackdrop={!isUpdating && !isDeleting}
+        dismissOnEscape={!isUpdating && !isDeleting}
+        showCloseButton={!isUpdating && !isDeleting}
         title="Manage Team Account"
         description="Update role permissions, assigned project sites, payroll inclusion, or account access."
         maxWidth="lg"
@@ -760,10 +788,11 @@ export default function UsersPage() {
                     {editIncludeInPayroll && (
                       <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 pt-1">
                         <Input
-                          label="Daily Rate (PHP ₱)"
+                          label={`${editPayRateType === 'hourly' ? 'Hourly' : 'Daily'} Rate (PHP ₱)`}
                           type="number"
                           min="0"
-                          step="50"
+                          step="0.01"
+                      max="99999999.99"
                           value={editPayRate}
                           onChange={(e) => setEditPayRate(e.target.value)}
                           required
@@ -786,6 +815,7 @@ export default function UsersPage() {
                 </label>
                 <div className="flex items-center gap-2">
                   <Input
+                    aria-label="Reset to temporary password (optional)"
                     placeholder="Leave blank to keep current password"
                     value={editResetPassword}
                     onChange={(e) => setEditResetPassword(e.target.value)}
@@ -811,6 +841,7 @@ export default function UsersPage() {
                   {!confirmingDeleteInModal ? (
                     <button
                       type="button"
+                      disabled={isUpdating || isDeleting}
                       onClick={() => setConfirmingDeleteInModal(true)}
                       className="text-xs font-semibold text-status-danger hover:underline flex items-center gap-1.5"
                     >
@@ -823,13 +854,14 @@ export default function UsersPage() {
                         Permanently remove {editingUser.name} ({editingUser.email})?
                       </div>
                       <div className="text-[11px]">
-                        Revokes login access immediately. Historical attendance logs, payroll, and expenses remain preserved in the ledger.
+                        Removes the Auth account and BALE profile. Attendance and expense records remain, but their attribution to this user is cleared; payroll history remains. Confirm removal and session status in Supabase Auth.
                       </div>
                       <div className="flex items-center gap-2">
                         <Button
                           type="button"
-                          variant="primary"
+                          variant="danger"
                           size="sm"
+                          disabled={isUpdating}
                           isLoading={isDeleting}
                           onClick={handleDeleteConfirm}
                         >
@@ -839,6 +871,7 @@ export default function UsersPage() {
                           type="button"
                           variant="secondary"
                           size="sm"
+                          disabled={isDeleting || isUpdating}
                           onClick={() => setConfirmingDeleteInModal(false)}
                         >
                           Keep Account
@@ -853,6 +886,7 @@ export default function UsersPage() {
                 <Button
                   type="button"
                   variant="secondary"
+                  disabled={isUpdating || isDeleting}
                   onClick={() => {
                     setEditingUser(null);
                     setConfirmingDeleteInModal(false);
@@ -860,7 +894,7 @@ export default function UsersPage() {
                 >
                   Cancel
                 </Button>
-                <Button type="submit" variant="primary" isLoading={isUpdating}>
+                <Button type="submit" variant="primary" isLoading={isUpdating} disabled={isDeleting}>
                   Save Changes
                 </Button>
               </div>

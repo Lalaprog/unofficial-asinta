@@ -53,6 +53,12 @@ async function writeUserAuditEntry(
   }
 }
 
+// Follow-up calls happen after an account/profile change may have committed.
+// Convert both API errors and transport exceptions into reviewable warnings.
+async function mutationFailed(operation: () => PromiseLike<{ error: unknown }>): Promise<boolean> {
+  try { return Boolean((await operation()).error); } catch { return true; }
+}
+
 export interface MinimalAdminSupabaseClient {
   auth: {
     admin: {
@@ -157,29 +163,40 @@ export function generateTemporaryPassword(): string {
   const digits = '23456789';
   const all = upper + lower + digits;
 
-  const pick = (charset: string, indexSeed: number): string => {
-    if (typeof crypto !== 'undefined' && typeof crypto.getRandomValues === 'function') {
-      const buf = new Uint32Array(1);
-      crypto.getRandomValues(buf);
-      return charset[buf[0] % charset.length];
+  const pick = (charset: string): string => {
+    if (typeof crypto === 'undefined' || typeof crypto.getRandomValues !== 'function') {
+      throw new Error('Secure random password generation is unavailable. Use a secure browser or HTTPS.');
     }
-    return charset[Math.floor(Math.random() * charset.length) || indexSeed % charset.length];
+    const buf = new Uint32Array(1);
+    const limit = Math.floor(0x100000000 / charset.length) * charset.length;
+    do { crypto.getRandomValues(buf); } while (buf[0] >= limit);
+    return charset[buf[0] % charset.length];
   };
 
   const segment1 = [
-    pick(upper, 1),
-    pick(lower, 2),
-    pick(lower, 3),
-    pick(digits, 4),
+    pick(upper),
+    pick(lower),
+    pick(lower),
+    pick(digits),
   ].join('');
   const segment2 = [
-    pick(upper, 5),
-    pick(lower, 6),
-    pick(digits, 7),
-    pick(all, 8),
+    pick(upper),
+    pick(lower),
+    pick(digits),
+    pick(all),
   ].join('');
 
   return `Asinta-${segment1}-${segment2}!`;
+}
+
+/** NUMERIC(10,2) payroll rate; zero is valid and invalid inputs are never defaulted. */
+export function parseTeamPayRate(value: unknown): number | null {
+  if (value === undefined) return 1200; // backward compatibility for older callers
+  if (typeof value !== 'string' && typeof value !== 'number') return null;
+  if (typeof value === 'string' && !/^\d+(?:\.\d{1,2})?$/.test(value.trim())) return null;
+  const rate = Number(value);
+  return Number.isFinite(rate) && rate >= 0 && rate <= 99999999.99 &&
+    Math.abs(rate * 100 - Math.round(rate * 100)) < 1e-5 ? rate : null;
 }
 
 function normalizeProjectIds(input: unknown): string[] {
@@ -216,6 +233,7 @@ export async function createTeamAccount(params: {
     emailSent?: boolean;
     emailNote?: string;
     auditWarning?: string;
+    warnings?: string[];
   }>
 > {
   const { callerId, callerEmail, input, adminClient, sendWelcomeMail } = params;
@@ -229,6 +247,12 @@ export async function createTeamAccount(params: {
       : generateTemporaryPassword();
   const assignedProjectIds = role === 'supervisor' ? normalizeProjectIds(input.assignedProjectIds) : [];
   const shouldSendEmail = input.sendWelcomeEmail !== false;
+  const warnings: string[] = [];
+  const includeInPayroll = role === 'supervisor' && input.includeInPayroll !== false;
+  const requestedRate = parseTeamPayRate(input.payRate);
+  if (includeInPayroll && requestedRate === null) {
+    return { status: 400, body: { ok: false, error: 'Enter a valid payroll rate from 0 to 99,999,999.99 with at most two decimal places.' } };
+  }
 
   if (!name || name.length < 2) {
     return {
@@ -315,14 +339,14 @@ export async function createTeamAccount(params: {
 
   if (profileInsertError || !insertedUser) {
     // Roll back the orphaned auth.users row.
-    await adminClient.auth.admin.deleteUser(newUserId).catch(() => {});
+    const rollback = await adminClient.auth.admin.deleteUser(newUserId).catch(() => ({ data: null, error: { message: 'request failed' } }));
     return {
       status: 500,
       body: {
         ok: false,
-        error:
-          profileInsertError?.message ||
-          'Failed to create the BALE user profile row; authentication record was rolled back.',
+        error: rollback.error
+          ? 'The profile could not be created and Auth cleanup was not confirmed. Check Supabase Auth before retrying.'
+          : 'Profile creation was not confirmed and the new Auth account was removed. Check for a remaining profile before retrying.',
       },
     };
   }
@@ -333,23 +357,22 @@ export async function createTeamAccount(params: {
       project_id: projectId,
       supervisor_id: newUserId,
     }));
-    await adminClient.from('project_supervisors').insert(supervisorRows);
+    const failed = await mutationFailed(() => adminClient.from('project_supervisors').insert(supervisorRows));
+    if (failed) warnings.push('Project assignments were not confirmed. Check the assigned sites before the user signs in.');
   }
 
   // 4b. Automatically provision a 1:1 linked `public.workers` row for every
   //     Supervisor (unless explicitly disabled via `includeInPayroll: false`)
   //     so they are automatically on the roster of the project sites they supervise.
-  const includeInPayroll = role === 'supervisor' && input.includeInPayroll !== false;
   if (includeInPayroll) {
-    const parsedRate = Number(input.payRate);
-    const payRate = Number.isFinite(parsedRate) && parsedRate > 0 ? parsedRate : 1200;
+    const payRate = requestedRate ?? 1200;
     const payRateType = input.payRateType === 'hourly' ? 'hourly' : 'daily';
     const contactNumber =
       typeof input.contactNumber === 'string' && input.contactNumber.trim()
         ? input.contactNumber.trim()
         : '—';
 
-    await adminClient.from('workers').upsert(
+    const workerFailed = await mutationFailed(() => adminClient.from('workers').upsert(
       {
         id: newUserId,
         name,
@@ -360,7 +383,8 @@ export async function createTeamAccount(params: {
         active: true,
       },
       { onConflict: 'id' }
-    );
+    ));
+    if (workerFailed) warnings.push('Payroll roster entry was not confirmed. Check the worker record before running payroll.');
   }
 
   // 5. Write audit trail (never log the temporary password).
@@ -375,7 +399,7 @@ export async function createTeamAccount(params: {
       name,
       email,
       role,
-      assigned_project_ids: assignedProjectIds,
+      assigned_project_ids_requested: assignedProjectIds,
       must_change_password: true,
     },
   });
@@ -389,7 +413,7 @@ export async function createTeamAccount(params: {
       name,
       role,
       temporaryPassword: rawTempPassword,
-    });
+    }).catch(() => ({ accepted: false, error: 'Welcome email outcome is unconfirmed. Check your email provider before resending or sharing credentials.' }));
     emailSent = mailOutcome.accepted;
     emailNote = mailOutcome.accepted
       ? `Welcome email with temporary password accepted by SMTP for ${email}.`
@@ -408,6 +432,7 @@ export async function createTeamAccount(params: {
       emailSent,
       emailNote,
       ...(auditRes.ok ? {} : { auditWarning: auditRes.error }),
+      ...(warnings.length ? { warnings } : {}),
     },
   };
 }
@@ -426,6 +451,8 @@ export async function updateTeamAccount(params: {
     user?: User;
     assignedProjectIds?: string[];
     temporaryPassword?: string;
+    warnings?: string[];
+    auditWarning?: string;
   }>
 > {
   const { callerId, callerEmail, input, adminClient } = params;
@@ -445,6 +472,9 @@ export async function updateTeamAccount(params: {
     return { status: 404, body: { ok: false, error: 'Team account not found.' } };
   }
 
+  if (input.name !== undefined && (typeof input.name !== 'string' || input.name.trim().length < 2)) {
+    return { status: 400, body: { ok: false, error: 'Full name is required (at least 2 characters).' } };
+  }
   const nextName =
     typeof input.name === 'string' && input.name.trim().length >= 2
       ? input.name.trim()
@@ -493,6 +523,12 @@ export async function updateTeamAccount(params: {
     resetPasswordValue = candidate;
   }
 
+  const warnings: string[] = [];
+  const requestedRate = parseTeamPayRate(input.payRate);
+  if (nextRole === 'supervisor' && input.includeInPayroll !== false && requestedRate === null) {
+    return { status: 400, body: { ok: false, error: 'Enter a valid payroll rate from 0 to 99,999,999.99 with at most two decimal places.' } };
+  }
+
   // Update `public.users`.
   const { data: updatedUser, error: updateError } = await adminClient
     .from('users')
@@ -509,42 +545,47 @@ export async function updateTeamAccount(params: {
   }
 
   // Update `auth.users` metadata (and temporary password if requested).
-  await adminClient.auth.admin.updateUserById(targetUserId, {
+  const authUpdate = await adminClient.auth.admin.updateUserById(targetUserId, {
     ...(resetPasswordValue ? { password: resetPasswordValue } : {}),
     user_metadata: {
       name: nextName,
       role: nextRole,
       ...(resetPasswordValue ? { must_change_password: true } : {}),
     },
-  });
+  }).catch(() => ({ data: { user: null }, error: { message: 'request failed' } }));
+  const authUpdateConfirmed = !authUpdate.error && Boolean(authUpdate.data?.user);
+  if (!authUpdateConfirmed) warnings.push(resetPasswordValue
+    ? 'Auth update and password reset were not confirmed. Do not share the proposed password; check Supabase Auth before retrying.'
+    : 'Auth metadata update was not confirmed. Check Supabase Auth and the profile before retrying.');
 
   // Sync supervisor project assignments when `assignedProjectIds` is provided.
   let assignedProjectIds: string[] | undefined;
   if (Array.isArray(input.assignedProjectIds) || nextRole === 'founder') {
-    await adminClient.from('project_supervisors').delete().eq('supervisor_id', targetUserId);
+    const assignmentDeleteError = await mutationFailed(() => adminClient.from('project_supervisors').delete().eq('supervisor_id', targetUserId));
+    if (assignmentDeleteError) warnings.push('Removing old project assignments was not confirmed. Check assigned sites.');
     assignedProjectIds =
       nextRole === 'supervisor' ? normalizeProjectIds(input.assignedProjectIds) : [];
-    if (assignedProjectIds.length > 0) {
-      await adminClient.from('project_supervisors').insert(
-        assignedProjectIds.map((projectId) => ({
+    if (!assignmentDeleteError && assignedProjectIds.length > 0) {
+      const assignmentInsertError = await mutationFailed(() => adminClient.from('project_supervisors').insert(
+        assignedProjectIds!.map((projectId) => ({
           project_id: projectId,
           supervisor_id: targetUserId,
         }))
-      );
+      ));
+      if (assignmentInsertError) warnings.push('New project assignments were not confirmed. Check assigned sites before the user signs in.');
     }
   }
 
   // Sync 1:1 linked `public.workers` profile for Supervisor attendance & payroll.
   if (nextRole === 'supervisor' && input.includeInPayroll !== false) {
-    const parsedRate = Number(input.payRate);
-    const payRate = Number.isFinite(parsedRate) && parsedRate > 0 ? parsedRate : 1200;
+    const payRate = requestedRate ?? 1200;
     const payRateType = input.payRateType === 'hourly' ? 'hourly' : 'daily';
     const contactNumber =
       typeof input.contactNumber === 'string' && input.contactNumber.trim()
         ? input.contactNumber.trim()
         : '—';
 
-    await adminClient.from('workers').upsert(
+    const workerFailed = await mutationFailed(() => adminClient.from('workers').upsert(
       {
         id: targetUserId,
         name: nextName,
@@ -555,15 +596,17 @@ export async function updateTeamAccount(params: {
         active: true,
       },
       { onConflict: 'id' }
-    );
+    ));
+    if (workerFailed) warnings.push('Payroll roster update was not confirmed. Check the worker record before running payroll.');
   } else if (nextRole === 'founder' || input.includeInPayroll === false) {
-    await adminClient
+    const workerFailed = await mutationFailed(() => adminClient
       .from('workers')
       .update({ active: false })
-      .eq('id', targetUserId);
+      .eq('id', targetUserId));
+    if (workerFailed) warnings.push('Payroll roster deactivation was not confirmed. Check the worker record before running payroll.');
   }
 
-  await writeUserAuditEntry(adminClient, {
+  const auditRes = await writeUserAuditEntry(adminClient, {
     actorId: callerId,
     actorEmail: callerEmail ?? null,
     action: 'update',
@@ -571,8 +614,8 @@ export async function updateTeamAccount(params: {
     before: beforeUser as Record<string, unknown>,
     after: {
       ...(updatedUser as Record<string, unknown>),
-      ...(assignedProjectIds ? { assigned_project_ids: assignedProjectIds } : {}),
-      ...(resetPasswordValue ? { password_reset_to_temporary: true } : {}),
+      ...(assignedProjectIds ? { assigned_project_ids_requested: assignedProjectIds } : {}),
+      ...(resetPasswordValue && authUpdateConfirmed ? { password_reset_to_temporary: true } : {}),
     },
   });
 
@@ -582,7 +625,9 @@ export async function updateTeamAccount(params: {
       ok: true,
       user: updatedUser as User,
       ...(assignedProjectIds ? { assignedProjectIds } : {}),
-      ...(resetPasswordValue ? { temporaryPassword: resetPasswordValue } : {}),
+      ...(resetPasswordValue && authUpdateConfirmed ? { temporaryPassword: resetPasswordValue } : {}),
+      ...(warnings.length ? { warnings } : {}),
+      ...(auditRes.ok ? {} : { auditWarning: auditRes.error }),
     },
   };
 }
@@ -599,7 +644,7 @@ export async function deleteTeamAccount(params: {
   callerEmail?: string;
   targetUserId: string;
   adminClient: MinimalAdminSupabaseClient;
-}): Promise<AdminActionOutcome<{ deletedUserId?: string }>> {
+}): Promise<AdminActionOutcome<{ deletedUserId?: string; auditWarning?: string }>> {
   const { callerId, callerEmail, targetUserId, adminClient } = params;
 
   const cleanTargetId = typeof targetUserId === 'string' ? targetUserId.trim() : '';
@@ -646,53 +691,35 @@ export async function deleteTeamAccount(params: {
     }
   }
 
-  // Null out non-cascading foreign-key references so historical attendance and
-  // expense rows are preserved without violating FK constraints.
-  await adminClient
-    .from('attendance')
-    .update({ recorded_by: null })
-    .eq('recorded_by', cleanTargetId);
-  await adminClient
-    .from('expenses')
-    .update({ created_by: null })
-    .eq('created_by', cleanTargetId);
-  await adminClient
-    .from('email_templates')
-    .update({ updated_by: null })
-    .eq('updated_by', cleanTargetId);
-  await adminClient
-    .from('email_logs')
-    .update({ sent_by: null })
-    .eq('sent_by', cleanTargetId);
-  await adminClient
-    .from('project_supervisors')
-    .delete()
-    .eq('supervisor_id', cleanTargetId);
-  // If this user had a 1:1 linked `public.workers` payroll profile, mark it
-  // inactive so historical attendance and payroll records remain intact.
-  await adminClient
-    .from('workers')
-    .update({ active: false })
-    .eq('id', cleanTargetId);
-
-  const { error: deleteProfileError } = await adminClient
-    .from('users')
-    .delete()
-    .eq('id', cleanTargetId);
-
-  if (deleteProfileError) {
-    return {
-      status: 500,
-      body: {
-        ok: false,
-        error: `Could not delete profile row: ${deleteProfileError.message}`,
-      },
-    };
+  // These are separate Auth and database requests, not a transaction. Stop on
+  // failure and report partial completion; never claim login was removed if
+  // the Auth request failed or had an unknown outcome.
+  const cleanupSteps: Array<[string, () => PromiseLike<{ error: { message: string } | null }>]> = [
+    ['attendance attribution', () => adminClient.from('attendance').update({ recorded_by: null }).eq('recorded_by', cleanTargetId)],
+    ['expense attribution', () => adminClient.from('expenses').update({ created_by: null }).eq('created_by', cleanTargetId)],
+    ['template attribution', () => adminClient.from('email_templates').update({ updated_by: null }).eq('updated_by', cleanTargetId)],
+    ['email attribution', () => adminClient.from('email_logs').update({ sent_by: null }).eq('sent_by', cleanTargetId)],
+    ['project assignments', () => adminClient.from('project_supervisors').delete().eq('supervisor_id', cleanTargetId)],
+    ['payroll roster', () => adminClient.from('workers').update({ active: false }).eq('id', cleanTargetId)],
+  ];
+  for (const [label, operation] of cleanupSteps) {
+    try {
+      const { error } = await operation();
+      if (error) throw error;
+    } catch {
+      return { status: 500, body: { ok: false, error: `Removal stopped: ${label} cleanup was not confirmed. Earlier changes may have been applied. Check the account, assignments and ledger before retrying.` } };
+    }
   }
 
-  await adminClient.auth.admin.deleteUser(cleanTargetId).catch(() => {});
-
-  await writeUserAuditEntry(adminClient, {
+  // Remove the profile first: RLS and app authorization depend on that row.
+  // If Auth removal fails, report the orphan explicitly for administrator
+  // cleanup; do not claim that authentication was revoked.
+  const { error: deleteProfileError } = await adminClient.from('users').delete().eq('id', cleanTargetId);
+  if (deleteProfileError) {
+    return { status: 500, body: { ok: false, error: 'BALE profile removal was not confirmed. Earlier cleanup may have applied. Check the account, assignments and payroll roster before retrying.' } };
+  }
+  // Record the confirmed profile deletion even if Auth removal then fails.
+  const auditRes = await writeUserAuditEntry(adminClient, {
     actorId: callerId,
     actorEmail: callerEmail ?? null,
     action: 'delete',
@@ -700,12 +727,18 @@ export async function deleteTeamAccount(params: {
     before: targetUser as Record<string, unknown>,
     after: null,
   });
+  const authDelete = await adminClient.auth.admin.deleteUser(cleanTargetId)
+    .catch(() => ({ data: null, error: { message: 'request failed' } }));
+  if (authDelete.error) {
+    return { status: 500, body: { ok: false, error: 'The BALE profile was removed but Auth removal was not confirmed. Administrator cleanup in Supabase Auth is required; do not assume login was revoked or blindly retry.', ...(auditRes.ok ? {} : { auditWarning: auditRes.error }) } };
+  }
 
   return {
     status: 200,
     body: {
       ok: true,
       deletedUserId: cleanTargetId,
+      ...(auditRes.ok ? {} : { auditWarning: auditRes.error }),
     },
   };
 }

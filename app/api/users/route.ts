@@ -3,6 +3,7 @@ import { createServerSupabaseClient } from '@/lib/supabase/server';
 import { createServiceRoleClient, isServiceRoleConfigured } from '@/lib/supabase/admin';
 import { requireFounder } from '@/lib/auth/serverRole';
 import { isSmtpConfigured, sendEmail } from '@/lib/email/mailer';
+import { escapeHtml } from '@/lib/email/format';
 import {
   createTeamAccount,
   deleteTeamAccount,
@@ -80,12 +81,12 @@ export async function POST(request: NextRequest) {
       const html = `
         <div style="font-family: sans-serif; color: #0b1f3a; line-height: 1.5; max-width: 520px;">
           <h2 style="margin-bottom: 8px;">Asinta Architects — BALE Account Ready</h2>
-          <p>Hello <strong>${name}</strong>,</p>
+          <p>Hello <strong>${escapeHtml(name)}</strong>,</p>
           <p>An account has been provisioned for you in the BALE portal:</p>
           <div style="background: #f8fafc; border: 1px solid #e2e8f0; border-radius: 12px; padding: 16px; margin: 16px 0;">
-            <div><strong>Email:</strong> ${to}</div>
+            <div><strong>Email:</strong> ${escapeHtml(to)}</div>
             <div><strong>Role:</strong> ${roleLabel}</div>
-            <div style="margin-top: 8px;"><strong>Temporary Password:</strong> <code style="font-size: 14px; background: #fff; padding: 2px 6px; border: 1px solid #cbd5e1; border-radius: 4px;">${temporaryPassword}</code></div>
+            <div style="margin-top: 8px;"><strong>Temporary Password:</strong> <code style="font-size: 14px; background: #fff; padding: 2px 6px; border: 1px solid #cbd5e1; border-radius: 4px;">${escapeHtml(temporaryPassword)}</code></div>
           </div>
           <p style="font-size: 13px; color: #475569;">
             When you sign in for the first time, you will be prompted to set your own personal password before accessing the workspace.

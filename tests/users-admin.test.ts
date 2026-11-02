@@ -3,6 +3,7 @@ import {
   createTeamAccount,
   deleteTeamAccount,
   generateTemporaryPassword,
+  parseTeamPayRate,
   updateTeamAccount,
   validatePasswordStrength,
   type MinimalAdminSupabaseClient,
@@ -25,7 +26,7 @@ function makeMockAdminClient(options?: {
   const deleteUserSpy = vi.fn(async () => ({ data: {}, error: null }));
   const auditInsertSpy = vi.fn(async () => ({ error: null }));
   const supervisorInsertSpy = vi.fn(async () => ({ error: null }));
-  const workerUpsertSpy = vi.fn(async () => ({ error: null }));
+  const workerUpsertSpy = vi.fn(async (_row: Record<string, unknown>, _options: unknown) => ({ error: null }));
   const workerDeactivateSpy = vi.fn(async () => ({ error: null }));
   const attendanceNullSpy = vi.fn(async () => ({ error: null }));
   const expensesNullSpy = vi.fn(async () => ({ error: null }));
@@ -352,5 +353,79 @@ describe('updateTeamAccount & deleteTeamAccount safety guards', () => {
     expect(workerDeactivateSpy).toHaveBeenCalledWith('id', 'sup-1');
     expect(deleteUserSpy).toHaveBeenCalledWith('sup-1');
     expect(auditInsertSpy).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe('team administration partial outcomes', () => {
+  it('does not return or audit a password as reset when Auth rejects it', async () => {
+    const { client, updateUserByIdSpy, auditInsertSpy } = makeMockAdminClient();
+    updateUserByIdSpy.mockImplementationOnce(async () => ({ data: { user: null }, error: { message: 'auth failed' } }) as never);
+    const res = await updateTeamAccount({ callerId: 'founder-1', input: { userId: 'sup-1', resetTemporaryPassword: 'SafePass123' }, adminClient: client });
+    expect(res.body.ok).toBe(true);
+    expect(res.body.temporaryPassword).toBeUndefined();
+    expect(res.body.warnings?.join(' ')).toMatch(/password reset were not confirmed/i);
+    expect(JSON.stringify(auditInsertSpy.mock.calls)).not.toContain('SafePass123');
+    expect(JSON.stringify(auditInsertSpy.mock.calls)).not.toContain('password_reset_to_temporary');
+  });
+
+  it('reports failed or thrown assignment and roster writes while retaining provisioned credentials', async () => {
+    const { client, supervisorInsertSpy, workerUpsertSpy } = makeMockAdminClient();
+    supervisorInsertSpy.mockRejectedValueOnce(new Error('network'));
+    workerUpsertSpy.mockImplementationOnce(async () => ({ error: { message: 'database error' } }) as never);
+    const res = await createTeamAccount({ callerId: 'founder-1', input: {
+      name: 'Test User', email: 'test@example.com', role: 'supervisor', temporaryPassword: 'SafePass123',
+      assignedProjectIds: ['site-1'], includeInPayroll: true, payRate: 0, sendWelcomeEmail: false,
+    }, adminClient: client });
+    expect(res.body.ok).toBe(true);
+    expect(res.body.temporaryPassword).toBe('SafePass123');
+    expect(res.body.warnings?.join(' ')).toMatch(/assignments/i);
+    expect(res.body.warnings?.join(' ')).toMatch(/roster/i);
+    expect(workerUpsertSpy.mock.calls[0][0]).toMatchObject({ pay_rate: 0 });
+  });
+
+  it('rejects invalid pay rates before changing a profile', async () => {
+    const { client, updateUserByIdSpy } = makeMockAdminClient();
+    const res = await updateTeamAccount({ callerId: 'founder-1', input: { userId: 'sup-1', role: 'supervisor', includeInPayroll: true, payRate: -10 }, adminClient: client });
+    expect(res.status).toBe(400);
+    expect(updateUserByIdSpy).not.toHaveBeenCalled();
+  });
+
+  it('keeps credentials available if the welcome email outcome is unknown', async () => {
+    const { client } = makeMockAdminClient();
+    const res = await createTeamAccount({ callerId: 'founder-1', input: {
+      name: 'Test User', email: 'test@example.com', role: 'founder', temporaryPassword: 'SafePass123',
+    }, adminClient: client, sendWelcomeMail: async () => { throw new Error('timeout'); } });
+    expect(res.body.ok).toBe(true);
+    expect(res.body.temporaryPassword).toBe('SafePass123');
+    expect(res.body.emailNote).toMatch(/unconfirmed/i);
+  });
+
+  it('does not report deletion success when Auth removal fails', async () => {
+    const { client, deleteUserSpy } = makeMockAdminClient();
+    deleteUserSpy.mockImplementationOnce(async () => ({ data: null, error: { message: 'auth error' } }) as never);
+    const res = await deleteTeamAccount({ callerId: 'founder-1', targetUserId: 'sup-1', adminClient: client });
+    expect(res.body.ok).toBe(false);
+    expect(res.body.error).toMatch(/profile was removed.*Auth removal was not confirmed/i);
+  });
+
+  it('stops removal when a cleanup step fails before deleting Auth', async () => {
+    const { client, deleteUserSpy, attendanceNullSpy } = makeMockAdminClient();
+    attendanceNullSpy.mockImplementationOnce(async () => ({ error: { message: 'failed' } }) as never);
+    const res = await deleteTeamAccount({ callerId: 'founder-1', targetUserId: 'sup-1', adminClient: client });
+    expect(res.body.ok).toBe(false);
+    expect(res.body.error).toMatch(/cleanup was not confirmed/i);
+    expect(deleteUserSpy).not.toHaveBeenCalled();
+  });
+});
+
+
+describe('team payroll rate validation', () => {
+  it('accepts zero, fractional cents-safe rates and the historical absent default', () => {
+    expect(parseTeamPayRate(0)).toBe(0);
+    expect(parseTeamPayRate('1234.56')).toBe(1234.56);
+    expect(parseTeamPayRate(undefined)).toBe(1200);
+  });
+  it.each(['', '  ', null, false, -1, '1.001', '1e4', 100000000])('rejects invalid rate %s', (value) => {
+    expect(parseTeamPayRate(value)).toBeNull();
   });
 });
