@@ -122,6 +122,20 @@ notification_policy_check as (
     ) as unsafe_count
   from pg_policies
   where schemaname = 'public' and tablename = 'user_notifications'
+),
+founder_guard_checks as (
+  select
+    to_regprocedure('public.update_team_profile_guarded(uuid,uuid,text,text)') as update_rpc,
+    to_regprocedure('public.delete_team_profile_guarded(uuid,uuid)') as delete_rpc,
+    to_regclass('app_private.founder_guard') as guard_table,
+    (select oid from pg_namespace where nspname = 'app_private') as private_schema,
+    (select count(*) = 4 from pg_trigger t
+      where t.tgrelid = to_regclass('public.users') and not t.tgisinternal
+        and t.tgenabled in ('O', 'A')
+        and ((t.tgname = 'lock_user_mutations' and t.tgfoid = to_regprocedure('app_private.lock_user_mutations()'))
+          or (t.tgname = 'check_founder_after_update' and t.tgfoid = to_regprocedure('app_private.check_founder_after_update()'))
+          or (t.tgname = 'check_founder_after_delete' and t.tgfoid = to_regprocedure('app_private.check_founder_after_delete()'))
+          or (t.tgname = 'prevent_user_truncate' and t.tgfoid = to_regprocedure('app_private.prevent_user_truncate()')))) as triggers_present
 )
 
 -- ── results: one row per check ────────────────────────────────────────────
@@ -164,6 +178,35 @@ select 'atomic payroll protections installed',
           and not coalesce(has_function_privilege('anon', status_rpc, 'EXECUTE'), true)
           and guard_present and payroll_status_protected and advances_protected and draft_updates_allowed
           from payroll_atomic_checks) then 'PASS' else 'FAIL' end
+
+union all
+select 'Founder profile protection installed',
+       'guard, four enabled triggers, and two service-role-only RPCs',
+       case when (select guard_table is not null and private_schema is not null and triggers_present
+         and update_rpc is not null and delete_rpc is not null
+         and coalesce(has_function_privilege('service_role', update_rpc, 'EXECUTE'), false)
+         and coalesce(has_function_privilege('service_role', delete_rpc, 'EXECUTE'), false)
+         and not coalesce(has_function_privilege('anon', update_rpc, 'EXECUTE'), true)
+         and not coalesce(has_function_privilege('anon', delete_rpc, 'EXECUTE'), true)
+         and not coalesce(has_function_privilege('authenticated', update_rpc, 'EXECUTE'), true)
+         and not coalesce(has_function_privilege('authenticated', delete_rpc, 'EXECUTE'), true)
+         and not coalesce(has_schema_privilege('service_role', private_schema, 'USAGE'), true)
+         and not coalesce(has_schema_privilege('authenticated', private_schema, 'USAGE'), true)
+         and not coalesce(has_schema_privilege('anon', private_schema, 'USAGE'), true)
+         from founder_guard_checks) then 'guard objects and grants present (exercise on staging too)'
+       else 'MISSING or unsafe — inspect 20261102000001 migration and grants' end,
+       case when (select guard_table is not null and private_schema is not null and triggers_present
+         and update_rpc is not null and delete_rpc is not null
+         and coalesce(has_function_privilege('service_role', update_rpc, 'EXECUTE'), false)
+         and coalesce(has_function_privilege('service_role', delete_rpc, 'EXECUTE'), false)
+         and not coalesce(has_function_privilege('anon', update_rpc, 'EXECUTE'), true)
+         and not coalesce(has_function_privilege('anon', delete_rpc, 'EXECUTE'), true)
+         and not coalesce(has_function_privilege('authenticated', update_rpc, 'EXECUTE'), true)
+         and not coalesce(has_function_privilege('authenticated', delete_rpc, 'EXECUTE'), true)
+         and not coalesce(has_schema_privilege('service_role', private_schema, 'USAGE'), true)
+         and not coalesce(has_schema_privilege('authenticated', private_schema, 'USAGE'), true)
+         and not coalesce(has_schema_privilege('anon', private_schema, 'USAGE'), true)
+         from founder_guard_checks) then 'PASS' else 'FAIL' end
 
 union all
 select 'Bale notification policies are recipient-only',

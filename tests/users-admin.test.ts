@@ -29,6 +29,10 @@ function makeMockAdminClient(options?: {
   const workerUpsertSpy = vi.fn(async (_row: Record<string, unknown>, _options: unknown) => ({ error: null }));
   const workerDeactivateSpy = vi.fn(async () => ({ error: null }));
   const attendanceNullSpy = vi.fn(async () => ({ error: null }));
+  const rpcSpy = vi.fn(async (name: string, args: Record<string, unknown>) => ({
+    data: name === 'delete_team_profile_guarded' ? { id: args.p_target } : { ...targetUser, id: args.p_target, name: args.p_name, role: args.p_role },
+    error: null,
+  }));
   const expensesNullSpy = vi.fn(async () => ({ error: null }));
 
   const targetUser =
@@ -52,6 +56,7 @@ function makeMockAdminClient(options?: {
         deleteUser: deleteUserSpy,
       },
     },
+    rpc: rpcSpy,
     from: (table: string) => {
       if (table === 'audit_log') {
         return { insert: auditInsertSpy };
@@ -137,6 +142,7 @@ function makeMockAdminClient(options?: {
 
   return {
     client,
+    rpcSpy,
     createUserSpy,
     updateUserByIdSpy,
     deleteUserSpy,
@@ -335,24 +341,12 @@ describe('updateTeamAccount & deleteTeamAccount safety guards', () => {
     expect(deleteRes.body.error).toMatch(/last Founder/i);
   });
 
-  it('detaches attendance.recorded_by and expenses.created_by before deleting a team account', async () => {
-    const { client, attendanceNullSpy, expensesNullSpy, workerDeactivateSpy, deleteUserSpy, auditInsertSpy } =
-      makeMockAdminClient();
-
-    const res = await deleteTeamAccount({
-      callerId: 'founder-1',
-      callerEmail: 'junel@asinta.ph',
-      targetUserId: 'sup-1',
-      adminClient: client,
-    });
-
-    expect(res.status).toBe(200);
+  it('requests atomic profile cleanup before deleting the Auth account', async () => {
+    const { client, rpcSpy, deleteUserSpy } = makeMockAdminClient();
+    const res = await deleteTeamAccount({ callerId: 'founder-1', targetUserId: 'sup-1', adminClient: client });
     expect(res.body.ok).toBe(true);
-    expect(attendanceNullSpy).toHaveBeenCalledWith('recorded_by', 'sup-1');
-    expect(expensesNullSpy).toHaveBeenCalledWith('created_by', 'sup-1');
-    expect(workerDeactivateSpy).toHaveBeenCalledWith('id', 'sup-1');
+    expect(rpcSpy).toHaveBeenCalledWith('delete_team_profile_guarded', { p_actor: 'founder-1', p_target: 'sup-1' });
     expect(deleteUserSpy).toHaveBeenCalledWith('sup-1');
-    expect(auditInsertSpy).toHaveBeenCalledTimes(1);
   });
 });
 
@@ -408,13 +402,30 @@ describe('team administration partial outcomes', () => {
     expect(res.body.error).toMatch(/profile was removed.*Auth removal was not confirmed/i);
   });
 
-  it('stops removal when a cleanup step fails before deleting Auth', async () => {
-    const { client, deleteUserSpy, attendanceNullSpy } = makeMockAdminClient();
-    attendanceNullSpy.mockImplementationOnce(async () => ({ error: { message: 'failed' } }) as never);
+  it('fails closed when the guarded cleanup RPC is missing or fails', async () => {
+    const { client, deleteUserSpy, rpcSpy } = makeMockAdminClient();
+    rpcSpy.mockImplementationOnce(async () => ({ data: null, error: { message: 'RPC missing' } }) as never);
     const res = await deleteTeamAccount({ callerId: 'founder-1', targetUserId: 'sup-1', adminClient: client });
     expect(res.body.ok).toBe(false);
-    expect(res.body.error).toMatch(/cleanup was not confirmed/i);
+    expect(res.body.error).toMatch(/Auth removal was not attempted/i);
     expect(deleteUserSpy).not.toHaveBeenCalled();
+  });
+
+  it('reports an unknown RPC outcome without attempting Auth deletion', async () => {
+    const { client, deleteUserSpy, rpcSpy } = makeMockAdminClient();
+    rpcSpy.mockImplementationOnce(async () => { throw new Error('lost response'); });
+    const res = await deleteTeamAccount({ callerId: 'founder-1', targetUserId: 'sup-1', adminClient: client });
+    expect(res.body.ok).toBe(false);
+    expect(res.body.error).toMatch(/check the profile and audit/i);
+    expect(deleteUserSpy).not.toHaveBeenCalled();
+  });
+
+  it('does not update Auth when the guarded profile update fails', async () => {
+    const { client, rpcSpy, updateUserByIdSpy } = makeMockAdminClient();
+    rpcSpy.mockImplementationOnce(async () => ({ data: null, error: { message: 'RPC missing' } }) as never);
+    const res = await updateTeamAccount({ callerId: 'founder-1', input: { userId: 'sup-1', name: 'Test User' }, adminClient: client });
+    expect(res.body.ok).toBe(false);
+    expect(updateUserByIdSpy).not.toHaveBeenCalled();
   });
 });
 

@@ -1,5 +1,7 @@
 # Applying the BALE migrations to a live Supabase project
 
+> **Team accounts:** the current bundles also include the Founder guard. Follow [TEAM_ACCOUNT_OPERATIONS.md](TEAM_ACCOUNT_OPERATIONS.md) for maintenance, deployment order, staging and recovery.
+
 > **Payroll/Bale deployment:** the current bundles include a breaking financial-write migration. Follow [ATOMIC_PAYROLL_ROLLOUT.md](ATOMIC_PAYROLL_ROLLOUT.md) for staging, maintenance, reconciliation and recovery before applying them. A committed migration is not undone by the bundle transaction.
 
 Written for project `mchkdkjntnbwrgmyobpd`. Everything here is read-only until
@@ -223,7 +225,7 @@ npm run build:apply-sql
    still commits as a whole. Harmless.)
 5. Expect `Success. No rows returned` — this is DDL, not a query.
 
-The `upgrade-hardening.sql` bundle includes the security and AI hardening, the Bale request workflow, durable request notifications, and batch approval:
+The `upgrade-hardening.sql` bundle includes the security and AI hardening, the Bale request workflow, durable request notifications, batch approval, atomic payroll and Founder protection:
 
 | Section | Effect |
 | --- | --- |
@@ -234,6 +236,8 @@ The `upgrade-hardening.sql` bundle includes the security and AI hardening, the B
 | `20261006000001` | `expenses.vendor`, two indexes, `vendor_memory`, `record_vendor_outcome()`, drops the dead `ai_approval_suggestion` column |
 | `20261013000000` | Supervisor-submitted `advance_requests` with RLS, audit logging, Founder-only approval/rejection, and atomic payment-to-issued-advance RPC |
 | `20261013000001` | Recipient-only persistent request notifications, submission/status triggers, and Founder-only same-site batch approval (approval remains separate from payment) |
+| `20261102000000` | Atomic payroll and advance deduction protections; follow the payroll rollout guide |
+| `20261102000001` | Last-Founder guard and atomic profile cleanup RPCs; follow the team account operations guide |
 
 §3 changes the *grantee* of every existing policy from `PUBLIC` (which includes
 `anon`) to `authenticated`. Signed-in behaviour is unchanged — the `USING`
@@ -274,6 +278,7 @@ returns one row per check; **every row must say PASS**:
 | RLS helpers pin `search_path` | `security definer` helper is shadowable |
 | receipts bucket is private | bucket is still public |
 | receipt_url holds storage paths | rows still hold `http(s)://` values |
+| Founder profile protection installed | inspect guard objects, trigger state and RPC grants; test on staging |
 | at least one Founder profile | nobody can sign in as Founder yet (step 6) |
 | no orphaned profiles | a `public.users` row has no matching `auth.users` row |
 

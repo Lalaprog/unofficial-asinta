@@ -48,7 +48,7 @@ const BUNDLES = [
       'The 2026-10-06 security/AI hardening plus the 2026-10-13 Bale request\n' +
       'workflow and follow-up: private receipts + audit log, vendor memory,\n' +
       'Founder-reviewed advances, durable per-user notifications, and atomic\n' +
-      'same-site batch approval, and transactional payroll payments. Requires the\n' +
+      'same-site batch approval, transactional payroll, and Founder protection. Requires the\n' +
       'base BALE schema and communications\n' +
       'migration to already be present.',
     include: (name) =>
@@ -56,7 +56,8 @@ const BUNDLES = [
       name === '20261006000001_ai_draft_support.sql' ||
       name === '20261013000000_advance_requests.sql' ||
       name === '20261013000001_advance_request_notifications.sql' ||
-      name === '20261102000000_atomic_payroll_payments.sql',
+      name === '20261102000000_atomic_payroll_payments.sql' ||
+      name === '20261102000001_founder_guard.sql',
   },
 ];
 

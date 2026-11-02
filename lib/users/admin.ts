@@ -89,6 +89,7 @@ export interface MinimalAdminSupabaseClient {
     };
   };
   from: (table: string) => any;
+  rpc: (name: string, args: Record<string, unknown>) => PromiseLike<{ data: any; error: { message: string } | null }>;
 }
 
 export interface CreateTeamAccountInput {
@@ -529,19 +530,19 @@ export async function updateTeamAccount(params: {
     return { status: 400, body: { ok: false, error: 'Enter a valid payroll rate from 0 to 99,999,999.99 with at most two decimal places.' } };
   }
 
-  // Update `public.users`.
-  const { data: updatedUser, error: updateError } = await adminClient
-    .from('users')
-    .update({ name: nextName, role: nextRole })
-    .eq('id', targetUserId)
-    .select('id, name, email, role, created_at')
-    .single();
-
-  if (updateError || !updatedUser) {
-    return {
-      status: 500,
-      body: { ok: false, error: updateError?.message || 'Failed to update team account.' },
-    };
+  // The database re-checks actor and last-Founder invariants under a
+  // transaction lock. Missing migration or an unconfirmed result fails closed.
+  let updateResult: Awaited<ReturnType<MinimalAdminSupabaseClient['rpc']>>;
+  try {
+    updateResult = await adminClient.rpc('update_team_profile_guarded', {
+      p_actor: callerId, p_target: targetUserId, p_name: nextName, p_role: nextRole,
+    });
+  } catch {
+    return { status: 500, body: { ok: false, error: 'Profile update not confirmed. Refresh and check the account before retrying; Auth was not updated.' } };
+  }
+  const { data: updatedUser, error: updateError } = updateResult;
+  if (updateError || !updatedUser || updatedUser.id !== targetUserId) {
+    return { status: 500, body: { ok: false, error: `Profile update not confirmed: ${updateError?.message || 'unexpected database response'}. Refresh and check the account before retrying.` } };
   }
 
   // Update `auth.users` metadata (and temporary password if requested).
@@ -691,46 +692,25 @@ export async function deleteTeamAccount(params: {
     }
   }
 
-  // These are separate Auth and database requests, not a transaction. Stop on
-  // failure and report partial completion; never claim login was removed if
-  // the Auth request failed or had an unknown outcome.
-  const cleanupSteps: Array<[string, () => PromiseLike<{ error: { message: string } | null }>]> = [
-    ['attendance attribution', () => adminClient.from('attendance').update({ recorded_by: null }).eq('recorded_by', cleanTargetId)],
-    ['expense attribution', () => adminClient.from('expenses').update({ created_by: null }).eq('created_by', cleanTargetId)],
-    ['template attribution', () => adminClient.from('email_templates').update({ updated_by: null }).eq('updated_by', cleanTargetId)],
-    ['email attribution', () => adminClient.from('email_logs').update({ sent_by: null }).eq('sent_by', cleanTargetId)],
-    ['project assignments', () => adminClient.from('project_supervisors').delete().eq('supervisor_id', cleanTargetId)],
-    ['payroll roster', () => adminClient.from('workers').update({ active: false }).eq('id', cleanTargetId)],
-  ];
-  for (const [label, operation] of cleanupSteps) {
-    try {
-      const { error } = await operation();
-      if (error) throw error;
-    } catch {
-      return { status: 500, body: { ok: false, error: `Removal stopped: ${label} cleanup was not confirmed. Earlier changes may have been applied. Check the account, assignments and ledger before retrying.` } };
-    }
+  // Cleanup, profile removal and audit are one database transaction. A
+  // missing RPC or ambiguous response never falls back to the legacy writes.
+  let profileResult: Awaited<ReturnType<MinimalAdminSupabaseClient['rpc']>>;
+  try {
+    profileResult = await adminClient.rpc('delete_team_profile_guarded', {
+      p_actor: callerId, p_target: cleanTargetId,
+    });
+  } catch {
+    return { status: 500, body: { ok: false, error: 'Profile removal not confirmed. Check the profile and audit before retrying; Auth removal was not attempted.' } };
+  }
+  const { data: deletedProfile, error: profileError } = profileResult;
+  if (profileError || !deletedProfile || deletedProfile.id !== cleanTargetId) {
+    return { status: 500, body: { ok: false, error: `Profile removal not confirmed: ${profileError?.message || 'unexpected database response'}. Check the profile and audit before retrying; Auth removal was not attempted.` } };
   }
 
-  // Remove the profile first: RLS and app authorization depend on that row.
-  // If Auth removal fails, report the orphan explicitly for administrator
-  // cleanup; do not claim that authentication was revoked.
-  const { error: deleteProfileError } = await adminClient.from('users').delete().eq('id', cleanTargetId);
-  if (deleteProfileError) {
-    return { status: 500, body: { ok: false, error: 'BALE profile removal was not confirmed. Earlier cleanup may have applied. Check the account, assignments and payroll roster before retrying.' } };
-  }
-  // Record the confirmed profile deletion even if Auth removal then fails.
-  const auditRes = await writeUserAuditEntry(adminClient, {
-    actorId: callerId,
-    actorEmail: callerEmail ?? null,
-    action: 'delete',
-    recordId: cleanTargetId,
-    before: targetUser as Record<string, unknown>,
-    after: null,
-  });
   const authDelete = await adminClient.auth.admin.deleteUser(cleanTargetId)
     .catch(() => ({ data: null, error: { message: 'request failed' } }));
   if (authDelete.error) {
-    return { status: 500, body: { ok: false, error: 'The BALE profile was removed but Auth removal was not confirmed. Administrator cleanup in Supabase Auth is required; do not assume login was revoked or blindly retry.', ...(auditRes.ok ? {} : { auditWarning: auditRes.error }) } };
+    return { status: 500, body: { ok: false, error: 'The BALE profile was removed but Auth removal was not confirmed. Administrator cleanup in Supabase Auth is required; do not assume login was revoked or blindly retry.' } };
   }
 
   return {
@@ -738,7 +718,6 @@ export async function deleteTeamAccount(params: {
     body: {
       ok: true,
       deletedUserId: cleanTargetId,
-      ...(auditRes.ok ? {} : { auditWarning: auditRes.error }),
     },
   };
 }

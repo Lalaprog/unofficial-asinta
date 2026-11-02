@@ -299,7 +299,7 @@ export default function UsersPage() {
           action={<Button variant="primary" size="sm" onClick={openCreateModal} leftIcon={<UserPlus className="w-4 h-4" />}>Add Member</Button>}
         />
         <p className="rounded-xl border border-status-warning/25 bg-status-warning-bg px-4 py-3 text-xs text-ink-secondary">
-          Coordinate Founder account changes one at a time. Last-Founder checks do not protect against simultaneous changes from different sessions.
+          Coordinate account changes one at a time. Database protection requires the Founder guard migration; Auth and roster changes are still separate and may need review after an error.
         </p>
         {actionWarnings.length > 0 && (
           <div role="alert" className="rounded-xl border border-status-warning/30 bg-status-warning-bg p-4 text-xs text-navy space-y-2">
