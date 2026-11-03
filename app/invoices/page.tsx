@@ -1,6 +1,7 @@
 'use client';
 
 import React, { useMemo, useState } from 'react';
+import * as DropdownMenu from '@radix-ui/react-dropdown-menu';
 import { AppShell } from '@/components/layout/AppShell';
 import { useDataStore } from '@/lib/data/store';
 import { Invoice, InvoiceStatus } from '@/types';
@@ -41,6 +42,84 @@ function getNextInvoiceNumber(invoices: Invoice[], year: number): string {
   }, 0);
 
   return `${prefix}${String(maxSequence + 1).padStart(3, '0')}`;
+}
+
+/** A portalled menu avoids clipping by the invoice list and never changes row height. */
+function InvoiceActionsMenu({
+  invoice,
+  open,
+  onOpenChange,
+  onRequest,
+  onSms,
+  onHistory,
+}: {
+  invoice: Invoice;
+  open: boolean;
+  onOpenChange: (open: boolean) => void;
+  onRequest: () => void;
+  onSms: () => void;
+  onHistory: () => void;
+}) {
+  const triggerRef = React.useRef<HTMLButtonElement>(null);
+  const handingOffRef = React.useRef(false);
+  const itemClass = 'flex min-h-11 cursor-pointer items-center gap-2.5 rounded-lg px-3 text-xs font-medium text-ink-secondary outline-none data-[highlighted]:bg-surface-inset data-[highlighted]:text-navy';
+
+  // Focus the trigger before launching a dialog so it has a valid return target.
+  // Prevent the menu's delayed exit autofocus from stealing focus back from it.
+  const selectAction = (action: () => void) => {
+    handingOffRef.current = true;
+    triggerRef.current?.focus();
+    action();
+  };
+
+  return (
+    <DropdownMenu.Root modal={false} open={open} onOpenChange={onOpenChange}>
+      <DropdownMenu.Trigger asChild>
+        <Button
+          ref={triggerRef}
+          type="button"
+          variant="ghost"
+          size="sm"
+          aria-label={`More actions for ${invoice.invoice_number}`}
+          leftIcon={<MoreHorizontal className="w-4 h-4" />}
+        >
+          More
+        </Button>
+      </DropdownMenu.Trigger>
+      <DropdownMenu.Portal>
+        <DropdownMenu.Content
+          aria-label={`More actions for ${invoice.invoice_number}`}
+          align="end"
+          sideOffset={6}
+          collisionPadding={{ top: 72, bottom: 96, left: 8, right: 8 }}
+          onCloseAutoFocus={(event) => {
+            if (handingOffRef.current) {
+              event.preventDefault();
+              handingOffRef.current = false;
+            }
+          }}
+          className="z-[60] w-60 max-w-[calc(100vw-1rem)] max-h-[var(--radix-dropdown-menu-content-available-height)] overflow-y-auto rounded-xl border border-surface-border bg-white p-1.5 shadow-xl motion-safe:animate-dropdown-enter"
+        >
+          {invoice.status !== 'paid' && invoice.status !== 'cancelled' && (
+            <>
+              <DropdownMenu.Item className={itemClass} onSelect={() => selectAction(onRequest)}>
+                <Mail className="h-4 w-4 shrink-0" aria-hidden="true" />
+                Send payment request
+              </DropdownMenu.Item>
+              <DropdownMenu.Item className={itemClass} onSelect={() => selectAction(onSms)}>
+                <Send className="h-4 w-4 shrink-0" aria-hidden="true" />
+                Send SMS reminder
+              </DropdownMenu.Item>
+            </>
+          )}
+          <DropdownMenu.Item className={itemClass} onSelect={() => selectAction(onHistory)}>
+            <History className="h-4 w-4 shrink-0" aria-hidden="true" />
+            Email history
+          </DropdownMenu.Item>
+        </DropdownMenu.Content>
+      </DropdownMenu.Portal>
+    </DropdownMenu.Root>
+  );
 }
 
 const today = () => new Date().toISOString().split('T')[0];
@@ -388,74 +467,23 @@ export default function InvoicesPage() {
                         </Button>
                       )}
 
-                      <Button
-                        type="button"
-                        variant="ghost"
-                        size="sm"
-                        aria-label={`More actions for ${inv.invoice_number}`}
-                        aria-expanded={expandedInvoiceActions === inv.id}
-                        aria-controls={
-                          expandedInvoiceActions === inv.id ? `invoice-actions-${inv.id}` : undefined
+                      <InvoiceActionsMenu
+                        invoice={inv}
+                        open={expandedInvoiceActions === inv.id}
+                        onOpenChange={(open) =>
+                          setExpandedInvoiceActions((current) => open ? inv.id : current === inv.id ? null : current)
                         }
-                        onClick={() =>
-                          setExpandedInvoiceActions((current) =>
-                            current === inv.id ? null : inv.id
-                          )
-                        }
-                        leftIcon={<MoreHorizontal className="w-4 h-4" />}
-                      >
-                        More
-                      </Button>
+                        onRequest={() => {
+                          setSelectedInvoice(inv);
+                          setIsEmailModalOpen(true);
+                        }}
+                        onSms={() => { void openSmsModal(inv); }}
+                        onHistory={() => {
+                          setSelectedInvoice(inv);
+                          setIsEmailHistoryOpen(true);
+                        }}
+                      />
                     </div>
-
-                    {expandedInvoiceActions === inv.id && (
-                      <div
-                        id={`invoice-actions-${inv.id}`}
-                        role="group"
-                        aria-label={`More actions for ${inv.invoice_number}`}
-                        className="flex w-full flex-wrap gap-2 rounded-lg border border-surface-border bg-surface p-2 lg:w-auto lg:justify-end"
-                      >
-                        {inv.status !== 'paid' && inv.status !== 'cancelled' && (
-                          <>
-                            <Button
-                              variant="ghost"
-                              size="sm"
-                              onClick={() => {
-                                setSelectedInvoice(inv);
-                                setIsEmailModalOpen(true);
-                                setExpandedInvoiceActions(null);
-                              }}
-                              leftIcon={<Mail className="w-3.5 h-3.5" />}
-                            >
-                              Send payment request
-                            </Button>
-                            <Button
-                              variant="ghost"
-                              size="sm"
-                              onClick={() => {
-                                setExpandedInvoiceActions(null);
-                                void openSmsModal(inv);
-                              }}
-                              leftIcon={<Send className="w-3.5 h-3.5" />}
-                            >
-                              Send SMS reminder
-                            </Button>
-                          </>
-                        )}
-                        <Button
-                          variant="ghost"
-                          size="sm"
-                          onClick={() => {
-                            setSelectedInvoice(inv);
-                            setIsEmailHistoryOpen(true);
-                            setExpandedInvoiceActions(null);
-                          }}
-                          leftIcon={<History className="w-3.5 h-3.5" />}
-                        >
-                          Email history
-                        </Button>
-                      </div>
-                    )}
                   </div>
                 </div>
               );
