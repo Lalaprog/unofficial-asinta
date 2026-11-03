@@ -519,6 +519,8 @@ export default function FounderDashboard() {
     tools,
     clients,
     projects,
+    isLoaded,
+    loadError,
     sendSMS,
   } = useDataStore();
 
@@ -603,9 +605,24 @@ export default function FounderDashboard() {
   };
 
   const activeProject = metrics.selectedProject;
+
+  // A refresh can remove a selected project (completed, deleted or no longer
+  // in the loaded snapshot). Clear it only after a successful load so the
+  // controls cannot keep a stale selection that the metrics no longer use.
+  useEffect(() => {
+    if (isLoaded && !loadError && selectedProjectId && !activeProject) {
+      setSelectedProjectId(null);
+    }
+  }, [isLoaded, loadError, selectedProjectId, activeProject]);
+
   const scopeKey = activeProject ? activeProject.id : 'all-projects';
   const oldestOverdueInvoice = metrics.receivables.overdueInvoices[0];
   const currentProjectCount = metrics.projects.length;
+  const projectNameCounts = new Map<string, number>();
+  metrics.projects.forEach((project) => {
+    const key = project.name.trim().toLocaleLowerCase();
+    projectNameCounts.set(key, (projectNameCounts.get(key) ?? 0) + 1);
+  });
   const scopedProjects = activeProject ? [activeProject] : metrics.projects;
   const projectsWithoutEstimateCount = scopedProjects.filter(
     (project) => project.budgetEstimate <= 0
@@ -680,6 +697,32 @@ export default function FounderDashboard() {
             <p className="mt-2 text-[11px] font-medium text-ink-muted">
               Snapshot as of {formatDatePH(metrics.asOfDate)}
             </p>
+            <div className="mt-3 flex w-full max-w-sm min-w-0 items-center gap-2">
+              <label htmlFor="dashboard-project-scope" className="shrink-0 text-[11px] font-semibold text-ink-secondary">
+                Project scope
+              </label>
+              <select
+                id="dashboard-project-scope"
+                value={activeProject?.id ?? ''}
+                onChange={(event) => setSelectedProjectId(event.target.value || null)}
+                aria-describedby="dashboard-project-scope-hint"
+                aria-busy={!isLoaded}
+                disabled={!isLoaded}
+                className="min-h-11 w-full min-w-0 rounded-lg border border-[#ded7c9] bg-white px-3 py-2 text-base font-medium text-navy transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand focus-visible:ring-offset-2 disabled:opacity-60 sm:text-sm"
+              >
+                <option value="">All projects</option>
+                {metrics.projects.map((project) => (
+                  <option key={project.id} value={project.id}>
+                    {(projectNameCounts.get(project.name.trim().toLocaleLowerCase()) ?? 0) > 1
+                      ? `${project.name} — ${project.location || 'No location'} · ${project.id}`
+                      : project.name}
+                  </option>
+                ))}
+              </select>
+            </div>
+            <p id="dashboard-project-scope-hint" className="mt-1 text-[10px] text-ink-muted">
+              Current project options come from loaded data.
+            </p>
           </div>
 
           <div className="relative z-10 flex shrink-0 flex-wrap items-center gap-2">
@@ -727,7 +770,7 @@ export default function FounderDashboard() {
                       Client balances due
                     </h2>
                     <p className="mt-0.5 truncate text-[11px] text-ink-muted">
-                      {activeProject ? activeProject.name : `Across ${currentProjectCount} current projects`}
+                      {activeProject ? activeProject.name : 'Across all projects'}
                     </p>
                   </div>
                   {metrics.receivables.overdueInvoiceCount > 0 ? (
@@ -1121,7 +1164,7 @@ export default function FounderDashboard() {
                 <div className="mt-2.5 rounded-xl border border-[#e6dfd2] bg-[#faf8f3] px-3 py-2">
                   <div className="flex items-center justify-between gap-2">
                     <p className="truncate text-sm font-semibold text-navy">
-                      {activeProject ? activeProject.name : 'All current projects'}
+                      {activeProject ? activeProject.name : 'All projects'}
                     </p>
                     {activeProject && (
                       <Badge size="sm" variant={getProjectStatusVariant(activeProject.status)}>
@@ -1136,7 +1179,7 @@ export default function FounderDashboard() {
                             ? `${activeProject.spendPercent}% budget used`
                             : 'No estimate set'
                         }`
-                      : `Combined view across ${currentProjectCount} active & planning sites`}
+                      : `Choose from ${currentProjectCount} loaded current sites`}
                   </p>
                 </div>
 
@@ -1148,10 +1191,10 @@ export default function FounderDashboard() {
                 >
                   <button
                     type="button"
-                    aria-pressed={selectedProjectId === null}
+                    aria-pressed={!activeProject}
                     onClick={() => setSelectedProjectId(null)}
                     className={`flex min-h-9 w-full items-center justify-between gap-2 rounded-lg border px-2.5 py-1.5 text-left text-xs transition-all duration-150 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand focus-visible:ring-offset-2 ${
-                      selectedProjectId === null
+                      !activeProject
                         ? 'border-navy bg-navy text-white shadow-sm'
                         : 'border-[#e8e1d4] bg-white/90 text-navy hover:border-brand/40 hover:bg-[#faf8f3]'
                     }`}
@@ -1159,15 +1202,15 @@ export default function FounderDashboard() {
                     <span className="flex min-w-0 items-center gap-2 font-semibold">
                       <span
                         className={`h-2 w-2 shrink-0 rounded-full ${
-                          selectedProjectId === null ? 'bg-white' : 'bg-brand'
+                          !activeProject ? 'bg-white' : 'bg-brand'
                         }`}
                         aria-hidden="true"
                       />
-                      <span className="truncate">All current projects</span>
+                      <span className="truncate">All projects</span>
                     </span>
                     <span
                       className={`shrink-0 rounded px-1.5 py-0.5 text-[10px] font-semibold tabular-nums ${
-                        selectedProjectId === null
+                        !activeProject
                           ? 'bg-white/15 text-white'
                           : 'bg-[#f3EFE6] text-ink-secondary'
                       }`}

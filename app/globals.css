@@ -392,7 +392,8 @@
 .dashboard-register { container: register / inline-size; }
 
 @container dashboard (min-width: 70rem) {
-  .dashboard-summary-grid { grid-template-columns: repeat(4, minmax(0, 1fr)); }
+  /* Outrank the responsive two-column utility emitted later by Tailwind. */
+  .dashboard-summary-grid.dashboard-summary-grid { grid-template-columns: repeat(4, minmax(0, 1fr)); }
 }
 @container dashboard (min-width: 62rem) {
   .dashboard-detail-grid { grid-template-columns: minmax(18rem, 0.86fr) minmax(0, 2.14fr); }
