@@ -25,6 +25,7 @@ import { useAuth } from '@/lib/auth/authContext';
 import { useToast } from '@/components/ui/Toast';
 import { writeAuditEntry, auditFailureMessage, type AuditEntry } from '@/lib/audit/log';
 import { confirmProjectDeletion } from '@/lib/projects/delete';
+import { parsePayrollInputSnapshot } from '@/lib/payroll/inputSnapshot';
 
 interface DataStoreContextType {
   // State (loaded from live Supabase PostgreSQL)
@@ -1080,21 +1081,49 @@ export const DataStoreProvider: React.FC<{ children: React.ReactNode }> = ({ chi
       return null;
     }
 
-    const targetProject =
-      projectId && projectId !== 'all' ? projects.find((p) => p.id === projectId) : undefined;
+    // Never fall back to the capped shared store: the RPC reads all relevant
+    // inputs in one server-side snapshot and fails if its safety limits are exceeded.
+    let snapshot;
+    try {
+      const { data, error } = await supabase.rpc('payroll_input_snapshot', {
+        p_period_start: periodStart,
+        p_period_end: periodEnd,
+        p_project_id: projectId && projectId !== 'all' ? projectId : null,
+      });
+      if (error) throw new Error(error.message);
+      const input = parsePayrollInputSnapshot(data);
+      snapshot = {
+        attendance: input.attendance.map(mapAttendance),
+        workers: input.workers.map(mapWorker),
+        projects: input.projects.map(mapProject),
+        users: input.users,
+        advances: input.advances.map(mapAdvance),
+        payroll: input.payroll.map(mapPayroll),
+      };
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'Could not load payroll inputs.';
+      showToast('error', `Payroll not generated: ${message}`);
+      return null;
+    }
+    const targetProject = projectId && projectId !== 'all'
+      ? snapshot.projects.find((p) => p.id === projectId)
+      : undefined;
+    if (projectId && projectId !== 'all' && !targetProject) {
+      showToast('error', 'Payroll not generated: the selected project is unavailable. Refresh and choose a valid site.');
+      return null;
+    }
 
-    // Separate new vouchers from existing draft vouchers for the exact same
-    // (worker_id, period_start, period_end) so clicking "Generate Payroll Run"
-    // repeatedly NEVER creates duplicate payslips for the same period.
+    // Reuse exact-period draft/reviewed vouchers visible in this snapshot.
+    // Concurrent runs are not serialized and can still create duplicates.
     const rowsToInsert: Array<Omit<Payroll, 'id' | 'created_at'>> = [];
     const rowsToUpdate: Array<{ id: string; before: Payroll; patch: Partial<Payroll> }> = [];
     let skippedFinalizedCount = 0;
     let unverifiedSupervisorSelfCount = 0;
 
-    workers
+    snapshot.workers
       .filter((w) => w.active)
       .forEach((w) => {
-        const rawWorkerAtt = attendance.filter(
+        const rawWorkerAtt = snapshot.attendance.filter(
           (a) =>
             a.worker_id === w.id &&
             a.date >= periodStart &&
@@ -1107,7 +1136,7 @@ export const DataStoreProvider: React.FC<{ children: React.ReactNode }> = ({ chi
         // toward payroll disbursement.
         const isSupervisorWorker =
           w.position.toLowerCase().includes('supervisor') ||
-          users.some(
+          snapshot.users.some(
             (u) =>
               u.role === 'supervisor' &&
               (u.id === w.id ||
@@ -1153,7 +1182,7 @@ export const DataStoreProvider: React.FC<{ children: React.ReactNode }> = ({ chi
 
         const gross = w.pay_rate_type === 'daily' ? effectiveDays * w.pay_rate : hoursTotal * w.pay_rate;
 
-        const activeBales = advances.filter(
+        const activeBales = snapshot.advances.filter(
           (adv) =>
             adv.worker_id === w.id &&
             (adv.status === 'active' || adv.status === 'partially_deducted') &&
@@ -1178,7 +1207,7 @@ export const DataStoreProvider: React.FC<{ children: React.ReactNode }> = ({ chi
 
         const siteIds = Array.from(new Set(workerAtt.map((a) => a.project_id)));
         const siteNames = siteIds
-          .map((pid) => projects.find((p) => p.id === pid)?.name)
+          .map((pid) => snapshot.projects.find((p) => p.id === pid)?.name)
           .filter(Boolean) as string[];
         const siteLabel = targetProject
           ? ` — Site: ${targetProject.name}`
@@ -1186,7 +1215,7 @@ export const DataStoreProvider: React.FC<{ children: React.ReactNode }> = ({ chi
             ? ` — Site: ${siteNames.join(', ')}`
             : '';
 
-        const existingForPeriod = payroll.find(
+        const existingForPeriod = snapshot.payroll.find(
           (p) =>
             p.worker_id === w.id &&
             p.period_start === periodStart &&
@@ -1204,7 +1233,7 @@ export const DataStoreProvider: React.FC<{ children: React.ReactNode }> = ({ chi
             patch: {
               gross_pay: Math.round(gross),
               bale_deduction: suggestedDeduction,
-              net_pay: Math.round(net),
+              net_pay: Math.round(Math.max(0, gross - suggestedDeduction - existingForPeriod.other_deductions)),
               days_worked: effectiveDays,
               hours_worked: hoursTotal,
               notes: `Auto-computed from ${effectiveDays} days attendance${siteLabel}`,
@@ -1232,7 +1261,7 @@ export const DataStoreProvider: React.FC<{ children: React.ReactNode }> = ({ chi
       if (skippedFinalizedCount > 0) {
         showToast(
           'info',
-          `Payroll for ${periodStart} → ${periodEnd} is already approved/paid (${skippedFinalizedCount} voucher${skippedFinalizedCount === 1 ? '' : 's'}). No duplicate vouchers created.`
+          `Payroll for ${periodStart} → ${periodEnd} is already approved/paid (${skippedFinalizedCount} voucher${skippedFinalizedCount === 1 ? '' : 's'}). No changes were submitted for those finalized vouchers.`
         );
       } else if (unverifiedSupervisorSelfCount > 0) {
         showToast(
@@ -1243,8 +1272,8 @@ export const DataStoreProvider: React.FC<{ children: React.ReactNode }> = ({ chi
         showToast(
           'error',
           targetProject
-            ? `No submitted attendance found for ${targetProject.name} in ${periodStart} → ${periodEnd}.`
-            : `No submitted attendance found in ${periodStart} → ${periodEnd}. Record site attendance first.`
+            ? `No eligible attendance found for ${targetProject.name} in ${periodStart} → ${periodEnd}.`
+            : `No eligible attendance found in ${periodStart} → ${periodEnd}. Check active workers and submitted attendance.`
         );
       }
       return null;
@@ -1254,7 +1283,8 @@ export const DataStoreProvider: React.FC<{ children: React.ReactNode }> = ({ chi
 
     if (rowsToInsert.length > 0) {
       const inserted = await runMutation('Create payroll run', (db) =>
-        db.from('payroll').insert(rowsToInsert).select()
+        db.from('payroll').insert(rowsToInsert).select(),
+        'Could not confirm the payroll run. Refresh and inspect vouchers and audit entries before retrying.'
       );
       if (!inserted) return null;
       const mappedInserted = (inserted as any[]).map(mapPayroll).reverse();
@@ -1269,16 +1299,22 @@ export const DataStoreProvider: React.FC<{ children: React.ReactNode }> = ({ chi
         });
       }
       resultingRows.push(...mappedInserted);
+      if (mappedInserted.length !== rowsToInsert.length) {
+        showToast('error', 'Payroll response was incomplete. Some vouchers may have been created without audit entries. Refresh and inspect the ledger and audit before retrying.');
+        await refresh();
+        return null;
+      }
     }
 
+    let failedUpdates = 0;
     if (rowsToUpdate.length > 0) {
       for (const item of rowsToUpdate) {
         const updatedRow = await runMutation('Recalculate draft payroll', (db) =>
-          db.from('payroll').update(item.patch).eq('id', item.id).select().single()
+          db.from('payroll').update(item.patch).eq('id', item.id).eq('status', item.before.status).select().single()
         );
         if (updatedRow) {
           const mappedUpdated = mapPayroll(updatedRow);
-          setPayroll((prev) => prev.map((p) => (p.id === item.id ? mappedUpdated : p)));
+          setPayroll((prev) => prev.some((p) => p.id === item.id) ? prev.map((p) => (p.id === item.id ? mappedUpdated : p)) : [mappedUpdated, ...prev]);
           await recordAudit({
             action: 'update',
             table: 'payroll',
@@ -1287,8 +1323,16 @@ export const DataStoreProvider: React.FC<{ children: React.ReactNode }> = ({ chi
             after: mappedUpdated as unknown as Record<string, unknown>,
           });
           resultingRows.push(mappedUpdated);
+        } else {
+          failedUpdates += 1;
         }
       }
+    }
+
+    if (failedUpdates > 0) {
+      showToast('error', `Could not confirm ${failedUpdates} voucher update(s). Refresh and inspect the ledger and audit before retrying.`);
+      await refresh();
+      return null;
     }
 
     if (rowsToInsert.length > 0 && rowsToUpdate.length > 0) {
@@ -1299,7 +1343,7 @@ export const DataStoreProvider: React.FC<{ children: React.ReactNode }> = ({ chi
     } else if (rowsToUpdate.length > 0) {
       showToast(
         'success',
-        `Refreshed ${rowsToUpdate.length} existing draft payroll voucher(s) for ${periodStart} → ${periodEnd} (no duplicates created).`
+        `Refreshed ${rowsToUpdate.length} existing draft payroll voucher(s) for ${periodStart} → ${periodEnd}.`
       );
     } else {
       showToast('success', `Generated ${rowsToInsert.length} payroll voucher(s) for ${periodStart} → ${periodEnd}.`);
