@@ -263,7 +263,7 @@ function IssuedAdvancesPanel() {
           </div>
         </div>
 
-        <p className="text-xs leading-relaxed text-ink-secondary">Summary reflects the selected project; search and status filters apply to the list below.</p>
+        <p className="text-xs leading-relaxed text-ink-secondary">Summary reflects loaded advances for the selected project; older records may be missing. Search and status filters apply to the list below.</p>
 
         <WorkspaceFilters title="Find an issued advance" summary={<FilterSummary count={filteredAdvances.length} itemName="advance" active={Boolean(searchQuery) || projectFilter !== 'all' || statusFilter !== 'all'} onClear={() => { setSearchQuery(''); setProjectFilter('all'); setStatusFilter('all'); }} />}>
           <div className="flex flex-col sm:flex-row flex-wrap sm:items-end gap-3">
@@ -317,11 +317,14 @@ function IssuedAdvancesPanel() {
               const proj = projects.find((p) => p.id === adv.project_id);
               const balance = adv.amount - adv.amount_deducted;
 
+              const canRecordDeduction = balance > 0 && (adv.status === 'active' || adv.status === 'partially_deducted');
               const statusBadgeVariant =
                 adv.status === 'fully_deducted'
                   ? 'success'
                   : adv.status === 'partially_deducted'
                   ? 'warning'
+                  : adv.status === 'cancelled'
+                  ? 'neutral'
                   : 'navy';
 
               return (
@@ -335,7 +338,7 @@ function IssuedAdvancesPanel() {
                       <span className="font-bold text-sm text-navy">{worker?.name}</span>
                       <span className="text-xs text-ink-secondary">({worker?.position})</span>
                       <Badge variant={statusBadgeVariant} size="sm">
-                        {adv.status.replace('_', ' ')}
+                        {{active: 'Active', partially_deducted: 'Partially deducted', fully_deducted: 'Fully deducted', cancelled: 'Cancelled'}[adv.status]}
                       </Badge>
                     </div>
 
@@ -361,7 +364,7 @@ function IssuedAdvancesPanel() {
                     </div>
 
                     <div>
-                      <div className="text-ink-secondary">Remaining Balance</div>
+                      <div className="text-ink-secondary">{adv.status === 'cancelled' ? 'Undeducted amount (cancelled)' : 'Remaining Balance'}</div>
                       <div className={`font-bold text-sm mt-0.5 ${balance > 0 ? 'text-status-warning' : 'text-slate-400'}`}>
                         {formatPeso(balance)}
                       </div>
@@ -370,7 +373,7 @@ function IssuedAdvancesPanel() {
 
                   {/* Right Actions */}
                   <div className="flex items-center space-x-2">
-                    {balance > 0 && (
+                    {canRecordDeduction && (
                       <Button
                         variant="soft"
                         size="sm"
@@ -405,7 +408,7 @@ function IssuedAdvancesPanel() {
         dismissOnEscape={!isAdding}
         showCloseButton={!isAdding}
         title="Record Worker Advance (Bale)"
-        description="Log an advance disbursement. This will be automatically factored into upcoming payroll deductions."
+        description="Record money already given to the worker as an issued advance. Eligible balances may be considered when generating payroll; this does not transfer money."
         maxWidth="lg"
       >
         <form onSubmit={handleAddSubmit} className="space-y-4 text-xs">

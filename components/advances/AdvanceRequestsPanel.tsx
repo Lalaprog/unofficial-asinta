@@ -18,8 +18,29 @@ import { Check, ChevronDown, HandCoins, X } from 'lucide-react';
 function requestStatusLabel(status: AdvanceRequestStatus): string {
   if (status === 'pending_approval') return 'Awaiting approval';
   if (status === 'approved_pending_payment') return 'Approved · awaiting payment';
-  if (status === 'issued') return 'Issued';
+  if (status === 'issued') return 'Issued · payment confirmed';
   return 'Rejected';
+}
+
+// Describe the recorded request state only; this is not independent proof of
+// a transfer and cannot rule out separate, manually recorded advances.
+function requestStatusDescription(status: AdvanceRequestStatus): string {
+  switch (status) {
+    case 'pending_approval': return 'Waiting for the Founder’s decision. This request has not been issued.';
+    case 'approved_pending_payment': return 'Approved, but payment and issue have not been confirmed.';
+    case 'issued': return 'Payment confirmation and an issued advance were recorded.';
+    case 'rejected': return 'Rejected. This request did not create an issued advance.';
+  }
+}
+
+function requestActivity(request: AdvanceRequest): { label: string; date: string }[] {
+  const entries = [{ label: 'Request submitted', date: request.created_at }];
+  if ((request.status === 'approved_pending_payment' || request.status === 'issued') && request.approved_at) {
+    entries.push({ label: 'Approval recorded', date: request.approved_at });
+  }
+  if (request.status === 'rejected' && request.rejected_at) entries.push({ label: 'Rejection recorded', date: request.rejected_at });
+  if (request.status === 'issued' && request.issued_at) entries.push({ label: 'Issue confirmation recorded', date: request.issued_at });
+  return entries;
 }
 
 function requestStatusVariant(status: AdvanceRequestStatus) {
@@ -390,6 +411,19 @@ export function AdvanceRequestsPanel() {
                 Submitted by {submitter?.name || 'Supervisor'}
               </p>
             )}
+            <p className="max-w-lg text-xs leading-relaxed text-ink-secondary">{requestStatusDescription(request.status)}</p>
+            <details className="group/activity text-xs">
+              <summary className="inline-flex min-h-11 cursor-pointer items-center gap-1.5 rounded-md font-semibold text-brand focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand">
+                Status dates <span className="sr-only">for {worker?.name || 'worker'} · {formatPeso(request.requested_amount)}</span>
+                <ChevronDown aria-hidden="true" className="h-3.5 w-3.5 transition-transform group-open/activity:rotate-180" />
+              </summary>
+              <ul className="space-y-1 pb-1 text-ink-secondary">
+                {requestActivity(request).map((event) => (
+                  <li key={event.label}>{event.label}: {formatDatePH(event.date) || 'Date unavailable'}</li>
+                ))}
+              </ul>
+              <p className="pb-1 text-[11px] leading-relaxed text-ink-muted">Dates are recorded status changes in Manila time, not a payment receipt.</p>
+            </details>
           </div>
         </div>
 
@@ -529,7 +563,7 @@ export function AdvanceRequestsPanel() {
       )}
 
       {isFounder && (
-        <p className="text-xs leading-relaxed text-ink-secondary">Summary covers all sites and is not affected by the request filters below.</p>
+        <p className="text-xs leading-relaxed text-ink-secondary">Summary covers loaded requests across all sites and is not affected by the filters below. Older requests may be missing from the loaded history.</p>
       )}
       {isFounder && (
         <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
@@ -610,32 +644,41 @@ export function AdvanceRequestsPanel() {
         </div>
       )}
 
+      <p className="text-xs leading-relaxed text-ink-secondary">The list shows loaded requests only; older requests may not appear and statuses can change. Check the records before retrying an unconfirmed action.</p>
+
+      {focusedRequestId && (
+        <div className="flex flex-wrap items-center justify-between gap-2 rounded-lg border border-surface-border bg-white px-3 py-2 text-xs text-ink-secondary">
+          <span>Showing a linked request.</span>
+          <Button type="button" size="sm" variant="ghost" onClick={clearRequestFocus}>Back to filtered requests</Button>
+        </div>
+      )}
+
       {visibleRequests.length === 0 ? (
         <Card className="p-8 text-center">
           <HandCoins className="mx-auto h-7 w-7 text-ink-muted" aria-hidden="true" />
           <p className="mt-2 text-sm font-semibold text-navy">
-            {isFounder
-              ? focusedRequestId
-                ? 'This Bale request is unavailable'
-                : founderStatusFilter === 'needs_action'
-                  ? 'No requests need action'
-                  : 'No requests match these filters'
-              : requestFilter === 'open'
-                ? 'No open requests'
-                : 'No Bale requests yet'}
+            {focusedRequestId
+              ? 'This Bale request is not in the loaded list'
+              : isFounder
+                ? founderStatusFilter === 'needs_action'
+                  ? 'No loaded requests need action'
+                  : 'No loaded requests match these filters'
+                : requestFilter === 'open'
+                  ? 'No loaded open requests'
+                  : 'No loaded Bale requests'}
           </p>
           <p className="mt-1 text-xs text-ink-secondary">
-            {isFounder
-              ? focusedRequestId
-                ? 'The request may have been removed or is no longer available to this account.'
-                : siteFilter === 'all'
-                  ? 'New Supervisor submissions will appear in this queue.'
+            {focusedRequestId
+              ? 'This request may be outside the loaded history or unavailable to this account.'
+              : isFounder
+                ? siteFilter === 'all'
+                  ? 'New Supervisor submissions appear here when loaded; check other records if a request is missing.'
                   : 'Try another site or request status.'
-              : accessibleProjects.length === 0
-                ? 'Ask the Founder to assign a project before submitting a request.'
-                : activeWorkers.length === 0
-                  ? 'Ask the Founder to add or activate a worker first.'
-                  : 'Use “New Bale Request” to submit a worker’s requested amount.'}
+                : accessibleProjects.length === 0
+                  ? 'Ask the Founder to assign a project before submitting a request.'
+                  : activeWorkers.length === 0
+                    ? 'Ask the Founder to add or activate a worker first.'
+                    : 'Use “New Bale Request” to submit a worker’s requested amount.'}
           </p>
         </Card>
       ) : isFounder ? (
@@ -714,7 +757,7 @@ export function AdvanceRequestsPanel() {
                       <span className="break-words">{group.siteName}</span>
                     </button>
                     <div className="shrink-0 pt-1 text-right">
-                      <span className="block text-[10px] font-medium text-ink-muted">Shown total</span>
+                      <span className="block text-[10px] font-medium text-ink-muted">Shown requested total</span>
                       <p className="text-xs font-semibold tabular-nums text-navy">
                         {formatPesoCompact(groupTotal)}
                       </p>
@@ -723,6 +766,8 @@ export function AdvanceRequestsPanel() {
                   <p className="ml-6 break-words text-[11px] leading-relaxed text-ink-secondary">
                     {group.requests.length} shown · {pendingGroupRequests.length} awaiting approval · {approvedGroupCount} awaiting payment
                   </p>
+
+                  <p className="ml-6 text-[11px] leading-relaxed text-ink-muted">Shown total adds requested amounts in this view, including any issued or rejected requests; it is not an amount due.</p>
 
                   {pendingGroupRequests.length > 0 && (
                     <label className={`mt-2 inline-flex min-h-11 items-center gap-2 rounded-lg px-2 text-xs font-medium ${
@@ -945,6 +990,9 @@ export function AdvanceRequestsPanel() {
                   {formatPeso(request.requested_amount)} · {projects.find((project) => project.id === request.project_id)?.name || 'Project'}
                 </div>
               </div>
+              <p className="rounded-lg border border-status-warning/20 bg-status-warning-bg/50 px-3 py-2.5 leading-relaxed text-ink-secondary">
+                This records an issued advance eligible for payroll deduction. It does not transfer money; confirm only after the worker has received it.
+              </p>
               <div className="flex flex-col-reverse gap-2 sm:flex-row sm:justify-end">
                 <Button type="button" variant="secondary" onClick={() => setRequestToIssue(null)} disabled={Boolean(actioningRequestId)}>
                   Not yet
