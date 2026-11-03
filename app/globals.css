@@ -185,6 +185,30 @@
     animation: asintaDropdown 0.16s cubic-bezier(0.16, 1, 0.3, 1) both;
   }
 
+  /* The transform origin is measured from the bell by Radix, on both layouts.
+     Exit reverses the same short path; it is never driven by a touch gesture. */
+  .notification-popover {
+    --notification-collapsed-scale: 0.985;
+    /* Full-bleed mobile sheet: originate at the bell, not the shifted panel edge. */
+    transform-origin: calc(100% - 90px) 0;
+  }
+  .notification-popover[data-state='open'] {
+    animation: asintaNotificationOpen 0.22s cubic-bezier(0.16, 1, 0.3, 1) both;
+  }
+  .notification-popover[data-state='closed'] {
+    animation: asintaNotificationClose 0.16s cubic-bezier(0.4, 0, 1, 1) both;
+  }
+  @media (min-width: 640px) and (max-width: 1023px) {
+    .notification-popover { transform-origin: calc(100% - 98px) 0; }
+  }
+  @media (min-width: 1024px) {
+    .notification-popover {
+      --notification-collapsed-scale: 0.96;
+      /* Right-aligned popover: half the bell width back from the shared right edge. */
+      transform-origin: calc(100% - var(--radix-popover-trigger-width, 44px) / 2) -8px;
+    }
+  }
+
   .animate-card-rise {
     animation: asintaCardRise 0.34s cubic-bezier(0.16, 1, 0.3, 1) both;
     animation-delay: var(--rise-delay, 0ms);
@@ -277,6 +301,28 @@
   to {
     opacity: 1;
     transform: translateY(0) scale(1);
+  }
+}
+
+@keyframes asintaNotificationOpen {
+  from {
+    opacity: 0;
+    transform: translateY(-6px) scale(var(--notification-collapsed-scale));
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+}
+
+@keyframes asintaNotificationClose {
+  from {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+  to {
+    opacity: 0;
+    transform: translateY(-6px) scale(var(--notification-collapsed-scale));
   }
 }
 

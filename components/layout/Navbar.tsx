@@ -10,9 +10,6 @@ import {
   ChevronDown,
   Bell,
   ArrowRight,
-  RefreshCw,
-  X,
-  CheckCheck,
   Compass,
   HardHat,
   LayoutDashboard,
@@ -34,27 +31,15 @@ import {
 import { Badge } from '@/components/ui/Badge';
 import { BaleLogo } from '@/components/ui/AsintaLogo';
 import { AsintaLoader } from '@/components/ui/AsintaLoader';
-import { Modal } from '@/components/ui/Modal';
+import * as Popover from '@radix-ui/react-popover';
+import { NotificationsPanel, type ActionNotification } from './NotificationsPanel';
 import { formatPesoCompact } from '@/lib/email/format';
 import { useManilaToday } from '@/lib/dates/useManilaToday';
+import { getNewestNotificationTimestamp } from '@/lib/notifications/time';
 
 interface NavbarProps {
   onToggleMobileMenu?: () => void;
   showDesktopNavigation?: boolean;
-}
-
-interface ActionNotification {
-  id: string;
-  signature: string;
-  title: string;
-  description: string;
-  actionLabel: string;
-  href: string;
-  variant: 'warning' | 'danger' | 'info' | 'success';
-  actionable?: boolean;
-  priority?: number;
-  dismissOnClick?: boolean;
-  notificationIds?: string[];
 }
 
 interface NavDropdownItem {
@@ -69,97 +54,6 @@ interface NavDropdownGroup {
   label: string;
   items: NavDropdownItem[];
 }
-
-interface NotificationCardProps {
-  item: ActionNotification;
-  compact?: boolean;
-  onOpen: (item: ActionNotification) => void;
-  onDismiss: (item: ActionNotification) => void;
-}
-
-function getNotificationTypeLabel(variant: ActionNotification['variant']): string {
-  if (variant === 'danger') return 'Urgent';
-  if (variant === 'warning') return 'Action';
-  if (variant === 'success') return 'Synced';
-  return 'Info';
-}
-
-const NotificationCard: React.FC<NotificationCardProps> = ({
-  item,
-  compact = false,
-  onOpen,
-  onDismiss,
-}) => (
-  <article className={compact ? 'py-3' : 'py-2'}>
-    {compact ? (
-      <div className="rounded-xl px-2 py-1 transition-colors hover:bg-surface/70">
-        <div className="flex items-center justify-between gap-2">
-          <Badge variant={item.variant} size="sm">
-            {getNotificationTypeLabel(item.variant)}
-          </Badge>
-          <button
-            type="button"
-            onClick={() => onDismiss(item)}
-            className="inline-flex min-h-11 min-w-11 shrink-0 items-center justify-center rounded-full text-ink-muted transition-colors hover:bg-surface-inset hover:text-navy focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand focus-visible:ring-offset-2"
-            title="Dismiss notification"
-            aria-label={`Dismiss ${item.title}`}
-          >
-            <X className="h-4 w-4" />
-          </button>
-        </div>
-        <button
-          type="button"
-          onClick={() => onOpen(item)}
-          className="mt-1 block min-h-11 w-full rounded-lg py-2 text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand focus-visible:ring-inset"
-        >
-          <span className="block break-words text-sm font-semibold leading-snug text-navy">
-            {item.title}
-          </span>
-          <span className="mt-1 block break-words text-[13px] leading-relaxed text-ink-secondary">
-            {item.description}
-          </span>
-          <span className="mt-3 inline-flex min-h-10 w-full items-center justify-between gap-2 rounded-lg bg-surface-inset/80 px-3 text-xs font-semibold text-brand">
-            <span className="break-words text-left">{item.actionLabel}</span>
-            <ArrowRight className="h-4 w-4 shrink-0" aria-hidden="true" />
-          </span>
-        </button>
-      </div>
-    ) : (
-      <div className="flex items-start gap-2 rounded-lg px-2 py-2 transition-colors hover:bg-surface">
-        <button
-          type="button"
-          onClick={() => onOpen(item)}
-          className="min-w-0 flex-1 whitespace-normal rounded-md text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand"
-        >
-          <span className="block break-words font-semibold leading-snug text-navy">
-            {item.title}
-          </span>
-          <span className="mt-1 block break-words text-[12px] leading-relaxed text-ink-secondary">
-            {item.description}
-          </span>
-          <span className="mt-1.5 inline-flex items-center gap-1 text-[11px] font-semibold text-brand">
-            <span>{item.actionLabel}</span>
-            <ArrowRight className="h-3 w-3" aria-hidden="true" />
-          </span>
-        </button>
-        <div className="flex shrink-0 items-center gap-1">
-          <Badge variant={item.variant} size="sm">
-            {getNotificationTypeLabel(item.variant)}
-          </Badge>
-          <button
-            type="button"
-            onClick={() => onDismiss(item)}
-            className="inline-flex min-h-11 min-w-11 items-center justify-center rounded-lg border border-transparent text-ink-muted transition-colors hover:bg-white hover:text-navy focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand"
-            title="Dismiss notification"
-            aria-label={`Dismiss ${item.title}`}
-          >
-            <X className="h-3.5 w-3.5" />
-          </button>
-        </div>
-      </div>
-    )}
-  </article>
-);
 
 const FOUNDER_DROPDOWN_GROUPS: NavDropdownGroup[] = [
   {
@@ -350,7 +244,8 @@ export const Navbar: React.FC<NavbarProps> = ({ showDesktopNavigation = true }) 
     return () => window.removeEventListener('bale:attendance-tab', onTabEvent);
   }, []);
 
-  // Close popovers on outside click or Escape.
+  // Close account/navigation popovers on outside click or Escape. Radix owns
+  // notification dismissal so its exit animation and focus behavior stay intact.
   useEffect(() => {
     const handleClickOutside = (event: MouseEvent) => {
       const target = event.target;
@@ -367,10 +262,10 @@ export const Navbar: React.FC<NavbarProps> = ({ showDesktopNavigation = true }) 
     };
     const handleEscape = (event: KeyboardEvent) => {
       if (event.key !== 'Escape') return;
-      // The shared Modal owns Escape handling and focus restoration for the sheet.
-      if (showNotifications && isCompactViewport) return;
-      if (showNotifications) notificationButtonRef.current?.focus();
-      else if (showUserMenu) accountMenuButtonRef.current?.focus();
+      // The notification popover owns Escape and immediate focus restoration
+      // on both layouts, including while its exit preview is still mounted.
+      if (showNotifications) return;
+      if (showUserMenu) accountMenuButtonRef.current?.focus();
       setOpenDropdownId(null);
       setShowUserMenu(false);
       setShowNotifications(false);
@@ -381,7 +276,7 @@ export const Navbar: React.FC<NavbarProps> = ({ showDesktopNavigation = true }) 
       document.removeEventListener('mousedown', handleClickOutside);
       document.removeEventListener('keydown', handleEscape);
     };
-  }, [isCompactViewport, showNotifications, showUserMenu]);
+  }, [showNotifications, showUserMenu]);
 
   useEffect(() => {
     if (!storageKey || typeof window === 'undefined') return;
@@ -542,6 +437,8 @@ export const Navbar: React.FC<NavbarProps> = ({ showDesktopNavigation = true }) 
         actionable: true,
         priority: 1,
         notificationIds: eventIds,
+        occurredAt: getNewestNotificationTimestamp(siteNotifications.map((event) => event.created_at)),
+        timestampPrefix: 'Latest',
       });
     });
 
@@ -674,22 +571,19 @@ export const Navbar: React.FC<NavbarProps> = ({ showDesktopNavigation = true }) 
         const requestQuery = notification.advance_request_id
           ? `&request=${encodeURIComponent(notification.advance_request_id)}`
           : '';
-        const createdDate = new Date(notification.created_at).toLocaleDateString('en-PH', {
-          month: 'short',
-          day: 'numeric',
-        });
 
         allNotifications.push({
           id: `supervisor-bale-${notification.id}`,
           signature: `supervisor-bale:${notification.id}`,
           title: eventCopy.title,
-          description: `${workerName}’s request for ${formatPHP(notification.requested_amount)} at ${siteName} ${eventCopy.message} ${createdDate}.`,
+          description: `${workerName}’s request for ${formatPHP(notification.requested_amount)} at ${siteName} ${eventCopy.message}`,
           actionLabel: eventCopy.actionLabel,
           href: `/advances?tab=requests${requestQuery}`,
           variant: eventCopy.variant,
           actionable: true,
           priority: 1,
           notificationIds: [notification.id],
+          occurredAt: notification.created_at,
         });
       });
 
@@ -740,6 +634,8 @@ export const Navbar: React.FC<NavbarProps> = ({ showDesktopNavigation = true }) 
         return Date.parse(record.submitted_at) > Date.parse(latest.submitted_at) ? record : latest;
       }, null);
     if (latestOverride) {
+      // This is a derived reminder about a record, not a stored notification
+      // event. Its attendance timestamp is not an alert creation time.
       const workerName = workers.find((worker) => worker.id === latestOverride.worker_id)?.name;
       const projectName = projects.find((project) => project.id === latestOverride.project_id)?.name;
       allNotifications.push({
@@ -793,65 +689,6 @@ export const Navbar: React.FC<NavbarProps> = ({ showDesktopNavigation = true }) 
       : isFounder
         ? 'Founder updates'
         : 'Site updates';
-
-  const renderNotificationControls = () => (
-    <div className="flex shrink-0 items-center gap-1">
-      {visibleNotifications.length > 0 && (
-        <button
-          type="button"
-          onClick={handleClearAll}
-          className="inline-flex min-h-11 items-center gap-1.5 rounded-full px-2.5 text-[11px] font-medium text-ink-secondary transition-colors hover:bg-surface-inset hover:text-navy focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand focus-visible:ring-offset-2"
-          title="Clear all notifications"
-        >
-          <CheckCheck className="h-3.5 w-3.5" />
-          <span>Clear all</span>
-        </button>
-      )}
-      <button
-        type="button"
-        onClick={handleManualSync}
-        disabled={isRefreshing}
-        className="inline-flex min-h-11 min-w-11 items-center justify-center rounded-full text-ink-secondary transition-colors hover:bg-surface-inset hover:text-navy disabled:opacity-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand focus-visible:ring-offset-2"
-        title="Sync now"
-        aria-label="Sync notifications now"
-        aria-busy={isRefreshing}
-      >
-        <RefreshCw className={`h-3.5 w-3.5 ${isRefreshing ? 'animate-spin text-brand' : ''}`} />
-      </button>
-    </div>
-  );
-
-  const renderNotificationList = (compact = false) => (
-    <div className="divide-y divide-surface-border/70 text-xs">
-      {visibleNotifications.map((item) => (
-        <NotificationCard
-          key={item.id}
-          item={item}
-          compact={compact}
-          onOpen={handleNotificationClick}
-          onDismiss={dismissNotification}
-        />
-      ))}
-
-      {visibleNotifications.length === 0 && (
-        <div className="space-y-2 px-4 py-7 text-center">
-          <CheckCheck className="mx-auto h-5 w-5 text-status-success" aria-hidden="true" />
-          <p className="text-xs font-medium text-ink-secondary">
-            All clear — nothing needs attention right now.
-          </p>
-          {dismissedCount > 0 && (
-            <button
-              type="button"
-              onClick={handleRestoreDismissed}
-              className="inline-flex min-h-11 items-center justify-center rounded-full px-3 text-[11px] font-semibold text-brand transition-colors hover:bg-surface-inset focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand focus-visible:ring-offset-2"
-            >
-              Show {dismissedCount} cleared notification{dismissedCount === 1 ? '' : 's'}
-            </button>
-          )}
-        </div>
-      )}
-    </div>
-  );
 
   return (
     <>
@@ -1012,68 +849,63 @@ export const Navbar: React.FC<NavbarProps> = ({ showDesktopNavigation = true }) 
 
           {/* Right: Notification Bell & Role Icon Account Menu */}
           <div className="flex items-center space-x-2 shrink-0">
-            {/* Notifications button */}
-            <div className="relative">
-              <button
-                type="button"
-                onClick={() => {
-                  setShowNotifications(!showNotifications);
+            {/* One anchored, non-modal surface on desktop and mobile. */}
+            <Popover.Root
+              open={showNotifications}
+              onOpenChange={(open) => {
+                setShowNotifications(open);
+                if (open) {
                   setShowUserMenu(false);
                   setOpenDropdownId(null);
-                }}
-                ref={notificationButtonRef}
-                className={`relative inline-flex min-h-11 min-w-11 items-center justify-center rounded-full text-ink-secondary transition-colors active:scale-95 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand focus-visible:ring-offset-2 ${
-                  showNotifications
-                    ? 'bg-surface-inset text-brand'
-                    : 'hover:bg-surface-inset hover:text-brand'
-                }`}
-                aria-label={
-                  actionableNotificationCount > 0
-                    ? `${actionableNotificationCount} actionable notification${actionableNotificationCount === 1 ? '' : 's'}`
-                    : 'Notifications'
                 }
-                aria-expanded={showNotifications}
-                aria-controls={showNotifications ? 'navbar-notifications-panel' : undefined}
-              >
-                <Bell className="w-4 h-4" />
-                {actionableNotificationCount > 0 && (
-                  <span
-                    aria-hidden="true"
-                    className="absolute -top-1 -right-1 min-w-[18px] h-[18px] px-1 bg-status-warning text-navy text-[10px] font-bold rounded-full ring-2 ring-white flex items-center justify-center"
-                  >
-                    {actionableNotificationCount > 99 ? '99+' : actionableNotificationCount}
-                  </span>
-                )}
-              </button>
-
-              {showNotifications && !isCompactViewport && (
-                <div
-                  id="navbar-notifications-panel"
-                  role="region"
-                  aria-labelledby="navbar-notifications-title"
-                  className="absolute right-0 top-full z-50 mt-2 w-96 max-w-[calc(100vw-2rem)] rounded-xl border border-surface-border bg-white p-2.5 shadow-lg animate-dropdown-enter sm:p-3"
+              }}
+            >
+              <Popover.Trigger asChild>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setShowUserMenu(false);
+                    setOpenDropdownId(null);
+                  }}
+                  ref={notificationButtonRef}
+                  className={`relative inline-flex min-h-11 min-w-11 items-center justify-center rounded-full text-ink-secondary transition-colors motion-safe:active:scale-95 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand focus-visible:ring-offset-2 ${
+                    showNotifications
+                      ? 'bg-surface-inset text-brand'
+                      : 'hover:bg-surface-inset hover:text-brand'
+                  }`}
+                  aria-label={
+                    actionableNotificationCount > 0
+                      ? `${actionableNotificationCount} actionable notification${actionableNotificationCount === 1 ? '' : 's'}`
+                      : 'Notifications'
+                  }
+                  aria-controls={showNotifications ? 'navbar-notifications-panel' : undefined}
                 >
-                  <div className="flex items-center justify-between gap-2 border-b border-surface-border pb-2.5">
-                    <div className="flex min-w-0 items-center gap-2">
-                      <h4 id="navbar-notifications-title" className="truncate text-sm font-semibold text-navy">
-                        {notificationHeading}
-                      </h4>
-                      <span
-                        className="inline-flex shrink-0 items-center gap-1 text-[10px] font-medium text-status-success"
-                        title="Live Supabase Realtime and background sync are active"
-                      >
-                        <span aria-hidden="true" className="h-1.5 w-1.5 rounded-full bg-status-success animate-pulse" />
-                        Live
-                      </span>
-                    </div>
-                    {renderNotificationControls()}
-                  </div>
-                  <div className="mt-1 max-h-[min(70vh,32rem)] overflow-y-auto overscroll-contain">
-                    {renderNotificationList()}
-                  </div>
-                </div>
-              )}
-            </div>
+                  <Bell className="w-4 h-4" aria-hidden="true" />
+                  {actionableNotificationCount > 0 && (
+                    <span
+                      aria-hidden="true"
+                      className="absolute -top-1 -right-1 min-w-[18px] h-[18px] px-1 bg-status-warning text-white text-[10px] font-bold rounded-full ring-2 ring-white flex items-center justify-center"
+                    >
+                      {actionableNotificationCount > 99 ? '99+' : actionableNotificationCount}
+                    </span>
+                  )}
+                </button>
+              </Popover.Trigger>
+              <NotificationsPanel
+                open={showNotifications}
+                compact={isCompactViewport}
+                heading={notificationHeading}
+                items={visibleNotifications}
+                dismissedCount={dismissedCount}
+                isRefreshing={isRefreshing}
+                anchorRef={notificationButtonRef}
+                onClearAll={handleClearAll}
+                onRestoreDismissed={handleRestoreDismissed}
+                onSync={handleManualSync}
+                onOpenItem={handleNotificationClick}
+                onDismiss={dismissNotification}
+              />
+            </Popover.Root>
 
             {/* Role Icon Account Menu (Single unified place for Profile & Sign Out) */}
             <div className="relative">
@@ -1158,34 +990,6 @@ export const Navbar: React.FC<NavbarProps> = ({ showDesktopNavigation = true }) 
           </div>
         </div>
       </header>
-
-      {isCompactViewport && (
-        <Modal
-          isOpen={showNotifications}
-          onClose={() => setShowNotifications(false)}
-          title={notificationHeading}
-          description="Updates for your role and assigned sites."
-          maxWidth="full"
-          presentation="top-sheet"
-        >
-          <div
-            id="navbar-notifications-panel"
-            className="space-y-2"
-          >
-            <div className="flex items-center justify-between gap-2 border-b border-surface-border/70 pb-2">
-              <span
-                className="inline-flex shrink-0 items-center gap-1.5 text-[11px] font-medium text-status-success"
-                title="Live Supabase Realtime and background sync are active"
-              >
-                <span aria-hidden="true" className="h-1.5 w-1.5 rounded-full bg-status-success animate-pulse" />
-                Live updates
-              </span>
-              {renderNotificationControls()}
-            </div>
-            {renderNotificationList(true)}
-          </div>
-        </Modal>
-      )}
     </>
   );
 };

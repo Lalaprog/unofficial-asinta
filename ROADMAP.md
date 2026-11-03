@@ -95,6 +95,24 @@ production credentials. **Open** = known work, deliberately deferred.
   with environment overrides and are reported by `/api/integrations/status`,
   because Groq retired both model IDs this app had been using.
 
+## Done — notifications usability
+
+- **One bell-anchored panel.** Desktop and mobile now share a non-modal Radix
+  popover. Mobile is a translucent, blurred top-bar extension; desktop is a
+  right-aligned popover. Opening and closing animate from/to the bell, with no
+  finger-following gesture (the More panel keeps its drag behavior). Reduced
+  motion removes the animation. The closing preview is inert and focus returns
+  to the bell on Escape/Close.
+- **Trustworthy event ages.** Stored Bale notifications show “just now”,
+  seconds, minutes, hours, days, then a Philippine date. Site groups label the
+  newest stored event as “Latest”. Generated reminders (missing roll call,
+  draft payroll, overdue billing, attendance overrides) intentionally have no
+  invented creation timestamp. Missing/invalid times are omitted; future source
+  times are disclosed as clock skew rather than shown as new.
+- **Still open:** notification history is still the shared client store, not a
+  scalable server-side feed. Attendance/workforce/SMS server-side loading and
+  the other reliability items below remain separate work.
+
 ## Open — security (deliberately deferred)
 
 - **Upgrade off Next 14.x (its own PR).** 14.x receives no more security
@@ -142,6 +160,5 @@ production credentials. **Open** = known work, deliberately deferred.
 
 - `store.tsx` and component tests (coverage is server-logic only).
 - Adopt `isSupabaseConfigured()` fail-fast path in more entry points if needed.
-- Navbar timestamp still uses a raw `toLocaleString` (datetime, not currency).
 - Automated data-retention purge (see `docs/PRIVACY.md` §5) — manual review is
   the current answer.
