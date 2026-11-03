@@ -24,7 +24,7 @@
   body {
     background-color: #F7F9FC;
     color: #172033;
-    font-family: ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+    font-family: 'Inter Variable', ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
     letter-spacing: -0.005em;
     -webkit-font-smoothing: antialiased;
     -moz-osx-font-smoothing: grayscale;
@@ -165,6 +165,10 @@
     animation: asintaPanelEnter 0.2s cubic-bezier(0.16, 1, 0.3, 1) backwards;
   }
 
+  .animate-launcher-up {
+    animation: asintaLauncherUp 0.3s cubic-bezier(0.16, 1, 0.3, 1) backwards;
+  }
+
   .animate-dialog-enter {
     animation: asintaDialogEnter 0.18s cubic-bezier(0.16, 1, 0.3, 1) backwards;
   }
@@ -230,8 +234,18 @@
 }
 
 @keyframes asintaPanelEnter {
-  from { opacity: 0.45; }
+  from { opacity: 0.25; }
   to { opacity: 1; }
+}
+
+@keyframes asintaPanelLift {
+  from { opacity: 0.25; transform: translateY(8px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+@keyframes asintaLauncherUp {
+  from { opacity: 0.6; transform: translateY(18px); }
+  to { opacity: 1; transform: translateY(0); }
 }
 
 @keyframes asintaDialogEnter {
@@ -301,6 +315,13 @@
     stroke-dasharray: 40 160;
     stroke-dashoffset: -200;
   }
+}
+
+@media (max-width: 1023px) {
+  .animate-panel-enter { animation-duration: 0.28s; }
+  /* Applied only to sections without fixed-position dialogs inside them. */
+  .animate-panel-lift { animation-name: asintaPanelLift; }
+  .animate-mobile-lift { animation: asintaPanelLift 0.28s cubic-bezier(0.16, 1, 0.3, 1) backwards; }
 }
 
 /* Respect the operating system's reduced-motion preference. The app uses

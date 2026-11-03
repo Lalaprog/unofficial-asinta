@@ -744,7 +744,7 @@ export default function FounderDashboard() {
                 </div>
 
                 <p className="mt-3 break-words text-2xl font-semibold tracking-tight text-navy sm:text-[28px]">
-                  <AnimatedPeso amount={metrics.receivables.outstanding} />
+                  <AnimatedPeso amount={metrics.receivables.outstanding} className="font-serif" />
                 </p>
 
                 {/* Health split progress bar */}
@@ -876,7 +876,7 @@ export default function FounderDashboard() {
 
                 <div className="mt-2.5 flex items-baseline justify-between gap-2">
                   <p className="break-words text-2xl font-semibold tracking-tight text-navy sm:text-[28px]">
-                    <AnimatedPeso amount={metrics.payroll.approvedUnpaid} />
+                    <AnimatedPeso amount={metrics.payroll.approvedUnpaid} className="font-serif" />
                   </p>
                   <span className="shrink-0 text-[11px] font-medium text-ink-secondary">
                     <AnimatedInteger value={metrics.payroll.approvedUnpaidCount} /> approved to pay
@@ -980,7 +980,7 @@ export default function FounderDashboard() {
                 </div>
 
                 <p className="mt-3 break-words text-2xl font-semibold tracking-tight text-navy sm:text-[28px]">
-                  <AnimatedPeso amount={metrics.projectRecordedExpensesTotal} />
+                  <AnimatedPeso amount={metrics.projectRecordedExpensesTotal} className="font-serif" />
                 </p>
 
                 {/* Overall Budget Utilization Progress Bar */}

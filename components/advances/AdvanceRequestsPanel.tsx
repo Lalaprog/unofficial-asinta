@@ -441,7 +441,7 @@ export function AdvanceRequestsPanel() {
   return (
     <div className="space-y-4">
       <div
-        className={`flex flex-col gap-3 rounded-2xl border p-4 sm:flex-row sm:items-center sm:justify-between sm:p-5 ${
+        className={`animate-mobile-lift flex flex-col gap-3 rounded-2xl border p-4 sm:flex-row sm:items-center sm:justify-between sm:p-5 ${
           isSupervisor
             ? 'border-brand/15 bg-gradient-to-br from-white via-white to-brand/5'
             : 'border-surface-border bg-white'

@@ -64,7 +64,7 @@ function AdvancesPageContent() {
               aria-controls="advances-panel"
               aria-pressed={activeTab === 'requests'}
               onClick={() => selectTab('requests')}
-              className={`min-h-11 rounded-lg px-4 text-xs font-semibold transition-[color,background-color,border-color,transform] duration-150 motion-safe:active:scale-[0.98] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand ${
+              className={`min-h-11 rounded-lg px-4 text-xs font-semibold transition-[color,background-color,border-color,transform] duration-200 motion-safe:active:scale-[0.96] sm:motion-safe:active:scale-[0.98] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand ${
                 activeTab === 'requests'
                   ? 'bg-navy text-white'
                   : 'border border-surface-border bg-white text-ink-secondary hover:bg-surface-inset hover:text-navy'
@@ -78,7 +78,7 @@ function AdvancesPageContent() {
               aria-controls="advances-panel"
               aria-pressed={activeTab === 'issued'}
               onClick={() => selectTab('issued')}
-              className={`min-h-11 rounded-lg px-4 text-xs font-semibold transition-[color,background-color,border-color,transform] duration-150 motion-safe:active:scale-[0.98] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand ${
+              className={`min-h-11 rounded-lg px-4 text-xs font-semibold transition-[color,background-color,border-color,transform] duration-200 motion-safe:active:scale-[0.96] sm:motion-safe:active:scale-[0.98] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand ${
                 activeTab === 'issued'
                   ? 'bg-navy text-white'
                   : 'border border-surface-border bg-white text-ink-secondary hover:bg-surface-inset hover:text-navy'
@@ -221,7 +221,7 @@ function IssuedAdvancesPanel() {
   return (
     <div className="space-y-6">
         {/* Header */}
-        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pb-3 border-b border-surface-border/60">
+        <div className="animate-mobile-lift flex flex-col sm:flex-row sm:items-center justify-between gap-3 pb-3 border-b border-surface-border/60">
           <div>
             <h2 className="text-lg sm:text-xl font-semibold text-navy tracking-tight">
               Worker Advances (&ldquo;Bale&rdquo;)
@@ -245,7 +245,7 @@ function IssuedAdvancesPanel() {
         <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 auto-rows-fr">
           <div className="h-full p-4 sm:p-5 rounded-xl bg-white border border-surface-border flex flex-col justify-between">
             <div className="text-xs font-medium text-ink-secondary">Active Bale Balance</div>
-            <div className="text-2xl font-bold text-navy mt-1 tabular-nums break-words">{formatPHP(totalOutstandingBale)}</div>
+            <div className="font-serif text-2xl font-semibold text-navy mt-1 tabular-nums break-words">{formatPHP(totalOutstandingBale)}</div>
           </div>
 
           <div className="h-full p-4 sm:p-5 rounded-xl bg-white border border-surface-border flex flex-col justify-between">
@@ -257,7 +257,7 @@ function IssuedAdvancesPanel() {
 
           <div className="h-full p-4 sm:p-5 rounded-xl bg-white border border-surface-border flex flex-col justify-between">
             <div className="text-xs font-medium text-ink-secondary">Deductions recorded (all statuses)</div>
-            <div className="text-2xl font-bold text-status-success mt-1 tabular-nums break-words">
+            <div className="font-serif text-2xl font-semibold text-status-success mt-1 tabular-nums break-words">
               {formatPHP(projectScopedAdvances.reduce((sum, a) => sum + Number(a.amount_deducted || 0), 0))}
             </div>
           </div>
