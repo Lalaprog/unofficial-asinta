@@ -378,3 +378,11 @@ See [SMS_HISTORY_ROLLOUT.md](SMS_HISTORY_ROLLOUT.md) before applying the
 individual SMS history migration. Do not blindly apply the complete upgrade
 bundle or run `supabase db push` against an existing project: hosted migration
 versions may differ, and other migrations require independent review.
+
+---
+
+## Payroll attendance matrix rollout
+
+See [PAYROLL_ATTENDANCE_MATRIX_ROLLOUT.md](PAYROLL_ATTENDANCE_MATRIX_ROLLOUT.md).
+Apply only the individual read-only matrix migration before the UI; never
+blindly run the full upgrade bundle or `supabase db push` on an existing project.

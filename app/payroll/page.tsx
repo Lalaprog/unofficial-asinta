@@ -23,6 +23,8 @@ import { Modal } from '@/components/ui/Modal';
 import { AsintaEmblem, AsintaWordmark } from '@/components/ui/AsintaLogo';
 import { formatPeso, formatPesoCompact } from '@/lib/email/format';
 import { formatRecordedWork } from '@/lib/payroll/display';
+import { AttendanceMatrix } from '@/components/payroll/AttendanceMatrix';
+import { getManilaClock } from '@/lib/reminders/scheduler';
 
 export default function PayrollPage() {
   const { showToast } = useToast();
@@ -50,8 +52,8 @@ export default function PayrollPage() {
   const [selectedPayroll, setSelectedPayroll] = useState<Payroll | null>(null);
 
   // Generate run state (defaults to the past 7 days through today)
-  const todayStr = new Date().toISOString().split('T')[0];
-  const weekAgoStr = new Date(Date.now() - 6 * 24 * 60 * 60 * 1000).toISOString().split('T')[0];
+  const todayStr = getManilaClock().dateIso;
+  const weekAgoStr = new Date(Date.parse(`${todayStr}T00:00:00Z`) - 6 * 24 * 60 * 60 * 1000).toISOString().slice(0, 10);
   const [periodStart, setPeriodStart] = useState(weekAgoStr);
   const [periodEnd, setPeriodEnd] = useState(todayStr);
   const [generateProjectId, setGenerateProjectId] = useState<string>('all');
@@ -184,6 +186,8 @@ export default function PayrollPage() {
           description="Review attendance-based vouchers, Bale deductions and worker payslips."
           action={<Button variant="primary" size="md" onClick={() => setIsGenerateModalOpen(true)} leftIcon={<Plus className="w-4 h-4" />}>New Payroll Run</Button>}
         />
+
+        <AttendanceMatrix start={periodStart} end={periodEnd} site={generateProjectId} setStart={setPeriodStart} setEnd={setPeriodEnd} setSite={setGenerateProjectId} projects={projects} />
 
         {/* Top Summary Cards */}
         <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 auto-rows-fr">
