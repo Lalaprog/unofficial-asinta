@@ -66,6 +66,7 @@ module.exports = {
       },
       fontFamily: {
         sans: [
+          'Inter Variable',
           'ui-sans-serif',
           'system-ui',
           '-apple-system',
@@ -74,6 +75,7 @@ module.exports = {
           'Roboto',
           'sans-serif',
         ],
+        serif: ['Source Serif 4 Variable', 'Georgia', 'serif'],
         mono: [
           'JetBrains Mono',
           'SFMono-Regular',
