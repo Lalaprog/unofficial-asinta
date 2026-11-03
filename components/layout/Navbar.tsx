@@ -36,6 +36,7 @@ import { BaleLogo } from '@/components/ui/AsintaLogo';
 import { AsintaLoader } from '@/components/ui/AsintaLoader';
 import { Modal } from '@/components/ui/Modal';
 import { formatPesoCompact } from '@/lib/email/format';
+import { useManilaToday } from '@/lib/dates/useManilaToday';
 
 interface NavbarProps {
   onToggleMobileMenu?: () => void;
@@ -499,7 +500,7 @@ export const Navbar: React.FC<NavbarProps> = ({ showDesktopNavigation = true }) 
 
   const formatPHP = formatPesoCompact;
   const now = new Date();
-  const todayStr = now.toISOString().split('T')[0];
+  const todayStr = useManilaToday();
 
   const allNotifications: ActionNotification[] = [];
 
