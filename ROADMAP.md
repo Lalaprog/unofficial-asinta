@@ -87,13 +87,8 @@ production credentials. **Open** = known work, deliberately deferred.
   as a base64 data URI (never a signed URL), 4 MB cap, current model IDs
   (`qwen/qwen3.8-27b`; Llama 4 Scout is retired on the free tier), degrade to
   manual entry with the reason shown.
-- **Track D — voice → draft.** Verified: `whisper-large-v3-turbo`, name-seeded
-  prompt built from real worker/project/supplier names (700-char cap under the
-  224-token limit), 20 MB guard, transcription is transcription — the draft still
-  has to pass the same no-invented-values gate as text.
-- **Model IDs are data, not code.** All three resolve through `lib/ai/models.ts`
-  with environment overrides and are reported by `/api/integrations/status`,
-  because Groq retired both model IDs this app had been using.
+- **Expense voice recording removed.** Receipt and text drafting remain; a receipt description is now a short editable, source-checked excerpt, with the complete model reading separate and uncertain fields left for review. The photo still goes to Groq for scanning.
+- **Model IDs are data, not code.** Text and vision models resolve through `lib/ai/models.ts` with environment overrides and are reported by `/api/integrations/status`.
 
 ## Done — server-backed Founder attendance approval queue
 

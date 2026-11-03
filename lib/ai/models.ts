@@ -23,8 +23,6 @@
  */
 
 export const GROQ_CHAT_ENDPOINT = 'https://api.groq.com/openai/v1/chat/completions';
-export const GROQ_TRANSCRIPTION_ENDPOINT =
-  'https://api.groq.com/openai/v1/audio/transcriptions';
 
 function modelFromEnv(name: string, fallback: string): string {
   return (process.env[name] || '').trim() || fallback;
@@ -38,15 +36,6 @@ export function getTextModel(): string {
 /** Vision model for receipt photos. */
 export function getVisionModel(): string {
   return modelFromEnv('GROQ_VISION_MODEL', 'qwen/qwen3.8-27b');
-}
-
-/**
- * Speech-to-text. `whisper-large-v3-turbo` is current and multilingual, which
- * matters here: site instructions arrive in Tagalog, English, and the Taglish
- * mixture of both.
- */
-export function getTranscriptionModel(): string {
-  return modelFromEnv('GROQ_TRANSCRIBE_MODEL', 'whisper-large-v3-turbo');
 }
 
 /**
@@ -72,56 +61,3 @@ export const VISION_FALLBACK_MODELS = ['meta-llama/llama-4-scout-17b-16e-instruc
  * to the vision model, and the UI says exactly that instead of failing vaguely.
  */
 export const VISION_MAX_IMAGE_BYTES = 4 * 1024 * 1024;
-
-/** Audio: 25 MB on the free tier, 100 MB on the developer tier. */
-export const TRANSCRIPTION_MAX_FILE_BYTES = 20 * 1024 * 1024;
-
-export const TRANSCRIPTION_ALLOWED_MIME_TYPES = [
-  'audio/flac',
-  'audio/mp3',
-  'audio/mp4',
-  'audio/m4a',
-  'audio/mpeg',
-  'audio/ogg',
-  'audio/wav',
-  'audio/webm',
-  'audio/x-m4a',
-  'audio/x-wav',
-  'video/webm', // MediaRecorder in some browsers reports webm audio as video/webm
-];
-
-/** Whisper's `prompt` parameter is capped at 224 tokens (~180 words). */
-export const TRANSCRIPTION_PROMPT_MAX_CHARS = 700;
-
-/**
- * Builds the Whisper context prompt from real firm data so proper nouns and
- * Taglish spellings transcribe correctly.
- *
- * Without this, "Danilo Magpantay" becomes "Daniel Magpante", "JMC Hardware"
- * becomes "JMZ hardware", and a supplier name in the ledger stops matching the
- * vendor memory. The prompt is context only — it is not instructions, and the
- * model cannot be made to invent a value from it.
- */
-export function buildTranscriptionPrompt(input: {
-  workerNames: string[];
-  projectNames: string[];
-  vendorNames: string[];
-}): string {
-  const parts: string[] = [
-    'Asinta Architects (Batangas, Philippines) site expense note. Speakers mix Filipino (Tagalog) and English.',
-  ];
-
-  const push = (label: string, values: string[]) => {
-    const cleaned = values.map((value) => value.trim()).filter(Boolean);
-    if (cleaned.length === 0) return;
-    parts.push(`${label}: ${cleaned.slice(0, 40).join(', ')}.`);
-  };
-
-  push('Workers', input.workerNames);
-  push('Projects', input.projectNames);
-  push('Suppliers', input.vendorNames);
-  parts.push('Transcribe verbatim, including Tagalog numbers and words such as kahapon, kanina, at, bale.');
-
-  // Hard cap: exceeding 224 tokens makes the API reject the request.
-  return parts.join(' ').slice(0, TRANSCRIPTION_PROMPT_MAX_CHARS);
-}

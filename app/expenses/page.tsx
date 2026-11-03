@@ -17,10 +17,7 @@ import {
   Check,
   Bot,
   Loader2,
-  Mic,
-  Square,
   AlertTriangle,
-  FileText,
   ScanLine,
   Info,
 } from 'lucide-react';
@@ -32,6 +29,7 @@ import { Badge } from '@/components/ui/Badge';
 import { Input, Textarea } from '@/components/ui/Input';
 import { Select } from '@/components/ui/Select';
 import { Modal } from '@/components/ui/Modal';
+import { ConfirmDialog } from '@/components/ui/ConfirmDialog';
 import { EmptyState } from '@/components/ui/EmptyState';
 import { AICategorizationResult } from '@/lib/ai/groq';
 import {
@@ -50,6 +48,7 @@ import {
 } from '@/lib/expenses/anomalies';
 import { EXPENSE_CATEGORY_LABELS } from '@/lib/ai/categories';
 import { resolveReceiptForSubmission } from '@/lib/expenses/receiptSubmission';
+import { VISION_MAX_IMAGE_BYTES } from '@/lib/ai/models';
 
 export default function ExpensesPage() {
   const { user } = useAuth();
@@ -76,7 +75,7 @@ export default function ExpensesPage() {
     project_id: '',
     description: '',
     amount: '',
-    category: 'materials' as ExpenseCategory,
+    category: 'materials' as ExpenseCategory | '',
     expense_date: new Date().toISOString().split('T')[0],
     notes: '',
     receipt_url: '' as string | null,
@@ -100,20 +99,16 @@ export default function ExpensesPage() {
   const [pendingReceiptFile, setPendingReceiptFile] = useState<File | null>(null);
   const [pendingReceiptPreview, setPendingReceiptPreview] = useState<string | null>(null);
 
-  // Track E / B / D: one messy line, a receipt photo, or a spoken note.
+  // Draft from a line of text or a receipt photo.
   const [quickText, setQuickText] = useState('');
   const [isDrafting, setIsDrafting] = useState(false);
+  const [receiptToConfirm, setReceiptToConfirm] = useState<File | null>(null);
   const [draft, setDraft] = useState<ExpenseDraft | null>(null);
   const [draftWarnings, setDraftWarnings] = useState<ExpenseWarningSummary | null>(null);
-  const [draftInputKind, setDraftInputKind] = useState<'text' | 'receipt' | 'voice' | null>(null);
+  const [draftInputKind, setDraftInputKind] = useState<'text' | 'receipt' | null>(null);
   const [draftModel, setDraftModel] = useState<string | null>(null);
-  const [draftTranscript, setDraftTranscript] = useState<string | null>(null);
   const [draftExtractedText, setDraftExtractedText] = useState<string | null>(null);
   const [contextWarnings, setContextWarnings] = useState<string[]>([]);
-  const [isRecording, setIsRecording] = useState(false);
-  const [recordingSeconds, setRecordingSeconds] = useState(0);
-  const recorderRef = React.useRef<MediaRecorder | null>(null);
-  const recordedChunksRef = React.useRef<Blob[]>([]);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const expenseSubmitLock = React.useRef(false);
 
@@ -208,7 +203,7 @@ export default function ExpensesPage() {
 
   const handleAddSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (expenseSubmitLock.current || isUploadingReceipt || !formData.project_id || !formData.description || !formData.amount) return;
+    if (expenseSubmitLock.current || isUploadingReceipt || !formData.project_id || !formData.description || !formData.amount || !formData.expense_date || !formData.category) return;
     if (!user) {
       showToast('error', 'You must be signed in to record expenses.');
       return;
@@ -317,7 +312,6 @@ export default function ExpensesPage() {
         setDraftWarnings(null);
         setDraftInputKind(null);
         setDraftModel(null);
-        setDraftTranscript(null);
         setDraftExtractedText(null);
         setContextWarnings([]);
         setPendingReceiptFile(null);
@@ -387,6 +381,17 @@ export default function ExpensesPage() {
       if (path) {
         setFormData((prev) => ({ ...prev, receipt_url: path }));
         setReceiptFileName(file.name);
+        if (draftInputKind === 'receipt') {
+          setDraft(null);
+          setDraftWarnings(null);
+          setDraftInputKind(null);
+          setDraftModel(null);
+          setDraftExtractedText(null);
+          setContextWarnings([]);
+          setAiResult(null);
+          setAiAccepted(false);
+          showToast('info', 'Photo replaced. The form may still contain details from the earlier scan; review them against the new photo.');
+        }
         setPendingReceiptFile(null);
         setPendingReceiptPreview((previous) => {
           if (previous) URL.revokeObjectURL(previous);
@@ -444,7 +449,7 @@ export default function ExpensesPage() {
   };
 
   // ---------------------------------------------------------------------------
-  // Track E / B / D — draft from a line of text, a receipt photo, or a voice note
+  // Draft from a line of text or a receipt photo
   // ---------------------------------------------------------------------------
 
   /**
@@ -457,9 +462,19 @@ export default function ExpensesPage() {
    */
   const applyDraft = (
     nextDraft: ExpenseDraft,
-    input: { kind: 'text' | 'receipt' | 'voice'; model?: string | null; transcript?: string | null; extractedText?: string | null }
+    input: { kind: 'text' | 'receipt'; model?: string | null; extractedText?: string | null }
   ) => {
-    setFormData((previous) => ({
+    setFormData((previous) => input.kind === 'receipt' ? {
+      ...previous,
+      description: nextDraft.description,
+      amount: nextDraft.amount !== null ? String(nextDraft.amount) : '',
+      expense_date: nextDraft.expenseDate ?? '',
+      project_id: nextDraft.projectId ?? '',
+      category: nextDraft.category ?? '',
+      vendor: nextDraft.vendor ?? '',
+      notes: '',
+      receipt_url: null,
+    } : {
       ...previous,
       description: nextDraft.description || previous.description,
       amount: nextDraft.amount !== null ? String(nextDraft.amount) : previous.amount,
@@ -468,14 +483,14 @@ export default function ExpensesPage() {
       category: nextDraft.category ?? previous.category,
       vendor: nextDraft.vendor ?? previous.vendor,
       notes: nextDraft.noteEvidence
-        ? previous.notes
-          ? `${previous.notes} ${nextDraft.noteEvidence}`
-          : nextDraft.noteEvidence
+        ? previous.notes ? `${previous.notes} ${nextDraft.noteEvidence}` : nextDraft.noteEvidence
         : previous.notes,
-    }));
+    });
 
     // The draft's category is a suggestion with provenance, so it feeds the
     // same review box the manual "Analyze with Groq AI" button uses.
+    setAiResult(null);
+    setAiAccepted(false);
     if (nextDraft.category) {
       setAiResult({
         category: nextDraft.category,
@@ -484,7 +499,7 @@ export default function ExpensesPage() {
           nextDraft.categorySource === 'vendor_memory'
             ? 'Suggested from your own history with this supplier.'
             : nextDraft.categorySource === 'llm'
-              ? `Extracted from the ${input.kind === 'text' ? 'description' : input.kind === 'receipt' ? 'receipt photo' : 'voice note'} by the AI model.`
+              ? `Extracted from the ${input.kind === 'text' ? 'description' : 'receipt photo'} by the AI model.`
               : 'Suggested by the built-in rules.',
         evidence: nextDraft.evidence.slice(0, 3),
         source: nextDraft.categorySource === 'llm' ? 'llm' : 'rules',
@@ -495,7 +510,6 @@ export default function ExpensesPage() {
     setDraft(nextDraft);
     setDraftInputKind(input.kind);
     setDraftModel(input.model ?? null);
-    setDraftTranscript(input.transcript ?? null);
     setDraftExtractedText(input.extractedText ?? null);
     setIsAddModalOpen(true);
 
@@ -563,22 +577,19 @@ export default function ExpensesPage() {
           reject(new Error('The image could not be encoded.'));
           return;
         }
-        resolve({ mediaType: match[1], base64: match[2] });
+        resolve({ mediaType: match[1].toLowerCase() === 'image/jpg' ? 'image/jpeg' : match[1], base64: match[2] });
       };
       reader.readAsDataURL(file);
     });
 
   const handleDraftFromReceipt = async (file: File) => {
     if (isDrafting) return;
+    const check = validateReceiptFile(file);
+    if (!check.ok || file.size > VISION_MAX_IMAGE_BYTES) {
+      showToast('error', check.error || 'Receipt scanning accepts JPEG, PNG or WebP up to 4 MB. You can attach a photo up to 5 MB manually.');
+      return;
+    }
     setIsDrafting(true);
-    setDraftWarnings(null);
-    setContextWarnings([]);
-    setPendingReceiptFile(file);
-    // Local preview only — the photo is uploaded when the expense is saved.
-    setPendingReceiptPreview((previous) => {
-      if (previous) URL.revokeObjectURL(previous);
-      return URL.createObjectURL(file);
-    });
 
     try {
       const { mediaType, base64 } = await readReceiptFileAsBase64(file);
@@ -589,16 +600,21 @@ export default function ExpensesPage() {
       });
       const payload = await response.json().catch(() => null);
 
-      if (!response.ok || !payload?.ok) {
+      if (!response.ok || !payload?.ok || !payload?.draft) {
         // Honest failure: the manual path is untouched and we say so.
         showToast(
           'error',
-          payload?.error ||
-            'The receipt could not be read by the AI model. Type the expense instead — nothing is blocked.'
+          `${payload?.error || 'The receipt could not be read.'} No new photo was attached; you can attach it manually.`
         );
         return;
       }
 
+      setPendingReceiptFile(file);
+      setReceiptFileName(file.name);
+      setPendingReceiptPreview((previous) => {
+        if (previous) URL.revokeObjectURL(previous);
+        return URL.createObjectURL(file);
+      });
       setContextWarnings(Array.isArray(payload.contextWarnings) ? payload.contextWarnings : []);
       const nextDraft = payload.draft as ExpenseDraft;
       setDraftWarnings(
@@ -630,102 +646,6 @@ export default function ExpensesPage() {
     }
   };
 
-  const startRecording = async () => {
-    if (isRecording) return;
-    try {
-      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-      const recorder = new MediaRecorder(stream);
-      recordedChunksRef.current = [];
-      recorder.ondataavailable = (event) => {
-        if (event.data.size > 0) recordedChunksRef.current.push(event.data);
-      };
-      recorder.onstop = () => {
-        stream.getTracks().forEach((track) => track.stop());
-      };
-      recorderRef.current = recorder;
-      recorder.start();
-      setIsRecording(true);
-      setRecordingSeconds(0);
-    } catch (caught) {
-      showToast(
-        'error',
-        caught instanceof Error
-          ? `Microphone unavailable: ${caught.message}. Type the expense instead.`
-          : 'Microphone unavailable. Type the expense instead.'
-      );
-    }
-  };
-
-  // Auto-stop: a bounded recording keeps the transcription request (and its
-  // cost) bounded, and a forgotten tab cannot record indefinitely.
-  React.useEffect(() => {
-    if (!isRecording) return;
-    const interval = window.setInterval(() => setRecordingSeconds((seconds) => seconds + 1), 1000);
-    return () => window.clearInterval(interval);
-  }, [isRecording]);
-
-  const stopRecording = () => {
-    recorderRef.current?.stop();
-    setIsRecording(false);
-  };
-
-  const handleDraftFromVoice = async () => {
-    const blob = new Blob(recordedChunksRef.current, { type: 'audio/webm' });
-    if (blob.size === 0) {
-      showToast('error', 'Nothing was recorded — hold the button, speak, then stop.');
-      return;
-    }
-    if (blob.size > 20 * 1024 * 1024) {
-      showToast('error', 'That recording is too large. Record a shorter note.');
-      return;
-    }
-
-    setIsDrafting(true);
-    setContextWarnings([]);
-    try {
-      const form = new FormData();
-      form.append('audio', blob, 'site-note.webm');
-      const response = await fetch('/api/ai/voice-draft', { method: 'POST', body: form });
-      const payload = await response.json().catch(() => null);
-
-      if (!response.ok || !payload?.ok) {
-        showToast(
-          'error',
-          payload?.error || 'The recording could not be transcribed. Type the expense instead.'
-        );
-        return;
-      }
-
-      setContextWarnings(Array.isArray(payload.contextWarnings) ? payload.contextWarnings : []);
-      const nextDraft = payload.draft as ExpenseDraft;
-      setDraftWarnings(
-        buildExpenseWarnings(
-          {
-            amount: nextDraft.amount ?? 0,
-            expenseDate: nextDraft.expenseDate ?? new Date().toISOString().slice(0, 10),
-            vendor: nextDraft.vendor,
-            projectId: nextDraft.projectId ?? '',
-            category: nextDraft.category ?? 'other',
-          },
-          expenses
-        )
-      );
-      applyDraft(nextDraft, {
-        kind: 'voice',
-        model: payload.transcriptionModel ?? null,
-        transcript: payload.transcript ?? null,
-      });
-    } catch (caught) {
-      showToast(
-        'error',
-        caught instanceof Error ? `Transcription failed: ${caught.message}` : 'Transcription failed.'
-      );
-    } finally {
-      setIsDrafting(false);
-      recordedChunksRef.current = [];
-    }
-  };
-
   const handleRemoveReceipt = () => {
     setFormData((previous) => ({ ...previous, receipt_url: null }));
     setReceiptFileName(null);
@@ -751,7 +671,7 @@ export default function ExpensesPage() {
         />
 
         {/* ------------------------------------------------------------------
-            TRACK E / B / D — one messy line, a receipt photo, or a voice note.
+            Draft from text or a receipt photo.
             The model extracts; the Founder confirms in the modal below. Nothing
             written here reaches the ledger.
            ------------------------------------------------------------------ */}
@@ -768,9 +688,7 @@ export default function ExpensesPage() {
               <span className="text-[11px] text-ink-muted">
                 {draftInputKind === 'receipt'
                   ? 'Read from a receipt photo'
-                  : draftInputKind === 'voice'
-                    ? 'Transcribed from a voice note'
-                    : 'Drafted from your description'}
+                  : 'Drafted from your description'}
                 {draftModel ? ` · ${draftModel}` : ''}
               </span>
             )}
@@ -789,7 +707,7 @@ export default function ExpensesPage() {
               variant="primary"
               size="sm"
               onClick={handleDraftFromText}
-              isLoading={isDrafting && draftInputKind !== 'receipt' && draftInputKind !== 'voice'}
+              isLoading={isDrafting && draftInputKind !== 'receipt'}
               disabled={!quickText.trim() || isDrafting}
               leftIcon={<Sparkles className="h-3.5 w-3.5" />}
             >
@@ -808,51 +726,22 @@ export default function ExpensesPage() {
                 onChange={(event) => {
                   const file = event.target.files?.[0];
                   event.target.value = '';
-                  if (file) void handleDraftFromReceipt(file);
+                  if (file) {
+                    const hasUnfinishedEntry = Boolean(formData.project_id || formData.description || formData.amount || formData.vendor || formData.notes || formData.receipt_url || pendingReceiptFile || draft || formData.category !== 'materials' || formData.expense_date !== new Date().toISOString().split('T')[0]);
+                    if (hasUnfinishedEntry) setReceiptToConfirm(file);
+                    else void handleDraftFromReceipt(file);
+                  }
                 }}
               />
             </label>
 
-            {isRecording ? (
-              <button
-                type="button"
-                onClick={stopRecording}
-                className="inline-flex items-center gap-2 rounded-xl border border-status-danger/30 bg-status-danger-bg px-3 py-2 text-[11px] font-semibold text-status-danger"
-              >
-                <Square className="h-3.5 w-3.5" />
-                Stop recording ({recordingSeconds}s)
-              </button>
-            ) : (
-              <button
-                type="button"
-                onClick={startRecording}
-                disabled={isDrafting}
-                className="inline-flex items-center gap-2 rounded-xl border border-surface-border bg-surface-inset px-3 py-2 text-[11px] font-semibold text-navy transition-all hover:bg-slate-200 disabled:opacity-50"
-              >
-                <Mic className="h-3.5 w-3.5" />
-                Record a voice note
-              </button>
-            )}
 
-            {recordingSeconds > 0 && !isRecording && (
-              <Button
-                variant="secondary"
-                size="sm"
-                onClick={handleDraftFromVoice}
-                isLoading={isDrafting}
-                disabled={isDrafting}
-                leftIcon={<FileText className="h-3.5 w-3.5" />}
-              >
-                Transcribe &amp; draft ({recordingSeconds}s)
-              </Button>
-            )}
           </div>
 
           <p className="text-[11px] leading-relaxed text-ink-muted">
-            The AI reads and the rules validate: an amount that is not written in your text stays
-            blank, a project must match a real project record, and a supplier that is not named is
-            not recorded. Voice notes over ~20 MB and receipt photos over 4 MB are refused with a
-            reason instead of failing silently.
+            Scanning sends the photo to Groq for reading (JPEG, PNG or WebP up to 4 MB).
+            Check every suggestion against the photo. If something is unclear, enter it yourself.
+            You can also attach a photo without scanning it.
           </p>
         </div>
 
@@ -1109,13 +998,11 @@ export default function ExpensesPage() {
                   <span>
                     {draftInputKind === 'receipt'
                       ? 'Read from the receipt photo'
-                      : draftInputKind === 'voice'
-                        ? 'Transcribed from your voice note'
-                        : 'Drafted from your description'}
+                      : 'Drafted from your description'}
                   </span>
                 </div>
                 <Badge variant={draft.verification === 'text' ? 'navy' : 'warning'} size="sm">
-                  {draft.verification === 'text' ? 'Checked against your text' : 'Check against the photo / recording'}
+                  {draft.verification === 'text' ? 'Checked against your text' : 'Check against the photo'}
                 </Badge>
               </div>
 
@@ -1188,17 +1075,10 @@ export default function ExpensesPage() {
                 </p>
               ))}
 
-              {draftTranscript && (
-                <div className="rounded-xl border border-slate-200 bg-white p-2.5 text-[11px]">
-                  <div className="font-semibold text-navy">Transcript (check it against what you said)</div>
-                  <p className="mt-1 text-ink-secondary">“{draftTranscript}”</p>
-                </div>
-              )}
-
               {draftExtractedText && (
                 <details className="rounded-xl border border-slate-200 bg-white p-2.5 text-[11px]">
                   <summary className="cursor-pointer font-semibold text-navy">
-                    Text read from the receipt
+                    Text read from the receipt (not saved)
                   </summary>
                   <pre className="mt-2 max-h-40 overflow-auto whitespace-pre-wrap text-ink-secondary">
                     {draftExtractedText}
@@ -1227,6 +1107,7 @@ export default function ExpensesPage() {
 
               {draftWarnings && (
                 <div className="space-y-1 text-[11px]">
+                  <p className="text-ink-muted">Checks below are based on the initial draft and may not reflect later edits.</p>
                   {draftWarnings.duplicates.length > 0 && (
                     <p className="rounded-xl border border-status-danger/20 bg-status-danger-bg p-2.5 text-status-danger">
                       Possible duplicate: {draftWarnings.duplicates[0].reason} Check before saving —
@@ -1243,7 +1124,7 @@ export default function ExpensesPage() {
                       {draftWarnings.outlier.message}
                     </p>
                   )}
-                  {draftWarnings.missingReceipt && (
+                  {draftWarnings.missingReceipt && !pendingReceiptFile && !formData.receipt_url && (
                     <p className="rounded-xl border border-status-warning/20 bg-status-warning-bg p-2.5 text-status-warning">
                       {draftWarnings.missingReceipt.reason} Attach the photo, or save and attach it later.
                     </p>
@@ -1292,15 +1173,15 @@ export default function ExpensesPage() {
             </div>
             <Input
               id="expense-description"
-              placeholder="e.g. Advance cash ₱3,000 for Danilo Magpantay emergency medical"
+              placeholder="e.g. Cement and construction materials"
+              hint={draftInputKind === 'receipt' ? 'Edit this short description. Check it against the photo; the full reading is shown separately above.' : undefined}
               value={formData.description}
               onChange={(e) => setFormData({ ...formData, description: e.target.value })}
-              onBlur={handleAnalyzeWithAI}
               required
             />
           </div>
 
-          <div className="grid grid-cols-2 gap-4">
+          <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
             <Input
               label="Amount (PHP ₱)"
               type="number"
@@ -1402,12 +1283,14 @@ export default function ExpensesPage() {
             onChange={(event) => setFormData({ ...formData, vendor: event.target.value })}
           />
 
-          <div className="grid grid-cols-2 gap-4">
+          <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
             <Select
               label="Expense Category"
               value={formData.category}
-              onChange={(e) => setFormData({ ...formData, category: e.target.value as ExpenseCategory })}
+              onChange={(e) => setFormData({ ...formData, category: e.target.value as ExpenseCategory | '' })}
+              required
             >
+              <option value="">Select a category...</option>
               <option value="materials">Materials</option>
               <option value="labor">Labor</option>
               <option value="equipment">Equipment</option>
@@ -1479,6 +1362,20 @@ export default function ExpensesPage() {
           </div>
         </form>
       </Modal>
+
+      <ConfirmDialog
+        isOpen={Boolean(receiptToConfirm)}
+        title="Replace unfinished expense?"
+        message="A successful scan replaces the unfinished expense details and selected receipt. If scanning fails, your entry stays as it is."
+        confirmLabel="Scan new receipt"
+        cancelLabel="Keep my entry"
+        onCancel={() => setReceiptToConfirm(null)}
+        onConfirm={() => {
+          const file = receiptToConfirm;
+          setReceiptToConfirm(null);
+          if (file) void handleDraftFromReceipt(file);
+        }}
+      />
 
       {/* RECEIPT PREVIEW MODAL — private bucket, so the src is a short-lived signature */}
       <Modal

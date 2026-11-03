@@ -89,7 +89,7 @@ resolved and the photo must be re-attached.
   Supabase origin, `connect-src 'self'` plus Supabase (`https`/`wss`).
 - `X-Content-Type-Options: nosniff`, `Referrer-Policy: strict-origin-when-cross-origin`,
   `Permissions-Policy` (camera denied — receipt capture uses `<input capture>`;
-  microphone allowed for voice notes), `X-DNS-Prefetch-Control: off`.
+  microphone denied), `X-DNS-Prefetch-Control: off`.
 - Production only: `X-Frame-Options: DENY`, `frame-ancestors 'none'`, and HSTS
   (`max-age=63072000; includeSubDomains; preload`).
 
@@ -317,9 +317,7 @@ There is no CSRF token, and that is a deliberate, documented decision:
 - Every mutating endpoint accepts **JSON bodies** and parses them with
   `req.json()`. A cross-site HTML form can only send
   `application/x-www-form-urlencoded`, `multipart/form-data` or `text/plain`;
-  those would fail or produce an empty body. `multipart/form-data` is accepted
-  only by the voice route, which requires an authenticated session and a
-  same-origin fetch.
+  those would fail or produce an empty body. `multipart/form-data` is not used by these mutating endpoints.
 - There is no `GET` endpoint that mutates state. (The cron route requires the
   cron secret and is excluded from cookie auth entirely.)
 - The response is never used to read cross-origin data, and CSP

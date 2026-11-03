@@ -72,7 +72,7 @@ in the HR file, not the ledger.
 | Processor | Data | Notes |
 | --- | --- | --- |
 | Supabase (database, auth, storage) | All of the above | Confirm the project region and the data processing agreement. |
-| Groq (AI drafting) | Expense text, receipt images, voice recordings — sent **per request** | No key configured ⇒ nothing is sent. Receipts are sent as base64 within the request. Prefer Dataverse/enterprise settings if the firm requires no-training guarantees. |
+| Groq (AI drafting) | Expense text, receipt images — sent **per request** | No key configured ⇒ nothing is sent. Receipts are sent as base64 within the request. Prefer Dataverse/enterprise settings if the firm requires no-training guarantees. |
 | PhilSMS | Client recipient name and phone number | Only when a SMS is actually sent. |
 | SMTP provider | Client email address and message content | Only when a mail is sent. |
 
