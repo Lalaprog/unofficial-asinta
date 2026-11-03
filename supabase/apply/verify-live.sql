@@ -228,6 +228,14 @@ select 'SMS history read functions and index',
             then 'PASS' else 'FAIL' end
 
 union all
+select 'Payroll attendance matrix read function',
+       'invoker function granted to authenticated only',
+       case when exists (select 1 from pg_proc p where p.oid=to_regprocedure('public.payroll_attendance_matrix(date,date,uuid)') and not p.prosecdef and coalesce(has_function_privilege('authenticated',p.oid,'EXECUTE'),false) and not coalesce(has_function_privilege('anon',p.oid,'EXECUTE'),true))
+            then 'function present with expected grants' else 'missing or unsafe matrix function' end,
+       case when exists (select 1 from pg_proc p where p.oid=to_regprocedure('public.payroll_attendance_matrix(date,date,uuid)') and not p.prosecdef and coalesce(has_function_privilege('authenticated',p.oid,'EXECUTE'),false) and not coalesce(has_function_privilege('anon',p.oid,'EXECUTE'),true))
+            then 'PASS' else 'FAIL' end
+
+union all
 select 'RLS enabled on every public table',
        'no table without RLS',
        coalesce((select string_agg(relname, ', ') from rls_off), 'all tables have RLS'),
