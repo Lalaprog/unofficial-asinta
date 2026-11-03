@@ -59,6 +59,10 @@ const CRAFT_GROUP_META: Record<
   general: { label: 'Finishing & General Labor', order: 5 },
 };
 
+const HISTORY_SHEET_PAGE_SIZE = 10;
+const HISTORY_RECORD_PAGE_SIZE = 20;
+const REVIEW_PAGE_SIZE = 3;
+
 const CRAFT_FILTER_OPTIONS = [
   { label: 'All Craft Groups', value: 'all' },
   { label: 'Supervision & Foremen', value: 'supervision' },
@@ -208,7 +212,16 @@ function AttendancePageInner() {
   const [historyDateFilter, setHistoryDateFilter] = useState<string>('');
   const [historySearchQuery, setHistorySearchQuery] = useState<string>('');
   const [isHistoryFilterSheetOpen, setIsHistoryFilterSheetOpen] = useState(false);
-  const [collapsedHistorySheets, setCollapsedHistorySheets] = useState<Record<string, boolean>>({});
+  const [expandedHistorySheets, setExpandedHistorySheets] = useState<Record<string, boolean>>({});
+  const [visibleHistorySheets, setVisibleHistorySheets] = useState(HISTORY_SHEET_PAGE_SIZE);
+  const [historyRecordLimits, setHistoryRecordLimits] = useState<Record<string, number>>({});
+  const [visibleReviewItems, setVisibleReviewItems] = useState(REVIEW_PAGE_SIZE);
+
+  useEffect(() => {
+    setVisibleHistorySheets(HISTORY_SHEET_PAGE_SIZE);
+    setHistoryRecordLimits({});
+    setExpandedHistorySheets({});
+  }, [historyProjectFilter, historyStatusFilter, historyDateFilter, historySearchQuery]);
 
   // Founder Override modal
   const [overrideModalOpen, setOverrideModalOpen] = useState(false);
@@ -967,7 +980,7 @@ function AttendancePageInner() {
         });
       }
     });
-    return Array.from(sheets.values()).sort((a, b) => b.date.localeCompare(a.date));
+    return Array.from(sheets.values()).sort((a, b) => b.date.localeCompare(a.date) || a.projectId.localeCompare(b.projectId));
   }, [filteredHistoryAttendance]);
 
   // Group Workforce tab workers by craft group
@@ -1088,17 +1101,17 @@ function AttendancePageInner() {
                 <ShieldAlert className="w-5 h-5 text-status-warning shrink-0 mt-0.5 sm:mt-0" />
                 <div>
                   <div className="font-bold text-navy text-sm">
-                    Supervisor approvals ({unverifiedSelfLogs.length})
+                    Supervisor approvals ({unverifiedSelfLogs.length} loaded)
                   </div>
                   <div className="text-ink-secondary">
-                    Review these supervisor logs before they are included in Payroll.
+                    Review these supervisor logs before they are included in Payroll. Older approvals may not be loaded.
                   </div>
                 </div>
               </div>
             </div>
 
             <div className="divide-y divide-surface-border/60 bg-white rounded-xl border border-surface-border overflow-hidden">
-              {unverifiedSelfLogs.map((rec) => {
+              {unverifiedSelfLogs.slice(0, visibleReviewItems).map((rec) => {
                 const supWorker = workers.find((w) => w.id === rec.worker_id);
                 const proj = projects.find((p) => p.id === rec.project_id);
                 return (
@@ -1156,6 +1169,11 @@ function AttendancePageInner() {
                 );
               })}
             </div>
+            {visibleReviewItems < unverifiedSelfLogs.length && (
+              <Button type="button" variant="secondary" size="sm" onClick={() => setVisibleReviewItems((count) => count + REVIEW_PAGE_SIZE)}>
+                Show more pending approvals ({unverifiedSelfLogs.length - visibleReviewItems} remaining)
+              </Button>
+            )}
           </div>
         )}
 
@@ -1838,7 +1856,7 @@ function AttendancePageInner() {
                     <button
                       type="button"
                       onClick={() => setHistoryProjectFilter('all')}
-                      aria-label={`Remove site filter: ${projects.find((project) => project.id === historyProjectFilter)?.name || 'selected site'}`}
+                      aria-label={`Site · ${projects.find((project) => project.id === historyProjectFilter)?.name || 'Selected'} — remove filter`}
                       className="inline-flex min-h-9 max-w-full items-center gap-1.5 rounded-full bg-surface-inset px-3 py-1 text-xs font-medium text-navy transition-colors hover:bg-slate-200 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand focus-visible:ring-offset-2"
                     >
                       <span className="break-words text-left">
@@ -1851,7 +1869,7 @@ function AttendancePageInner() {
                     <button
                       type="button"
                       onClick={() => setHistoryStatusFilter('all')}
-                      aria-label={`Remove status filter: ${historyStatusFilter.replace('_', ' ')}`}
+                      aria-label={`Status · ${historyStatusFilter === 'half_day' ? 'Half Day' : historyStatusFilter === 'leave' ? 'Approved Leave' : historyStatusFilter[0].toUpperCase() + historyStatusFilter.slice(1)} — remove filter`}
                       className="inline-flex min-h-9 items-center gap-1.5 rounded-full bg-surface-inset px-3 py-1 text-xs font-medium text-navy transition-colors hover:bg-slate-200 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand focus-visible:ring-offset-2"
                     >
                       <span>Status · {historyStatusFilter === 'half_day' ? 'Half Day' : historyStatusFilter === 'leave' ? 'Approved Leave' : historyStatusFilter[0].toUpperCase() + historyStatusFilter.slice(1)}</span>
@@ -1862,7 +1880,7 @@ function AttendancePageInner() {
                     <button
                       type="button"
                       onClick={() => setHistoryDateFilter('')}
-                      aria-label={`Remove date filter: ${formatDatePH(historyDateFilter)}`}
+                      aria-label={`Date · ${formatDatePH(historyDateFilter)} — remove filter`}
                       className="inline-flex min-h-9 items-center gap-1.5 rounded-full bg-surface-inset px-3 py-1 text-xs font-medium text-navy transition-colors hover:bg-slate-200 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand focus-visible:ring-offset-2"
                     >
                       <span>Date · {formatDatePH(historyDateFilter)}</span>
@@ -1985,16 +2003,29 @@ function AttendancePageInner() {
               </div>
             </Modal>
 
-            {/* Grouped Daily Attendance Sheets */}
-            <div className="space-y-3">
-              {groupedHistorySheets.map((sheet) => {
+            {/* Grouped Daily Attendance Sheets. Counts/search cover loaded data only. */}
+            <div className="space-y-1 text-xs text-ink-secondary">
+              <p aria-live="polite">
+                {filteredHistoryAttendance.length} matching {filteredHistoryAttendance.length === 1 ? 'record' : 'records'} in loaded history. Showing {Math.min(visibleHistorySheets, groupedHistorySheets.length)} of {groupedHistorySheets.length} date/site sheets.
+              </p>
+              <p>Search and counts cover only loaded records; older records may be missing.</p>
+            </div>
+            <div className="space-y-2">
+              {groupedHistorySheets.slice(0, visibleHistorySheets).map((sheet) => {
                 const proj = projects.find((p) => p.id === sheet.projectId);
-                const isCollapsed = Boolean(collapsedHistorySheets[sheet.key]);
-                const pCount = sheet.records.filter((r) => r.status === 'present').length;
-                const hCount = sheet.records.filter((r) => r.status === 'half_day').length;
-                const aCount = sheet.records.filter(
-                  (r) => r.status === 'absent' || r.status === 'leave'
+                const isExpanded = Boolean(expandedHistorySheets[sheet.key]);
+                const recordLimit = historyRecordLimits[sheet.key] || HISTORY_RECORD_PAGE_SIZE;
+                const statusCounts = {
+                  present: sheet.records.filter((rec) => rec.status === 'present').length,
+                  half_day: sheet.records.filter((rec) => rec.status === 'half_day').length,
+                  absent: sheet.records.filter((rec) => rec.status === 'absent').length,
+                  leave: sheet.records.filter((rec) => rec.status === 'leave').length,
+                };
+                const pendingCount = sheet.records.filter((rec) =>
+                  isSupervisorAttendanceRecord(rec) && !rec.is_founder_override &&
+                  (rec.status === 'present' || rec.status === 'half_day')
                 ).length;
+                const sheetId = `history-sheet-${encodeURIComponent(sheet.key)}`;
 
                 return (
                   <div
@@ -2003,40 +2034,35 @@ function AttendancePageInner() {
                   >
                     <button
                       type="button"
+                      aria-expanded={isExpanded}
+                      aria-controls={isExpanded ? sheetId : undefined}
                       onClick={() =>
-                        setCollapsedHistorySheets((prev) => ({
+                        setExpandedHistorySheets((prev) => ({
                           ...prev,
                           [sheet.key]: !prev[sheet.key],
                         }))
                       }
-                      className="w-full px-4 py-3 bg-surface-inset/70 border-b border-surface-border/60 flex flex-wrap items-center justify-between gap-2 text-left hover:bg-surface-inset transition-colors"
+                      className="flex min-h-11 w-full flex-wrap items-center gap-x-3 gap-y-1 bg-surface-inset/70 px-4 py-3 text-left transition-colors hover:bg-surface-inset focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-brand"
                     >
-                      <div className="flex items-center gap-2">
-                        {isCollapsed ? (
-                          <ChevronRight className="w-4 h-4 text-ink-secondary" />
-                        ) : (
-                          <ChevronDown className="w-4 h-4 text-ink-secondary" />
-                        )}
-                        <span className="font-bold text-navy text-xs sm:text-sm">
-                          {sheet.date} · {proj?.name || 'Project Site'}
-                        </span>
-                        <Badge variant="neutral" size="sm">
-                          {sheet.records.length} worker{sheet.records.length === 1 ? '' : 's'}
-                        </Badge>
-                      </div>
-
-                      <div className="flex items-center gap-2 text-[11px]">
-                        <span className="text-status-success font-bold">{pCount} Present</span>
-                        <span className="text-ink-muted">·</span>
-                        <span className="text-status-warning font-bold">{hCount} Half Day</span>
-                        <span className="text-ink-muted">·</span>
-                        <span className="text-status-danger font-bold">{aCount} Absent/Leave</span>
-                      </div>
+                      {isExpanded ? <ChevronDown className="h-4 w-4 shrink-0 text-ink-secondary" aria-hidden="true" /> : <ChevronRight className="h-4 w-4 shrink-0 text-ink-secondary" aria-hidden="true" />}
+                      <span className="min-w-0 flex-1 break-words text-xs font-bold text-navy sm:text-sm">
+                        {formatDatePH(sheet.date)} · {proj?.name || 'Project Site'}
+                      </span>
+                      <span className="text-xs font-medium tabular-nums text-ink-secondary">
+                        {sheet.records.length} {sheet.records.length === 1 ? 'record' : 'records'}
+                      </span>
+                      <span className="flex w-full flex-wrap gap-x-3 gap-y-0.5 pl-7 text-[11px] font-medium text-ink-secondary">
+                        <span>{statusCounts.present} Present</span>
+                        <span>{statusCounts.half_day} Half Day</span>
+                        <span>{statusCounts.absent} Absent</span>
+                        <span>{statusCounts.leave} Leave</span>
+                        {pendingCount > 0 && <span className="font-semibold text-status-warning">{pendingCount} pending Founder review</span>}
+                      </span>
                     </button>
 
-                    {!isCollapsed && (
-                      <div className="divide-y divide-surface-border/60">
-                        {sheet.records.map((rec) => {
+                    {isExpanded && (
+                      <div id={sheetId} className="divide-y divide-surface-border/60 border-t border-surface-border/60">
+                        {sheet.records.slice(0, recordLimit).map((rec) => {
                           const worker = workers.find((w) => w.id === rec.worker_id);
                           const isSelfLog = isSupervisorAttendanceRecord(rec);
                           const isUnverifiedSelf =
@@ -2051,10 +2077,8 @@ function AttendancePageInner() {
                             >
                               <div className="space-y-0.5 min-w-0">
                                 <div className="flex items-center flex-wrap gap-1.5">
-                                  <span className="font-bold text-navy">{worker?.name}</span>
-                                  <span className="text-ink-secondary text-[11px]">
-                                    ({worker?.position})
-                                  </span>
+                                  <span className="break-words font-bold text-navy">{worker?.name || 'Worker'}</span>
+                                  {worker?.position && <span className="text-ink-secondary text-[11px]">({worker.position})</span>}
                                   {isUnverifiedSelf && (
                                     <Badge variant="warning" size="sm">
                                       Pending Founder Approval (Held from Payroll)
@@ -2072,7 +2096,7 @@ function AttendancePageInner() {
                                   )}
                                 </div>
                                 {rec.notes && (
-                                  <div className="text-[11px] text-ink-muted truncate max-w-2xl">
+                                  <div className="max-w-2xl whitespace-pre-wrap break-words text-[11px] text-ink-muted">
                                     {rec.notes}
                                   </div>
                                 )}
@@ -2147,11 +2171,25 @@ function AttendancePageInner() {
                             </div>
                           );
                         })}
+                        {recordLimit < sheet.records.length && (
+                          <div className="flex flex-wrap items-center gap-2 px-4 py-2">
+                            <Button type="button" variant="secondary" size="sm" onClick={() => setHistoryRecordLimits((prev) => ({ ...prev, [sheet.key]: recordLimit + HISTORY_RECORD_PAGE_SIZE }))}>
+                              Show more records for {formatDatePH(sheet.date)} · {proj?.name || 'Project Site'}
+                            </Button>
+                            <span className="text-xs text-ink-secondary">Showing {recordLimit} of {sheet.records.length}</span>
+                          </div>
+                        )}
                       </div>
                     )}
                   </div>
                 );
               })}
+
+              {visibleHistorySheets < groupedHistorySheets.length && (
+                <Button type="button" variant="secondary" className="w-full sm:w-auto" onClick={() => setVisibleHistorySheets((count) => count + HISTORY_SHEET_PAGE_SIZE)}>
+                  Show more date/site sheets
+                </Button>
+              )}
 
               {groupedHistorySheets.length === 0 && (
                 <div className="bg-white rounded-xl border border-surface-border">
@@ -2159,8 +2197,8 @@ function AttendancePageInner() {
                     title="No attendance records match"
                     description={
                       attendance.length === 0
-                        ? 'Submitted site attendance will appear here grouped by date and site.'
-                        : 'Try selecting "All Project Sites" or clearing the date/search filter.'
+                        ? 'No attendance records are currently loaded.'
+                        : 'No loaded records match. Try clearing the site, date, status or search filters.'
                     }
                   />
                 </div>
