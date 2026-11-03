@@ -191,9 +191,11 @@ export default function ProjectsPage() {
                   {/* Top line */}
                   <div className="flex items-start justify-between gap-3">
                     <div className="space-y-1 min-w-0 flex-1">
-                      <div className="text-xs font-medium text-ink-secondary break-words">
-                        {client?.name || 'Private Client'}
-                      </div>
+                      {isFounder && (
+                        <div className="text-xs font-medium text-ink-secondary break-words">
+                          {client?.name || 'Private Client'}
+                        </div>
+                      )}
                       <h3
                         className="text-lg font-bold text-navy group-hover:text-navy-light transition-colors break-words"
                         title={proj.name}

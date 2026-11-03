@@ -11,7 +11,6 @@ import {
   Calendar,
   MapPin,
   Wrench,
-  UserCheck,
   Plus,
   Trash2,
   Edit2,
@@ -29,6 +28,7 @@ import { formatPesoCompact, formatPeso } from '@/lib/email/format';
 import { getBudgetSummary } from '@/lib/projects/budgetSummary';
 import { validateProjectForm } from '@/lib/projects/form';
 import { useToast } from '@/components/ui/Toast';
+import { ProjectWorkforceLogs } from '@/components/projects/ProjectWorkforceLogs';
 
 export default function ProjectDetailPage() {
   const params = useParams();
@@ -177,7 +177,7 @@ export default function ProjectDetailPage() {
                 <Badge variant={project.status === 'active' ? 'success' : 'navy'} size="sm" className="capitalize">
                   {project.status.replace(/_/g, ' ')}
                 </Badge>
-                <span className="text-xs text-ink-secondary">Client: {client?.name}</span>
+                {isFounder && <span className="text-xs text-ink-secondary">Client: {client?.name}</span>}
               </div>
               <h1 className="text-2xl sm:text-3xl font-semibold text-navy tracking-tight mt-1.5">
                 {project.name}
@@ -230,7 +230,7 @@ export default function ProjectDetailPage() {
             ...(isFounder ? [{ id: 'invoices', label: `Invoices (${projInvoices.length})` }] : []),
             ...(isFounder ? [{ id: 'expenses', label: `Expenses (${projExpenses.length})` }] : []),
             { id: 'tools', label: `Site Tools (${projTools.length})` },
-            { id: 'attendance', label: `Workforce Logs (${projAttendance.length})` },
+            { id: 'attendance', label: `Workforce Logs (${projAttendance.length} loaded)` },
           ].map((tab) => (
             <button
               key={tab.id}
@@ -284,8 +284,8 @@ export default function ProjectDetailPage() {
             )}
 
             {/* Project Site Details */}
-            <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-              <Card>
+            <div className={`grid grid-cols-1 gap-6 ${isFounder ? 'lg:grid-cols-2' : ''}`}>
+              {isFounder && <Card>
                 <CardHeader>
                   <CardTitle>Site & Client Specifications</CardTitle>
                 </CardHeader>
@@ -311,7 +311,7 @@ export default function ProjectDetailPage() {
                     <span className="min-w-0 max-w-[60%] break-words font-medium text-navy text-right">{project.location}</span>
                   </div>
                 </CardContent>
-              </Card>
+              </Card>}
 
               {/* Assigned Supervisors */}
               <Card>
@@ -343,14 +343,14 @@ export default function ProjectDetailPage() {
                       ))
                     ) : (
                       <div className="text-xs text-ink-secondary italic p-4 text-center">
-                        No supervisor specifically assigned yet. Founders manage attendance by default.
+                        {isFounder ? 'No supervisor specifically assigned yet. Founders manage attendance by default.' : 'No assigned supervisors are visible to your account.'}
                       </div>
                     )}
 
                     <div className="pt-3">
                       <Link href="/attendance">
                         <Button variant="secondary" size="sm" className="w-full">
-                          Open Attendance Terminal for this Site
+                          Open Attendance Terminal
                         </Button>
                       </Link>
                     </div>
@@ -496,54 +496,7 @@ export default function ProjectDetailPage() {
 
         {/* TAB 5: ATTENDANCE */}
         {activeTab === 'attendance' && (
-          <div className="animate-panel-enter animate-panel-lift space-y-4">
-            <div className="flex items-center justify-between">
-              <h3 className="font-bold text-navy text-sm">Site Attendance Logs</h3>
-              <Link href="/attendance">
-                <Button variant="primary" size="sm" leftIcon={<UserCheck className="w-3.5 h-3.5" />}>
-                  Go to Attendance Terminal
-                </Button>
-              </Link>
-            </div>
-
-            <div className="bg-white rounded-xl border border-surface-border overflow-hidden">
-              <div className="divide-y divide-surface-border/70">
-                {projAttendance.length > 0 ? (
-                  projAttendance.map((att) => {
-                    const worker = workers.find((w) => w.id === att.worker_id);
-                    return (
-                      <div key={att.id} className="p-4 flex items-center justify-between gap-3 text-xs">
-                        <div>
-                          <div className="font-bold text-navy">{worker?.name || 'Worker'}</div>
-                          <div className="text-ink-secondary">{worker?.position} · Date: {att.date}</div>
-                          {att.notes && <div className="text-[11px] text-ink-muted mt-0.5">{att.notes}</div>}
-                        </div>
-                        <div className="flex items-center space-x-3 text-right">
-                          <span className="font-semibold text-navy">{att.hours_worked} hrs</span>
-                          <Badge
-                            variant={
-                              att.status === 'present'
-                                ? 'success'
-                                : att.status === 'half_day'
-                                ? 'warning'
-                                : 'danger'
-                            }
-                            size="sm"
-                          >
-                            {att.status}
-                          </Badge>
-                        </div>
-                      </div>
-                    );
-                  })
-                ) : (
-                  <div className="p-8 text-center text-xs text-ink-secondary">
-                    No attendance logs for this site yet.
-                  </div>
-                )}
-              </div>
-            </div>
-          </div>
+          <ProjectWorkforceLogs key={id} records={projAttendance} workers={workers} />
         )}
       </div>
 
