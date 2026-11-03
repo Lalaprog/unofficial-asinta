@@ -3,9 +3,8 @@
  *
  *   Track E  one messy line of text        → draft
  *   Track B  a photo of a receipt          → draft
- *   Track D  a spoken note (transcribed)   → draft
  *
- * All three call `extractExpenseDraft`. The input differs; the rules do not:
+ * Text and receipt inputs use shared verification rules. The input differs; the rules do not:
  *
  *   1. The model EXTRACTS. It never decides and it never writes to the ledger —
  *      the Founder reviews every prefilled field and presses Save.
@@ -52,7 +51,7 @@ export interface DraftContext {
 }
 
 export interface ExpenseDraft {
-  /** The user's own words (or the transcript). Never rewritten by the model. */
+  /** The original text for typed drafts; receipt drafts use a short checked excerpt. */
   description: string;
   amount: number | null;
   expenseDate: string | null;
@@ -73,12 +72,12 @@ export interface ExpenseDraft {
   source: 'llm' | 'rules' | 'none';
   degradedReason?: string;
   vendorMemory?: VendorMemorySuggestion;
-  /** Receipt/voice inputs: what the model read or heard, for side-by-side review. */
+  /** Receipt input: what the model read, for side-by-side review. */
   extractedText?: string;
   /**
    * How much of this draft is checkable:
    *   'text'    — every value was verified against the source text.
-   *   'model-reported' — a photo/audio draft: values are quoted from the
+   *   'model-reported' — a photo draft: values are quoted from the
    *                      model's OWN transcription, which a human must check.
    * The UI must label the second case honestly.
    */
@@ -560,7 +559,7 @@ interface LlmDraftFields {
 export interface ExtractDraftOptions {
   /** Force the rule layer; used by tests and when the caller wants no network. */
   disableModel?: boolean;
-  /** Overrides the source text used for evidence checking (photo/audio input). */
+  /** Overrides the source text used for evidence checking (photo input). */
   verification?: ExpenseDraft['verification'];
   /** Extra instruction appended for vision calls (e.g. "read the receipt"). */
   extraSystemInstruction?: string;
@@ -635,13 +634,16 @@ export function validateModelDraft(
   raw: LlmDraftFields | null | undefined,
   sourceText: string,
   context: DraftContext,
-  options: { model?: string; verification?: ExpenseDraft['verification'] } = {}
+  options: { model?: string; verification?: ExpenseDraft['verification']; requireQuotedAmount?: boolean; allowAmountFallback?: boolean; allowRelativeDate?: boolean; allowVendorInference?: boolean } = {}
 ): ExpenseDraft {
   const verification = options.verification ?? 'text';
   const rules = categorizeWithRules(sourceText);
   const fields = raw ?? {};
 
-  const modelAmount = verifyAmount(fields.amount, fields.amount_quote, sourceText);
+  const proposed = typeof fields.amount === 'number' || (typeof fields.amount === 'string' && fields.amount.trim() !== '') ? Number(fields.amount) : NaN;
+  const modelAmount = options.requireQuotedAmount && !(Number.isFinite(proposed) && proposed > 0)
+    ? { amount: null, reason: 'No readable total was identified — enter the amount yourself.' }
+    : verifyAmount(fields.amount, fields.amount_quote, sourceText);
   /**
    * If the model produced no verified amount, fall back to the text itself.
    * The rule layer reads the digits that are actually written down (with the
@@ -649,11 +651,13 @@ export function validateModelDraft(
    * does not contain — it only rescues a field the model failed to report.
    */
   const amount =
-    modelAmount.amount !== null ? modelAmount : extractAmountByRule(sourceText);
+    modelAmount.amount !== null || options.allowAmountFallback === false ? modelAmount : extractAmountByRule(sourceText);
   const modelDate = verifyDate(fields.date, fields.date_quote, sourceText, context.todayISO);
-  const relativeDate = extractRelativeDate(sourceText, context.todayISO);
+  const relativeDate = options.allowRelativeDate === false ? null : extractRelativeDate(sourceText, context.todayISO);
   const project = resolveProject(fields.project_id, fields.project_name, sourceText, context.projects);
-  const vendor = verifyVendor(fields.vendor, sourceText, context.vendorMemory);
+  const vendor = options.allowVendorInference === false && !fields.vendor
+    ? { vendor: null, vendorToken: null, reason: 'No supplier could be verified — enter it if needed.' }
+    : verifyVendor(fields.vendor, sourceText, context.vendorMemory);
 
   const llmCategory = isExpenseCategory(fields.category) ? (fields.category as ExpenseCategory) : null;
 
@@ -725,7 +729,7 @@ export function validateModelDraft(
 
 /**
  * Context helper shared by the routes: builds the draft context from the
- * ledger-shaped rows the API loaded. Kept here so text, photo and voice callers
+ * ledger-shaped rows the API loaded. Kept here so text and photo callers
  * cannot build subtly different contexts.
  */
 export function buildDraftContext(input: {

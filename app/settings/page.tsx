@@ -17,7 +17,6 @@ import { WorkspaceHeader } from '@/components/ui/WorkspaceHeader';
 interface IntegrationStatus {
   groqModel?: string;
   groqVisionModel?: string;
-  groqTranscriptionModel?: string;
   mfaEnforcedForFounders?: boolean;
   sessionPolicy?: {
     idleMinutes: number;
@@ -281,16 +280,10 @@ export default function SettingsPage() {
                         {integrationStatus?.groqVisionModel || '—'}
                       </span>
                     </div>
-                    <div>
-                      Voice (speech-to-text):{' '}
-                      <span className="font-mono text-navy font-semibold">
-                        {integrationStatus?.groqTranscriptionModel || '—'}
-                      </span>
-                    </div>
                   </div>
                   <div className="text-[11px] text-ink-muted">
                     Suggests an expense category, drafts expenses from one messy line, reads receipt
-                    photos, and transcribes voice notes. Every suggestion is confirmed by a Founder
+                    photos. Every suggestion is confirmed by a Founder
                     before it reaches the ledger, and model IDs are overridable by environment
                     variable because Groq retires models regularly.
                   </div>

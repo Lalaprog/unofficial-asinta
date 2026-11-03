@@ -137,9 +137,8 @@ const nextConfig = {
         : []),
       {
         key: 'Permissions-Policy',
-        // Receipt capture uses <input capture> (no Camera API), voice capture
-        // uses MediaRecorder (microphone). Everything else is denied.
-        value: 'camera=(), microphone=(self), geolocation=(), payment=(), usb=()',
+        // Receipt capture uses <input capture>, not the Camera API.
+        value: 'camera=(), microphone=(), geolocation=(), payment=(), usb=()',
       },
       { key: 'X-DNS-Prefetch-Control', value: 'off' },
     ];

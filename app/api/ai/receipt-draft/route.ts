@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { createServerSupabaseClient } from '@/lib/supabase/server';
 import { requireFounder } from '@/lib/auth/serverRole';
 import { enforceRateLimit } from '@/lib/api/rateLimitGuard';
-import { validateModelDraft } from '@/lib/ai/draft';
+import { buildReceiptDraft } from '@/lib/ai/receiptDraft';
 import { loadDraftData } from '@/lib/ai/draftData';
 import { readReceiptImage, validateReceiptImagePayload } from '@/lib/ai/receiptVision';
 
@@ -62,32 +62,12 @@ export async function POST(req: NextRequest) {
     // receipt; quotes must appear inside it. That catches internally
     // inconsistent output but cannot catch a misread, which is why the draft is
     // labelled and why the founder sees the photo next to it.
-    const draft = validateModelDraft(
-      {
-        amount: reading.fields.amount,
-        amount_quote: reading.fields.amount_quote,
-        date: reading.fields.date,
-        date_quote: reading.fields.date_quote,
-        category: reading.fields.category,
-        project_id: reading.fields.project_id,
-        project_name: reading.fields.project_name,
-        vendor: reading.fields.vendor,
-        note_quote: reading.fields.vendor_quote,
-        bale: reading.fields.bale,
-      },
-      reading.text,
-      context,
-      { model: reading.model, verification: 'model-reported' }
-    );
+    const draft = buildReceiptDraft(reading.fields, reading.text, context, reading.model);
 
     return NextResponse.json(
       {
         ok: true,
-        draft: {
-          ...draft,
-          // The typed description is the receipt text; the Founder edits it.
-          description: draft.description || reading.text,
-        },
+        draft,
         read: {
           model: reading.model,
           usedFallbackModel: Boolean(reading.usedFallback),
