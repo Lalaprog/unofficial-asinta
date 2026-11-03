@@ -195,6 +195,12 @@ function AttendancePageInner() {
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [attendanceSaveFailed, setAttendanceSaveFailed] = useState(false);
   const [searchWorker, setSearchWorker] = useState('');
+  // Snapshot keeps a just-marked worker visible and focused until the user refreshes.
+  const [unmarkedWorkerIds, setUnmarkedWorkerIds] = useState<string[] | null>(null);
+
+  useEffect(() => {
+    setUnmarkedWorkerIds(null);
+  }, [selectedProjectId, selectedDate]);
 
   // History tab filters & collapsible daily sheets
   const [historyProjectFilter, setHistoryProjectFilter] = useState<string>('all');
@@ -509,7 +515,7 @@ function AttendancePageInner() {
 
   const handleStatusChange = (worker: Worker, status: AttendanceStatus) => {
     // Supervisor cannot manually toggle their own row (auto-logged on crew submit)
-    if (isSelfSupervisorWorker(worker)) {
+    if (isSubmitting || isSelfSupervisorWorker(worker)) {
       return;
     }
 
@@ -538,6 +544,7 @@ function AttendancePageInner() {
   };
 
   const handleNotesChange = (workerId: string, notes: string) => {
+    if (isSubmitting) return;
     const current = draftAttendance[workerId] || getBaselineDraftEntry(workerId);
     applyDraftChanges({
       [workerId]: {
@@ -549,6 +556,7 @@ function AttendancePageInner() {
 
   // Fill only unmarked regular crew in a craft group as Present
   const handleMarkCrewPresent = (targetWorkers: Worker[]) => {
+    if (isSubmitting) return;
     const changes: AttendanceDraftMap = {};
     targetWorkers.forEach((worker) => {
       if (isSelfSupervisorWorker(worker)) return;
@@ -804,10 +812,17 @@ function AttendancePageInner() {
     }
   };
 
+  const collectUnmarkedWorkerIds = () => siteRosterWorkers
+    .filter((worker) => !isSelfSupervisorWorker(worker))
+    .filter((worker) => !(draftAttendance[worker.id] || getBaselineDraftEntry(worker.id)).status)
+    .map((worker) => worker.id);
+
   // Filtered workers on the Daily Roster (Supervisors placed at the top)
   const filteredWorkers = useMemo(() => {
+    const unmarkedIds = unmarkedWorkerIds ? new Set(unmarkedWorkerIds) : null;
     return siteRosterWorkers
       .filter((w) => {
+        if (unmarkedIds && !unmarkedIds.has(w.id)) return false;
         if (craftFilter !== 'all' && getCraftGroup(w.position) !== craftFilter) {
           return false;
         }
@@ -823,7 +838,7 @@ function AttendancePageInner() {
         if (aSup !== bSup) return aSup - bSup;
         return a.name.localeCompare(b.name);
       });
-  }, [siteRosterWorkers, craftFilter, searchWorker]);
+  }, [siteRosterWorkers, craftFilter, searchWorker, unmarkedWorkerIds]);
 
   // Group filteredWorkers by CraftGroupKey for compact collapsible display
   const groupedRosterWorkers = useMemo(() => {
@@ -1146,7 +1161,7 @@ function AttendancePageInner() {
 
         {/* Active Project & Date Selector Bar (Only shown on Daily Roster tab) */}
         {activeTab === 'terminal' && (
-          <div className="rounded-xl border border-surface-border bg-white p-3 sm:p-3.5 grid grid-cols-1 md:grid-cols-2 gap-2.5 md:gap-3 items-center">
+          <div className="rounded-xl border border-surface-border bg-white p-3 sm:p-3.5 grid grid-cols-1 md:grid-cols-2 gap-2.5 md:gap-3 items-start">
             <div>
               <label htmlFor="attendance-project" className="text-xs font-semibold text-ink-secondary block mb-1.5">
                 Project Site
@@ -1178,7 +1193,7 @@ function AttendancePageInner() {
                   type="button"
                   variant={selectedDate === today ? 'primary' : 'secondary'}
                   size="sm"
-                  className="min-h-11 sm:min-h-9"
+                  className="min-h-11 sm:min-h-11"
                   disabled={isSubmitting}
                   onClick={() => setSelectedDate(manilaDateISO())}
                 >
@@ -1188,22 +1203,24 @@ function AttendancePageInner() {
                   type="button"
                   variant={selectedDate === yesterday ? 'primary' : 'secondary'}
                   size="sm"
-                  className="min-h-11 sm:min-h-9"
+                  className="min-h-11 sm:min-h-11"
                   disabled={isSubmitting}
                   onClick={() => setSelectedDate(shiftCalendarDate(manilaDateISO(), -1))}
                 >
                   Yesterday ({yesterday.slice(5)})
                 </Button>
                 {isFounder && (
-                  <Input
-                    type="date"
-                    aria-label="Roll call date"
-                    value={selectedDate}
-                    max={today}
-                    disabled={isSubmitting}
-                    onChange={(e) => setSelectedDate(e.target.value)}
-                    className="py-2"
-                  />
+                  <div className="w-full sm:w-44">
+                    <Input
+                      type="date"
+                      aria-label="Roll call date"
+                      value={selectedDate}
+                      max={today}
+                      disabled={isSubmitting}
+                      onChange={(e) => setSelectedDate(e.target.value)}
+                      className="py-2"
+                    />
+                  </div>
                 )}
               </div>
             </div>
@@ -1218,26 +1235,11 @@ function AttendancePageInner() {
               aria-label="Attendance summary"
               className="rounded-xl border border-surface-border bg-white px-3 py-2.5 sm:px-3.5 sm:py-3"
             >
-              <div className="flex items-center justify-between gap-3">
+              <div className="flex flex-wrap items-center justify-between gap-x-3 gap-y-1">
                 <h2 className="text-sm font-semibold text-ink-primary">Crew status</h2>
-                <span className="text-xs font-medium text-ink-secondary tabular-nums">
-                  {checkedCount} of {markableWorkers.length} marked
-                </span>
-              </div>
-              <div
-                className="mt-2 h-1.5 overflow-hidden rounded-full bg-surface-inset"
-                role="progressbar"
-                aria-label="Attendance completion"
-                aria-valuemin={0}
-                aria-valuemax={Math.max(markableWorkers.length, 1)}
-                aria-valuenow={checkedCount}
-              >
-                <div
-                  className="h-full rounded-full bg-brand transition-[width] duration-200"
-                  style={{
-                    width: `${markableWorkers.length ? Math.round((checkedCount / markableWorkers.length) * 100) : 0}%`,
-                  }}
-                />
+                <p className="text-xs font-medium text-ink-secondary tabular-nums" aria-live="polite">
+                  {checkedCount} of {markableWorkers.length} marked · {uncheckedCount} remaining
+                </p>
               </div>
               <ul
                 aria-label="Attendance counts by status"
@@ -1317,6 +1319,33 @@ function AttendancePageInner() {
                     options={CRAFT_FILTER_OPTIONS}
                   />
                 </div>
+              </div>
+
+              <div className="mt-2 flex flex-wrap items-center gap-2 border-t border-surface-border/70 pt-2">
+                <button
+                  type="button"
+                  aria-pressed={unmarkedWorkerIds !== null}
+                  disabled={!isLoaded || !attendanceDraftStorageKey || draftStorageReadyKey !== attendanceDraftStorageKey || isSubmitting}
+                  onClick={() => setUnmarkedWorkerIds((current) => current === null ? collectUnmarkedWorkerIds() : null)}
+                  className={`inline-flex min-h-11 items-center rounded-lg border px-3 text-xs font-semibold transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand focus-visible:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-50 ${
+                    unmarkedWorkerIds !== null ? 'border-brand bg-brand text-white' : 'border-surface-border bg-white text-navy hover:bg-surface-inset'
+                  }`}
+                >
+                  Unmarked only
+                </button>
+                {unmarkedWorkerIds !== null && (
+                  <>
+                    <button
+                      type="button"
+                      disabled={isSubmitting}
+                      onClick={() => setUnmarkedWorkerIds(collectUnmarkedWorkerIds())}
+                      className="inline-flex min-h-11 items-center rounded-lg px-2 text-xs font-semibold text-brand hover:bg-brand/5 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand disabled:opacity-50"
+                    >
+                      Refresh unmarked list
+                    </button>
+                    <span className="text-xs text-ink-secondary">Marked workers stay visible until you refresh the list.</span>
+                  </>
+                )}
               </div>
 
               {craftFilter !== 'all' && (
@@ -1413,6 +1442,7 @@ function AttendancePageInner() {
                         type="button"
                         onClick={() => toggleGroupCollapse(groupKey)}
                         aria-expanded={!isCollapsed}
+                        aria-controls={`attendance-group-${groupKey}`}
                         className="flex min-h-11 w-full min-w-0 items-center gap-2.5 rounded-md text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand"
                       >
                         {isCollapsed ? (
@@ -1429,33 +1459,42 @@ function AttendancePageInner() {
                         </span>
                       </button>
 
-                      <div className="mt-1.5 flex flex-col gap-1.5 md:flex-row md:items-center md:justify-between">
-                        <div className="flex min-w-0 flex-wrap items-center gap-x-2.5 gap-y-1 text-[11px] text-ink-secondary">
-                          <span><strong className="tabular-nums text-status-success">{groupPresent}</strong> present</span>
-                          <span><strong className="tabular-nums text-status-warning">{groupHalf}</strong> half day</span>
-                          <span><strong className="tabular-nums text-status-danger">{groupAbsent}</strong> absent</span>
-                          <span><strong className="tabular-nums text-status-info">{groupLeave}</strong> leave</span>
-                          {groupUnchecked > 0 && (
-                            <span className="font-semibold text-status-warning">
-                              {groupUnchecked} unmarked
-                            </span>
-                          )}
+                      <div className="flex flex-wrap items-start justify-between gap-x-3 gap-y-1">
+                        <div className="flex flex-wrap items-start gap-x-3">
+                          <div className="inline-flex min-h-11 items-center text-xs font-semibold text-ink-secondary tabular-nums">
+                            {groupUnchecked} unmarked{(searchWorker.trim() || unmarkedWorkerIds !== null) ? ' among shown workers' : ''}
+                          </div>
+                          <details className="text-xs text-ink-secondary">
+                            <summary className="min-h-11 w-fit cursor-pointer py-3 font-medium text-brand focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand">Status breakdown{(searchWorker.trim() || unmarkedWorkerIds !== null) ? ' (shown workers)' : ''}</summary>
+                            <div className="flex flex-wrap gap-x-3 gap-y-1 pb-2 tabular-nums">
+                              <span>{groupPresent} present</span>
+                              <span>{groupHalf} half day</span>
+                              <span>{groupAbsent} absent</span>
+                              <span>{groupLeave} leave</span>
+                            </div>
+                          </details>
                         </div>
-
                         {hasUnmarkedCrew && (
                           <button
                             type="button"
+                            disabled={isSubmitting}
                             onClick={() => handleMarkCrewPresent(groupWorkers)}
-                            className="inline-flex min-h-11 w-fit max-w-full shrink-0 items-center rounded-lg px-2 text-xs font-semibold text-brand transition-colors hover:bg-brand/5 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand"
+                            className="inline-flex min-h-11 w-fit max-w-full shrink-0 items-center rounded-lg px-2 text-xs font-semibold text-brand transition-colors hover:bg-brand/5 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand disabled:opacity-50"
                           >
-                            Mark remaining present
+                            {(searchWorker.trim() || unmarkedWorkerIds !== null) ? 'Mark visible unmarked present' : 'Mark remaining present'}
                           </button>
                         )}
                       </div>
                     </div>
 
-                    {!isCollapsed && (
-                      <div className="divide-y divide-surface-border/60">
+                    <div
+                      id={`attendance-group-${groupKey}`}
+                      ref={(node) => { node?.toggleAttribute('inert', isCollapsed); }}
+                      aria-hidden={isCollapsed || undefined}
+                      className={`grid transition-[grid-template-rows] duration-200 ease-out motion-reduce:transition-none ${isCollapsed ? 'grid-rows-[0fr]' : 'grid-rows-[1fr]'}`}
+                    >
+                      <div className="min-h-0 overflow-hidden">
+                        <div className="divide-y divide-surface-border/60">
                         {groupWorkers.map((worker) => {
                           const currentDraft = draftAttendance[worker.id] || {
                             status: null,
@@ -1585,6 +1624,7 @@ function AttendancePageInner() {
                                           <button
                                             key={status.id}
                                             type="button"
+                                            disabled={isSubmitting}
                                             onClick={() =>
                                               handleStatusChange(
                                                 worker,
@@ -1649,6 +1689,7 @@ function AttendancePageInner() {
                                           aria-label={`Activity note for ${worker.name}`}
                                           placeholder="Activity note (e.g. 2F slab rebar, went home at noon)..."
                                           value={currentDraft.notes}
+                                          disabled={isSubmitting}
                                           onChange={(e) =>
                                             handleNotesChange(worker.id, e.target.value)
                                           }
@@ -1662,10 +1703,9 @@ function AttendancePageInner() {
                             </div>
                           );
                         })}
+                        </div>
                       </div>
-                    )}
-
-
+                    </div>
                   </div>
                 );
               })}
@@ -1673,11 +1713,13 @@ function AttendancePageInner() {
               {filteredWorkers.length === 0 && (
                 <div className="bg-white rounded-xl border border-surface-border">
                   <EmptyState
-                    title="No workers on this site"
+                    title={unmarkedWorkerIds !== null ? 'No workers in this view' : 'No workers on this site'}
                     description={
                       workers.length === 0
                         ? 'Add workers from the Workforce tab. They will appear here grouped by craft.'
-                        : 'No worker matches the current filter.'
+                        : unmarkedWorkerIds !== null
+                          ? 'Refresh the unmarked list or turn off Unmarked only to see the full roster.'
+                          : 'No worker matches the current filter.'
                     }
                   />
                 </div>
