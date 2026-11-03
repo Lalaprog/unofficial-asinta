@@ -4,6 +4,14 @@ import { act, cleanup, fireEvent, render, screen, within } from '@testing-librar
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 const mock = vi.hoisted(() => ({ founder: true, update: vi.fn(), showToast: vi.fn() }));
+vi.mock('@/lib/attendance/usePendingApprovals', async () => {
+  const React = await import('react');
+  const rows = Array.from({length: 4}, (_, i) => ({id:`pending-${i+1}`, worker_id:`sup-${i+1}`, worker_name:`Supervisor ${i+1}`, project_id:'site-1', project_name:'Alpha Site', date:'2026-10-15', status:'present', hours_worked:8, notes:'Pending Founder Review', recorded_by:`sup-${i+1}`, is_founder_override:false}));
+  return {usePendingApprovals: (enabled: boolean) => {
+    const [count, setCount] = React.useState(3);
+    return {items: enabled ? rows.slice(0, count) : [], total: enabled ? rows.length : null, hasMore: enabled && count < rows.length, loading:false, error:null, loadMore: () => setCount(4), refresh: vi.fn()};
+  }};
+});
 vi.mock('next/navigation', () => ({ useSearchParams: () => new URLSearchParams('tab=history') }));
 vi.mock('next/link', () => ({ default: ({children, href, prefetch: _prefetch, ...props}: React.AnchorHTMLAttributes<HTMLAnchorElement> & {prefetch?: boolean}) => React.createElement('a', {href, ...props}, children) }));
 vi.mock('@/components/layout/AppShell', () => ({ AppShell: ({children}: {children: React.ReactNode}) => React.createElement('main', null, children) }));
@@ -60,13 +68,13 @@ describe('compact attendance history', () => {
 
   it('filters the loaded records before batching and keeps the Founder approval queue independent', () => {
     render(React.createElement(AttendancePage));
-    expect(screen.getByText('Supervisor approvals (4 loaded)')).toBeTruthy();
+    expect(screen.getByText('Supervisor approvals (4 pending)')).toBeTruthy();
     expect(screen.getAllByRole('button',{name:'Approve Full Day'})).toHaveLength(3);
-    fireEvent.click(screen.getByRole('button',{name:'Show more pending approvals (1 remaining)'}));
+    fireEvent.click(screen.getByRole('button',{name:'Show more pending approvals'}));
     expect(screen.getAllByRole('button',{name:'Approve Full Day'})).toHaveLength(4);
     fireEvent.change(screen.getAllByLabelText('Search attendance history')[0],{target:{value:'ceiling repairs'}});
     expect(screen.getByText('1 matching record in loaded history. Showing 1 of 1 date/site sheets.')).toBeTruthy();
-    expect(screen.getByText('Supervisor approvals (4 loaded)')).toBeTruthy();
+    expect(screen.getByText('Supervisor approvals (4 pending)')).toBeTruthy();
     const header=screen.getByRole('button',{name:/October 15, 2026 · Alpha Site/});
     fireEvent.click(header);
     expect(screen.getByText('Worker 25')).toBeTruthy();
@@ -89,7 +97,7 @@ describe('compact attendance history', () => {
     fireEvent.click(screen.getByRole('button', {name: 'Reset'}));
     expect(screen.getByText('44 matching records in loaded history. Showing 10 of 15 date/site sheets.')).toBeTruthy();
     expect(screen.getByRole('button', {name: /October 15, 2026 · Alpha Site/}).getAttribute('aria-expanded')).toBe('false');
-    expect(screen.getByText('Supervisor approvals (4 loaded)')).toBeTruthy();
+    expect(screen.getByText('Supervisor approvals (4 pending)')).toBeTruthy();
   });
 
   it('preserves the correct Founder approval and override actions within an expanded sheet', async () => {

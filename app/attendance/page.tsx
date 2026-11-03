@@ -40,6 +40,7 @@ import {
   type AttendanceDraftMap,
 } from '@/lib/attendance/drafts';
 import { useToast } from '@/components/ui/Toast';
+import { usePendingApprovals } from '@/lib/attendance/usePendingApprovals';
 
 type CraftGroupKey =
   | 'supervision'
@@ -61,7 +62,6 @@ const CRAFT_GROUP_META: Record<
 
 const HISTORY_SHEET_PAGE_SIZE = 10;
 const HISTORY_RECORD_PAGE_SIZE = 20;
-const REVIEW_PAGE_SIZE = 3;
 
 const CRAFT_FILTER_OPTIONS = [
   { label: 'All Craft Groups', value: 'all' },
@@ -112,6 +112,7 @@ function AttendancePageInner() {
   const { user, isFounder, isSupervisor } = useAuth();
   const searchParams = useSearchParams();
   const { showToast } = useToast();
+  const pendingApprovals = usePendingApprovals(isFounder, user?.id);
   const {
     users,
     workers,
@@ -198,6 +199,8 @@ function AttendancePageInner() {
 
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [attendanceSaveFailed, setAttendanceSaveFailed] = useState(false);
+  const [isReviewingSupervisor, setIsReviewingSupervisor] = useState(false);
+  const reviewInFlightRef = useRef(false);
   const [searchWorker, setSearchWorker] = useState('');
   // Snapshot keeps a just-marked worker visible and focused until the user refreshes.
   const [unmarkedWorkerIds, setUnmarkedWorkerIds] = useState<string[] | null>(null);
@@ -215,7 +218,6 @@ function AttendancePageInner() {
   const [expandedHistorySheets, setExpandedHistorySheets] = useState<Record<string, boolean>>({});
   const [visibleHistorySheets, setVisibleHistorySheets] = useState(HISTORY_SHEET_PAGE_SIZE);
   const [historyRecordLimits, setHistoryRecordLimits] = useState<Record<string, number>>({});
-  const [visibleReviewItems, setVisibleReviewItems] = useState(REVIEW_PAGE_SIZE);
 
   useEffect(() => {
     setVisibleHistorySheets(HISTORY_SHEET_PAGE_SIZE);
@@ -720,6 +722,7 @@ function AttendancePageInner() {
         }
       }
       showToast('success', 'Attendance saved. Supervisor self-attendance may still require Founder review before payroll.');
+      if (isFounder) void pendingApprovals.refresh();
     } else {
       setAttendanceSaveFailed(true);
     }
@@ -730,26 +733,30 @@ function AttendancePageInner() {
     rec: Attendance,
     decision: 'present' | 'half_day' | 'absent'
   ) => {
-    const label =
-      decision === 'present'
-        ? 'Approved Full Day'
-        : decision === 'half_day'
-          ? 'Approved Half Day'
-          : 'Marked Absent';
-    const ok = await updateAttendanceRecord(
-      rec.id,
-      {
-        status: decision,
-        hours_worked: statusToHours(decision),
-        notes: `[Founder Review: ${label} by ${user?.name || 'Founder'}]`,
-      },
-      true
-    );
-    if (ok) {
-      showToast(
-        'success',
-        `Supervisor attendance ${label.toLowerCase()} and synced to Payroll Engine.`
+    if (reviewInFlightRef.current) return;
+    reviewInFlightRef.current = true;
+    setIsReviewingSupervisor(true);
+    try {
+      const label =
+        decision === 'present'
+          ? 'Approved Full Day'
+          : decision === 'half_day'
+            ? 'Approved Half Day'
+            : 'Marked Absent';
+      const ok = await updateAttendanceRecord(
+        rec.id,
+        {
+          status: decision,
+          hours_worked: statusToHours(decision),
+          notes: `[Founder Review: ${label} by ${user?.name || 'Founder'}]`,
+        },
+        true
       );
+      if (ok) showToast('success', `Supervisor attendance ${label.toLowerCase()} and saved.`);
+      await pendingApprovals.refresh();
+    } finally {
+      reviewInFlightRef.current = false;
+      setIsReviewingSupervisor(false);
     }
   };
 
@@ -771,6 +778,7 @@ function AttendancePageInner() {
 
     if (success) {
       setOverrideModalOpen(false);
+      void pendingApprovals.refresh();
     }
   };
 
@@ -883,18 +891,6 @@ function AttendancePageInner() {
       );
     },
     [workers, findSupervisorAccountForWorker]
-  );
-
-  // Unverified Supervisor attendance logs across the ledger awaiting Founder sign-off
-  const unverifiedSelfLogs = useMemo(
-    () =>
-      attendance.filter(
-        (a) =>
-          isSupervisorAttendanceRecord(a) &&
-          !a.is_founder_override &&
-          (a.status === 'present' || a.status === 'half_day')
-      ),
-    [attendance, isSupervisorAttendanceRecord]
   );
 
   // Determine whether the current draft has unsaved changes compared to saved records
@@ -1094,26 +1090,26 @@ function AttendancePageInner() {
         </div>
 
         {/* Founder Review Banner: Supervisor Attendance Submitted with Crew Report */}
-        {isFounder && unverifiedSelfLogs.length > 0 && (
+        {isFounder && (pendingApprovals.loading || pendingApprovals.error || (pendingApprovals.total ?? 0) > 0) && (
           <div className="p-3.5 rounded-xl bg-status-warning-bg/60 border border-status-warning/25 space-y-3 text-xs">
             <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
               <div className="flex items-start sm:items-center gap-2.5">
                 <ShieldAlert className="w-5 h-5 text-status-warning shrink-0 mt-0.5 sm:mt-0" />
                 <div>
                   <div className="font-bold text-navy text-sm">
-                    Supervisor approvals ({unverifiedSelfLogs.length} loaded)
+                    Supervisor approvals {pendingApprovals.total !== null ? `(${pendingApprovals.total} pending)` : ''}
                   </div>
                   <div className="text-ink-secondary">
-                    Review these supervisor logs before they are included in Payroll. Older approvals may not be loaded.
+                    Review these supervisor logs before payroll. This queue reflects the last check; refresh for changes made elsewhere.
                   </div>
                 </div>
               </div>
             </div>
 
-            <div className="divide-y divide-surface-border/60 bg-white rounded-xl border border-surface-border overflow-hidden">
-              {unverifiedSelfLogs.slice(0, visibleReviewItems).map((rec) => {
-                const supWorker = workers.find((w) => w.id === rec.worker_id);
-                const proj = projects.find((p) => p.id === rec.project_id);
+            {pendingApprovals.loading && <p role="status" className="text-ink-secondary">Loading pending approvals…</p>}
+            {pendingApprovals.error && <p role="alert" className="text-status-danger">Could not load the approval queue. Retry before assuming there are no pending approvals.</p>}
+            {pendingApprovals.items.length > 0 && <div className="divide-y divide-surface-border/60 bg-white rounded-xl border border-surface-border overflow-hidden">
+              {pendingApprovals.items.map((rec) => {
                 return (
                   <div
                     key={rec.id}
@@ -1121,16 +1117,16 @@ function AttendancePageInner() {
                   >
                     <div className="space-y-0.5">
                       <div className="flex items-center gap-2 flex-wrap">
-                        <span className="font-bold text-navy">{supWorker?.name || 'Supervisor'}</span>
+                        <span className="font-bold text-navy">{rec.worker_name || 'Supervisor'}</span>
                         <Badge variant="warning" size="sm">
                           Site Supervisor
                         </Badge>
                         <span className="text-ink-secondary">
-                          · Submitted crew attendance for <strong className="text-navy">{proj?.name}</strong> on <strong>{rec.date}</strong>
+                          · Attendance at <strong className="text-navy">{rec.project_name || 'Project Site'}</strong> on <strong>{rec.date}</strong>
                         </span>
                       </div>
                       {rec.notes && (
-                        <div className="text-[11px] text-ink-muted">{rec.notes}</div>
+                        <div className="whitespace-pre-wrap break-words text-[11px] text-ink-muted">{rec.notes}</div>
                       )}
                     </div>
 
@@ -1140,6 +1136,7 @@ function AttendancePageInner() {
                         variant="primary"
                         size="sm"
                         className="min-h-11 sm:min-h-9"
+                        disabled={isReviewingSupervisor || pendingApprovals.loading || Boolean(pendingApprovals.error)}
                         onClick={() => handleFounderSupervisorReview(rec, 'present')}
                         leftIcon={<ShieldCheck className="w-3.5 h-3.5" />}
                       >
@@ -1150,6 +1147,7 @@ function AttendancePageInner() {
                         variant="secondary"
                         size="sm"
                         className="min-h-11 sm:min-h-9"
+                        disabled={isReviewingSupervisor || pendingApprovals.loading || Boolean(pendingApprovals.error)}
                         onClick={() => handleFounderSupervisorReview(rec, 'half_day')}
                       >
                         Half Day
@@ -1159,6 +1157,7 @@ function AttendancePageInner() {
                         variant="danger"
                         size="sm"
                         className="min-h-11 sm:min-h-9"
+                        disabled={isReviewingSupervisor || pendingApprovals.loading || Boolean(pendingApprovals.error)}
                         onClick={() => handleFounderSupervisorReview(rec, 'absent')}
                         leftIcon={<XCircle className="w-3.5 h-3.5" />}
                       >
@@ -1168,12 +1167,24 @@ function AttendancePageInner() {
                   </div>
                 );
               })}
-            </div>
-            {visibleReviewItems < unverifiedSelfLogs.length && (
-              <Button type="button" variant="secondary" size="sm" onClick={() => setVisibleReviewItems((count) => count + REVIEW_PAGE_SIZE)}>
-                Show more pending approvals ({unverifiedSelfLogs.length - visibleReviewItems} remaining)
+            </div>}
+            <div className="flex flex-wrap gap-2">
+              {pendingApprovals.hasMore && (
+                <Button type="button" variant="secondary" size="sm" disabled={pendingApprovals.loading} onClick={pendingApprovals.loadMore}>
+                  Show more pending approvals
+                </Button>
+              )}
+              <Button type="button" variant="secondary" size="sm" disabled={pendingApprovals.loading} onClick={() => void pendingApprovals.refresh()}>
+                {pendingApprovals.error ? 'Retry approvals' : 'Refresh approvals'}
               </Button>
-            )}
+            </div>
+          </div>
+        )}
+
+        {isFounder && !pendingApprovals.loading && !pendingApprovals.error && pendingApprovals.total === 0 && (
+          <div className="flex flex-wrap items-center justify-between gap-2 rounded-xl border border-surface-border bg-white px-3.5 py-2 text-xs text-ink-secondary">
+            <span>No pending supervisor approvals at last check.</span>
+            <Button type="button" variant="ghost" size="sm" onClick={() => void pendingApprovals.refresh()}>Refresh approvals</Button>
           </div>
         )}
 
@@ -2124,6 +2135,7 @@ function AttendancePageInner() {
                                       type="button"
                                       variant="primary"
                                       size="sm"
+                                      disabled={isReviewingSupervisor}
                                       onClick={() =>
                                         handleFounderSupervisorReview(rec, 'present')
                                       }
@@ -2134,6 +2146,7 @@ function AttendancePageInner() {
                                       type="button"
                                       variant="secondary"
                                       size="sm"
+                                      disabled={isReviewingSupervisor}
                                       onClick={() =>
                                         handleFounderSupervisorReview(rec, 'half_day')
                                       }
@@ -2144,6 +2157,7 @@ function AttendancePageInner() {
                                       type="button"
                                       variant="danger"
                                       size="sm"
+                                      disabled={isReviewingSupervisor}
                                       onClick={() =>
                                         handleFounderSupervisorReview(rec, 'absent')
                                       }
