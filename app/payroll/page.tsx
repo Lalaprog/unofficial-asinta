@@ -417,24 +417,23 @@ export default function PayrollPage() {
 
           <div className="p-3.5 rounded-2xl bg-surface-inset border border-surface-border space-y-1.5 text-ink-secondary">
             <div className="flex items-center justify-between">
-              <span className="font-bold text-navy text-xs">Live Attendance Sync:</span>
+              <span className="font-bold text-navy text-xs">Attendance currently loaded:</span>
               <Badge variant={periodAttendanceCount > 0 ? 'success' : 'warning'} size="sm">
-                {periodAttendanceCount} attendance log{periodAttendanceCount === 1 ? '' : 's'} in range
+                {periodAttendanceCount} loaded log{periodAttendanceCount === 1 ? '' : 's'} in range
               </Badge>
             </div>
             <div>
-              Supervisor-submitted attendance is synced automatically — you do not need to re-submit attendance before running payroll.
+              This preview may omit records. Generating checks the selected period directly from the server. Review the resulting vouchers before approval, and avoid concurrent payroll, attendance or advance changes during generation.
             </div>
             {unverifiedSelfLogsCount > 0 && (
               <div className="text-[11px] font-semibold text-status-warning pt-1 border-t border-surface-border/60">
                 At least {unverifiedSelfLogsCount} supervisor self-attendance log(s) need Founder verification on the Attendance page. Other unverified supervisor records may also be held back.
               </div>
             )}
-            {existingPeriodVouchers.length > 0 && (
-              <div className="text-[11px] font-semibold text-navy pt-1 border-t border-surface-border/60">
-                {existingPeriodVouchers.length} voucher(s) already exist for {periodStart} → {periodEnd}. The run recalculates eligible draft or reviewed vouchers; approved and paid vouchers are skipped. A site-scoped run may recalculate the existing worker-period voucher rather than creating a separate voucher for that site.
-              </div>
-            )}
+            <div className="text-[11px] font-semibold text-navy pt-1 border-t border-surface-border/60">
+              {existingPeriodVouchers.length > 0 && <>At least {existingPeriodVouchers.length} loaded voucher(s) exist for {periodStart} → {periodEnd}. </>}
+              The run recalculates eligible draft or reviewed vouchers; approved and paid vouchers are skipped. A site-scoped run may recalculate an existing worker-period voucher rather than creating a separate voucher for that site.
+            </div>
           </div>
 
           <div className="pt-3 flex justify-end space-x-2">
@@ -450,9 +449,9 @@ export default function PayrollPage() {
               variant="primary"
               type="submit"
               isLoading={isGenerating}
-              disabled={isGenerating || periodAttendanceCount === 0}
+              disabled={isGenerating}
             >
-              {isGenerating ? 'Preparing payroll…' : existingPeriodVouchers.length > 0 ? 'Refresh / Recalculate Run' : 'Generate Payroll Run'}
+              {isGenerating ? 'Preparing payroll…' : 'Generate / Refresh Payroll Run'}
             </Button>
           </div>
         </form>

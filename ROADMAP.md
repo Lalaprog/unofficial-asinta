@@ -185,3 +185,7 @@ production credentials. **Open** = known work, deliberately deferred.
 - Adopt `isSupabaseConfigured()` fail-fast path in more entry points if needed.
 - Automated data-retention purge (see `docs/PRIVACY.md` §5) — manual review is
   the current answer.
+
+### Payroll input completeness follow-up
+
+Payroll generation can request a bounded, Founder-only server snapshot instead of relying on the capped shared browser store (see `docs/PAYROLL_INPUT_SNAPSHOT_ROLLOUT.md`). This is read-only groundwork, not a complete attendance matrix or a concurrency-safe payroll run. Atomic generation, duplicate prevention, consistent review semantics, scalable payroll ledger/project selectors, and reconciliation of existing hosted financial migrations remain separate work. Avoid concurrent edits/runs and review drafts before approval.
