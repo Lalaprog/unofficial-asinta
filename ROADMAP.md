@@ -95,6 +95,18 @@ production credentials. **Open** = known work, deliberately deferred.
   with environment overrides and are reported by `/api/integrations/status`,
   because Groq retired both model IDs this app had been using.
 
+## Done — server-backed Founder attendance approval queue
+
+- Founder review candidates are queried independently of the capped shared
+  attendance store, with keyset pages, a count, explicit errors and refresh.
+  The read-only invoker function retains the existing review heuristics and RLS.
+- Apply the individual migration before deploying the UI; see
+  `docs/ATTENDANCE_APPROVAL_QUEUE_ROLLOUT.md`. Hosted permissions and live
+  operation are not verified. Approval decisions can still race between Founders.
+- **Still open:** genuine server-side attendance history, scalable workforce
+  logs, complete payroll-period data and safe payroll calculation. The queue
+  does not make those other views or calculations complete.
+
 ## Done — notifications usability
 
 - **One bell-anchored panel.** Desktop and mobile now share a non-modal Radix

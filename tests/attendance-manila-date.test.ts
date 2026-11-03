@@ -12,6 +12,7 @@ const mock = vi.hoisted(() => ({
   recordAttendanceBatch: vi.fn(),
   showToast: vi.fn(),
 }));
+vi.mock('@/lib/attendance/usePendingApprovals', () => ({ usePendingApprovals: () => ({items: [], total: 0, hasMore: false, loading: false, error: null, loadMore: vi.fn(), refresh: vi.fn()}) }));
 vi.mock('next/navigation', () => ({ useSearchParams: () => new URLSearchParams(mock.tab) }));
 vi.mock('next/link', () => ({
   default: ({ children, href, prefetch: _prefetch, ...props }: React.AnchorHTMLAttributes<HTMLAnchorElement> & { prefetch?: boolean }) =>
