@@ -4,6 +4,7 @@ import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-libra
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 const mock = vi.hoisted(() => ({rpc:vi.fn(), update:vi.fn(), toast:vi.fn(), founder:true}));
+vi.mock('@/lib/attendance/useAttendanceHistory', () => ({useAttendanceHistory: () => ({items:[], hasMore:false, loading:false, error:null, loadMore:vi.fn(), retry:vi.fn()})}));
 vi.mock('next/navigation', () => ({useSearchParams: () => new URLSearchParams('tab=history')}));
 vi.mock('next/link', () => ({default: ({children,href,prefetch: _prefetch,...props}: React.AnchorHTMLAttributes<HTMLAnchorElement> & {prefetch?: boolean}) => React.createElement('a',{href,...props},children)}));
 vi.mock('@/components/layout/AppShell', () => ({AppShell: ({children}: {children:React.ReactNode}) => React.createElement('main',null,children)}));

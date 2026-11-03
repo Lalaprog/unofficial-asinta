@@ -41,6 +41,9 @@ import {
 } from '@/lib/attendance/drafts';
 import { useToast } from '@/components/ui/Toast';
 import { usePendingApprovals } from '@/lib/attendance/usePendingApprovals';
+import { useAttendanceHistory } from '@/lib/attendance/useAttendanceHistory';
+import type { HistoryRecord, HistorySheet } from '@/lib/attendance/history';
+import { HistorySheetRecords } from '@/components/attendance/HistorySheetRecords';
 
 type CraftGroupKey =
   | 'supervision'
@@ -59,9 +62,6 @@ const CRAFT_GROUP_META: Record<
   mep_steel: { label: 'Steel, Electrical & Plumbing', order: 4 },
   general: { label: 'Finishing & General Labor', order: 5 },
 };
-
-const HISTORY_SHEET_PAGE_SIZE = 10;
-const HISTORY_RECORD_PAGE_SIZE = 20;
 
 const CRAFT_FILTER_OPTIONS = [
   { label: 'All Craft Groups', value: 'all' },
@@ -216,12 +216,17 @@ function AttendancePageInner() {
   const [historySearchQuery, setHistorySearchQuery] = useState<string>('');
   const [isHistoryFilterSheetOpen, setIsHistoryFilterSheetOpen] = useState(false);
   const [expandedHistorySheets, setExpandedHistorySheets] = useState<Record<string, boolean>>({});
-  const [visibleHistorySheets, setVisibleHistorySheets] = useState(HISTORY_SHEET_PAGE_SIZE);
-  const [historyRecordLimits, setHistoryRecordLimits] = useState<Record<string, number>>({});
+  const [historyRevision, setHistoryRevision] = useState(0);
+  const [debouncedHistorySearch, setDebouncedHistorySearch] = useState('');
+  useEffect(() => {
+    const timer = window.setTimeout(() => setDebouncedHistorySearch(historySearchQuery), 300);
+    return () => window.clearTimeout(timer);
+  }, [historySearchQuery]);
+  const historyFilters = {projectId:historyProjectFilter, status:historyStatusFilter, date:historyDateFilter, search:debouncedHistorySearch};
+  const isHistorySearchSettling = historySearchQuery !== debouncedHistorySearch;
+  const history = useAttendanceHistory<HistorySheet>('sheets', activeTab === 'history' && !isHistorySearchSettling, user?.id, historyFilters, historyRevision);
 
   useEffect(() => {
-    setVisibleHistorySheets(HISTORY_SHEET_PAGE_SIZE);
-    setHistoryRecordLimits({});
     setExpandedHistorySheets({});
   }, [historyProjectFilter, historyStatusFilter, historyDateFilter, historySearchQuery]);
 
@@ -723,6 +728,7 @@ function AttendancePageInner() {
       }
       showToast('success', 'Attendance saved. Supervisor self-attendance may still require Founder review before payroll.');
       if (isFounder) void pendingApprovals.refresh();
+      setHistoryRevision((n) => n + 1);
     } else {
       setAttendanceSaveFailed(true);
     }
@@ -752,7 +758,10 @@ function AttendancePageInner() {
         },
         true
       );
-      if (ok) showToast('success', `Supervisor attendance ${label.toLowerCase()} and saved.`);
+      if (ok) {
+        showToast('success', `Supervisor attendance ${label.toLowerCase()} and saved.`);
+        setHistoryRevision((n) => n + 1);
+      }
       await pendingApprovals.refresh();
     } finally {
       reviewInFlightRef.current = false;
@@ -778,6 +787,7 @@ function AttendancePageInner() {
 
     if (success) {
       setOverrideModalOpen(false);
+      setHistoryRevision((n) => n + 1);
       void pendingApprovals.refresh();
     }
   };
@@ -875,24 +885,6 @@ function AttendancePageInner() {
     );
   }, [filteredWorkers]);
 
-  // Identify whether an attendance record belongs to a Site Supervisor
-  const isSupervisorAttendanceRecord = useCallback(
-    (rec: Attendance): boolean => {
-      if (rec.worker_id === rec.recorded_by) return true;
-      const notes = rec.notes || '';
-      if (notes.includes('Pending Founder Review') || notes.includes('Founder Review:')) {
-        return true;
-      }
-      const w = workers.find((item) => item.id === rec.worker_id);
-      if (!w) return false;
-      return (
-        Boolean(findSupervisorAccountForWorker(w)) ||
-        w.position.toLowerCase().includes('supervisor')
-      );
-    },
-    [workers, findSupervisorAccountForWorker]
-  );
-
   // Determine whether the current draft has unsaved changes compared to saved records
   const hasUnsavedChanges =
     existingSiteDateRecords.length === 0
@@ -926,58 +918,6 @@ function AttendancePageInner() {
   const leaveCount = markableWorkers.filter(
     (worker) => draftAttendance[worker.id]?.status === 'leave'
   ).length;
-
-  const accessibleProjectIdSet = new Set(accessibleProjects.map((p) => p.id));
-  const filteredHistoryAttendance = attendance.filter((rec) => {
-    if (isSupervisor && !accessibleProjectIdSet.has(rec.project_id)) {
-      return false;
-    }
-    if (historyProjectFilter !== 'all' && rec.project_id !== historyProjectFilter) {
-      return false;
-    }
-    if (historyStatusFilter !== 'all' && rec.status !== historyStatusFilter) {
-      return false;
-    }
-    if (historyDateFilter && rec.date !== historyDateFilter) {
-      return false;
-    }
-    if (historySearchQuery.trim()) {
-      const q = historySearchQuery.toLowerCase();
-      const worker = workers.find((w) => w.id === rec.worker_id);
-      const proj = projects.find((p) => p.id === rec.project_id);
-      const matchesName = worker?.name.toLowerCase().includes(q) || false;
-      const matchesPos = worker?.position.toLowerCase().includes(q) || false;
-      const matchesProj = proj?.name.toLowerCase().includes(q) || false;
-      const matchesNotes = rec.notes?.toLowerCase().includes(q) || false;
-      if (!matchesName && !matchesPos && !matchesProj && !matchesNotes) {
-        return false;
-      }
-    }
-    return true;
-  });
-
-  // Group history records by (date + project_id) so each daily sheet is compact & collapsible
-  const groupedHistorySheets = useMemo(() => {
-    const sheets = new Map<
-      string,
-      { key: string; date: string; projectId: string; records: Attendance[] }
-    >();
-    filteredHistoryAttendance.forEach((rec) => {
-      const key = `${rec.date}::${rec.project_id}`;
-      const existing = sheets.get(key);
-      if (existing) {
-        existing.records.push(rec);
-      } else {
-        sheets.set(key, {
-          key,
-          date: rec.date,
-          projectId: rec.project_id,
-          records: [rec],
-        });
-      }
-    });
-    return Array.from(sheets.values()).sort((a, b) => b.date.localeCompare(a.date) || a.projectId.localeCompare(b.projectId));
-  }, [filteredHistoryAttendance]);
 
   // Group Workforce tab workers by craft group
   const groupedWorkforceDirectory = useMemo(() => {
@@ -1833,6 +1773,7 @@ function AttendancePageInner() {
                 <div className="min-w-0 flex-1">
                   <Input
                     aria-label="Search attendance history"
+                    maxLength={200}
                     placeholder="Search workers, sites, notes..."
                     value={historySearchQuery}
                     onChange={(e) => setHistorySearchQuery(e.target.value)}
@@ -1904,6 +1845,7 @@ function AttendancePageInner() {
               <div className="hidden items-center gap-2 lg:grid lg:grid-cols-[minmax(12rem,2fr)_minmax(12rem,1.6fr)_minmax(8.5rem,1fr)_minmax(9rem,1.1fr)_auto]">
                 <Input
                   placeholder="Search worker, craft, site, or notes..."
+                  maxLength={200}
                   value={historySearchQuery}
                   onChange={(e) => setHistorySearchQuery(e.target.value)}
                   leftIcon={<Search className="h-4 w-4" />}
@@ -2014,209 +1956,37 @@ function AttendancePageInner() {
               </div>
             </Modal>
 
-            {/* Grouped Daily Attendance Sheets. Counts/search cover loaded data only. */}
             <div className="space-y-1 text-xs text-ink-secondary">
-              <p aria-live="polite">
-                {filteredHistoryAttendance.length} matching {filteredHistoryAttendance.length === 1 ? 'record' : 'records'} in loaded history. Showing {Math.min(visibleHistorySheets, groupedHistorySheets.length)} of {groupedHistorySheets.length} date/site sheets.
-              </p>
-              <p>Search and counts cover only loaded records; older records may be missing.</p>
+              <p aria-live="polite">{history.loading || isHistorySearchSettling ? 'Updating results…' : history.error ? 'History could not be loaded; retry to update results.' : `Showing ${history.items.length} date/site ${history.items.length === 1 ? 'sheet' : 'sheets'} from the server. Counts reflect the current filters.`}</p>
+              <p>Results are a snapshot; refresh to include changes made elsewhere.</p>
             </div>
             <div className="space-y-2">
-              {groupedHistorySheets.slice(0, visibleHistorySheets).map((sheet) => {
-                const proj = projects.find((p) => p.id === sheet.projectId);
-                const isExpanded = Boolean(expandedHistorySheets[sheet.key]);
-                const recordLimit = historyRecordLimits[sheet.key] || HISTORY_RECORD_PAGE_SIZE;
-                const statusCounts = {
-                  present: sheet.records.filter((rec) => rec.status === 'present').length,
-                  half_day: sheet.records.filter((rec) => rec.status === 'half_day').length,
-                  absent: sheet.records.filter((rec) => rec.status === 'absent').length,
-                  leave: sheet.records.filter((rec) => rec.status === 'leave').length,
-                };
-                const pendingCount = sheet.records.filter((rec) =>
-                  isSupervisorAttendanceRecord(rec) && !rec.is_founder_override &&
-                  (rec.status === 'present' || rec.status === 'half_day')
-                ).length;
-                const sheetId = `history-sheet-${encodeURIComponent(sheet.key)}`;
-
-                return (
-                  <div
-                    key={sheet.key}
-                    className="rounded-2xl bg-white border border-surface-border shadow-sm overflow-hidden"
-                  >
-                    <button
-                      type="button"
-                      aria-expanded={isExpanded}
-                      aria-controls={isExpanded ? sheetId : undefined}
-                      onClick={() =>
-                        setExpandedHistorySheets((prev) => ({
-                          ...prev,
-                          [sheet.key]: !prev[sheet.key],
-                        }))
-                      }
-                      className="flex min-h-11 w-full flex-wrap items-center gap-x-3 gap-y-1 bg-surface-inset/70 px-4 py-3 text-left transition-colors hover:bg-surface-inset focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-brand"
-                    >
-                      {isExpanded ? <ChevronDown className="h-4 w-4 shrink-0 text-ink-secondary" aria-hidden="true" /> : <ChevronRight className="h-4 w-4 shrink-0 text-ink-secondary" aria-hidden="true" />}
-                      <span className="min-w-0 flex-1 break-words text-xs font-bold text-navy sm:text-sm">
-                        {formatDatePH(sheet.date)} · {proj?.name || 'Project Site'}
-                      </span>
-                      <span className="text-xs font-medium tabular-nums text-ink-secondary">
-                        {sheet.records.length} {sheet.records.length === 1 ? 'record' : 'records'}
-                      </span>
-                      <span className="flex w-full flex-wrap gap-x-3 gap-y-0.5 pl-7 text-[11px] font-medium text-ink-secondary">
-                        <span>{statusCounts.present} Present</span>
-                        <span>{statusCounts.half_day} Half Day</span>
-                        <span>{statusCounts.absent} Absent</span>
-                        <span>{statusCounts.leave} Leave</span>
-                        {pendingCount > 0 && <span className="font-semibold text-status-warning">{pendingCount} pending Founder review</span>}
-                      </span>
-                    </button>
-
-                    {isExpanded && (
-                      <div id={sheetId} className="divide-y divide-surface-border/60 border-t border-surface-border/60">
-                        {sheet.records.slice(0, recordLimit).map((rec) => {
-                          const worker = workers.find((w) => w.id === rec.worker_id);
-                          const isSelfLog = isSupervisorAttendanceRecord(rec);
-                          const isUnverifiedSelf =
-                            isSelfLog &&
-                            !rec.is_founder_override &&
-                            (rec.status === 'present' || rec.status === 'half_day');
-
-                          return (
-                            <div
-                              key={rec.id}
-                              className="px-4 py-2.5 flex flex-col sm:flex-row sm:items-center justify-between gap-2 text-xs hover:bg-slate-50 transition-colors"
-                            >
-                              <div className="space-y-0.5 min-w-0">
-                                <div className="flex items-center flex-wrap gap-1.5">
-                                  <span className="break-words font-bold text-navy">{worker?.name || 'Worker'}</span>
-                                  {worker?.position && <span className="text-ink-secondary text-[11px]">({worker.position})</span>}
-                                  {isUnverifiedSelf && (
-                                    <Badge variant="warning" size="sm">
-                                      Pending Founder Approval (Held from Payroll)
-                                    </Badge>
-                                  )}
-                                  {isSelfLog && rec.is_founder_override && (
-                                    <Badge variant="success" size="sm">
-                                      Founder Approved ✓
-                                    </Badge>
-                                  )}
-                                  {!isSelfLog && rec.is_founder_override && (
-                                    <Badge variant="navy" size="sm">
-                                      Founder Override
-                                    </Badge>
-                                  )}
-                                </div>
-                                {rec.notes && (
-                                  <div className="max-w-2xl whitespace-pre-wrap break-words text-[11px] text-ink-muted">
-                                    {rec.notes}
-                                  </div>
-                                )}
-                              </div>
-
-                              <div className="flex items-center flex-wrap gap-1.5 shrink-0">
-                                <Badge
-                                  variant={
-                                    rec.status === 'present'
-                                      ? 'success'
-                                      : rec.status === 'half_day'
-                                        ? 'warning'
-                                        : rec.status === 'leave'
-                                          ? 'info'
-                                          : 'danger'
-                                  }
-                                  size="sm"
-                                >
-                                  {formatStatusLabel(rec.status)}
-                                </Badge>
-
-                                {isFounder && isUnverifiedSelf && (
-                                  <>
-                                    <Button
-                                      type="button"
-                                      variant="primary"
-                                      size="sm"
-                                      disabled={isReviewingSupervisor}
-                                      onClick={() =>
-                                        handleFounderSupervisorReview(rec, 'present')
-                                      }
-                                    >
-                                      Full Day
-                                    </Button>
-                                    <Button
-                                      type="button"
-                                      variant="secondary"
-                                      size="sm"
-                                      disabled={isReviewingSupervisor}
-                                      onClick={() =>
-                                        handleFounderSupervisorReview(rec, 'half_day')
-                                      }
-                                    >
-                                      Half Day
-                                    </Button>
-                                    <Button
-                                      type="button"
-                                      variant="danger"
-                                      size="sm"
-                                      disabled={isReviewingSupervisor}
-                                      onClick={() =>
-                                        handleFounderSupervisorReview(rec, 'absent')
-                                      }
-                                    >
-                                      Absent
-                                    </Button>
-                                  </>
-                                )}
-
-                                {isFounder && (
-                                  <Button
-                                    variant="secondary"
-                                    size="sm"
-                                    onClick={() => {
-                                      setSelectedRecordForOverride(rec);
-                                      setOverrideStatus(rec.status);
-                                      setOverrideNotes(rec.notes || '');
-                                      setOverrideModalOpen(true);
-                                    }}
-                                  >
-                                    Edit
-                                  </Button>
-                                )}
-                              </div>
-                            </div>
-                          );
-                        })}
-                        {recordLimit < sheet.records.length && (
-                          <div className="flex flex-wrap items-center gap-2 px-4 py-2">
-                            <Button type="button" variant="secondary" size="sm" onClick={() => setHistoryRecordLimits((prev) => ({ ...prev, [sheet.key]: recordLimit + HISTORY_RECORD_PAGE_SIZE }))}>
-                              Show more records for {formatDatePH(sheet.date)} · {proj?.name || 'Project Site'}
-                            </Button>
-                            <span className="text-xs text-ink-secondary">Showing {recordLimit} of {sheet.records.length}</span>
-                          </div>
-                        )}
-                      </div>
-                    )}
-                  </div>
-                );
+              {history.items.map((sheet) => {
+                const key = `${sheet.date}::${sheet.project_id}`;
+                const isExpanded = Boolean(expandedHistorySheets[key]);
+                const sheetId = `history-sheet-${encodeURIComponent(key)}`;
+                return <div key={key} className="overflow-hidden rounded-2xl border border-surface-border bg-white shadow-sm">
+                  <button type="button" aria-expanded={isExpanded} aria-controls={isExpanded ? sheetId : undefined}
+                    onClick={() => setExpandedHistorySheets((prev) => ({...prev,[key]:!prev[key]}))}
+                    className="flex min-h-11 w-full flex-wrap items-center gap-x-3 gap-y-1 bg-surface-inset/70 px-4 py-3 text-left transition-colors hover:bg-surface-inset focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-brand">
+                    {isExpanded ? <ChevronDown className="h-4 w-4 shrink-0 text-ink-secondary" aria-hidden="true" /> : <ChevronRight className="h-4 w-4 shrink-0 text-ink-secondary" aria-hidden="true" />}
+                    <span className="min-w-0 flex-1 break-words text-xs font-bold text-navy sm:text-sm">{formatDatePH(sheet.date)} · {sheet.project_name || 'Project Site'}</span>
+                    <span className="text-xs font-medium tabular-nums text-ink-secondary">{sheet.record_count} {sheet.record_count === 1 ? 'record' : 'records'}</span>
+                    <span className="flex w-full flex-wrap gap-x-3 gap-y-0.5 pl-7 text-[11px] font-medium text-ink-secondary">
+                      <span>{sheet.present_count} Present</span><span>{sheet.half_day_count} Half Day</span><span>{sheet.absent_count} Absent</span><span>{sheet.leave_count} Leave</span>
+                      {sheet.pending_count > 0 && <span className="font-semibold text-status-warning">{sheet.pending_count} pending Founder review</span>}
+                    </span>
+                  </button>
+                  {isExpanded && <div id={sheetId}><HistorySheetRecords sheet={sheet} filters={historyFilters} userId={user?.id} revision={historyRevision} isFounder={isFounder} reviewing={isReviewingSupervisor}
+                    onReview={handleFounderSupervisorReview}
+                    onEdit={(rec: HistoryRecord) => {setSelectedRecordForOverride(rec);setOverrideStatus(rec.status);setOverrideNotes(rec.notes || '');setOverrideModalOpen(true);}} /></div>}
+                </div>;
               })}
-
-              {visibleHistorySheets < groupedHistorySheets.length && (
-                <Button type="button" variant="secondary" className="w-full sm:w-auto" onClick={() => setVisibleHistorySheets((count) => count + HISTORY_SHEET_PAGE_SIZE)}>
-                  Show more date/site sheets
-                </Button>
-              )}
-
-              {groupedHistorySheets.length === 0 && (
-                <div className="bg-white rounded-xl border border-surface-border">
-                  <EmptyState
-                    title="No attendance records match"
-                    description={
-                      attendance.length === 0
-                        ? 'No attendance records are currently loaded.'
-                        : 'No loaded records match. Try clearing the site, date, status or search filters.'
-                    }
-                  />
-                </div>
-              )}
+              {(history.loading || isHistorySearchSettling) && <p role="status" className="text-xs text-ink-secondary">Loading attendance history…</p>}
+              {history.error && <div className="space-y-2 rounded-xl border border-surface-border bg-white p-4 text-xs"><p role="alert" className="text-status-danger">Unable to load attendance history. Please retry.</p><Button type="button" variant="secondary" size="sm" onClick={history.retry}>Retry history</Button></div>}
+              {history.hasMore && !history.error && <Button type="button" variant="secondary" className="w-full sm:w-auto" disabled={history.loading} onClick={history.loadMore}>Show more date/site sheets</Button>}
+              {!history.loading && !history.error && !isHistorySearchSettling && history.items.length === 0 && <div className="rounded-xl border border-surface-border bg-white"><EmptyState title="No attendance records match" description="Try clearing the site, date, status or search filters." /></div>}
+              <Button type="button" variant="ghost" size="sm" disabled={history.loading || isHistorySearchSettling} onClick={() => setHistoryRevision((n) => n + 1)}>Refresh history</Button>
             </div>
           </div>
         )}
@@ -2518,7 +2288,7 @@ function AttendancePageInner() {
           <form onSubmit={handleFounderOverrideSubmit} className="space-y-4 text-xs">
             <div className="p-3 rounded-xl bg-surface-inset border border-surface-border space-y-1">
               <div className="font-bold text-navy">
-                Worker: {workers.find((w) => w.id === selectedRecordForOverride.worker_id)?.name}
+                Worker: {(selectedRecordForOverride as HistoryRecord).worker_name || workers.find((w) => w.id === selectedRecordForOverride.worker_id)?.name || 'Worker'}
               </div>
               <div className="text-ink-secondary">
                 Date: {selectedRecordForOverride.date}

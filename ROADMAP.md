@@ -103,9 +103,20 @@ production credentials. **Open** = known work, deliberately deferred.
 - Apply the individual migration before deploying the UI; see
   `docs/ATTENDANCE_APPROVAL_QUEUE_ROLLOUT.md`. Hosted permissions and live
   operation are not verified. Approval decisions can still race between Founders.
-- **Still open:** genuine server-side attendance history, scalable workforce
-  logs, complete payroll-period data and safe payroll calculation. The queue
-  does not make those other views or calculations complete.
+- **Still open:** scalable workforce logs, complete payroll-period data and
+  safe payroll calculation. The queue does not make those other views complete.
+
+## Done — server-backed attendance history
+
+- Date/site sheets and their records load independently from the database in
+  bounded keyset pages. Site/status/date/search filters run on the server,
+  subject to the caller's existing RLS. Counts are per filtered sheet; refresh
+  to see concurrent changes. No claim of a frozen snapshot across pages.
+- Apply the individual migration before deploying the client. See
+  `docs/ATTENDANCE_HISTORY_ROLLOUT.md`; hosted behavior is not verified.
+- **Still open:** the shared store still feeds payroll, roll call, project
+  workforce logs and other screens and may omit records. This change does not
+  make payroll computation complete or address concurrent review writes.
 
 ## Done — notifications usability
 
@@ -122,8 +133,8 @@ production credentials. **Open** = known work, deliberately deferred.
   invented creation timestamp. Missing/invalid times are omitted; future source
   times are disclosed as clock skew rather than shown as new.
 - **Still open:** notification history is still the shared client store, not a
-  scalable server-side feed. Attendance/workforce/SMS server-side loading and
-  the other reliability items below remain separate work.
+  scalable server-side feed. Workforce/SMS server-side loading and other
+  reliability items below remain separate work.
 
 ## Open — security (deliberately deferred)
 
