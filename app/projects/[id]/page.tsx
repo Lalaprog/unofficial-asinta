@@ -236,7 +236,7 @@ export default function ProjectDetailPage() {
               key={tab.id}
               onClick={() => setActiveTab(tab.id as any)}
               aria-pressed={activeTab === tab.id}
-              className={`min-h-11 px-3 sm:px-4 py-2 text-xs font-semibold text-center break-words transition-colors border-b-2 ${
+              className={`min-h-11 px-3 sm:px-4 py-2 text-xs font-semibold text-center break-words transition-[color,border-color,transform] duration-150 motion-safe:active:scale-[0.98] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-brand border-b-2 ${
                 tab.id === 'overview' ? 'col-span-2 sm:col-span-1' : ''
               } ${
                 activeTab === tab.id
@@ -251,7 +251,7 @@ export default function ProjectDetailPage() {
 
         {/* TAB 1: OVERVIEW */}
         {activeTab === 'overview' && (
-          <div className="space-y-6">
+          <div className="animate-panel-enter space-y-6">
             {/* Financial summary metrics (Founder only) */}
             {isFounder && (
               <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
@@ -363,7 +363,7 @@ export default function ProjectDetailPage() {
 
         {/* TAB 2: INVOICES (Founder only) */}
         {activeTab === 'invoices' && isFounder && (
-          <div className="space-y-4">
+          <div className="animate-panel-enter space-y-4">
             <div className="flex items-center justify-between">
               <h3 className="font-bold text-navy text-sm">Project Milestone Invoices</h3>
               <Link href="/invoices">
@@ -417,7 +417,7 @@ export default function ProjectDetailPage() {
 
         {/* TAB 3: EXPENSES (Founder only) */}
         {activeTab === 'expenses' && isFounder && (
-          <div className="space-y-4">
+          <div className="animate-panel-enter space-y-4">
             <div className="flex items-center justify-between">
               <h3 className="font-bold text-navy text-sm">Site Disbursements & Cost Ledger</h3>
               <Link href="/expenses">
@@ -459,7 +459,7 @@ export default function ProjectDetailPage() {
 
         {/* TAB 4: TOOLS */}
         {activeTab === 'tools' && (
-          <div className="space-y-4">
+          <div className="animate-panel-enter space-y-4">
             <div className="flex items-center justify-between">
               <h3 className="font-bold text-navy text-sm">Tools Allocated to This Site</h3>
               {isFounder && (
@@ -496,7 +496,7 @@ export default function ProjectDetailPage() {
 
         {/* TAB 5: ATTENDANCE */}
         {activeTab === 'attendance' && (
-          <div className="space-y-4">
+          <div className="animate-panel-enter space-y-4">
             <div className="flex items-center justify-between">
               <h3 className="font-bold text-navy text-sm">Site Attendance Logs</h3>
               <Link href="/attendance">

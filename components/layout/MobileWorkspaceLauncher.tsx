@@ -69,7 +69,7 @@ export const MobileWorkspaceLauncher: React.FC<MobileWorkspaceLauncherProps> = (
               return (
                 <Link key={item.href} href={item.href} aria-current={active ? 'page' : undefined}
                   onClick={(event) => onNavigate(event, item.href)}
-                  className={`flex min-h-11 flex-col items-center justify-center py-2 px-1.5 rounded-xl text-center transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand focus-visible:ring-offset-2 ${
+                  className={`flex min-h-11 flex-col items-center justify-center py-2 px-1.5 rounded-xl text-center transition-[color,background-color,transform] duration-150 motion-safe:active:scale-[0.97] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand focus-visible:ring-offset-2 ${
                     active ? 'bg-brand text-white' : 'bg-surface/60 text-navy hover:bg-surface-inset'
                   }`}>
                   <Icon aria-hidden="true" className="w-4 h-4 mb-1" />

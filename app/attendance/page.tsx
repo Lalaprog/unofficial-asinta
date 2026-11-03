@@ -1005,7 +1005,7 @@ function AttendancePageInner() {
 
   return (
     <AppShell>
-      <div key={activeTab} className="w-full space-y-4">
+      <div key={activeTab} className="animate-panel-enter w-full space-y-4">
         {/* Clean Dedicated Page Header for each separated view */}
         <div className="blueprint-accent flex flex-col gap-3 border-b border-surface-border/60 pb-3 sm:flex-row sm:items-center sm:justify-between">
           <div className="min-w-0">

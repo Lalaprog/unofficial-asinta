@@ -161,7 +161,7 @@ export const Modal: React.FC<ModalProps> = ({
     >
       {/* Backdrop */}
       <div
-        className="fixed inset-0 bg-navy/40 backdrop-blur-sm transition-opacity animate-in fade-in"
+        className="fixed inset-0 bg-navy/40 backdrop-blur-sm animate-backdrop-enter"
         onClick={dismissOnBackdrop ? onClose : undefined}
         aria-hidden="true"
       />
@@ -173,8 +173,8 @@ export const Modal: React.FC<ModalProps> = ({
         className={twMerge(
           clsx(
             'relative w-full bg-white rounded-2xl border border-surface-border shadow-2xl z-10 transition-all max-h-[86dvh] flex flex-col my-auto',
-            presentation === 'center' && 'animate-in zoom-in-95 duration-150',
-            presentation === 'bottom-sheet' && 'max-h-[calc(100dvh-env(safe-area-inset-top)-1rem)] rounded-t-2xl rounded-b-none my-0 pb-[env(safe-area-inset-bottom)] animate-sheet-up lg:max-h-[86dvh] lg:rounded-2xl lg:my-auto lg:pb-0 lg:animate-in lg:zoom-in-95 lg:duration-150',
+            presentation === 'center' && 'animate-dialog-enter',
+            presentation === 'bottom-sheet' && 'max-h-[calc(100dvh-env(safe-area-inset-top)-1rem)] rounded-t-2xl rounded-b-none my-0 pb-[env(safe-area-inset-bottom)] animate-sheet-up lg:max-h-[86dvh] lg:rounded-2xl lg:my-auto lg:pb-0 lg:animate-dialog-enter',
             presentation === 'top-sheet' && 'max-h-[calc(100dvh-4rem-env(safe-area-inset-top))] rounded-t-none rounded-b-2xl my-0 pb-[env(safe-area-inset-bottom)] animate-dropdown-enter lg:max-h-[86dvh] lg:rounded-2xl lg:my-auto lg:pb-0',
             'focus:outline-none',
             maxWidthClasses[maxWidth]

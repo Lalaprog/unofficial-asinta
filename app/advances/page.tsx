@@ -64,7 +64,7 @@ function AdvancesPageContent() {
               aria-controls="advances-panel"
               aria-pressed={activeTab === 'requests'}
               onClick={() => selectTab('requests')}
-              className={`min-h-11 rounded-lg px-4 text-xs font-semibold transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand ${
+              className={`min-h-11 rounded-lg px-4 text-xs font-semibold transition-[color,background-color,border-color,transform] duration-150 motion-safe:active:scale-[0.98] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand ${
                 activeTab === 'requests'
                   ? 'bg-navy text-white'
                   : 'border border-surface-border bg-white text-ink-secondary hover:bg-surface-inset hover:text-navy'
@@ -78,7 +78,7 @@ function AdvancesPageContent() {
               aria-controls="advances-panel"
               aria-pressed={activeTab === 'issued'}
               onClick={() => selectTab('issued')}
-              className={`min-h-11 rounded-lg px-4 text-xs font-semibold transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand ${
+              className={`min-h-11 rounded-lg px-4 text-xs font-semibold transition-[color,background-color,border-color,transform] duration-150 motion-safe:active:scale-[0.98] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand ${
                 activeTab === 'issued'
                   ? 'bg-navy text-white'
                   : 'border border-surface-border bg-white text-ink-secondary hover:bg-surface-inset hover:text-navy'
@@ -93,7 +93,11 @@ function AdvancesPageContent() {
           id="advances-panel"
           aria-label={isFounder ? (activeTab === 'requests' ? 'Requests' : 'Issued advances') : undefined}
         >
-          {activeTab === 'requests' ? <AdvanceRequestsPanel /> : <IssuedAdvancesPanel />}
+          {activeTab === 'requests' ? (
+            <div key="requests" className="animate-panel-enter"><AdvanceRequestsPanel /></div>
+          ) : (
+            <div key="issued" className="animate-panel-enter"><IssuedAdvancesPanel /></div>
+          )}
         </div>
       </div>
     </AppShell>

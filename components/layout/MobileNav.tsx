@@ -137,7 +137,7 @@ export const MobileNav: React.FC<MobileNavProps> = () => {
                 href={item.href}
                 onClick={(e) => handleNavClick(e, item.href)}
                 aria-current={active ? 'page' : undefined}
-                className={`flex min-h-11 flex-col items-center justify-center py-1.5 px-1 rounded-xl transition-colors duration-150 active:scale-95 ${
+                className={`flex min-h-11 flex-col items-center justify-center py-1.5 px-1 rounded-xl transition-[color,background-color,border-color,transform] duration-150 motion-safe:active:scale-[0.97] ${
                   active
                     ? 'bg-brand text-white'
                     : 'text-ink-secondary hover:text-navy hover:bg-surface-inset/50'
@@ -162,7 +162,7 @@ export const MobileNav: React.FC<MobileNavProps> = () => {
               onClick={() => setIsSheetOpen(true)}
               aria-haspopup="dialog"
               aria-expanded={isSheetOpen}
-              className={`flex min-h-11 flex-col items-center justify-center py-1.5 px-1 rounded-xl transition-colors duration-150 active:scale-95 ${
+              className={`flex min-h-11 flex-col items-center justify-center py-1.5 px-1 rounded-xl transition-[color,background-color,border-color,transform] duration-150 motion-safe:active:scale-[0.97] ${
                 isSheetOpen
                   ? 'bg-brand text-white'
                   : 'text-ink-secondary hover:text-navy hover:bg-surface-inset/50'
