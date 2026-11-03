@@ -31,6 +31,8 @@ import { Select } from '@/components/ui/Select';
 import { Modal } from '@/components/ui/Modal';
 import { EmptyState } from '@/components/ui/EmptyState';
 import { formatDatePH } from '@/lib/email/format';
+import { manilaDateISO, shiftCalendarDate } from '@/lib/dates/manila';
+import { useManilaToday } from '@/lib/dates/useManilaToday';
 import {
   parseAttendanceDraft,
   serializeAttendanceDraft,
@@ -126,8 +128,8 @@ function AttendancePageInner() {
     isSupervisor && user ? getProjectsForSupervisor(user.id) : projects;
 
   // Terminal workflow state
-  const today = new Date().toISOString().split('T')[0];
-  const yesterday = new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString().split('T')[0];
+  const today = useManilaToday();
+  const yesterday = shiftCalendarDate(today, -1);
   const [selectedProjectId, setSelectedProjectId] = useState<string>(
     accessibleProjects[0]?.id || projects[0]?.id || ''
   );
@@ -579,7 +581,7 @@ function AttendancePageInner() {
   const handleBatchSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (isSubmitting || !selectedProjectId || !user) return;
-    if (selectedDate > today) {
+    if (selectedDate > manilaDateISO()) {
       showToast('error', 'Attendance cannot be recorded for a future date.');
       return;
     }
@@ -1027,6 +1029,13 @@ function AttendancePageInner() {
             </p>
           </div>
 
+          {activeTab !== 'workforce' && (
+            <Link href="/attendance?tab=workforce" prefetch={false} className="inline-flex min-h-11 shrink-0 items-center justify-center gap-2 rounded-lg border border-surface-border bg-white px-3 text-xs font-medium text-navy hover:bg-surface-inset focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand focus-visible:ring-offset-2">
+              <UserPlus className="h-4 w-4" aria-hidden="true" />
+              Workforce &amp; Add Worker
+            </Link>
+          )}
+
           {activeTab === 'workforce' && (
             <div className="flex flex-wrap gap-2">
               {isSupervisor && (
@@ -1171,7 +1180,7 @@ function AttendancePageInner() {
                   size="sm"
                   className="min-h-11 sm:min-h-9"
                   disabled={isSubmitting}
-                  onClick={() => setSelectedDate(today)}
+                  onClick={() => setSelectedDate(manilaDateISO())}
                 >
                   Today ({today.slice(5)})
                 </Button>
@@ -1181,7 +1190,7 @@ function AttendancePageInner() {
                   size="sm"
                   className="min-h-11 sm:min-h-9"
                   disabled={isSubmitting}
-                  onClick={() => setSelectedDate(yesterday)}
+                  onClick={() => setSelectedDate(shiftCalendarDate(manilaDateISO(), -1))}
                 >
                   Yesterday ({yesterday.slice(5)})
                 </Button>
