@@ -104,6 +104,80 @@ describe('mobile workspace launcher', () => {
     expect(screen.queryByRole('dialog')).toBeNull();
   });
 
+
+  it('tracks the finger during opening and closing, with a non-interactive preview', async () => {
+    render(React.createElement(MobileNav));
+    const nav = screen.getByRole('navigation', { name: 'Mobile Bottom Navigation' });
+    const more = within(nav).getByRole('button', { name: 'More' });
+    expect(nav.querySelector('[data-dock-handle]')).toBeTruthy();
+    const touch = (y: number) => ({ identifier: 1, clientX: 120, clientY: y });
+    fireEvent.touchStart(nav, { touches: [touch(400)] });
+    fireEvent.touchMove(nav, { touches: [touch(380)] });
+    let panel = document.querySelector('#mobile-workspace-panel') as HTMLElement;
+    expect(panel.style.transform).toContain('20px');
+    expect(panel.style.transition).toBe('none');
+    expect(panel.hasAttribute('inert')).toBe(true);
+    expect(panel.getAttribute('aria-hidden')).toBe('true');
+    expect(Array.from(panel.querySelectorAll('a, button')).every((element) => element.getAttribute('tabindex') === '-1')).toBe(true);
+    expect(screen.queryByRole('dialog')).toBeNull();
+    expect(nav.querySelector('[data-dock-handle]')).toBeNull();
+    fireEvent.touchMove(nav, { touches: [touch(330)] });
+    expect(panel.style.transform).toContain('70px');
+    fireEvent.touchEnd(nav, { touches: [], changedTouches: [touch(330)] });
+    const dialog = screen.getByRole('dialog', { name: 'Workspace Modules' });
+    expect(dialog).toBe(panel);
+    expect(panel.hasAttribute('inert')).toBe(false);
+    expect(panel.style.transform).toBe('translateY(0)');
+    await waitFor(() => expect(dialog.contains(document.activeElement)).toBe(true));
+    const handle = dialog.querySelector('[data-swipe-handle]')!;
+    fireEvent.touchStart(handle, { touches: [touch(100)] });
+    fireEvent.touchMove(handle, { touches: [touch(130)] });
+    expect(panel.style.transform).toBe('translateY(30px)');
+    fireEvent.touchEnd(handle, { touches: [], changedTouches: [touch(130)] });
+    expect(screen.getByRole('dialog')).toBe(dialog);
+    expect(panel.style.transform).toBe('translateY(0)');
+    fireEvent.touchStart(handle, { touches: [touch(100)] });
+    fireEvent.touchMove(handle, { touches: [touch(170)] });
+    expect(panel.style.transform).toBe('translateY(70px)');
+    fireEvent.touchEnd(handle, { touches: [], changedTouches: [touch(170)] });
+    expect(screen.queryByRole('dialog')).toBeNull();
+    panel = document.querySelector('#mobile-workspace-panel') as HTMLElement;
+    expect(panel.style.transform).toBe('translateY(100%)');
+    expect(panel.hasAttribute('inert')).toBe(true);
+    expect(document.activeElement).toBe(more);
+  });
+
+  it('retracts short and cancelled drags without opening or trapping focus', () => {
+    render(React.createElement(MobileNav));
+    const nav = screen.getByRole('navigation', { name: 'Mobile Bottom Navigation' });
+    const touch = (y: number) => ({ identifier: 1, clientX: 120, clientY: y });
+    fireEvent.touchStart(nav, { touches: [touch(400)] });
+    fireEvent.touchMove(nav, { touches: [touch(375)] });
+    fireEvent.touchEnd(nav, { touches: [], changedTouches: [touch(375)] });
+    expect(screen.queryByRole('dialog')).toBeNull();
+    expect((document.querySelector('#mobile-workspace-panel') as HTMLElement).style.transform).toBe('translateY(100%)');
+    fireEvent.touchStart(nav, { touches: [touch(400)] });
+    fireEvent.touchMove(nav, { touches: [touch(350)] });
+    fireEvent.touchCancel(nav);
+    expect(screen.queryByRole('dialog')).toBeNull();
+    expect((document.querySelector('#mobile-workspace-panel') as HTMLElement).style.transform).toBe('translateY(100%)');
+  });
+
+
+  it('settles without lingering visual shells when reduced motion is requested', () => {
+    window.matchMedia = vi.fn().mockImplementation((query: string) => ({
+      matches: query.includes('prefers-reduced-motion'), addEventListener: vi.fn(), removeEventListener: vi.fn(),
+    }));
+    render(React.createElement(MobileNav));
+    const nav = screen.getByRole('navigation', { name: 'Mobile Bottom Navigation' });
+    const touch = (y: number) => ({ identifier: 1, clientX: 120, clientY: y });
+    fireEvent.touchStart(nav, { touches: [touch(400)] });
+    fireEvent.touchMove(nav, { touches: [touch(375)] });
+    fireEvent.touchEnd(nav, { touches: [], changedTouches: [touch(375)] });
+    expect(document.querySelector('#mobile-workspace-panel')).toBeNull();
+    expect(nav.querySelector('[data-dock-handle]')).toBeTruthy();
+  });
+
   it('does not open a Founder launcher for a Supervisor', () => {
     founder = false;
     render(React.createElement(MobileNav));

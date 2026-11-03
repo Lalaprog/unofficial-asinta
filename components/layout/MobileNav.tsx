@@ -1,10 +1,10 @@
 'use client';
 
-import React, { useState, useEffect, useLayoutEffect, useRef } from 'react';
+import React, { useState, useEffect, useLayoutEffect, useRef, useCallback } from 'react';
 import Link from 'next/link';
 import { usePathname, useSearchParams } from 'next/navigation';
 import { useAuth } from '@/lib/auth/authContext';
-import { MobileWorkspaceLauncher } from './MobileWorkspaceLauncher';
+import { MobileWorkspaceLauncher, type LauncherMotion } from './MobileWorkspaceLauncher';
 import {
   LayoutDashboard,
   FolderKanban,
@@ -28,7 +28,24 @@ export const MobileNav: React.FC<MobileNavProps> = () => {
   const [isSheetOpen, setIsSheetOpen] = useState(false);
   const navRef = useRef<HTMLElement>(null);
   const moreRef = useRef<HTMLButtonElement>(null);
-  const swipeStart = useRef<{ x: number; y: number; id: number } | null>(null);
+  const swipeStart = useRef<{ x: number; y: number; id: number; tracking: boolean; cancelled: boolean } | null>(null);
+  const [motion, setMotion] = useState<LauncherMotion | null>(null);
+  const [tapEntrance, setTapEntrance] = useState(false);
+  const settleTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const motionRef = useRef<LauncherMotion | null>(null);
+  motionRef.current = motion;
+  const updateMotion = useCallback((next: LauncherMotion | null) => { motionRef.current = next; setMotion(next); }, []);
+  const clearSettle = useCallback(() => { if (settleTimer.current) clearTimeout(settleTimer.current); settleTimer.current = null; }, []);
+  const dismiss = useCallback(() => { clearSettle(); updateMotion(null); setTapEntrance(false); setIsSheetOpen(false); }, [clearSettle, updateMotion]);
+  const settle = (open: boolean) => {
+    clearSettle();
+    setTapEntrance(false);
+    updateMotion({ kind: open ? 'settle-open' : 'settle-closed', distance: 0 });
+    setIsSheetOpen(open);
+    if (window.matchMedia('(prefers-reduced-motion: reduce)').matches) updateMotion(null);
+    else settleTimer.current = setTimeout(() => { updateMotion(null); settleTimer.current = null; }, 240);
+  };
+  useEffect(() => () => { if (settleTimer.current) clearTimeout(settleTimer.current); }, []);
   const suppressedClick = useRef<{ target: EventTarget; until: number } | null>(null);
   const [navHeight, setNavHeight] = useState<number | null>(null);
 
@@ -44,24 +61,56 @@ export const MobileNav: React.FC<MobileNavProps> = () => {
   }, []);
 
   const onDockTouchStart = (event: React.TouchEvent) => {
-    suppressedClick.current = null; // A new touch is a new intentional action.
-    if (!isFounder || isSheetOpen || event.touches.length !== 1) { swipeStart.current = null; return; }
+    suppressedClick.current = null;
+    if (!isFounder || isSheetOpen || event.touches.length !== 1) { if (swipeStart.current?.tracking) settle(false); swipeStart.current = null; return; }
     const touch = event.touches[0];
-    swipeStart.current = { x: touch.clientX, y: touch.clientY, id: touch.identifier };
+    swipeStart.current = { x: touch.clientX, y: touch.clientY, id: touch.identifier, tracking: false, cancelled: false };
+  };
+  const onDockTouchMove = (event: React.TouchEvent) => {
+    const start = swipeStart.current;
+    if (!start || start.cancelled) return;
+    if (event.touches.length !== 1) { if (start.tracking) settle(false); swipeStart.current = null; return; }
+    const touch = Array.from(event.touches).find((item) => item.identifier === start.id);
+    if (!touch) return;
+    const up = start.y - touch.clientY;
+    const sideways = Math.abs(touch.clientX - start.x);
+    if (!start.tracking && sideways > 10 && sideways > Math.abs(up)) { start.cancelled = true; return; }
+    if (!start.tracking && up > 8 && up > sideways * 1.5) {
+      start.tracking = true;
+      clearSettle();
+      setTapEntrance(false);
+    }
+    if (start.tracking) updateMotion({ kind: 'opening', distance: Math.max(0, up) });
   };
   const onDockTouchEnd = (event: React.TouchEvent) => {
     const start = swipeStart.current;
     swipeStart.current = null;
-    if (!start || event.touches.length !== 0) return;
+    if (!start || start.cancelled || event.touches.length !== 0) return;
     const touch = Array.from(event.changedTouches).find((item) => item.identifier === start.id);
     if (!touch) return;
     const up = start.y - touch.clientY;
     const sideways = Math.abs(touch.clientX - start.x);
-    if (up < 45 || up < sideways * 1.5) return;
+    if (!start.tracking && (up < 45 || up < sideways * 1.5)) return;
     event.preventDefault();
     suppressedClick.current = { target: event.target, until: Date.now() + 450 };
-    moreRef.current?.focus();
-    setIsSheetOpen(true);
+    if (up >= 45 && up >= sideways * 1.5) {
+      moreRef.current?.focus();
+      settle(true);
+    } else if (start.tracking) settle(false);
+  };
+  const onDockTouchCancel = () => {
+    const tracking = swipeStart.current?.tracking;
+    swipeStart.current = null;
+    if (tracking) settle(false);
+  };
+  const onPanelDrag = (distance: number) => {
+    clearSettle();
+    setTapEntrance(false);
+    updateMotion({ kind: 'closing', distance });
+  };
+  const onPanelDragEnd = (distance: number, cancelled: boolean) => {
+    if (distance >= 45 && !cancelled) settle(false);
+    else if (motionRef.current?.kind === 'closing') settle(true);
   };
   const [localAttendanceTab, setLocalAttendanceTab] = useState<string>(urlTab);
   const [pendingHref, setPendingHref] = useState<string | null>(null);
@@ -69,18 +118,18 @@ export const MobileNav: React.FC<MobileNavProps> = () => {
   useEffect(() => {
     setLocalAttendanceTab(urlTab);
     setPendingHref(null);
-    setIsSheetOpen(false);
-  }, [pathname, urlTab]);
+    dismiss();
+  }, [pathname, urlTab, dismiss]);
 
   useEffect(() => {
     // A sheet opened on mobile must not remain over the desktop workspace
     // after a resize or device rotation.
     const desktop = window.matchMedia('(min-width: 1024px)');
-    const onChange = () => { if (desktop.matches) setIsSheetOpen(false); };
+    const onChange = () => { if (desktop.matches) dismiss(); };
     onChange();
     desktop.addEventListener('change', onChange);
     return () => desktop.removeEventListener('change', onChange);
-  }, []);
+  }, [dismiss]);
 
   useEffect(() => {
     const onTabEvent = (e: Event) => {
@@ -110,7 +159,7 @@ export const MobileNav: React.FC<MobileNavProps> = () => {
   };
 
   const handleNavClick = (e: React.MouseEvent<HTMLAnchorElement>, href: string) => {
-    setIsSheetOpen(false);
+    dismiss();
     const [basePath, query] = href.split('?');
 
     // 0ms client-side tab switch when already on `/attendance`
@@ -159,8 +208,9 @@ export const MobileNav: React.FC<MobileNavProps> = () => {
         ref={navRef}
         aria-label="Mobile Bottom Navigation"
         onTouchStart={onDockTouchStart}
+        onTouchMove={onDockTouchMove}
         onTouchEnd={onDockTouchEnd}
-        onTouchCancel={() => { swipeStart.current = null; }}
+        onTouchCancel={onDockTouchCancel}
         onClickCapture={(event) => {
           const suppressed = suppressedClick.current;
           suppressedClick.current = null;
@@ -169,8 +219,13 @@ export const MobileNav: React.FC<MobileNavProps> = () => {
           }
         }}
         style={isFounder ? { touchAction: 'pan-x' } : undefined}
-        className="fixed bottom-0 inset-x-0 z-50 lg:hidden bg-white/95 backdrop-blur-md border-t border-surface-border/90 shadow-[0_-4px_20px_rgba(11,31,58,0.07)] px-2 pt-1.5 pb-[calc(env(safe-area-inset-bottom)+0.375rem)]"
+        className={`fixed bottom-0 inset-x-0 z-50 lg:hidden px-2 pb-[calc(env(safe-area-inset-bottom)+0.375rem)] ${
+          isFounder ? 'bg-white pt-3' : 'bg-white/95 backdrop-blur-md pt-1.5'
+        } ${isSheetOpen || motion ? 'border-t border-transparent' : 'border-t border-surface-border/90 shadow-[0_-4px_20px_rgba(11,31,58,0.07)]'}`}
       >
+        {isFounder && !isSheetOpen && !motion && (
+          <span aria-hidden="true" data-dock-handle="true" className="pointer-events-none absolute left-1/2 top-[4px] h-1 w-9 -translate-x-1/2 rounded-full bg-slate-300" />
+        )}
         <div
           className={`grid ${
             isFounder ? 'grid-cols-5' : 'grid-cols-4'
@@ -209,7 +264,7 @@ export const MobileNav: React.FC<MobileNavProps> = () => {
             <button
               type="button"
               ref={moreRef}
-              onClick={() => setIsSheetOpen((open) => !open)}
+              onClick={() => { if (isSheetOpen) dismiss(); else { clearSettle(); updateMotion(null); setTapEntrance(true); setIsSheetOpen(true); } }}
               aria-haspopup="dialog"
               aria-expanded={isSheetOpen}
               aria-controls={isSheetOpen ? "mobile-workspace-panel" : undefined}
@@ -235,7 +290,11 @@ export const MobileNav: React.FC<MobileNavProps> = () => {
           isOpen={isSheetOpen}
           navHeight={navHeight}
           returnFocusRef={moreRef}
-          onClose={() => setIsSheetOpen(false)}
+          onClose={dismiss}
+          motion={motion}
+          tapEntrance={tapEntrance}
+          onDrag={onPanelDrag}
+          onDragEnd={onPanelDragEnd}
           isHrefActive={isHrefActive}
           onNavigate={handleNavClick}
         />
