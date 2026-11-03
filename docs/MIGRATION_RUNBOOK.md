@@ -369,3 +369,12 @@ repository admin rights.
   browser session.
 - Backups/PITR: fill in the table in `docs/SECURITY.md` §10 after the restore
   test.
+
+---
+
+## SMS history rollout
+
+See [SMS_HISTORY_ROLLOUT.md](SMS_HISTORY_ROLLOUT.md) before applying the
+individual SMS history migration. Do not blindly apply the complete upgrade
+bundle or run `supabase db push` against an existing project: hosted migration
+versions may differ, and other migrations require independent review.

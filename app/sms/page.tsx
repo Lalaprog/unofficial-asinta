@@ -3,9 +3,10 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { AppShell } from '@/components/layout/AppShell';
 import { useDataStore } from '@/lib/data/store';
-import { Send, Search, CheckCircle2, AlertCircle } from 'lucide-react';
+import { useAuth } from '@/lib/auth/authContext';
+import { useSMSHistory, useSMSHistorySummary } from '@/lib/sms/useSMSHistory';
+import { Send, Search, CheckCircle2, AlertCircle, ChevronDown, RefreshCw } from 'lucide-react';
 import { Button } from '@/components/ui/Button';
-import { FilterSummary } from '@/components/ui/FilterSummary';
 import { Badge } from '@/components/ui/Badge';
 import { Input, Textarea } from '@/components/ui/Input';
 import { Select } from '@/components/ui/Select';
@@ -45,10 +46,24 @@ function smsStatusBadge(log: SMSLog): { label: string; variant: 'success' | 'war
 }
 
 export default function SMSPage() {
-  const { smsLogs, invoices, clients, projects, sendSMS } = useDataStore();
+  const { invoices, clients, projects, sendSMS } = useDataStore();
+  const { user, isFounder } = useAuth();
   const supabase = useMemo(() => createClient(), []);
 
   const [searchQuery, setSearchQuery] = useState('');
+  const [settledSearch, setSettledSearch] = useState('');
+  const [statusFilter, setStatusFilter] = useState('all');
+  const [fromDate, setFromDate] = useState('');
+  const [toDate, setToDate] = useState('');
+  const [historyRevision, setHistoryRevision] = useState(0);
+  useEffect(() => { const timer = setTimeout(() => setSettledSearch(searchQuery), 300); return () => clearTimeout(timer); }, [searchQuery]);
+  const invalidDates = Boolean(fromDate && toDate && fromDate > toDate);
+  const searchSettling = searchQuery !== settledSearch;
+  const history = useSMSHistory(isFounder && !invalidDates && !searchSettling, user?.id, {search:settledSearch,status:statusFilter,from:fromDate,to:toDate}, historyRevision);
+  const summary = useSMSHistorySummary(isFounder, user?.id, historyRevision);
+  const refreshHistory = () => setHistoryRevision(value => value + 1);
+  const clearFilters = () => { setSearchQuery(''); setStatusFilter('all'); setFromDate(''); setToDate(''); };
+  const hasFilters = Boolean(searchQuery || statusFilter !== 'all' || fromDate || toDate);
   const [isComposeModalOpen, setIsComposeModalOpen] = useState(false);
   const [gatewayStatus, setGatewayStatus] = useState<IntegrationStatus | null>(null);
 
@@ -90,13 +105,6 @@ export default function SMSPage() {
       active = false;
     };
   }, []);
-
-  const filteredLogs = smsLogs.filter(
-    (log) =>
-      log.recipient.toLowerCase().includes(searchQuery.toLowerCase()) ||
-      log.message.toLowerCase().includes(searchQuery.toLowerCase()) ||
-      log.phone.includes(searchQuery)
-  );
 
   const selectedInvoice = invoices.find((i) => i.id === selectedInvoiceId) || null;
   const selectedClient = selectedInvoice
@@ -180,6 +188,7 @@ export default function SMSPage() {
       if (sent) setSuccessNotice(true);
       else setConfirmed(false);
     } finally {
+      refreshHistory();
       sendLock.current = false;
       setIsSending(false);
     }
@@ -223,14 +232,14 @@ export default function SMSPage() {
 
           <div className="p-4 sm:p-5 rounded-xl bg-white border border-surface-border">
             <div className="text-xs font-medium text-ink-secondary">Total Dispatch Attempts</div>
-            <div className="text-2xl font-bold text-navy mt-1">{smsLogs.length} Messages</div>
-            <div className="text-[11px] text-ink-muted mt-0.5">Manual and automated reminder attempts</div>
+            <div className="text-2xl font-bold text-navy mt-1">{summary.value ? summary.value.total.toLocaleString() : '—'} Messages</div>
+            <div className="text-[11px] text-ink-muted mt-0.5">{summary.error ? 'Counts unavailable — refresh to try again.' : 'Manual and automated attempts, including simulations.'}</div>
           </div>
 
           <div className="p-4 sm:p-5 rounded-xl bg-white border border-surface-border">
             <div className="text-xs font-medium text-ink-secondary">Delivery Confirmations</div>
             <div className="text-2xl font-bold text-navy mt-1">
-              {smsLogs.filter((log) => log.status === 'delivered').length} Delivered
+              {summary.value ? summary.value.delivered.toLocaleString() : '—'} Delivered
             </div>
             <div className="text-[11px] text-ink-muted mt-0.5">
               Counted only when the provider reports a delivery receipt.
@@ -238,78 +247,46 @@ export default function SMSPage() {
           </div>
         </div>
 
-        <WorkspaceFilters title="Find messages" summary={<FilterSummary count={filteredLogs.length} itemName="message" active={Boolean(searchQuery)} onClear={() => setSearchQuery('')} />}>
-          <div className="max-w-md">
-            <Input label="Search messages" placeholder="Search recipient, mobile number, or message..." value={searchQuery} onChange={(e) => setSearchQuery(e.target.value)} leftIcon={<Search className="w-4 h-4" />} />
+        <WorkspaceFilters title="Find messages" summary={<div className="flex flex-wrap items-center justify-between gap-2 pt-1"><span>{invalidDates ? 'End date must be on or after start date.' : searchSettling ? 'Searching…' : history.loading && !history.items.length ? 'Loading history…' : history.error && !history.items.length ? 'History unavailable' : `${history.items.length} loaded${history.hasMore ? ' · more available' : ''}`}</span>{hasFilters && <button type="button" onClick={clearFilters} className="font-semibold text-navy underline underline-offset-2">Clear filters</button>}</div>}>
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
+            <Input label="Search messages" placeholder="Recipient, phone, message or invoice" maxLength={200} value={searchQuery} onChange={(e) => setSearchQuery(e.target.value)} leftIcon={<Search className="w-4 h-4" />} />
+            <Select label="Status" value={statusFilter} onChange={(e) => setStatusFilter(e.target.value)}>
+              <option value="all">All statuses</option><option value="delivered">Delivered</option><option value="sent">Sent / accepted</option><option value="pending">Pending / unconfirmed</option><option value="failed">Failed (not simulated)</option><option value="simulated">Simulation mode</option>
+            </Select>
+            <Input label="From date (Manila)" type="date" value={fromDate} onChange={(e) => setFromDate(e.target.value)} />
+            <Input label="To date (Manila)" type="date" aria-invalid={invalidDates} aria-describedby={invalidDates ? "sms-date-error" : undefined} value={toDate} onChange={(e) => setToDate(e.target.value)} />
           </div>
         </WorkspaceFilters>
 
-        {/* Logs List */}
         <div className="bg-white rounded-xl border border-surface-border overflow-hidden">
-          <div className="p-4 border-b border-surface-border/60">
-            <h3 className="font-bold text-navy text-sm">SMS Dispatch History</h3>
+          <div className="p-4 border-b border-surface-border/60 flex flex-wrap justify-between items-center gap-3">
+            <div><h3 className="font-bold text-navy text-sm">SMS Dispatch History</h3><p className="text-xs text-ink-secondary mt-1">Newest first · times in Manila · sent means accepted, not delivered</p></div>
+            <Button variant="secondary" size="sm" onClick={refreshHistory} leftIcon={<RefreshCw className="w-4 h-4" />}>Refresh</Button>
           </div>
-
-          <div className="divide-y divide-surface-border/70">
-            {filteredLogs.map((log) => {
-              const inv = invoices.find((i) => i.id === log.invoice_id);
+          <div className="divide-y divide-surface-border/70" aria-busy={history.loading || searchSettling}>
+            {history.items.map((log) => {
               const badge = smsStatusBadge(log);
-
-              return (
-                <div
-                  key={log.id}
-                  className="p-5 flex flex-col sm:flex-row sm:items-start justify-between gap-4 hover:bg-slate-50/60 transition-colors"
-                >
-                  <div className="space-y-1.5 max-w-2xl">
-                    <div className="flex items-center flex-wrap gap-2">
-                      <span className="font-bold text-sm text-navy">{log.recipient}</span>
-                      <span className="text-xs font-mono text-ink-secondary">{log.phone}</span>
-                      <Badge variant={badge.variant} size="sm">
-                        {badge.label}
-                      </Badge>
-                    </div>
-
-                    <p className="text-xs text-ink-primary bg-surface-inset/50 p-3 rounded-xl border border-surface-border/60 font-sans leading-relaxed">
-                      &ldquo;{log.message}&rdquo;
-                    </p>
-
-                    {log.error_message && (
-                      <div className="text-[11px] text-status-danger flex items-center gap-1.5">
-                        <AlertCircle className="w-3.5 h-3.5" />
-                        {log.error_message}
-                      </div>
-                    )}
-
-                    {inv && (
-                      <div className="text-[11px] text-ink-muted">
-                        Associated Milestone:{' '}
-                        <span className="font-mono text-navy font-semibold">{inv.invoice_number}</span>
-                      </div>
-                    )}
-                  </div>
-
-                  <div className="text-left sm:text-right text-xs text-ink-secondary shrink-0">
-                    <div className="font-semibold text-navy">
-                      {new Date(log.sent_at).toLocaleDateString('en-PH', {
-                        month: 'short',
-                        day: 'numeric',
-                        year: 'numeric',
-                      })}
-                    </div>
-                    <div className="text-[11px] text-ink-muted mt-0.5">
-                      {new Date(log.sent_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
-                    </div>
-                  </div>
+              return <details key={log.id} className="group">
+                <summary className="list-none cursor-pointer p-4 flex items-start gap-3 hover:bg-slate-50/60 focus-visible:outline focus-visible:outline-2 focus-visible:outline-navy [&::-webkit-details-marker]:hidden">
+                  <div className="min-w-0 flex-1 space-y-1">
+                    <div className="flex flex-wrap items-center gap-2"><span className="font-bold text-sm text-navy break-words">{log.recipient}</span><Badge variant={badge.variant} size="sm">{badge.label}</Badge></div>
+                    <div className="text-xs text-ink-secondary break-words">{log.phone} {log.invoice_number && <>· {log.invoice_number}</>}</div>
+                    <div className="text-xs text-ink-muted">{new Date(log.sent_at).toLocaleString('en-PH', {timeZone:'Asia/Manila',year:'numeric',month:'short',day:'numeric',hour:'2-digit',minute:'2-digit'})}</div>
+                  </div><ChevronDown aria-hidden="true" className="w-4 h-4 shrink-0 text-ink-secondary mt-1 transition-transform group-open:rotate-180" />
+                </summary>
+                <div className="px-4 pb-4 space-y-2 text-xs break-words">
+                  <p className="text-ink-primary bg-surface-inset/50 p-3 rounded-xl border border-surface-border/60 leading-relaxed whitespace-pre-wrap">{log.message}</p>
+                  {log.error_message && <div className="text-status-danger flex items-start gap-1.5"><AlertCircle aria-hidden="true" className="w-3.5 h-3.5 shrink-0" /><span>{log.error_message}</span></div>}
+                  {log.invoice_number && <div className="text-ink-muted">Associated milestone: <span className="font-mono text-navy">{log.invoice_number}</span></div>}
+                  {log.provider_status && <div className="text-ink-muted">Provider status: {log.provider_status}</div>}
+                  {log.provider_message_id && <div className="text-ink-muted">Provider message ID: <span className="font-mono">{log.provider_message_id}</span></div>}
                 </div>
-              );
+              </details>;
             })}
-
-            {filteredLogs.length === 0 && (
-              <div className="p-12 text-center text-xs text-ink-secondary">
-                No SMS dispatch logs found.
-              </div>
-            )}
           </div>
+          {invalidDates ? <p id="sms-date-error" role="alert" className="p-6 text-sm text-status-danger">Choose an end date on or after the start date.</p> : searchSettling || (history.loading && !history.items.length) ? <p className="p-6 text-sm text-ink-secondary" role="status">Loading SMS history…</p> : history.error ? <div className="p-6 text-sm text-status-danger" role="alert"><p>{history.error}</p><Button variant="secondary" size="sm" onClick={history.retry} className="mt-2">Try again</Button></div> : !history.items.length ? <p className="p-8 text-center text-sm text-ink-secondary">No SMS dispatch logs match these filters.</p> : null}
+          {history.hasMore && !history.error && <div className="p-4 border-t border-surface-border/60"><Button variant="secondary" size="sm" onClick={history.loadMore} isLoading={history.loading} disabled={history.loading}>Load more</Button></div>}
+          <p className="px-4 pb-4 text-[11px] text-ink-muted">Pages reflect the history at the time each is loaded. Refresh to see new or changed attempts.</p>
         </div>
       </div>
 
