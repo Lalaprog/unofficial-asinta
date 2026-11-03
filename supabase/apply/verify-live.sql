@@ -218,6 +218,16 @@ select 'Bale notification policies are recipient-only',
             then 'PASS' else 'FAIL' end
 
 union all
+select 'SMS history read functions and index',
+       'invoker functions granted to authenticated only; valid paging index',
+       case when (select count(*) from pg_proc p where p.oid in (to_regprocedure('public.sms_history_summary()'), to_regprocedure('public.sms_history_page(text,text,date,date,timestamptz,uuid,integer)')) and not p.prosecdef and coalesce(has_function_privilege('authenticated', p.oid, 'EXECUTE'), false) and not coalesce(has_function_privilege('anon', p.oid, 'EXECUTE'), true)) = 2
+              and exists (select 1 from pg_index where indexrelid = to_regclass('public.sms_logs_history_order_idx') and indisvalid)
+            then 'functions and index present' else 'missing, invalid, or unsafe SMS history objects' end,
+       case when (select count(*) from pg_proc p where p.oid in (to_regprocedure('public.sms_history_summary()'), to_regprocedure('public.sms_history_page(text,text,date,date,timestamptz,uuid,integer)')) and not p.prosecdef and coalesce(has_function_privilege('authenticated', p.oid, 'EXECUTE'), false) and not coalesce(has_function_privilege('anon', p.oid, 'EXECUTE'), true)) = 2
+              and exists (select 1 from pg_index where indexrelid = to_regclass('public.sms_logs_history_order_idx') and indisvalid)
+            then 'PASS' else 'FAIL' end
+
+union all
 select 'RLS enabled on every public table',
        'no table without RLS',
        coalesce((select string_agg(relname, ', ') from rls_off), 'all tables have RLS'),

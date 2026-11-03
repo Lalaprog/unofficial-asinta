@@ -60,7 +60,8 @@ const BUNDLES = [
       name === '20261102000001_founder_guard.sql' ||
       name === '20261103000000_pending_attendance_queue.sql' ||
       name === '20261103000001_attendance_history.sql' ||
-      name === '20261103000002_payroll_input_snapshot.sql',
+      name === '20261103000002_payroll_input_snapshot.sql' ||
+      name === '20261103000003_sms_history.sql',
   },
 ];
 
