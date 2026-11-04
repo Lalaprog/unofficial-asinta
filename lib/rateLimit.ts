@@ -143,6 +143,8 @@ export const RATE_LIMITS = {
    * is keyed by the combination of normalized email and IP.
    */
   authLogin: { limit: 10, windowMs: 5 * 60 * 1000 },
+  /** Per-instance secondary limit; Supabase Auth retains its own project limits. */
+  authEmailCode: { limit: 3, windowMs: 5 * 60 * 1000 },
 } as const satisfies Record<string, RateLimitRule>;
 
 export type RateLimitName = keyof typeof RATE_LIMITS;

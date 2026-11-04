@@ -131,35 +131,57 @@ describe('prototype against selected checked-in privileged functions', () => {
         create table public.advances(id uuid primary key,worker_id uuid,project_id uuid,amount numeric,amount_deducted numeric,reason text,date date,status text,created_at timestamptz default now());
         create table public.payroll(id uuid primary key,worker_id uuid,period_start date,period_end date,gross_pay numeric,bale_deduction numeric,other_deductions numeric,net_pay numeric,status text,days_worked numeric,hours_worked numeric,notes text,created_at timestamptz default now());
         create table public.audit_log(id uuid default gen_random_uuid(),actor_id uuid,actor_email text,action text,table_name text,record_id uuid,before_row jsonb,after_row jsonb,created_at timestamptz default now());
-        insert into public.users values ('${uid}','founder@example.test','founder');
+        create table public.advance_requests(id uuid,worker_id uuid,project_id uuid,requested_amount numeric,status text,submitted_by uuid,approved_by uuid,approved_at timestamptz,rejected_by uuid,rejected_at timestamptz,issued_by uuid,issued_at timestamptz,issued_advance_id uuid,updated_at timestamptz);
+        insert into public.users values ('${uid}','founder@example.test','founder'),('${supervisor}','supervisor@example.test','supervisor');
+        insert into public.project_supervisors values ('${project}','${supervisor}');
+        insert into auth.mfa_factors values (2,'${supervisor}','verified');
         insert into public.projects(id,name,client_id,location,budget_estimate,status,start_date,target_completion_date) values ('${project}','Synthetic',null,'Lipa',1000,'active','2026-01-01','2026-12-31');
         insert into public.workers values ('${worker}');
         insert into public.payroll(id,worker_id,period_start,period_end,gross_pay,bale_deduction,other_deductions,net_pay,status) values ('${payroll}','${worker}','2026-01-01','2026-01-07',100,0,0,100,'draft');
         grant select,insert,update,delete on public.payroll,public.advances to authenticated;
       `);
-      // Only the helper is reused here; the application tables and functions
-      // are the existing migration definitions, with test-only helper changes.
-      await db.exec(prototype.split('-- Restrictive policies')[0]);
-      await db.exec(`
-        create function public.is_founder() returns boolean language sql stable security definer set search_path='' as $$
-          select assurance_private.session_satisfies_mfa() and exists(select 1 from public.users where id=auth.uid() and role='founder')
-        $$;
-        create function public.is_supervisor_assigned(proj_id uuid) returns boolean language sql stable security definer set search_path='' as $$
-          select assurance_private.session_satisfies_mfa() and exists(select 1 from public.project_supervisors where supervisor_id=auth.uid() and project_id=proj_id)
-        $$;
-      `);
+      // Use the exact draft helper definitions with selected checked-in
+      // privileged functions, against disposable synthetic application tables.
+      await db.exec(readFileSync('supabase/migrations/20261105000000_session_assurance_prerequisite.sql','utf8'));
+      const policies = readFileSync('supabase/migrations/20261105000001_mfa_table_storage_policies.sql','utf8');
+      const helperStart = policies.indexOf('CREATE OR REPLACE FUNCTION public.is_founder()');
+      const helperEnd = policies.indexOf('DROP POLICY IF EXISTS mfa_session_required ON public.advance_requests;');
+      expect(helperStart).toBeGreaterThan(-1);
+      expect(helperEnd).toBeGreaterThan(helperStart);
+      await db.exec(policies.slice(helperStart,helperEnd));
+      const requests = readFileSync('supabase/migrations/20261013000000_advance_requests.sql','utf8');
+      const notifications = readFileSync('supabase/migrations/20261013000001_advance_request_notifications.sql','utf8');
+      for (const [source,name] of [[requests,'review_advance_request'],[requests,'issue_advance_request'],[notifications,'approve_advance_requests']] as const) {
+        const match = source.match(new RegExp(`CREATE OR REPLACE FUNCTION public\\.${name}\\([\\s\\S]*?\\$\\$ LANGUAGE plpgsql SECURITY DEFINER SET search_path = public, pg_temp;`, 'i'));
+        expect(match, name).not.toBeNull();
+        await db.exec(match![0]);
+      }
       await db.exec(readFileSync('supabase/migrations/20261104000000_visible_projects.sql','utf8'));
       await db.exec(readFileSync('supabase/migrations/20261102000000_atomic_payroll_payments.sql','utf8'));
       await db.exec('set role authenticated');
       await identity(db, uid, 'aal1');
       expect((await db.query('select * from public.visible_projects()')).rows).toEqual([]);
       await expect(db.query('select public.set_payroll_status_atomic($1,$2)',[payroll,'approved'])).rejects.toThrow(/Founder access/);
+      await expect(db.query('select public.record_advance_deduction_atomic($1,1)',[worker])).rejects.toThrow(/Founder access/);
+      await expect(db.query("select public.set_advance_status_atomic($1,'active')",[worker])).rejects.toThrow(/Founder access/);
+      await expect(db.query("select public.review_advance_request($1,'approve')",[worker])).rejects.toThrow(/Founder access/);
+      await expect(db.query('select public.issue_advance_request($1)',[worker])).rejects.toThrow(/Founder access/);
+      await expect(db.query('select * from public.approve_advance_requests($1::uuid[])',[[worker]])).rejects.toThrow(/Founder access/);
+      await identity(db, supervisor, 'aal1');
+      expect((await db.query('select * from public.visible_projects()')).rows).toEqual([]);
+      await identity(db, supervisor, 'aal2');
+      expect((await db.query('select id,client_id,budget_estimate from public.visible_projects()')).rows).toEqual([{id:project,client_id:null,budget_estimate:null}]);
       await db.exec('reset role');
       expect((await db.query('select status from public.payroll')).rows).toEqual([{status:'draft'}]);
       expect((await db.query('select * from public.audit_log')).rows).toHaveLength(0);
       await db.exec('set role authenticated');
       await identity(db, uid, 'aal2');
       expect((await db.query('select id,name from public.visible_projects()')).rows).toEqual([{id:project,name:'Synthetic'}]);
+      await expect(db.query('select public.record_advance_deduction_atomic($1,1)',[worker])).rejects.toThrow(/Advance not found/);
+      await expect(db.query("select public.set_advance_status_atomic($1,'active')",[worker])).rejects.toThrow(/Advance not found/);
+      await expect(db.query("select public.review_advance_request($1,'approve')",[worker])).rejects.toThrow(/Bale request not found/);
+      await expect(db.query('select public.issue_advance_request($1)',[worker])).rejects.toThrow(/Bale request not found/);
+      await expect(db.query('select * from public.approve_advance_requests($1::uuid[])',[[]])).rejects.toThrow(/Select at least one/);
       const result = await db.query<{result:{outcome:string}}>('select public.set_payroll_status_atomic($1,$2) as result',[payroll,'approved']);
       expect(result.rows[0].result.outcome).toBe('updated');
       await db.exec('reset role');

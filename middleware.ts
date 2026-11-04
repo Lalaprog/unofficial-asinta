@@ -2,6 +2,8 @@ import { NextResponse, type NextRequest } from 'next/server';
 import { createMiddlewareSupabaseClient } from '@/lib/supabase/middleware';
 import { canRoleAccessPath, getSafeRedirectPath, type AppRole } from '@/lib/auth/routes';
 import { isMfaEnforcementEnabled } from '@/lib/auth/mfa';
+import { requireSessionAssurance } from '@/lib/auth/session-assurance';
+import { RECOVERY_CHOICE_KEY } from '@/lib/auth/recovery';
 
 /**
  * Route protection middleware.
@@ -71,6 +73,20 @@ export async function middleware(request: NextRequest) {
     error: userError,
   } = await supabase.auth.getUser();
 
+  // The database checks the signed JWT and current verified factors. A partial
+  // session must stay on the login/challenge page, including after refresh or
+  // direct navigation; failures cannot silently become password-only access.
+  if (!userError && user) {
+    const assurance = await requireSessionAssurance(supabase);
+    if (!assurance.ok) {
+      if (pathname === '/') return response;
+      const returnTo = getSafeRedirectPath(`${pathname}${request.nextUrl.search || ''}`);
+      const redirect = redirectTo(request, '/', returnTo ? { redirect_to: returnTo } : undefined);
+      response.cookies.getAll().forEach(cookie => redirect.cookies.set(cookie));
+      return redirect;
+    }
+  }
+
   // "/" — the unified login. Unauthenticated visitors see the form;
   // authenticated users are forwarded to their role-based workspace.
   if (pathname === '/') {
@@ -93,9 +109,14 @@ export async function middleware(request: NextRequest) {
 
     const requestedPath = getSafeRedirectPath(request.nextUrl.searchParams.get('redirect_to'));
     const fallback = role === 'founder' ? '/dashboard' : '/attendance';
-    const destination =
-      requestedPath && canRoleAccessPath(role as AppRole, requestedPath) ? requestedPath : fallback;
-    return redirectToSafePath(request, destination);
+    // This flag only preserves the optional UI choice; it is never used as
+    // evidence of identity or assurance, both already checked above.
+    const destination = request.cookies.get(RECOVERY_CHOICE_KEY)?.value === '1'
+      ? '/recovery'
+      : requestedPath && canRoleAccessPath(role as AppRole, requestedPath) ? requestedPath : fallback;
+    const redirect = redirectToSafePath(request, destination);
+    response.cookies.getAll().forEach(cookie => redirect.cookies.set(cookie));
+    return redirect;
   }
 
   // Protected application routes.

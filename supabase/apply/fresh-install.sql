@@ -8,7 +8,7 @@
 -- will fail. Check with verify-live.sql before running.
 --
 -- GENERATED FILE — do not edit. Regenerate with `npm run build:apply-sql`.
--- Generated: 2026-11-04T18:39:49.735Z
+-- Generated: 2026-11-04T18:56:43.405Z
 --
 -- Source files (in execution order) and their SHA-256:
 --   20260913000000_bale_schema.sql  df054d9d265045b9…
@@ -29,7 +29,7 @@
 --   20261104000001_project_column_privacy.sql  a4b99e9d35b55fa9…
 --   20261104000002_login_cooldown.sql  d0104d7dc1291e09…
 --   20261105000000_session_assurance_prerequisite.sql  e8e39a25a33a5331…
---   20261105000001_mfa_table_storage_policies.sql  af5228f485bbd9f9…
+--   20261105000001_mfa_table_storage_policies.sql  03272558e2116214…
 --
 -- After running: execute supabase/apply/verify-live.sql and confirm every
 -- row reports PASS. Procedure: docs/MIGRATION_RUNBOOK.md.
@@ -2412,8 +2412,9 @@ GRANT EXECUTE ON FUNCTION public.session_assurance_satisfied() TO authenticated;
 
 -- DRAFT: DO NOT APPLY TO A HOSTED PROJECT until the full MFA rollout is ready.
 -- Requires the session_assurance_satisfied() prerequisite. This is only table
--- and storage RLS: SECURITY DEFINER functions and service-role routes need
--- their own safeguards; it is not sufficient to enable email recovery.
+-- and storage RLS plus the audited role helpers used by selected privileged
+-- functions. All other SECURITY DEFINER functions and service-role routes need
+-- separate review; it is not sufficient to enable email recovery.
 -- Existing permissive policies remain in force (the restrictive rules AND with
 -- them). An unenrolled user can continue with aal1, while an enrolled user
 -- requires aal2. The own profile read exception is only for MFA bootstrapping.
@@ -2445,6 +2446,35 @@ BEGIN
         OR pg_catalog.has_any_column_privilege('authenticated', c.oid, 'SELECT, INSERT, UPDATE'))) THEN
     RAISE EXCEPTION 'Unexpected authenticated-accessible public relation: review before deployment';
   END IF;
+  -- SECURITY DEFINER bypasses RLS. Refuse unexpected callable functions; the
+  -- named functions still require their bodies/grants to be reviewed at rollout.
+  IF EXISTS (
+    SELECT 1 FROM pg_catalog.pg_proc p
+    JOIN pg_catalog.pg_namespace n ON n.oid = p.pronamespace
+    WHERE n.nspname = 'public' AND p.prosecdef
+      AND (pg_catalog.has_function_privilege('authenticated', p.oid, 'EXECUTE')
+        OR pg_catalog.has_function_privilege('anon', p.oid, 'EXECUTE'))
+      AND NOT EXISTS (
+        SELECT 1 FROM unnest(ARRAY[
+          pg_catalog.to_regprocedure('public.session_assurance_satisfied()'),
+          pg_catalog.to_regprocedure('public.current_user_role()'),
+          pg_catalog.to_regprocedure('public.is_founder()'),
+          pg_catalog.to_regprocedure('public.is_supervisor_assigned(uuid)'),
+          pg_catalog.to_regprocedure('public.visible_projects()'),
+          pg_catalog.to_regprocedure('public.approve_advance_requests(uuid[])'),
+          pg_catalog.to_regprocedure('public.review_advance_request(uuid,text)'),
+          pg_catalog.to_regprocedure('public.issue_advance_request(uuid)'),
+          pg_catalog.to_regprocedure('public.record_advance_deduction_atomic(uuid,numeric)'),
+          pg_catalog.to_regprocedure('public.set_advance_status_atomic(uuid,text)'),
+          pg_catalog.to_regprocedure('public.set_payroll_status_atomic(uuid,text)'),
+          pg_catalog.to_regprocedure('public.audit_advance_request_change()'),
+          pg_catalog.to_regprocedure('public.notify_advance_request_event()'),
+          pg_catalog.to_regprocedure('public.rls_auto_enable()')
+        ]) AS allowed(function_oid) WHERE allowed.function_oid = p.oid
+      )
+  ) THEN
+    RAISE EXCEPTION 'Unexpected callable SECURITY DEFINER function: review before deployment';
+  END IF;
   IF NOT EXISTS (SELECT 1 FROM pg_catalog.pg_class c
     JOIN pg_catalog.pg_namespace n ON n.oid = c.relnamespace
     WHERE n.nspname = 'storage' AND c.relname = 'objects'
@@ -2452,6 +2482,23 @@ BEGIN
     RAISE EXCEPTION 'Expected RLS-enabled storage.objects missing';
   END IF;
 END $$;
+
+-- These helpers are used inside the currently audited privileged business
+-- functions, which bypass table RLS. Evaluate assurance before role/site access.
+-- Keep the return values non-null: older functions use IF NOT is_founder().
+-- Every other callable definer function still requires an independent audit.
+CREATE OR REPLACE FUNCTION public.is_founder()
+RETURNS boolean LANGUAGE sql STABLE SECURITY DEFINER SET search_path = '' AS $$
+  SELECT public.session_assurance_satisfied() IS TRUE AND EXISTS (
+    SELECT 1 FROM public.users WHERE id = auth.uid() AND role = 'founder'
+  );
+$$;
+CREATE OR REPLACE FUNCTION public.is_supervisor_assigned(proj_id uuid)
+RETURNS boolean LANGUAGE sql STABLE SECURITY DEFINER SET search_path = '' AS $$
+  SELECT public.session_assurance_satisfied() IS TRUE AND EXISTS (
+    SELECT 1 FROM public.project_supervisors WHERE supervisor_id = auth.uid() AND project_id = proj_id
+  );
+$$;
 
 DROP POLICY IF EXISTS mfa_session_required ON public.advance_requests;
 CREATE POLICY mfa_session_required ON public.advance_requests AS RESTRICTIVE FOR ALL TO authenticated
@@ -2546,6 +2593,14 @@ CREATE POLICY mfa_session_required ON public.workers AS RESTRICTIVE FOR ALL TO a
 -- Only the signed-in user's own profile can be read at aal1 while a verified
 -- factor awaits challenge. It does not grant profile access: existing permissive
 -- policies still apply. Never allow writes through the bootstrap exception.
+-- Role helpers below become false until MFA is complete. Explicitly permit a
+-- caller to read their own profile for bootstrap; the restrictive policy below
+-- still limits all other profile reads and writes. This is no broader than the
+-- existing Founder and Supervisor own-profile access.
+DROP POLICY IF EXISTS mfa_profile_bootstrap ON public.users;
+CREATE POLICY mfa_profile_bootstrap ON public.users FOR SELECT TO authenticated
+  USING (id = (SELECT auth.uid()));
+
 DROP POLICY IF EXISTS mfa_profile_read ON public.users;
 CREATE POLICY mfa_profile_read ON public.users AS RESTRICTIVE FOR SELECT TO authenticated
   USING (

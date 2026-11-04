@@ -6,6 +6,9 @@ import { AlertCircle, Clock, Eye, EyeOff, KeyRound, Loader2, Lock, Mail } from '
 import { useAuth } from '@/lib/auth/authContext';
 import { createClient } from '@/lib/supabase/client';
 import { friendlyMfaError, normalizeTotpCode } from '@/lib/auth/mfa';
+import { getLoginAssurance } from '@/lib/auth/login-assurance';
+import { requireSessionAssurance } from '@/lib/auth/session-assurance';
+import { hasRecoveryChoice, markRecoveryChoice, clearRecoveryChoice } from '@/lib/auth/recovery';
 import { canRoleAccessPath, getSafeRedirectPath, type AppRole } from '@/lib/auth/routes';
 import {
   AUTH_NOTICE_STORAGE_KEY,
@@ -31,7 +34,7 @@ const MIDDLEWARE_ERRORS: Record<string, string> = {
  */
 export default function LoginPage() {
   const router = useRouter();
-  const { login } = useAuth();
+  const { login, logout, user, assurance, refreshAssurance } = useAuth();
   const supabase = useMemo(() => createClient(), []);
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
@@ -40,6 +43,10 @@ export default function LoginPage() {
   const [isLoading, setIsLoading] = useState(false);
   const [isEnteringWorkspace, setIsEnteringWorkspace] = useState(false);
   const [sessionNotice, setSessionNotice] = useState<string | null>(null);
+  const [signinMode, setSigninMode] = useState<'password' | 'email-request' | 'email-code'>('password');
+  const [emailCode, setEmailCode] = useState('');
+  const [emailCodeMessage, setEmailCodeMessage] = useState<string | null>(null);
+  const emailCodeEnabled = process.env.NEXT_PUBLIC_EMAIL_CODE_SIGNIN_ENABLED === 'true';
 
   const [mfaChallenge, setMfaChallenge] = useState<{ factorId: string; role: AppRole } | null>(null);
   const [mfaCode, setMfaCode] = useState('');
@@ -66,13 +73,32 @@ export default function LoginPage() {
       new URLSearchParams(window.location.search).get('redirect_to')
     );
     const fallback = role === 'founder' ? '/dashboard' : '/attendance';
-    const destination =
-      requestedPath && canRoleAccessPath(role, requestedPath) ? requestedPath : fallback;
+    const destination = hasRecoveryChoice()
+      ? '/recovery'
+      : requestedPath && canRoleAccessPath(role, requestedPath) ? requestedPath : fallback;
 
     setIsEnteringWorkspace(true);
     router.refresh();
     router.replace(destination);
   };
+
+  // A partially authenticated session can be resumed after a reload. The
+  // factor list is retrieved from Auth, not from cached session metadata.
+  useEffect(() => {
+    if (assurance !== 'required' || !user || mfaChallenge) return;
+    let active = true;
+    void getLoginAssurance(supabase).then(result => {
+      if (!active) return;
+      if (result.kind === 'challenge' && (user.role === 'founder' || user.role === 'supervisor')) {
+        setEmail(user.email);
+        setMfaChallenge({ factorId: result.factorId, role: user.role });
+        setError(null);
+      } else if (result.kind === 'unavailable') {
+        setError('Could not verify your account security. Please retry or sign out.');
+      }
+    });
+    return () => { active = false; };
+  }, [assurance, user, mfaChallenge, supabase]);
 
   const handleVerifyMfa = async (event: React.FormEvent) => {
     event.preventDefault();
@@ -98,6 +124,15 @@ export default function LoginPage() {
         return;
       }
 
+      // The Auth API reporting success is not sufficient on its own; verify
+      // the new session at the database boundary before opening the workspace.
+      const assuranceResult = await requireSessionAssurance(supabase);
+      if (!assuranceResult.ok) {
+        setMfaError('Could not confirm your session security. Please try again.');
+        setIsVerifyingMfa(false);
+        return;
+      }
+      void refreshAssurance();
       const role = mfaChallenge.role;
       setMfaChallenge(null);
       setMfaCode('');
@@ -108,12 +143,67 @@ export default function LoginPage() {
     }
   };
 
+  const handleEmailRequest = async (event: React.FormEvent) => {
+    event.preventDefault(); setError(null); setIsLoading(true);
+    try {
+      const response = await fetch('/api/auth/email-code', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ email }),
+      });
+      const payload = await response.json().catch(() => ({}));
+      if (!response.ok) {
+        setError(payload.error || 'Could not request a code. Please try again.');
+      } else {
+        setEmailCodeMessage(payload.message || 'If this email belongs to a BALE account, a sign-in code may arrive shortly.');
+        setSigninMode('email-code');
+      }
+    } catch {
+      setError('Could not request a code. Check your connection and try again.');
+    } finally { setIsLoading(false); }
+  };
+
+  const handleEmailCode = async (event: React.FormEvent) => {
+    event.preventDefault(); setError(null);
+    const code = emailCode.replace(/\s/g, '');
+    if (!/^\d{6,10}$/.test(code)) { setError('Enter the numeric code from your email.'); return; }
+    setIsLoading(true);
+    try {
+      const { data, error: verifyError } = await supabase.auth.verifyOtp({
+        email: email.trim().toLowerCase(), token: code, type: 'email',
+      });
+      if (verifyError || !data.user || !data.session) {
+        setError('The code is invalid or expired. Please request a new code and try again.');
+        return;
+      }
+      markRecoveryChoice();
+      const { data: profile, error: profileError } = await supabase.from('users')
+        .select('role').eq('id', data.user.id).maybeSingle();
+      if (profileError || (profile?.role !== 'founder' && profile?.role !== 'supervisor')) {
+        clearRecoveryChoice(); await supabase.auth.signOut();
+        setError('Could not verify your BALE account. Please try again.');
+        return;
+      }
+      const decision = await getLoginAssurance(supabase);
+      if (decision.kind === 'challenge') {
+        setMfaChallenge({ factorId: decision.factorId, role: profile.role });
+      } else if (decision.kind === 'unavailable') {
+        setError('Could not verify your account security. Please retry or sign out.');
+      } else {
+        void refreshAssurance();
+        proceedToWorkspace(profile.role);
+      }
+    } catch {
+      setError('Could not complete sign-in. Check your connection and try again.');
+    } finally { setIsLoading(false); }
+  };
+
   const handleSubmit = async (event: React.FormEvent) => {
     event.preventDefault();
     setError(null);
     setIsLoading(true);
 
     try {
+      clearRecoveryChoice();
       const result = await login(email, password);
       if (!result.success) {
         setError(result.error || 'Invalid credentials');
@@ -129,17 +219,18 @@ export default function LoginPage() {
 
       const role = result.role as AppRole;
 
-      const { data: assurance } = await supabase.auth.mfa.getAuthenticatorAssuranceLevel();
-      if (assurance?.nextLevel === 'aal2' && assurance.currentLevel !== 'aal2') {
-        const { data: factorData } = await supabase.auth.mfa.listFactors();
-        const verified = (factorData?.totp ?? []).find((factor: any) => factor.status === 'verified');
-        if (verified) {
-          setMfaChallenge({ factorId: verified.id, role });
-          setIsLoading(false);
-          return;
-        }
+      const sessionDecision = await getLoginAssurance(supabase);
+      if (sessionDecision.kind === 'challenge') {
+        setMfaChallenge({ factorId: sessionDecision.factorId, role });
+        setIsLoading(false);
+        return;
       }
-
+      if (sessionDecision.kind === 'unavailable') {
+        setError('Could not verify your account security. Please retry or sign out.');
+        setIsLoading(false);
+        return;
+      }
+      void refreshAssurance();
       proceedToWorkspace(role);
     } catch (caughtError: unknown) {
       setError(caughtError instanceof Error ? caughtError.message : 'Authentication error');
@@ -353,7 +444,8 @@ export default function LoginPage() {
                     className="flex-1"
                     disabled={isVerifyingMfa}
                     onClick={() => {
-                      supabase.auth.signOut();
+                      clearRecoveryChoice();
+                      void logout();
                       setMfaChallenge(null);
                       setMfaCode('');
                       setMfaError(null);
@@ -378,6 +470,33 @@ export default function LoginPage() {
                     )}
                   </Button>
                 </div>
+              </form>
+            ) : user && assurance !== 'ready' ? (
+              <div className="space-y-4 text-xs text-ink-secondary" role="status">
+                <p>{error || 'Checking your account security…'}</p>
+                <div className="flex gap-2">
+                  <Button type="button" variant="secondary" onClick={() => { clearRecoveryChoice(); void logout(); }}>Sign out</Button>
+                  <Button type="button" variant="primary" onClick={() => void refreshAssurance()} disabled={assurance === 'checking'}>Try again</Button>
+                </div>
+              </div>
+            ) : signinMode !== 'password' ? (
+              <form onSubmit={signinMode === 'email-request' ? handleEmailRequest : handleEmailCode} className="space-y-4">
+                <p className="text-xs text-ink-secondary leading-relaxed">
+                  {signinMode === 'email-request'
+                    ? 'We’ll send a sign-in code to your work email. If you use an authenticator, you’ll still need its code.'
+                    : emailCodeMessage}
+                </p>
+                {error && <div role="alert" className="p-3 rounded-xl bg-status-danger-bg text-status-danger text-xs">{error}</div>}
+                <Input label="Work Email" type="email" value={email} onChange={e => setEmail(e.target.value)}
+                  autoComplete="off" autoCapitalize="none" spellCheck={false} disabled={signinMode === 'email-code'} required />
+                {signinMode === 'email-code' && <Input label="Email Sign-In Code" type="text" inputMode="numeric"
+                  autoComplete="one-time-code" value={emailCode} onChange={e => setEmailCode(e.target.value)} required />}
+                <Button type="submit" variant="primary" className="w-full" disabled={isLoading}>
+                  {signinMode === 'email-request' ? 'Send sign-in code' : 'Verify sign-in code'}
+                </Button>
+                <Button type="button" variant="ghost" className="w-full" onClick={() => {
+                  setError(null); setEmailCode(''); setSigninMode(signinMode === 'email-code' ? 'email-request' : 'password');
+                }}>{signinMode === 'email-code' ? 'Request another code' : 'Back to password sign-in'}</Button>
               </form>
             ) : (
               <form
@@ -444,6 +563,10 @@ export default function LoginPage() {
                     Sign In
                   </Button>
                 </div>
+                {emailCodeEnabled && <Button type="button" variant="ghost" size="sm" className="w-full"
+                  onClick={() => { setError(null); clearRecoveryChoice(); setSigninMode('email-request'); }}>
+                  Forgot your password? Sign in with an email code
+                </Button>}
               </form>
             )}
           </div>

@@ -12,7 +12,7 @@ vi.mock('@/lib/supabase/client',()=>({createClient:()=>({
     update:(payload:any)=>{const filters:Array<[string,unknown]>=[];const builder={eq:(key:string,value:unknown)=>{filters.push([key,value]);return builder},select:()=>({single:async()=>{mock.writes.push({kind:'update',payload,filters});return {data:{...mock.snapshot as any,payload,...payload,id:filters[0]?.[1]},error:null}}})};return builder},
   }),
 })}));
-vi.mock('@/lib/auth/authContext',()=>{const user={id:'founder',email:'founder@test',role:'founder'};return {useAuth:()=>({user,isFounder:true,authLoading:false})}});
+vi.mock('@/lib/auth/authContext',()=>{const user={id:'founder',email:'founder@test',role:'founder'};return {useAuth:()=>({assurance:'ready',user,isFounder:true,authLoading:false})}});
 vi.mock('@/components/ui/Toast',()=>({useToast:()=>({showToast:mock.toast})}));
 vi.mock('@/lib/audit/log',()=>({writeAuditEntry:async (...args:unknown[])=>{mock.audit(...args);return {ok:true}},auditFailureMessage:()=>''}));
 import {DataStoreProvider,useDataStore} from '@/lib/data/store';

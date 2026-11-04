@@ -21,8 +21,8 @@ async function createFixture() {
     create function auth.jwt() returns jsonb language sql stable as $$ select coalesce(nullif(current_setting('request.jwt.claims',true),''),'{}')::jsonb $$;
     create table auth.mfa_factors(user_id uuid, status text);
     insert into auth.mfa_factors values ('${founder}','verified'),('${supervisor}','verified');
-    create table public.users(id uuid primary key, name text);
-    insert into public.users values ('${founder}','Founder'),('${supervisor}','Supervisor'),('${other}','Other');
+    create table public.users(id uuid primary key, name text, role text);
+    insert into public.users values ('${founder}','Founder','founder'),('${supervisor}','Supervisor','supervisor'),('${other}','Other','supervisor');
     alter table public.users enable row level security;
     grant select, insert, update, delete on public.users to authenticated;
     create policy old_role_rules on public.users for all to authenticated using (true) with check (true);
@@ -31,6 +31,14 @@ async function createFixture() {
       alter table public.${name} enable row level security;
       grant select, insert, update, delete on public.${name} to authenticated;
       create policy old_role_rules on public.${name} for all to authenticated using (true) with check (true);`).join('\n')}
+    alter table public.project_supervisors add column supervisor_id uuid, add column project_id uuid;
+    update public.project_supervisors set supervisor_id='${supervisor}', project_id='00000000-0000-0000-0000-000000000009';
+    -- The real Founder can read other users; a Supervisor reads only their own.
+    drop policy old_role_rules on public.users;
+    create function public.is_founder() returns boolean language sql stable security definer as $$ select exists(select 1 from public.users where id=auth.uid() and role='founder') $$;
+    create function public.is_supervisor_assigned(proj_id uuid) returns boolean language sql stable security definer as $$ select exists(select 1 from public.project_supervisors where supervisor_id=auth.uid() and project_id=proj_id) $$;
+    create policy founder_profile_access on public.users for all to authenticated using (public.is_founder()) with check (public.is_founder());
+    create policy supervisor_own_profile on public.users for select to authenticated using (id=auth.uid());
     -- The real audit log grants SELECT and INSERT, never UPDATE or DELETE.
     drop policy old_role_rules on public.audit_log;
     create policy audit_select on public.audit_log for select to authenticated using (true);
@@ -74,6 +82,14 @@ describe('draft table and storage assurance policies', () => {
     } finally { await db.close(); }
   }, 30000);
 
+  it('refuses unreviewed caller-accessible security definer functions', async () => {
+    const db = await createFixture();
+    try {
+      await db.exec("create function public.unreviewed() returns integer language sql security definer as $$ select 42 $$; grant execute on function public.unreviewed() to authenticated;");
+      await expect(db.exec(migration)).rejects.toThrow(/Unexpected callable SECURITY DEFINER function/);
+    } finally { await db.close(); }
+  }, 30000);
+
   it('blocks aal1 enrolled users on every listed table and storage while preserving bootstrap and authorized sessions', async () => {
     const db = await createFixture();
     try {
@@ -91,12 +107,16 @@ describe('draft table and storage assurance policies', () => {
         expect((await db.query<{id:string}>('select id from public.users order by id')).rows.map(x => x.id)).toEqual([who]);
         expect((await db.query(`update public.users set name='Changed' where id='${who}' returning id`)).rows).toHaveLength(0);
         expect((await db.query(`delete from public.users where id='${who}' returning id`)).rows).toHaveLength(0);
-        await expect(db.query(`insert into public.users values ('00000000-0000-0000-0000-000000000004','Not allowed')`)).rejects.toThrow(/row-level security/);
+        await expect(db.query(`insert into public.users values ('00000000-0000-0000-0000-000000000004','Not allowed','supervisor')`)).rejects.toThrow(/row-level security/);
+        expect((await db.query<{result:boolean}>('select public.is_founder() as result')).rows[0].result).toBe(false);
+        expect((await db.query<{result:boolean}>("select public.is_supervisor_assigned('00000000-0000-0000-0000-000000000009') as result")).rows[0].result).toBe(false);
         await identity(db,who,'aal2');
         for (const table of [...tables.map(t => `public.${t}`), 'storage.objects']) {
           expect((await db.query(`select * from ${table}`)).rows, table).toHaveLength(1);
         }
-        expect((await db.query('select * from public.users')).rows).toHaveLength(3);
+        expect((await db.query('select * from public.users')).rows).toHaveLength(who === founder ? 3 : 1);
+        expect((await db.query<{result:boolean}>('select public.is_founder() as result')).rows[0].result).toBe(who === founder);
+        expect((await db.query<{result:boolean}>("select public.is_supervisor_assigned('00000000-0000-0000-0000-000000000009') as result")).rows[0].result).toBe(who === supervisor);
         expect((await db.query("update public.audit_log set value='changed' returning id")).rows).toHaveLength(0);
         expect((await db.query('delete from public.audit_log returning id')).rows).toHaveLength(0);
       }
