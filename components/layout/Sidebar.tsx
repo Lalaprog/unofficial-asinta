@@ -60,6 +60,7 @@ const FOUNDER_NAV_GROUPS: NavGroup[] = [
     title: 'Workforce & Pay',
     items: [
       { label: 'Attendance', href: '/attendance', icon: UserCheck },
+      { label: 'Attendance History', href: '/attendance?tab=history', icon: Clock },
       { label: 'Payroll', href: '/payroll', icon: Banknote },
       { label: 'Bale Requests & Advances', href: '/advances', icon: HandCoins },
     ],
@@ -102,7 +103,7 @@ function isItemActive(
   if (hrefPath === '/attendance') {
     if (pathname !== '/attendance') return false;
     if (targetTab) return currentTab === targetTab;
-    return isFounder || currentTab === 'terminal';
+    return isFounder ? currentTab !== 'history' : currentTab === 'terminal';
   }
 
   return (
@@ -114,9 +115,27 @@ function isItemActive(
 export const Sidebar: React.FC = () => {
   const pathname = usePathname();
   const searchParams = useSearchParams();
-  const currentTab = searchParams?.get('tab') || 'terminal';
+  const urlTab = searchParams?.get('tab') || 'terminal';
   const { isFounder } = useAuth();
   const [expandedGroups, setExpandedGroups] = useState<Record<string, boolean>>({});
+  const [currentTab, setCurrentTab] = useState(urlTab);
+
+  // Attendance tabs can also switch instantly through the mobile navigation.
+  // Keep the desktop rail accurate after a resize as well as URL navigation.
+  useEffect(() => {
+    setCurrentTab(urlTab);
+  }, [pathname, urlTab]);
+
+  useEffect(() => {
+    const onTabEvent = (event: Event) => {
+      const tab = (event as CustomEvent<string>).detail;
+      if (pathname === '/attendance' && (tab === 'terminal' || tab === 'history' || tab === 'workforce')) {
+        setCurrentTab(tab);
+      }
+    };
+    window.addEventListener('bale:attendance-tab', onTabEvent);
+    return () => window.removeEventListener('bale:attendance-tab', onTabEvent);
+  }, [pathname]);
 
   const groups = isFounder ? FOUNDER_NAV_GROUPS : SUPERVISOR_NAV_GROUPS;
   const activeGroupId = groups.find((group) =>
