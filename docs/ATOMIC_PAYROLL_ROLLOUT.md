@@ -2,6 +2,14 @@
 
 The `20261102000000_atomic_payroll_payments.sql` migration changes live financial write permissions. **Do not deploy it casually or assume past payments are repaired.** It does not move money; staff must still pay the worker before marking a voucher paid. It does not change, reconstruct, or reconcile existing ledgers.
 
+## Live test-data rollout — 2026-11-04
+
+The owner confirmed that the current records are test data and that payroll and Bale changes were paused. The individual atomic-payroll migration was applied to project `mchkdkjntnbwrgmyobpd` as hosted migration `20261104135324` (`atomic_payroll_payments`), while the matching app from PR #61 was already deployed. No financial rows were created, updated, deleted, or reconciled during this rollout. The full upgrade bundle and `supabase db push` were not run. The hosted version differs from the repository migration version `20261102000000`; do not blindly replay migrations to reconcile history.
+
+The migration ran with a lock timeout, precondition and postcondition checks in the migration transaction, and requested a PostgREST schema-cache reload. Afterward, read-only catalog checks confirmed the three RPCs, their authenticated/anonymous grants, the enabled finalized-voucher trigger, direct-write restrictions, and the draft gross-pay grant. All four installed function bodies matched the repository migration after ignoring comments and whitespace. Database and REST services reported healthy. The local isolated tests for atomic payroll and the payroll snapshot store passed (9 tests). These checks do **not** establish that the schema cache reloaded successfully, that signed-in app workflows work end to end, or that concurrent hosted transactions behave correctly.
+
+The owner will conduct real-world testing with test data. Everyone should refresh old app tabs before using payroll or Bale; old clients and integrations that update protected columns directly are no longer compatible. The rollout did not include a backup or hosted staging/concurrency test, and did not reconcile existing test records. Do not assume historical vouchers or advances have been repaired. Before the system holds real financial data, revisit backup/recovery and hosted concurrency validation. For an uncertain result, refresh and check both payroll and Bale records before retrying; manual deductions in particular are not idempotent.
+
 ## Before production
 
 1. Back up the database and prepare a staging copy without exposing real personal data. Reconcile historical paid vouchers and manual deductions against actual disbursements, advance balances and audit history. The old flow could leave partial or duplicate deductions, and an already-paid voucher is deliberately treated as a no-op on retry; it will not be repaired automatically. Escalate discrepancies for controlled accounting review, not blind replay.
