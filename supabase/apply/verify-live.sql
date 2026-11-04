@@ -17,7 +17,7 @@ expected_tables(name) as (
          ('invoices'), ('expenses'), ('advances'), ('attendance'), ('payroll'),
          ('tools'), ('sms_logs'), ('email_logs'), ('email_templates'),
          ('reminder_dispatches'), ('audit_log'), ('vendor_memory'), ('advance_requests'),
-         ('user_notifications'), ('invoice_payment_operations')
+         ('user_notifications')
 ),
 missing_tables as (
   select e.name
@@ -137,30 +137,12 @@ founder_guard_checks as (
           or (t.tgname = 'check_founder_after_delete' and t.tgfoid = to_regprocedure('app_private.check_founder_after_delete()'))
           or (t.tgname = 'prevent_user_truncate' and t.tgfoid = to_regprocedure('app_private.prevent_user_truncate()')))) as triggers_present
 )
-, invoice_payment_checks as (
-  select coalesce(
-    exists (select 1 from pg_proc p where p.oid = to_regprocedure('public.record_invoice_payment_atomic(uuid,uuid,numeric,numeric,numeric,text)')
-      and p.prosecdef and has_function_privilege('authenticated', p.oid, 'EXECUTE')
-      and not has_function_privilege('anon', p.oid, 'EXECUTE'))
-    and exists (select 1 from pg_class c where c.oid = to_regclass('public.invoice_payment_operations') and c.relrowsecurity)
-    and not has_table_privilege('authenticated', to_regclass('public.invoice_payment_operations'), 'SELECT,INSERT,UPDATE,DELETE')
-    and not has_table_privilege('anon', to_regclass('public.invoice_payment_operations'), 'SELECT,INSERT,UPDATE,DELETE')
-    and not has_column_privilege('authenticated', to_regclass('public.invoices'), 'amount', 'UPDATE')
-    and not has_column_privilege('authenticated', to_regclass('public.invoices'), 'amount_paid', 'UPDATE')
-    and not has_column_privilege('authenticated', to_regclass('public.invoices'), 'status', 'UPDATE')
-    and has_column_privilege('authenticated', to_regclass('public.invoices'), 'automatic_reminders_enabled', 'UPDATE')
-    and has_column_privilege('authenticated', to_regclass('public.invoices'), 'reminders_paused_until', 'UPDATE')
-    and exists (select 1 from pg_trigger t where t.tgrelid=to_regclass('public.invoices')
-      and t.tgname='guard_invoice_payment_insert' and t.tgenabled in ('O','A') and not t.tgisinternal
-      and t.tgfoid=to_regprocedure('public.guard_invoice_payment_insert()')),
-    false) as ok
-)
 
 -- ── results: one row per check ────────────────────────────────────────────
 select 'base tables present' as check_name,
-       '20 tables' as expected,
+       '19 tables' as expected,
        case when (select count(*) from missing_tables) = 0
-            then 'all 20 present'
+            then 'all 19 present'
             else 'MISSING: ' || (select string_agg(name, ', ') from missing_tables) end as actual,
        case when (select count(*) from missing_tables) = 0 then 'PASS' else 'FAIL' end as status
 
@@ -252,13 +234,6 @@ select 'Payroll attendance matrix read function',
             then 'function present with expected grants' else 'missing or unsafe matrix function' end,
        case when exists (select 1 from pg_proc p where p.oid=to_regprocedure('public.payroll_attendance_matrix(date,date,uuid)') and not p.prosecdef and coalesce(has_function_privilege('authenticated',p.oid,'EXECUTE'),false) and not coalesce(has_function_privilege('anon',p.oid,'EXECUTE'),true))
             then 'PASS' else 'FAIL' end
-
-union all
-select 'Invoice atomic payment protections',
-       'Founder RPC, private operation ledger, protected financial columns and insert guard',
-       case when (select ok from invoice_payment_checks) then 'objects and privileges present (exercise on staging too)'
-            else 'missing or unsafe invoice payment objects or grants' end,
-       case when (select ok from invoice_payment_checks) then 'PASS' else 'FAIL' end
 
 union all
 select 'RLS enabled on every public table',

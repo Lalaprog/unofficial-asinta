@@ -26,7 +26,7 @@ import { useToast } from '@/components/ui/Toast';
 import { writeAuditEntry, auditFailureMessage, type AuditEntry } from '@/lib/audit/log';
 import { confirmProjectDeletion } from '@/lib/projects/delete';
 import { parsePayrollInputSnapshot } from '@/lib/payroll/inputSnapshot';
-import type { InvoicePaymentAttempt, InvoicePaymentResult } from '@/lib/invoices/payment';
+import { prepareInvoicePayment, type InvoicePaymentResult } from '@/lib/invoices/payment';
 
 interface DataStoreContextType {
   // State (loaded from live Supabase PostgreSQL)
@@ -71,7 +71,7 @@ interface DataStoreContextType {
   // Invoice Actions
   createInvoice: (data: Omit<Invoice, 'id' | 'created_at'>) => Promise<Invoice | null>;
   updateInvoice: (id: string, data: Partial<Invoice>) => Promise<Invoice | null>;
-  recordInvoicePayment: (attempt: InvoicePaymentAttempt) => Promise<InvoicePaymentResult>;
+  recordInvoicePayment: (invoice: Invoice, amount: string) => Promise<InvoicePaymentResult>;
   deleteInvoice: (id: string) => Promise<boolean>;
 
   // Expense Actions
@@ -695,11 +695,14 @@ export const DataStoreProvider: React.FC<{ children: React.ReactNode }> = ({ chi
   };
 
   const updateInvoice = async (id: string, data: Partial<Invoice>): Promise<Invoice | null> => {
-    // Reminder-only edits must not derive financial state from a stale client snapshot.
-    // Payment totals/status are changed exclusively by the transactional RPC.
-    if (data.amount !== undefined || data.amount_paid !== undefined || data.status !== undefined) {
-      showToast('error', 'Financial invoice fields require the protected payment workflow.');
-      return null;
+    // Keep legacy financial-edit behavior, but never derive a status for a
+    // reminder-only change from a stale browser snapshot.
+    const current = invoices.find((invoice) => invoice.id === id);
+    if (current && data.status === undefined && (data.amount !== undefined || data.amount_paid !== undefined)) {
+      const total = data.amount !== undefined ? Number(data.amount) : current.amount;
+      const paid = data.amount_paid !== undefined ? Number(data.amount_paid) : current.amount_paid;
+      if (paid >= total && total > 0) data = { ...data, status: 'paid' };
+      else if (paid > 0 && paid < total) data = { ...data, status: 'partially_paid' };
     }
 
     // Snapshot BEFORE the write: this is what the trail diffs against.
@@ -722,25 +725,44 @@ export const DataStoreProvider: React.FC<{ children: React.ReactNode }> = ({ chi
     return mapped;
   };
 
-  const recordInvoicePayment = async (attempt: InvoicePaymentAttempt): Promise<InvoicePaymentResult> => {
+  const recordInvoicePayment = async (invoice: Invoice, amount: string): Promise<InvoicePaymentResult> => {
+    const payment = prepareInvoicePayment(invoice, amount);
+    if (!payment) return 'invalid';
+
+    // The database applies this as ONE conditional update. If another updated
+    // client changed the reviewed financial state first, this matches no row.
+    // This does not stop old clients or privileged integrations bypassing it.
+    let row: unknown;
     try {
-      const { data, error } = await supabase.rpc('record_invoice_payment_atomic', {
-        p_request_id: attempt.requestId, p_invoice_id: attempt.invoiceId,
-        p_amount: attempt.amount, p_expected_total: attempt.expectedTotal,
-        p_expected_paid: attempt.expectedPaid, p_expected_status: attempt.expectedStatus,
-      });
-      if (error) {
-        // A missing PostgREST function cannot have executed this request.
-        if (error.code === 'PGRST202') return { outcome: 'unavailable' };
-        return { outcome: 'unconfirmed' };
-      }
-      const outcomes: InvoicePaymentResult['outcome'][] = ['recorded', 'already_recorded', 'stale', 'invalid_balance', 'invalid', 'not_found', 'request_mismatch'];
-      if (!data || !outcomes.includes(data.outcome)) return { outcome: 'unconfirmed' };
-      const mapped = data.invoice ? mapInvoice(data.invoice) : null;
-      if (mapped) setInvoices((prev) => prev.map((invoice) => invoice.id === mapped.id ? mapped : invoice));
-      return { outcome: data.outcome, invoice: mapped };
+      const result = await supabase.from('invoices')
+        .update({ amount_paid: payment.amountPaid, status: payment.status })
+        .eq('id', invoice.id)
+        .eq('amount', invoice.amount)
+        .eq('amount_paid', invoice.amount_paid)
+        .eq('status', invoice.status)
+        .select().maybeSingle();
+      if (result.error) return 'unconfirmed';
+      if (!result.data) return 'stale';
+      row = result.data;
     } catch {
-      return { outcome: 'unconfirmed' };
+      // A lost response does not prove the update failed. Never auto-retry.
+      return 'unconfirmed';
+    }
+
+    const mapped = mapInvoice(row);
+    setInvoices((prev) => prev.map((current) => current.id === mapped.id ? mapped : current));
+    // Existing audit writes remain separate. Failure cannot roll the payment
+    // back, so the UI must not invite another payment attempt.
+    try {
+      const audit = await writeAuditEntry(supabase, {
+        actorId: user?.id ?? null, actorEmail: user?.email ?? null,
+        action: 'update', table: 'invoices', recordId: invoice.id,
+        before: invoice as unknown as Record<string, unknown>,
+        after: mapped as unknown as Record<string, unknown>,
+      });
+      return audit.ok ? 'recorded' : 'audit_unconfirmed';
+    } catch {
+      return 'audit_unconfirmed';
     }
   };
 
