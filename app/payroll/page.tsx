@@ -19,6 +19,7 @@ import { useToast } from '@/components/ui/Toast';
 import { Badge } from '@/components/ui/Badge';
 import { Input } from '@/components/ui/Input';
 import { Select } from '@/components/ui/Select';
+import { SearchableSelect } from '@/components/ui/SearchableSelect';
 import { Modal } from '@/components/ui/Modal';
 import { AsintaEmblem, AsintaWordmark } from '@/components/ui/AsintaLogo';
 import { formatPeso, formatPesoCompact } from '@/lib/email/format';
@@ -224,17 +225,16 @@ export default function PayrollPage() {
             </div>
 
             <div className="w-full sm:w-64">
-              <Select
+              <SearchableSelect
                 label="Project"
+                searchLabel="Search voucher project sites"
                 value={projectFilter}
                 onChange={(e) => setProjectFilter(e.target.value)}
-                options={[
-                  { label: 'All Project Sites', value: 'all' },
-                  ...projects.map((p) => ({
-                    label: `${p.name} (${p.location.split(',')[0]})`,
-                    value: p.id,
-                  })),
-                ]}
+                fixedOption={{ label: 'All Project Sites', value: 'all' }}
+                options={projects.map((p) => ({
+                  label: `${p.name} (${p.location.split(',')[0]})`,
+                  value: p.id,
+                }))}
               />
             </div>
 
@@ -387,18 +387,17 @@ export default function PayrollPage() {
         description="Calculate gross pay from attendance and suggest Bale deductions. Deductions are attempted when the voucher is marked paid."
       >
         <form onSubmit={handleGenerateSubmit} className="space-y-4 text-xs">
-          <Select
+          <SearchableSelect
             label="Project Site Scope"
+            searchLabel="Search payroll run sites"
             value={generateProjectId}
             onChange={(e) => setGenerateProjectId(e.target.value)}
-          >
-            <option value="all">All Project Sites (Firm-wide Run)</option>
-            {projects.map((p) => (
-              <option key={p.id} value={p.id}>
-                {p.name} ({p.location.split(',')[0]})
-              </option>
-            ))}
-          </Select>
+            fixedOption={{ label: 'All Project Sites (Firm-wide Run)', value: 'all' }}
+            options={projects.map((p) => ({
+              label: `${p.name} (${p.location.split(',')[0]})`,
+              value: p.id,
+            }))}
+          />
 
           <div className="grid grid-cols-2 gap-4">
             <Input

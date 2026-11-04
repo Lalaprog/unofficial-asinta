@@ -6,7 +6,7 @@ import { useAuth } from '@/lib/auth/authContext';
 import { createClient } from '@/lib/supabase/client';
 import { Button } from '@/components/ui/Button';
 import { Input } from '@/components/ui/Input';
-import { Select } from '@/components/ui/Select';
+import { SearchableSelect } from '@/components/ui/SearchableSelect';
 import { formatPeso } from '@/lib/email/format';
 import { attendancePrintData, buildMatrix, matrixDates, parseMatrixSnapshot, type MatrixSnapshot, type MatrixView } from '@/lib/payroll/attendanceMatrix';
 import { buildAttendancePrintDocument } from '@/lib/payroll/attendancePrint';
@@ -76,7 +76,7 @@ function MatrixContents({start,end,site,setStart,setEnd,setSite,projects}:Props)
     <div className="grid gap-3 sm:grid-cols-3">
       <Input label="Matrix period start" type="date" value={start} max={end} onChange={e=>setStart(e.target.value)} />
       <Input label="Matrix period end" type="date" value={end} min={start} onChange={e=>setEnd(e.target.value)} />
-      <Select label="Matrix project site" value={site} onChange={e=>setSite(e.target.value)}><option value="all">All project sites</option>{projects.map(p=><option key={p.id} value={p.id}>{p.name}{projects.filter(other=>other.name===p.name).length>1 ? ` (${p.id})` : ''}</option>)}</Select>
+      <SearchableSelect label="Matrix project site" searchLabel="Search matrix project sites" value={site} onChange={e=>setSite(e.target.value)} fixedOption={{label:'All project sites',value:'all'}} options={projects.map(p=>({value:p.id,label:`${p.name}${projects.filter(other=>other.name===p.name).length>1 ? ` (${p.id})` : ''}`}))} />
     </div>
     <div className="flex flex-wrap gap-2">
       <Button type="button" variant="secondary" size="sm" onClick={load} isLoading={current.loading} disabled={!isFounder || !user?.id}>{current.view?'Refresh matrix':'Load matrix'}</Button>
