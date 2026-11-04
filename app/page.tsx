@@ -382,6 +382,7 @@ export default function LoginPage() {
             ) : (
               <form
                 onSubmit={handleSubmit}
+                autoComplete="off"
                 className="space-y-4"
               >
                 {error && (
@@ -395,7 +396,7 @@ export default function LoginPage() {
                   label="Work Email"
                   type="email"
                   name="bale_work_email"
-                  autoComplete="username"
+                  autoComplete="off"
                   autoCorrect="off"
                   autoCapitalize="none"
                   spellCheck={false}
@@ -411,7 +412,7 @@ export default function LoginPage() {
                     label="Password"
                     type={showPassword ? 'text' : 'password'}
                     name="bale_work_password"
-                    autoComplete="current-password"
+                    autoComplete="off"
                     autoCorrect="off"
                     autoCapitalize="none"
                     spellCheck={false}

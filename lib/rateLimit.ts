@@ -20,15 +20,10 @@
  * (documented in docs/SECURITY.md) is a shared store — Upstash Redis, or a
  * Supabase table — plugged into the same `checkRateLimit` interface.
  *
- * Login brute-force is rate-limited per IP through `/api/auth/login`
- * (`authLogin`: 10 attempts per 5 minutes per IP, mirroring the Supabase Auth
- * `sign_in_sign_ups` setting). It is deliberately NEVER keyed by email or
- * account: per-account lockout is a denial-of-service vector against the firm
- * (anyone who knows a founder's email could lock them out of the books —
- * NIST SP 800-63B advises against account lockout for this reason; TOTP MFA is
- * the real control against password guessing). Supabase Auth also enforces its
- * own per-IP limit (though Supabase issue #41947 in Jan 2026 reported under-
- * enforcement, so `/api/auth/login` enforces this limit before forwarding).
+ * The login route additionally applies a database-backed, per-email-and-IP
+ * cooldown. This file's IP-only counter remains a secondary, per-instance
+ * request-volume limit; it also counts successful sign-ins.
+ * Neither protects the public Supabase Auth endpoint directly.
  */
 
 export interface RateLimitRule {
@@ -144,8 +139,8 @@ export const RATE_LIMITS = {
   integrationTest: { limit: 5, windowMs: 15 * 60 * 1000 },
   /**
    * Sign-in attempts per IP (10 per 5 minutes — matches Supabase Auth
-   * `sign_in_sign_ups`). Keyed by IP only, never by email/account, so a third
-   * party who knows a Founder's email cannot lock them out of the books.
+   * `sign_in_sign_ups`). Keyed by IP only. The separate shared login guard
+   * is keyed by the combination of normalized email and IP.
    */
   authLogin: { limit: 10, windowMs: 5 * 60 * 1000 },
 } as const satisfies Record<string, RateLimitRule>;
@@ -201,9 +196,8 @@ export function getRateLimitIdentity(headers: Headers, userId?: string | null): 
 /**
  * IP-only identity for sign-in rate limiting.
  *
- * Deliberately ignores any email address in the request body: keying on the
- * target email would let anyone who knows a Founder's address lock them out of
- * the books (account lockout DoS, see NIST SP 800-63B).
+ * This secondary in-process request limiter is deliberately IP-only. The
+ * shared login cooldown separately keys on email and IP together.
  */
 export function getLoginRateLimitIdentity(headers: Headers): string {
   return `ip:${getClientAddress(headers)}`;
@@ -237,7 +231,7 @@ export function rateLimitMessage(name: RateLimitName, decision: RateLimitDecisio
     name === 'smsSend'
       ? 'SMS messages outside the business day are usually a stuck tab rather than a human.'
       : name === 'authLogin'
-        ? 'Sign-in attempts are limited per IP address; accounts are never locked out by email.'
+        ? 'Too many sign-in requests from this network.'
         : 'This is a cost-control limit.';
   return `Too many requests (limit: ${RATE_LIMITS[name].limit} per ${Math.round(
     RATE_LIMITS[name].windowMs / 60000

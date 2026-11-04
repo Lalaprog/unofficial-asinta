@@ -1,32 +1,9 @@
 /**
- * Server-side login handler + error sanitiser.
- *
- * WHY THIS LIVES ON THE SERVER
- * ----------------------------
- * Previously the browser called `supabase.auth.signInWithPassword` directly
- * (`lib/auth/authContext.tsx`), which meant `lib/rateLimit.ts` never saw sign-in
- * traffic and the firm relied solely on Supabase Auth's `sign_in_sign_ups`
- * limiter (which was reported under-enforced in Supabase issue #41947, Jan
- * 2026). Routing sign-in through `/api/auth/login` puts our per-IP sliding-
- * window limiter (`RATE_LIMITS.authLogin`: 10 attempts per 5 minutes per IP) in
- * front of Supabase Auth.
- *
- * WHY THERE IS NO ACCOUNT LOCKOUT
- * -------------------------------
- * Rate limiting is keyed by IP (`ip:<client-ip>`) and NEVER by email address.
- * Per-account lockout is a denial-of-service vector against the firm: anyone
- * who knows `junel@asinta.ph` or `rei@asinta.ph` could intentionally fail N
- * logins and lock the Founders out of the books. NIST SP 800-63B advises
- * against account lockout for this reason; TOTP MFA (`lib/auth/mfa.ts`) is the
- * control that makes a guessed password useless.
- *
- * WHY ERRORS ARE GENERIC
- * ----------------------
- * Every credential or account-state failure (`Invalid login credentials`,
- * `Email not confirmed`, `User not found`, `User banned`, or an `auth.users`
- * record with no `public.users` profile row) returns the exact same `401`
- * message (`GENERIC_LOGIN_ERROR`). An attacker probing email addresses cannot
- * tell whether an account exists in BALE.
+ * Server-side sign-in and generic error handling. The route wraps this helper
+ * with the database-backed per-email-and-network safeguard before calling it.
+ * The legacy in-process IP limiter remains a secondary request-volume control;
+ * it counts valid-shape requests regardless of outcome and is not distributed.
+ * Neither control protects direct Supabase Auth requests.
  */
 
 import type { User, UserRole } from '@/types';
@@ -88,6 +65,7 @@ export function sanitizeLoginError(
   }
 
   if (
+    (typeof status === 'number' && status >= 500) ||
     normalized.includes('failed to fetch') ||
     normalized.includes('network') ||
     normalized.includes('econnrefused') ||
@@ -145,6 +123,8 @@ export interface LoginRequestPayload {
 }
 
 export interface LoginOutcome {
+  /** Internal only: a confirmed credential/account-state rejection, not an outage. */
+  guardFailure?: boolean;
   status: number;
   headers?: RateLimitHeaders;
   body: {
@@ -172,9 +152,8 @@ export async function authenticateLoginRequest(params: {
 }): Promise<LoginOutcome> {
   const { headers, payload, supabase, now } = params;
 
-  // 1. Per-IP rate limit first — before inspecting credentials or calling
-  //    Supabase Auth. Keyed by IP only, never by email, so no account lockout
-  //    is possible.
+  // Secondary per-instance, per-IP request-volume limit. The route applies
+  // the shared per-email-and-network cooldown separately.
   const identity = getLoginRateLimitIdentity(headers);
   const decision = checkRateLimit('authLogin', identity, now);
   if (!decision.allowed) {
@@ -218,8 +197,12 @@ export async function authenticateLoginRequest(params: {
 
     if (error || !data?.user) {
       const sanitized = sanitizeLoginError(error ?? 'Authentication failed');
+      const credentialRejection = Boolean(error && sanitized.status === 401 &&
+        ((typeof error.status === 'number' && error.status >= 400 && error.status < 500) ||
+          /invalid login credentials|invalid_credentials|email not confirmed|user not found|user banned/i.test(`${error.code ?? ''} ${error.message ?? ''}`)));
       return {
         status: sanitized.status,
+        guardFailure: credentialRejection,
         body: {
           ok: false,
           error: sanitized.message,
@@ -252,6 +235,7 @@ export async function authenticateLoginRequest(params: {
     if (!profile || (profile.role !== 'founder' && profile.role !== 'supervisor')) {
       await supabase.auth.signOut().catch(() => {});
       return {
+        guardFailure: true,
         status: 401,
         body: {
           ok: false,

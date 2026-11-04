@@ -144,10 +144,8 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
     setIsLoading(true);
     try {
-      // Route sign-in through `/api/auth/login` so `lib/rateLimit.ts` enforces
-      // the per-IP rate limit (10 attempts per 5 minutes, never per-account
-      // lockout) before forwarding to Supabase Auth, and so credential errors
-      // are collapsed to a single non-enumerating message.
+      // Route sign-in through `/api/auth/login` for the shared cooldown,
+      // secondary per-instance IP limit and generic credential errors.
       const response = await fetch('/api/auth/login', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
