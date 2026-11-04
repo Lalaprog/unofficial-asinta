@@ -524,7 +524,7 @@ export default function InvoicesPage() {
         maxWidth="lg"
       >
         <form onSubmit={handleCreateSubmit} className="space-y-4 text-xs">
-          <div className="grid grid-cols-2 gap-4">
+          <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
             <Input
               label="Invoice Number"
               value={formData.invoice_number}
@@ -554,17 +554,19 @@ export default function InvoicesPage() {
             required
           />
 
-          <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
-            <Input
-              label="Invoice Amount (PHP ₱)"
-              type="number"
-              min="0.01"
-              step="0.01"
-              placeholder="1500000"
-              value={formData.amount}
-              onChange={(e) => setFormData({ ...formData, amount: e.target.value })}
-              required
-            />
+          <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+            <div className="sm:col-span-2">
+              <Input
+                label="Invoice Amount (PHP ₱)"
+                type="number"
+                min="0.01"
+                step="0.01"
+                placeholder="1500000"
+                value={formData.amount}
+                onChange={(e) => setFormData({ ...formData, amount: e.target.value })}
+                required
+              />
+            </div>
             <Input
               label="Issue Date"
               type="date"
