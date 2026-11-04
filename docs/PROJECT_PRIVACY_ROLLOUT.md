@@ -1,6 +1,6 @@
 # Project-column privacy rollout
 
-**Status:** prepared in the repository; not applied to the hosted database. Do not merge/deploy the matching app until Phase 1 is installed and checked. The PR preview may point to the live database; signed-in testing against it before Phase 1 will fail to load projects. Never run `supabase db push` or a full upgrade bundle to perform this rollout on an existing project: hosted migration history differs from repository versions.
+**Status:** Phase 1 was installed on 2026-11-04 in hosted project `mchkdkjntnbwrgmyobpd` as migration `20261104142930` (`visible_projects`). The function body matches the repository version, the owner/search path and authenticated/anonymous grants were checked, and an identity-free database call returned no rows. Existing direct project column access remains unchanged; Phase 2 has not been applied. A PostgREST schema-cache reload was requested, but signed-in API and realtime behavior remain unverified. Do not merge/deploy the matching app unless Phase 1 is installed and checked. The PR preview may point to the live database; signed-in testing against it before Phase 1 will fail to load projects. Never run `supabase db push` or a full upgrade bundle to perform this rollout on an existing project: hosted migration history differs from repository versions.
 
 ## What changes
 

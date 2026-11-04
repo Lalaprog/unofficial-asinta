@@ -16,7 +16,7 @@ The existing isolated tests `tests/project-policy-intent.test.ts` and `tests/pro
 
 ## Future fix: plan and precautions
 
-A proposed fix and phased rollout are described in [PROJECT_PRIVACY_ROLLOUT.md](PROJECT_PRIVACY_ROLLOUT.md). They have not been applied to the hosted project.
+A proposed fix and phased rollout are described in [PROJECT_PRIVACY_ROLLOUT.md](PROJECT_PRIVACY_ROLLOUT.md). The additive Phase 1 function has been applied; the Phase 2 column restrictions have not.
 
 Before any permission change, agree whether the client identifier and project budget must be hidden from Supervisors. A UI-only projection would reduce unnecessary data transfer but **would not** prevent an authenticated user from querying the base table directly.
 
