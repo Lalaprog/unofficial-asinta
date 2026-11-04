@@ -239,7 +239,7 @@ export default function InvoicesPage() {
     setFormData({
       ...formData,
       project_id: projId,
-      client_id: proj ? proj.client_id : '',
+      client_id: proj?.client_id ?? '',
     });
   };
 

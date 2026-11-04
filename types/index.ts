@@ -34,9 +34,10 @@ export type ProjectStatus = 'planning' | 'active' | 'on_hold' | 'completed' | 'c
 export interface Project {
   id: string;
   name: string;
-  client_id: string;
+  /** Null when the signed-in role cannot view financial/client details. */
+  client_id: string | null;
   location: string;
-  budget_estimate: number;
+  budget_estimate: number | null;
   status: ProjectStatus;
   start_date: string;
   target_completion_date: string;

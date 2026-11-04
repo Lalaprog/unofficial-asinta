@@ -15,7 +15,7 @@ export interface ProjectFinancialSummary {
   name: string;
   status: Project['status'];
   location: string;
-  clientId: string;
+  clientId: string | null;
   budgetEstimate: number;
   recordedExpenses: number;
   spendPercent: number | null;

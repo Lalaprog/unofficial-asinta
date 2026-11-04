@@ -10,7 +10,7 @@
 -- migration to already be present.
 --
 -- GENERATED FILE — do not edit. Regenerate with `npm run build:apply-sql`.
--- Generated: 2026-11-03T14:23:04.575Z
+-- Generated: 2026-11-04T14:23:24.670Z
 --
 -- Source files (in execution order) and their SHA-256:
 --   20261006000000_security_hardening.sql  5990a60a9251e5ff…
