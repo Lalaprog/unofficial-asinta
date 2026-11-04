@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { createServerSupabaseClient } from '@/lib/supabase/server';
+import { createBufferedLoginClient } from '@/lib/supabase/login-buffer';
+import { createLoginCooldownStore, guardedLogin } from '@/lib/auth/login-cooldown';
 import {
   authenticateLoginRequest,
   type LoginRequestPayload,
@@ -9,14 +10,8 @@ import {
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
 
-/**
- * Server-side sign-in endpoint.
- *
- * Routes login traffic through `lib/rateLimit.ts` (`authLogin`: 10 attempts per
- * 5 minutes per IP, never per email/account) before forwarding to Supabase Auth,
- * and returns only generic credential errors so account existence cannot be
- * enumerated.
- */
+/** Shared safeguard is scoped to a hashed email + network. The older in-process
+ * IP limiter remains a secondary prefilter; direct Auth calls bypass both. */
 export async function POST(request: NextRequest) {
   let payload: LoginRequestPayload;
   try {
@@ -28,18 +23,20 @@ export async function POST(request: NextRequest) {
     );
   }
 
-  const supabase = createServerSupabaseClient() as unknown as MinimalLoginSupabaseClient;
-  const outcome = await authenticateLoginRequest({
+  const buffered = createBufferedLoginClient(request);
+  const supabase = buffered.client as unknown as MinimalLoginSupabaseClient;
+  const outcome = await guardedLogin({
     headers: request.headers,
     payload,
-    supabase,
+    secret: (process.env.SUPABASE_SERVICE_ROLE_KEY || '').trim(),
+    makeStore: createLoginCooldownStore,
+    authenticate: () => authenticateLoginRequest({ headers: request.headers, payload, supabase }),
   });
 
-  return NextResponse.json(outcome.body, {
+  const response = NextResponse.json(outcome.body, {
     status: outcome.status,
-    headers: {
-      ...(outcome.headers ?? {}),
-      'Cache-Control': 'private, no-store',
-    },
+    headers: { ...(outcome.headers ?? {}), 'Cache-Control': 'private, no-store' },
   });
+  if (outcome.status === 200 && outcome.body.ok) buffered.commit(response);
+  return response;
 }

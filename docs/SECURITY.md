@@ -17,7 +17,7 @@ Last updated: 2026-10-06.
 | Data access | PostgreSQL RLS on every table, `to authenticated` policies | Verified by `tests/rls-migration.test.ts` and `tests/migrations-parse.test.ts`. |
 | Session lifetime | Supabase Auth `auth.sessions.inactivity_timeout` (`20m`) / `timebox` (`8h`) + `SessionWatcher` | Project-wide across **all roles** (`founder` and `supervisor`). `NEXT_PUBLIC_SESSION_*` is baked in at build time (rebuild required when changed). |
 | MFA | Supabase TOTP, opt-in enforcement (`MFA_ENFORCE_FOUNDERS`) | See §5. |
-| Sign-in & cost abuse | `lib/rateLimit.ts` per-route limits (including `/api/auth/login`) | Single-instance; per-IP on login (no account lockout), per-Founder on authenticated routes — see §7. |
+| Sign-in & cost abuse | Shared login cooldown and `lib/rateLimit.ts` | Shared per-email-and-network cooldown on app login; other route limits are in-process — see §7. |
 | Trail | `public.audit_log` (append-only) | Covers money-moving mutations (invoices, expenses, advances, payroll). No UPDATE/DELETE policy exists. |
 
 **Not** a control: anything rendered in the browser. The UI states what the
@@ -156,41 +156,36 @@ per-route budgets (SMS 15/10 min, SMTP test 5/hour, AI extract 12/min, login
 id rather than a spoofable header. Limits return 429 with `Retry-After` and a
 message stating the limit and the wait.
 
-### Login rate limiting and why there is no account lockout
+### App sign-in cooldown
 
-- **Decision: no per-account lockout.** Locking an account after N failed
-  password attempts is a denial-of-service vector against the firm: anyone who
-  knows `junel@asinta.ph` or `rei@asinta.ph` could intentionally fail N sign-ins
-  and lock the Founders out of the books. NIST SP 800-63B advises against
-  account lockout for this reason. **TOTP MFA (§5) is the real control**: a
-  guessed password cannot open a Founder session without the 6-digit code.
-- **Server-side login (`/api/auth/login`).** `AuthProvider.login()` routes
-  sign-in through `POST /api/auth/login` before calling Supabase Auth. That puts
-  `RATE_LIMITS.authLogin` (**10 attempts per 5 minutes per IP**, keyed by IP
-  only via `getLoginRateLimitIdentity()`) in front of GoTrue.
-- **Generic errors only.** `sanitizeLoginError()` (`lib/auth/login.ts`)
-  collapses `Invalid login credentials`, `Email not confirmed`, `User not
-  found`, `User banned`, and missing `public.users` profile rows into the single
-  generic 401 message:
-  `Invalid email or password. Please check your credentials and try again.`
-  Sign-in never reveals whether an email address has an account in BALE.
-- **Supabase dashboard settings (still required):**
-  1. **Authentication → Rate Limits:** tighten `sign_in_sign_ups` from `30` to
-     `10` per 5 minutes per IP. (Note: Supabase issue #41947 in Jan 2026
-     reported under-enforcement of this limit in GoTrue — treat the dashboard
-     setting as best-effort, which is why `/api/auth/login` also enforces 10/5m
-     per IP in the app.)
-  2. **Authentication → Attack Protection (CAPTCHA):** enable hCaptcha or
-     Cloudflare Turnstile on sign-in. `/api/auth/login` forwards an optional
-     `captchaToken` to `supabase.auth.signInWithPassword`.
+`POST /api/auth/login` reserves capacity in the database before calling Auth.
+Five rejected sign-ins for the same normalized email **and network address**
+trigger a five-minute cooldown. A success clears failures; an outage or malformed
+request is not counted as an invalid password. After 15 minutes without a
+failure, a non-locked bucket is reset. In-flight reservations serialize capacity
+and expire after two minutes; a result without a confirmed reservation cannot
+publish login cookies. The database keeps an HMAC of identifiers, not the email,
+IP address, or password. Stale buckets are cleaned opportunistically.
 
-Honest limitations:
+The app needs the additive `20261104000002_login_cooldown.sql` migration and a
+server-only `SUPABASE_SERVICE_ROLE_KEY` pointing to that same project **before**
+this version is deployed. If the key, caller IP or shared store is unavailable,
+login fails closed with a temporary-unavailable response. A key rotation resets
+bucket identities. See `docs/LOGIN_COOLDOWN_ROLLOUT.md` before any rollout.
 
-- **Single instance.** Counters live in process memory. On a horizontally scaled
-  serverless platform the effective limit is `limit × instanceCount`. It reliably
-  stops stuck tabs, double submits and casual single-IP abuse; a distributed
-  botnet requires CAPTCHA at the Supabase edge plus a shared store (Upstash
-  Redis or a Supabase table) behind the same `checkRateLimit` interface.
+The older per-instance IP limiter remains a second control: it counts **valid-shape**
+requests, including successes, and can block a shared network
+after 10 requests in five minutes on one instance. Credential errors remain
+generic, but no anti-enumeration guarantee is perfect.
+
+**Boundaries:** this only guards the app login endpoint; direct calls to Supabase
+Auth can bypass it, as can an attacker using many network addresses. A user behind
+the same network as an attacker targeting their email may be temporarily blocked.
+An address forwarded by a non-trusted proxy can be spoofed; this design relies on
+Vercel's trusted forwarding. Supabase Auth protections and properly enforced MFA
+remain important. Other `lib/rateLimit.ts` limits remain process-local and are not
+reliable distributed controls. Do not turn on CAPTCHA until the frontend supports
+and has been tested with the configured challenge.
 
 ---
 
