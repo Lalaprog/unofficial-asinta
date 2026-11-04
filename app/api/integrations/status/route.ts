@@ -6,6 +6,7 @@ import { GROQ_MODEL } from '@/lib/ai/groq';
 import { getVisionModel } from '@/lib/ai/models';
 import { isMfaEnforcementEnabled } from '@/lib/auth/mfa';
 import { getSessionPolicy } from '@/lib/auth/session';
+import { requireSessionAssurance } from '@/lib/auth/session-assurance';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -24,6 +25,13 @@ export async function GET() {
 
   if (error || !user) {
     return NextResponse.json({ error: 'Authentication required' }, { status: 401 });
+  }
+
+  const assurance = await requireSessionAssurance(supabase);
+  if (!assurance.ok) {
+    return NextResponse.json({ error: assurance.error }, {
+      status: assurance.status, headers: { 'Cache-Control': 'private, no-store' },
+    });
   }
 
   const sessionPolicy = getSessionPolicy();

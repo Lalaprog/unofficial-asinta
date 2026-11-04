@@ -1,6 +1,6 @@
 # Email-code recovery: safety review and rollout prerequisites
 
-Status: **research only; recovery is not implemented or enabled.** This document does not change the application, database, Supabase Auth settings, email templates, or SMTP. No real message was sent. The intended feature is Founder/Supervisor sign-in by emailed code, with an optional password change, using the existing email provider and preserving enrolled MFA.
+Status: **draft, incomplete and not deployed; recovery is not implemented or enabled.** No live database, Supabase Auth settings, email templates, or SMTP changes have been made, and no real message was sent. The intended feature is Founder/Supervisor sign-in by emailed code, with an optional password change, using the existing email provider and preserving enrolled MFA.
 
 ## Why a sign-in form alone is not sufficient
 
@@ -34,7 +34,11 @@ The current app-level password cooldown only guards the app login endpoint; it d
 
 The installed Auth SDK has an important server-side distinction: calling `getAuthenticatorAssuranceLevel()` without a JWT reads the session's cached `user.factors`, whereas supplying a JWT makes it fetch the user from Auth. A server-side implementation must not treat client-controlled session data as proof that no factor is enrolled. Verify the JWT/user with Auth, check all error paths and use current verified factor information; test exactly the installed and hosted versions. JWT expiration, factor enrollment/removal races and already-issued sessions must be considered.
 
-Neither the security prerequisite nor recovery has been implemented here. Do not enable an OTP template or custom SMTP as a substitute for the missing authorization checks. Do not run `supabase db push` blindly: hosted migration versions differ from checked-in filenames.
+## Draft application prerequisite (not deployed)
+
+`supabase/migrations/20261105000000_session_assurance_prerequisite.sql` adds an authenticated-only boolean RPC for the current session; it does not itself restrict database access. `lib/auth/session-assurance.ts` and the draft API changes use it to fail closed for Founder actions, Supervisor worker creation, password setup and integration status. The selected AI endpoint also uses the Founder guard. This is partial: middleware, session/bootstrap, real database and storage RLS, every privileged RPC, and any other server boundary still need work and testing. AAL2 and factor state must also be checked against actual hosted behavior.
+
+**Do not merge or deploy the draft application before installing and verifying the additive RPC on the intended project**: guarded endpoints fail closed if it is unavailable. Installation requires a coordinated rollout and owner approval. Conversely, the additive RPC alone provides no access restrictions. Do not enable an OTP template or custom SMTP as a substitute for the missing authorization checks. Do not run `supabase db push` blindly: hosted migration versions differ from checked-in filenames.
 
 ## References
 

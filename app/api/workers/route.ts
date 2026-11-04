@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { createServerSupabaseClient } from '@/lib/supabase/server';
 import { createServiceRoleClient, isServiceRoleConfigured } from '@/lib/supabase/admin';
+import { requireSessionAssurance } from '@/lib/auth/session-assurance';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -38,6 +39,15 @@ export async function POST(request: NextRequest) {
       { ok: false, error: 'Valid BALE account required.' },
       { status: 403, headers: { 'Cache-Control': 'private, no-store' } }
     );
+  }
+
+  // This route can use service_role for Supervisors, bypassing RLS. Check the
+  // caller's assurance first; an enrolled factor cannot be skipped.
+  const assurance = await requireSessionAssurance(supabase);
+  if (!assurance.ok) {
+    return NextResponse.json({ ok: false, error: assurance.error }, {
+      status: assurance.status, headers: { 'Cache-Control': 'private, no-store' },
+    });
   }
 
   let body: Record<string, unknown> = {};

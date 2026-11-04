@@ -8,7 +8,7 @@
 -- will fail. Check with verify-live.sql before running.
 --
 -- GENERATED FILE — do not edit. Regenerate with `npm run build:apply-sql`.
--- Generated: 2026-11-04T16:18:19.846Z
+-- Generated: 2026-11-04T18:33:02.946Z
 --
 -- Source files (in execution order) and their SHA-256:
 --   20260913000000_bale_schema.sql  df054d9d265045b9…
@@ -28,6 +28,7 @@
 --   20261104000000_visible_projects.sql  415a7e6e38f962b0…
 --   20261104000001_project_column_privacy.sql  a4b99e9d35b55fa9…
 --   20261104000002_login_cooldown.sql  d0104d7dc1291e09…
+--   20261105000000_session_assurance_prerequisite.sql  e8e39a25a33a5331…
 --
 -- After running: execute supabase/apply/verify-live.sql and confirm every
 -- row reports PASS. Procedure: docs/MIGRATION_RUNBOOK.md.
@@ -2374,5 +2375,35 @@ BEGIN
 END $$;
 REVOKE ALL ON FUNCTION public.reserve_login_attempt(text,uuid), public.finish_login_attempt(text,uuid,text) FROM PUBLIC, anon, authenticated;
 GRANT EXECUTE ON FUNCTION public.reserve_login_attempt(text,uuid), public.finish_login_attempt(text,uuid,text) TO service_role;
+
+
+-- @@ source: 20261105000000_session_assurance_prerequisite.sql
+
+-- Additive MFA-assurance prerequisite. This migration does not restrict any
+-- existing access or change an account. It must be installed and verified before
+-- an application calls the function. Hosted migration versions may differ;
+-- follow the documented rollout, not an unconditional `supabase db push`.
+--
+-- Only the authenticated caller's own verified-factor presence is consulted.
+-- The return value is boolean; factor identifiers, types and secrets are never
+-- returned. auth.uid() and auth.jwt() reflect Supabase-verified request claims.
+CREATE OR REPLACE FUNCTION public.session_assurance_satisfied()
+RETURNS boolean
+LANGUAGE sql STABLE SECURITY DEFINER
+SET search_path = ''
+AS $$
+  SELECT CASE
+    WHEN auth.uid() IS NULL THEN false
+    WHEN (auth.jwt()->>'aal') NOT IN ('aal1', 'aal2') OR (auth.jwt()->>'aal') IS NULL THEN false
+    WHEN (auth.jwt()->>'aal') = 'aal2' THEN true
+    ELSE NOT EXISTS (
+      SELECT 1 FROM auth.mfa_factors AS factor
+      WHERE factor.user_id = auth.uid() AND factor.status = 'verified'
+    )
+  END;
+$$;
+
+REVOKE ALL ON FUNCTION public.session_assurance_satisfied() FROM PUBLIC, anon;
+GRANT EXECUTE ON FUNCTION public.session_assurance_satisfied() TO authenticated;
 
 commit;
