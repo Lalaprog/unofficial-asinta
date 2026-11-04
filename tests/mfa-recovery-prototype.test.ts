@@ -78,6 +78,13 @@ describe('isolated MFA assurance research prototype', () => {
       expect((await db.query('select * from public.private_entries')).rows).toHaveLength(1);
       expect((await db.query('select * from storage.objects')).rows).toHaveLength(1);
       expect((await db.query('select * from public.guarded_entries()')).rows).toHaveLength(1);
+      // The same rule applies if a Supervisor later verifies an authenticator.
+      await db.exec("reset role; update auth.mfa_factors set status='verified' where id=2; set role authenticated");
+      await identity(db, supervisor, 'aal1');
+      expect((await db.query('select * from public.private_entries')).rows).toEqual([]);
+      await expect(db.query('select * from public.guarded_entries()')).rejects.toThrow(/Additional verification required/);
+      await identity(db, supervisor, 'aal2');
+      expect((await db.query('select * from public.private_entries')).rows).toHaveLength(1);
       await identity(db, noFactor, 'aal1');
       expect((await db.query('select * from public.private_entries')).rows).toHaveLength(1);
       for (const aal of [null, 'invalid']) {
