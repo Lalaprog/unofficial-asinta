@@ -154,6 +154,8 @@ export default function InvoicesPage() {
 
   const [selectedInvoice, setSelectedInvoice] = useState<Invoice | null>(null);
   const [paymentAmount, setPaymentAmount] = useState('');
+  const [paymentNotice, setPaymentNotice] = useState('');
+  const [paymentNeedsReview, setPaymentNeedsReview] = useState(false);
   const [smsSending, setSmsSending] = useState(false);
   const smsSendLock = React.useRef(false);
   const smsPrepareVersion = React.useRef(0);
@@ -289,18 +291,28 @@ export default function InvoicesPage() {
 
   const handleRecordPayment = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (paymentLock.current || !selectedInvoice || !paymentAmount) return;
+    if (paymentLock.current || paymentNeedsReview || !selectedInvoice || !paymentAmount) return;
     paymentLock.current = true;
     setIsRecordingPayment(true);
     try {
-      const success = await recordInvoicePayment(selectedInvoice.id, parseFloat(paymentAmount));
-      if (success) {
+      const result = await recordInvoicePayment(selectedInvoice, paymentAmount);
+      if (result === 'recorded') {
         showToast('success', 'Payment recorded.');
         setIsPaymentModalOpen(false);
         setPaymentAmount('');
+      } else if (result === 'invalid') {
+        setPaymentNotice('Enter a valid payment no greater than the remaining balance.');
+      } else {
+        setPaymentNeedsReview(true);
+        setPaymentNotice(result === 'audit_unconfirmed'
+          ? 'The payment was saved, but its audit entry could not be confirmed. Do not record the payment again; ask the administrator to review the audit trail.'
+          : result === 'stale'
+            ? 'The invoice changed or is unavailable. Refresh the page and check whether this receipt has already been recorded before trying again.'
+            : 'The payment result could not be confirmed. It may have been saved. Refresh the page and check the invoice and receipt before trying again.');
       }
     } catch {
-      showToast('error', 'Could not confirm whether the payment was recorded. Refresh and check the invoice before trying again.');
+      setPaymentNeedsReview(true);
+      setPaymentNotice('The payment result could not be confirmed. It may have been saved. Refresh the page and check the invoice and receipt before trying again.');
     } finally {
       paymentLock.current = false;
       setIsRecordingPayment(false);
@@ -458,7 +470,9 @@ export default function InvoicesPage() {
                           size="sm"
                           onClick={() => {
                             setSelectedInvoice(inv);
-                            setPaymentAmount(String(balance));
+                            setPaymentAmount(balance.toFixed(2));
+                            setPaymentNotice('');
+                            setPaymentNeedsReview(false);
                             setIsPaymentModalOpen(true);
                           }}
                           leftIcon={<DollarSign className="w-3.5 h-3.5" />}
@@ -611,22 +625,24 @@ export default function InvoicesPage() {
               </div>
             </div>
 
+            {paymentNotice && <p role="alert" className="rounded-lg border border-status-warning/30 bg-status-warning/10 p-3 text-ink-primary">{paymentNotice}</p>}
             <Input
               label="Payment Amount Received (PHP ₱)"
               type="number"
               value={paymentAmount}
               onChange={(e) => setPaymentAmount(e.target.value)}
+              disabled={paymentNeedsReview}
               required
               min="0.01"
               step="0.01"
-              max={selectedInvoice.amount - selectedInvoice.amount_paid}
+              max={(selectedInvoice.amount - selectedInvoice.amount_paid).toFixed(2)}
             />
 
             <div className="pt-2 flex justify-end space-x-2">
               <Button type="button" variant="secondary" onClick={() => setIsPaymentModalOpen(false)} disabled={isRecordingPayment}>
-                Cancel
+                {paymentNeedsReview ? 'Close' : 'Cancel'}
               </Button>
-              <Button variant="primary" type="submit" isLoading={isRecordingPayment}>
+              <Button variant="primary" type="submit" isLoading={isRecordingPayment} disabled={paymentNeedsReview}>
                 {isRecordingPayment ? 'Recording payment…' : 'Confirm Payment Receipt'}
               </Button>
             </div>

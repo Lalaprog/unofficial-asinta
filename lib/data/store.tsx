@@ -26,6 +26,7 @@ import { useToast } from '@/components/ui/Toast';
 import { writeAuditEntry, auditFailureMessage, type AuditEntry } from '@/lib/audit/log';
 import { confirmProjectDeletion } from '@/lib/projects/delete';
 import { parsePayrollInputSnapshot } from '@/lib/payroll/inputSnapshot';
+import { prepareInvoicePayment, type InvoicePaymentResult } from '@/lib/invoices/payment';
 
 interface DataStoreContextType {
   // State (loaded from live Supabase PostgreSQL)
@@ -70,7 +71,7 @@ interface DataStoreContextType {
   // Invoice Actions
   createInvoice: (data: Omit<Invoice, 'id' | 'created_at'>) => Promise<Invoice | null>;
   updateInvoice: (id: string, data: Partial<Invoice>) => Promise<Invoice | null>;
-  recordInvoicePayment: (id: string, amount: number) => Promise<boolean>;
+  recordInvoicePayment: (invoice: Invoice, amount: string) => Promise<InvoicePaymentResult>;
   deleteInvoice: (id: string) => Promise<boolean>;
 
   // Expense Actions
@@ -694,18 +695,14 @@ export const DataStoreProvider: React.FC<{ children: React.ReactNode }> = ({ chi
   };
 
   const updateInvoice = async (id: string, data: Partial<Invoice>): Promise<Invoice | null> => {
-    // Automatic status recalculation based on amount_paid vs amount.
-    const current = invoices.find((i) => i.id === id);
-    if (current) {
-      const mergedAmount = data.amount !== undefined ? Number(data.amount) : current.amount;
-      const mergedPaid = data.amount_paid !== undefined ? Number(data.amount_paid) : current.amount_paid;
-      if (data.status === undefined) {
-        if (mergedPaid >= mergedAmount && mergedAmount > 0) {
-          data = { ...data, status: 'paid' };
-        } else if (mergedPaid > 0 && mergedPaid < mergedAmount) {
-          data = { ...data, status: 'partially_paid' };
-        }
-      }
+    // Keep legacy financial-edit behavior, but never derive a status for a
+    // reminder-only change from a stale browser snapshot.
+    const current = invoices.find((invoice) => invoice.id === id);
+    if (current && data.status === undefined && (data.amount !== undefined || data.amount_paid !== undefined)) {
+      const total = data.amount !== undefined ? Number(data.amount) : current.amount;
+      const paid = data.amount_paid !== undefined ? Number(data.amount_paid) : current.amount_paid;
+      if (paid >= total && total > 0) data = { ...data, status: 'paid' };
+      else if (paid > 0 && paid < total) data = { ...data, status: 'partially_paid' };
     }
 
     // Snapshot BEFORE the write: this is what the trail diffs against.
@@ -728,16 +725,45 @@ export const DataStoreProvider: React.FC<{ children: React.ReactNode }> = ({ chi
     return mapped;
   };
 
-  const recordInvoicePayment = async (id: string, amount: number): Promise<boolean> => {
-    const inv = invoices.find((i) => i.id === id);
-    if (!inv) {
-      showToast('error', 'Invoice not found in the current ledger snapshot.');
-      return false;
+  const recordInvoicePayment = async (invoice: Invoice, amount: string): Promise<InvoicePaymentResult> => {
+    const payment = prepareInvoicePayment(invoice, amount);
+    if (!payment) return 'invalid';
+
+    // The database applies this as ONE conditional update. If another updated
+    // client changed the reviewed financial state first, this matches no row.
+    // This does not stop old clients or privileged integrations bypassing it.
+    let row: unknown;
+    try {
+      const result = await supabase.from('invoices')
+        .update({ amount_paid: payment.amountPaid, status: payment.status })
+        .eq('id', invoice.id)
+        .eq('amount', invoice.amount)
+        .eq('amount_paid', invoice.amount_paid)
+        .eq('status', invoice.status)
+        .select().maybeSingle();
+      if (result.error) return 'unconfirmed';
+      if (!result.data) return 'stale';
+      row = result.data;
+    } catch {
+      // A lost response does not prove the update failed. Never auto-retry.
+      return 'unconfirmed';
     }
-    const newPaid = round2(inv.amount_paid + Number(amount || 0));
-    const newStatus = newPaid >= inv.amount ? 'paid' : 'partially_paid';
-    const updated = await updateInvoice(id, { amount_paid: newPaid, status: newStatus });
-    return Boolean(updated);
+
+    const mapped = mapInvoice(row);
+    setInvoices((prev) => prev.map((current) => current.id === mapped.id ? mapped : current));
+    // Existing audit writes remain separate. Failure cannot roll the payment
+    // back, so the UI must not invite another payment attempt.
+    try {
+      const audit = await writeAuditEntry(supabase, {
+        actorId: user?.id ?? null, actorEmail: user?.email ?? null,
+        action: 'update', table: 'invoices', recordId: invoice.id,
+        before: invoice as unknown as Record<string, unknown>,
+        after: mapped as unknown as Record<string, unknown>,
+      });
+      return audit.ok ? 'recorded' : 'audit_unconfirmed';
+    } catch {
+      return 'audit_unconfirmed';
+    }
   };
 
   const deleteInvoice = async (id: string): Promise<boolean> => {
