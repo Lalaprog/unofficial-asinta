@@ -16,6 +16,8 @@ The existing isolated tests `tests/project-policy-intent.test.ts` and `tests/pro
 
 ## Future fix: plan and precautions
 
+A proposed fix and phased rollout are described in [PROJECT_PRIVACY_ROLLOUT.md](PROJECT_PRIVACY_ROLLOUT.md). They have not been applied to the hosted project.
+
 Before any permission change, agree whether the client identifier and project budget must be hidden from Supervisors. A UI-only projection would reduce unnecessary data transfer but **would not** prevent an authenticated user from querying the base table directly.
 
 A real restriction requires a coordinated app/database design. Founders and Supervisors both use the PostgreSQL `authenticated` role, so revoking a sensitive column from that role also affects Founders. The current shared store reads `select('*')`, and project creation/editing returns full rows. Other attendance and payroll read functions use project fields, and older tabs and integrations may use the base table directly. Do not revoke project SELECT access without adapting and testing those paths and planning the rollout. Any privileged Founder-only access must verify the caller server-side and avoid weakening existing project-assignment RLS.

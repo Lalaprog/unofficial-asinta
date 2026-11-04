@@ -257,7 +257,7 @@ export default function ProjectDetailPage() {
               <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
                 <div className="p-4 rounded-xl bg-white border border-surface-border">
                   <div className="text-xs font-medium text-ink-secondary">Budget Estimate</div>
-                  <div className="text-xl font-bold text-navy mt-1">{formatPHP(project.budget_estimate)}</div>
+                  <div className="text-xl font-bold text-navy mt-1">{project.budget_estimate == null ? "Unavailable" : formatPHP(project.budget_estimate)}</div>
                   <div className="text-[11px] text-ink-muted mt-0.5">Saved estimate</div>
                 </div>
 

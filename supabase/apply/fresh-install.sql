@@ -8,7 +8,7 @@
 -- will fail. Check with verify-live.sql before running.
 --
 -- GENERATED FILE — do not edit. Regenerate with `npm run build:apply-sql`.
--- Generated: 2026-11-03T14:23:04.572Z
+-- Generated: 2026-11-04T14:23:24.668Z
 --
 -- Source files (in execution order) and their SHA-256:
 --   20260913000000_bale_schema.sql  df054d9d265045b9…
@@ -25,6 +25,8 @@
 --   20261103000002_payroll_input_snapshot.sql  34529c795f7f7a44…
 --   20261103000003_sms_history.sql  d1f956b5862f48c1…
 --   20261103000004_payroll_attendance_matrix.sql  beaec54abcd864a1…
+--   20261104000000_visible_projects.sql  415a7e6e38f962b0…
+--   20261104000001_project_column_privacy.sql  a4b99e9d35b55fa9…
 --
 -- After running: execute supabase/apply/verify-live.sql and confirm every
 -- row reports PASS. Procedure: docs/MIGRATION_RUNBOOK.md.
@@ -2245,5 +2247,51 @@ end;
 $$;
 revoke all on function public.payroll_attendance_matrix(date,date,uuid) from public,anon;
 grant execute on function public.payroll_attendance_matrix(date,date,uuid) to authenticated;
+
+
+-- @@ source: 20261104000000_visible_projects.sql
+
+-- Phase 1: additive. Deploy this read function before the matching app.
+-- It does not by itself restrict existing direct table access.
+CREATE OR REPLACE FUNCTION public.visible_projects()
+RETURNS TABLE (
+  id uuid, name text, client_id uuid, location text, budget_estimate numeric,
+  status text, start_date date, target_completion_date date, created_at timestamptz
+)
+LANGUAGE sql STABLE SECURITY DEFINER SET search_path = ''
+AS $$
+  SELECT p.id, p.name,
+         CASE WHEN public.is_founder() THEN p.client_id ELSE NULL END,
+         p.location,
+         CASE WHEN public.is_founder() THEN p.budget_estimate ELSE NULL END,
+         p.status, p.start_date, p.target_completion_date, p.created_at
+  FROM public.projects AS p
+  WHERE auth.uid() IS NOT NULL
+    AND (public.is_founder() OR public.is_supervisor_assigned(p.id));
+$$;
+REVOKE ALL ON FUNCTION public.visible_projects() FROM PUBLIC, anon;
+GRANT EXECUTE ON FUNCTION public.visible_projects() TO authenticated;
+
+
+-- @@ source: 20261104000001_project_column_privacy.sql
+
+-- Phase 2: breaking access change. Apply only after the app using
+-- visible_projects() is deployed and users have refreshed. See rollout guide.
+-- Refuse to remove direct access if the replacement function is not ready.
+DO $$
+BEGIN
+  IF to_regprocedure('public.visible_projects()') IS NULL
+     OR NOT EXISTS (SELECT 1 FROM pg_proc WHERE oid=to_regprocedure('public.visible_projects()') AND prosecdef)
+     OR NOT coalesce(has_function_privilege('authenticated',to_regprocedure('public.visible_projects()'),'EXECUTE'),false)
+     OR coalesce(has_function_privilege('anon',to_regprocedure('public.visible_projects()'),'EXECUTE'),true) THEN
+    RAISE EXCEPTION 'Install and verify visible_projects before restricting project columns.';
+  END IF;
+END $$;
+-- Revoking a table grant does not remove independent column-level grants.
+REVOKE SELECT ON public.projects FROM PUBLIC, anon, authenticated;
+REVOKE SELECT (id, name, client_id, location, budget_estimate, status, start_date, target_completion_date, created_at)
+  ON public.projects FROM PUBLIC, anon, authenticated;
+GRANT SELECT (id, name, location, status, start_date, target_completion_date, created_at)
+  ON public.projects TO authenticated;
 
 commit;

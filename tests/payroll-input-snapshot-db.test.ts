@@ -30,6 +30,9 @@ describe('payroll input snapshot',()=>{
         insert into public.advances values ('40000000-0000-0000-0000-000000000001','${w}','${a}','active',100,0),('40000000-0000-0000-0000-000000000002','${w}','${b}','active',200,0);
         insert into public.payroll values ('50000000-0000-0000-0000-000000000001','${w}','2026-10-01','2026-10-31','draft');
         ${migration}
+        -- Project column privacy leaves only site fields visible directly.
+        revoke select on public.projects from authenticated;
+        grant select (id,name) on public.projects to authenticated;
         set role authenticated; select set_config('request.jwt.claim.sub','${f}',false);
       `);
       const get=async(project:string|null)=>(await db.query<{v:Snapshot}>("select public.payroll_input_snapshot('2026-10-01','2026-10-31',$1) as v",[project])).rows[0].v;

@@ -5,7 +5,7 @@ import {afterEach,beforeEach,describe,expect,it,vi} from 'vitest';
 
 const mock=vi.hoisted(()=>({snapshot:null as unknown,error:null as null|{message:string},writes:[] as Array<{kind:string,payload:any,filters:unknown[]}>,toast:vi.fn(),audit:vi.fn()}));
 vi.mock('@/lib/supabase/client',()=>({createClient:()=>({
-  rpc:async()=>({data:mock.snapshot,error:mock.error}),
+  rpc:(name:string)=>name==='visible_projects' ? {order:async()=>({data:[],error:null})} : Promise.resolve({data:mock.snapshot,error:mock.error}),
   from:(table:string)=>({
     select:()=>({order:async()=>({data:[],error:null}),then:(resolve:(v:unknown)=>void)=>resolve({data:[],error:null})}),
     insert:(payload:any[])=>({select:async()=>{mock.writes.push({kind:'insert',payload,filters:[]});return {data:payload.map((p,i)=>({...p,id:`new-${i}`})),error:null}}}),

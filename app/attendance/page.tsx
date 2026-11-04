@@ -28,6 +28,7 @@ import { Button } from '@/components/ui/Button';
 import { Badge } from '@/components/ui/Badge';
 import { Input } from '@/components/ui/Input';
 import { Select } from '@/components/ui/Select';
+import { SearchableSelect } from '@/components/ui/SearchableSelect';
 import { Modal } from '@/components/ui/Modal';
 import { EmptyState } from '@/components/ui/EmptyState';
 import { formatDatePH } from '@/lib/email/format';
@@ -1132,25 +1133,19 @@ function AttendancePageInner() {
         {activeTab === 'terminal' && (
           <div className="rounded-xl border border-surface-border bg-white p-3 sm:p-3.5 grid grid-cols-1 md:grid-cols-2 gap-2.5 md:gap-3 items-start">
             <div>
-              <label htmlFor="attendance-project" className="text-xs font-semibold text-ink-secondary block mb-1.5">
-                Project Site
-              </label>
-              <Select
+              <SearchableSelect
                 id="attendance-project"
+                label="Project Site"
+                searchLabel="Search attendance sites"
                 value={selectedProjectId}
                 disabled={isSubmitting}
                 onChange={(e) => setSelectedProjectId(e.target.value)}
-              >
-                {accessibleProjects.length === 0 ? (
-                  <option value="">No assigned project sites yet</option>
-                ) : (
-                  accessibleProjects.map((p) => (
-                    <option key={p.id} value={p.id}>
-                      {p.name} ({p.location.split(',')[0]})
-                    </option>
-                  ))
-                )}
-              </Select>
+                fixedOption={accessibleProjects.length === 0 ? { value: '', label: 'No assigned project sites yet' } : undefined}
+                options={accessibleProjects.map((p) => ({
+                  value: p.id,
+                  label: `${p.name} (${p.location.split(',')[0]})`,
+                }))}
+              />
             </div>
 
             <div>

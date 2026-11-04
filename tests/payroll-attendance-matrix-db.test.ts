@@ -34,6 +34,9 @@ describe('Founder attendance matrix snapshot',()=>{
           ('30000000-0000-0000-0000-000000000003','${inactive}','${a}','2026-11-02','leave','private note');
         insert into public.payroll values ('40000000-0000-0000-0000-000000000001','${w}','2026-11-01','2026-11-02',1600,1200,'draft',400), ('40000000-0000-0000-0000-000000000002','${w}','2026-11-01','2026-11-02',1600,1200,'draft',400);
         ${migration}
+        -- Project column privacy leaves only site fields visible directly.
+        revoke select on public.projects from authenticated;
+        grant select (id,name) on public.projects to authenticated;
         set role authenticated;select set_config('request.jwt.claim.sub','${f}',false);
       `);
       const get=async(site:string|null)=>(await db.query<{v:Snapshot}>("select public.payroll_attendance_matrix('2026-11-01','2026-11-02',$1) as v",[site])).rows[0].v;

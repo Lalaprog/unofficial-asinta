@@ -3,7 +3,7 @@ import React from 'react';
 import { act, cleanup, fireEvent, render, screen, within } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
-const mock = vi.hoisted(() => ({ supervisor: false, record: vi.fn(), toast: vi.fn(), createWorker: vi.fn() }));
+const mock = vi.hoisted(() => ({ supervisor: false, extraSites: [] as Array<{id:string;name:string;location:string}>, record: vi.fn(), toast: vi.fn(), createWorker: vi.fn() }));
 vi.mock('@/lib/attendance/usePendingApprovals', () => ({ usePendingApprovals: () => ({items: [], total: 0, hasMore: false, loading: false, error: null, loadMore: vi.fn(), refresh: vi.fn()}) }));
 vi.mock('next/navigation', () => ({ useSearchParams: () => new URLSearchParams() }));
 vi.mock('next/link', () => ({ default: ({ children, href, prefetch: _prefetch, ...props }: React.AnchorHTMLAttributes<HTMLAnchorElement> & { prefetch?: boolean }) => React.createElement('a', { ...props, href }, children) }));
@@ -23,14 +23,14 @@ vi.mock('@/lib/data/store', () => {
     { id: 'c', worker_id: 'cara', project_id: 'site-1', date: '2026-11-03', status: 'absent', notes: '', recorded_by: 'founder' },
     { id: 'd', worker_id: 'dan', project_id: 'site-2', date: '2026-11-03', status: 'present', notes: '', recorded_by: 'founder' },
   ];
-  const store = { projects, workers, attendance, users: [{ id: 'sup', name: 'Site Supervisor', role: 'supervisor' }], projectSupervisors: [{ project_id: 'site-1', supervisor_id: 'sup' }], isLoaded: true, createWorker: mock.createWorker, updateWorker: vi.fn(), toggleWorkerStatus: vi.fn(), recordAttendanceBatch: mock.record, updateAttendanceRecord: vi.fn(), getProjectsForSupervisor: () => projects };
+  const store = { projects, workers, attendance, users: [{ id: 'sup', name: 'Site Supervisor', role: 'supervisor' }], projectSupervisors: [{ project_id: 'site-1', supervisor_id: 'sup' }], isLoaded: true, createWorker: mock.createWorker, updateWorker: vi.fn(), toggleWorkerStatus: vi.fn(), recordAttendanceBatch: mock.record, updateAttendanceRecord: vi.fn(), getProjectsForSupervisor: () => [...projects, ...mock.extraSites] };
   return { useDataStore: () => store };
 });
 import AttendancePage from '@/app/attendance/page';
 
 beforeEach(() => {
   vi.useFakeTimers(); vi.setSystemTime(new Date('2026-11-03T04:00:00Z'));
-  mock.supervisor = true; mock.record.mockReset(); mock.toast.mockReset(); mock.createWorker.mockReset();
+  mock.supervisor = true; mock.extraSites = []; mock.record.mockReset(); mock.toast.mockReset(); mock.createWorker.mockReset();
   window.localStorage.clear(); window.history.replaceState({}, '', '/attendance');
 });
 afterEach(() => { cleanup(); vi.useRealTimers(); });
@@ -40,6 +40,27 @@ function status(worker: string, label: string) {
 }
 
 describe('roll call usability and safety', () => {
+  it('searches long site lists without switching the roster or submitting attendance', () => {
+    mock.extraSites = Array.from({length: 8}, (_, i) => ({id:`extra-${i}`, name:i === 7 ? 'Luna Site' : `Extra Site ${i}`, location:'Batangas, PH'}));
+    render(React.createElement(AttendancePage));
+    const select = screen.getByRole('combobox', {name:'Project Site'}) as HTMLSelectElement;
+    expect(select.value).toBe('site-1');
+    fireEvent.click(status('Amy', 'Leave'));
+    fireEvent.click(screen.getByRole('button', {name:'Search attendance sites'}));
+    const search = screen.getByRole('searchbox', {name:'Search attendance sites'});
+    fireEvent.change(search, {target:{value:'luna'}});
+    expect(select.value).toBe('site-1');
+    expect(status('Amy', 'Leave').getAttribute('aria-pressed')).toBe('true');
+    expect(within(select).getByRole('option', {name:'Site One (Batangas)'})).toBeTruthy();
+    expect(within(select).getByRole('option', {name:'Luna Site (Batangas)'})).toBeTruthy();
+    expect(mock.record).not.toHaveBeenCalled();
+    fireEvent.change(select, {target:{value:'extra-7'}});
+    fireEvent.change(search, {target:{value:'no match'}});
+    expect(select.value).toBe('extra-7');
+    fireEvent.click(screen.getByRole('button', {name:'Close search attendance sites'}));
+    expect(select.value).toBe('extra-7');
+    expect(mock.record).not.toHaveBeenCalled();
+  });
   it('shows full-roster counts while filters only affect the visible list', () => {
     render(React.createElement(AttendancePage));
     const summary = screen.getByRole('region', { name: 'Attendance summary' });

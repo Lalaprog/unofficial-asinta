@@ -5,6 +5,7 @@ import {afterEach, beforeEach, describe, expect, it, vi} from 'vitest';
 import type { Invoice } from '@/types';
 const mock = vi.hoisted(() => ({ updates: [] as Array<{table:string;payload:unknown;filters:Array<[string,unknown]>}>, result: {data:null as any,error:null as any}, thrown:false, audit:vi.fn(), toast:vi.fn() }));
 vi.mock('@/lib/supabase/client', () => ({createClient: () => ({
+  rpc: () => ({order: async () => ({data:[],error:null})}),
   from: (table:string) => ({
     select: () => ({order: async () => ({data:[],error:null}), then: (resolve:(v:unknown)=>void) => resolve({data:[],error:null})}),
     update: (payload:unknown) => {

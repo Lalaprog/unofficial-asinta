@@ -173,7 +173,7 @@ const toOptionalNumber = (value: unknown): number | undefined =>
 
 const mapProject = (row: any): Project => ({
   ...row,
-  budget_estimate: toNumber(row.budget_estimate),
+  budget_estimate: row.budget_estimate == null ? null : toNumber(row.budget_estimate),
 });
 
 const mapInvoice = (row: any): Invoice => ({
@@ -260,7 +260,12 @@ export const DataStoreProvider: React.FC<{ children: React.ReactNode }> = ({ chi
   const [projectSupervisors, setProjectSupervisors] = useState<ProjectSupervisor[]>([]);
   const [users, setUsers] = useState<User[]>([]);
 
-  const inFlightRef = useRef(false);
+  const inFlightRef = useRef<number | null>(null);
+  const requestSequence = useRef(0);
+  const sessionKey = user ? `${user.id}:${user.role}` : null;
+  const activeSessionRef = useRef(sessionKey);
+  activeSessionRef.current = sessionKey;
+  const loadedSessionRef = useRef<string | null>(null);
 
   // -------------------------------------------------------------------------
   // Initial & background load — every SELECT runs with the authenticated
@@ -268,15 +273,17 @@ export const DataStoreProvider: React.FC<{ children: React.ReactNode }> = ({ chi
   // -------------------------------------------------------------------------
   const loadAll = useCallback(
     async (options?: { silent?: boolean }) => {
-      if (inFlightRef.current) return;
-      inFlightRef.current = true;
+      if (inFlightRef.current !== null) return;
+      const token = ++requestSequence.current;
+      const requestSession = activeSessionRef.current;
+      inFlightRef.current = token;
       if (!options?.silent) {
         setIsLoading(true);
       }
 
       try {
         const results = await Promise.all([
-          supabase.from('projects').select('*').order('created_at', { ascending: false }),
+          supabase.rpc('visible_projects').order('created_at', { ascending: false }),
           supabase.from('invoices').select('*').order('created_at', { ascending: false }),
           supabase.from('expenses').select('*').order('created_at', { ascending: false }),
           supabase.from('workers').select('*').order('created_at', { ascending: true }),
@@ -292,6 +299,9 @@ export const DataStoreProvider: React.FC<{ children: React.ReactNode }> = ({ chi
           supabase.from('user_notifications').select('*').order('created_at', { ascending: false }),
         ]);
 
+        // A response from a previous account/role or an overtaken refresh must
+        // never repopulate the new session's state or cache.
+        if (inFlightRef.current !== token || activeSessionRef.current !== requestSession) return;
         const firstError = results.find((r) => r.error)?.error as PostgrestError | undefined;
         if (firstError) {
           console.error('Supabase data load failed:', firstError.message);
@@ -339,7 +349,7 @@ export const DataStoreProvider: React.FC<{ children: React.ReactNode }> = ({ chi
         if (user?.id && typeof window !== 'undefined') {
           try {
             window.sessionStorage.setItem(
-              `bale-ledger-cache:${user.id}`,
+              `bale-ledger-cache:v2:${user.id}:${user.role}`,
               JSON.stringify({
                 projects: nextProjects,
                 invoices: nextInvoices,
@@ -362,6 +372,7 @@ export const DataStoreProvider: React.FC<{ children: React.ReactNode }> = ({ chi
           }
         }
       } catch (e: any) {
+        if (inFlightRef.current !== token || activeSessionRef.current !== requestSession) return;
         console.error('Unexpected error while loading BALE data:', e);
         if (!options?.silent) {
           setLoadError(
@@ -370,11 +381,13 @@ export const DataStoreProvider: React.FC<{ children: React.ReactNode }> = ({ chi
           );
         }
       } finally {
-        setIsLoading(false);
-        inFlightRef.current = false;
+        if (inFlightRef.current === token) {
+          setIsLoading(false);
+          inFlightRef.current = null;
+        }
       }
     },
-    [supabase, user?.id]
+    [supabase, user?.id, user?.role]
   );
 
   const clearAll = useCallback(() => {
@@ -393,6 +406,7 @@ export const DataStoreProvider: React.FC<{ children: React.ReactNode }> = ({ chi
     setProjectSupervisors([]);
     setUsers([]);
     setIsLoaded(false);
+    setIsLoading(false);
     setLoadError(null);
   }, []);
 
@@ -400,6 +414,22 @@ export const DataStoreProvider: React.FC<{ children: React.ReactNode }> = ({ chi
   // hydration + live Supabase Realtime & background sync); clear when signed out.
   useEffect(() => {
     if (authLoading) return;
+    if (loadedSessionRef.current !== sessionKey) {
+      loadedSessionRef.current = sessionKey;
+      clearAll();
+    }
+    // A shared tab must not leave a previous user's cached ledger available
+    // after sign-out or when another account/role signs in.
+    const currentCacheKey = user ? `bale-ledger-cache:v2:${user.id}:${user.role}` : null;
+    if (typeof window !== 'undefined') {
+      try {
+        const staleKeys = Array.from({ length: window.sessionStorage.length }, (_, i) => window.sessionStorage.key(i))
+          .filter((key): key is string => Boolean(key?.startsWith('bale-ledger-cache:') && key !== currentCacheKey));
+        staleKeys.forEach((key) => window.sessionStorage.removeItem(key));
+      } catch {
+        // Storage may be disabled; the network data load still works.
+      }
+    }
     if (!user) {
       clearAll();
       return;
@@ -407,7 +437,7 @@ export const DataStoreProvider: React.FC<{ children: React.ReactNode }> = ({ chi
 
     if (typeof window !== 'undefined') {
       try {
-        const cachedRaw = window.sessionStorage.getItem(`bale-ledger-cache:${user.id}`);
+        const cachedRaw = currentCacheKey ? window.sessionStorage.getItem(currentCacheKey) : null;
         if (cachedRaw) {
           const cached = JSON.parse(cachedRaw);
           if (cached && Array.isArray(cached.projects)) {
@@ -471,6 +501,8 @@ export const DataStoreProvider: React.FC<{ children: React.ReactNode }> = ({ chi
     }, 25_000);
 
     return () => {
+      // Discard pending loads before this account, role or provider changes.
+      inFlightRef.current = null;
       if (debounceTimer) window.clearTimeout(debounceTimer);
       window.removeEventListener('focus', handleVisibilityOrFocus);
       document.removeEventListener('visibilitychange', handleVisibilityOrFocus);
@@ -479,10 +511,10 @@ export const DataStoreProvider: React.FC<{ children: React.ReactNode }> = ({ chi
         supabase.removeChannel(channel);
       }
     };
-  }, [user, authLoading, loadAll, clearAll, supabase]);
+  }, [user, authLoading, loadAll, clearAll, supabase, sessionKey]);
 
   const refresh = useCallback(async () => {
-    inFlightRef.current = false;
+    inFlightRef.current = null;
     await loadAll();
   }, [loadAll]);
 
@@ -533,22 +565,35 @@ export const DataStoreProvider: React.FC<{ children: React.ReactNode }> = ({ chi
   );
 
   // --- PROJECT ACTIONS ---
+  // Direct project RETURNING queries use only public project columns. The
+  // role-aware RPC re-reads the authoritative row after a confirmed write.
+  const projectPublicColumns = 'id,name,location,status,start_date,target_completion_date,created_at';
+  const readProjectAfterWrite = async (id: string): Promise<Project | null> => {
+    const row = await runMutation('Reload project', (db) =>
+      db.rpc('visible_projects').eq('id', id).maybeSingle(),
+      'The project may have been saved, but its details could not be reloaded. Refresh and check before retrying.'
+    );
+    return row ? mapProject(row) : null;
+  };
+
   const createProject = async (data: Omit<Project, 'id' | 'created_at'>): Promise<Project | null> => {
-    const row = await runMutation('Create project', (db) =>
-      db.from('projects').insert(data).select().single(),
+    const row = await runMutation<{id:string}>('Create project', (db) =>
+      db.from('projects').insert(data).select(projectPublicColumns).single(),
       'Project creation was not confirmed. Refresh and check the project list before retrying.'
     );
-    const mapped = row ? mapProject(row) : null;
-    if (mapped) setProjects((prev) => [mapped, ...prev]);
+    if (!row) return null;
+    const mapped = await readProjectAfterWrite(row.id);
+    if (mapped) setProjects((prev) => [mapped, ...prev.filter((p) => p.id !== mapped.id)]);
     return mapped;
   };
 
   const updateProject = async (id: string, data: Partial<Project>): Promise<Project | null> => {
-    const row = await runMutation('Update project', (db) =>
-      db.from('projects').update(data).eq('id', id).select().single(),
+    const row = await runMutation<{id:string}>('Update project', (db) =>
+      db.from('projects').update(data).eq('id', id).select(projectPublicColumns).single(),
       'Project update was not confirmed. Refresh and check the project before retrying.'
     );
-    const mapped = row ? mapProject(row) : null;
+    if (!row) return null;
+    const mapped = await readProjectAfterWrite(row.id);
     if (mapped) setProjects((prev) => prev.map((p) => (p.id === id ? mapped : p)));
     return mapped;
   };
@@ -1542,7 +1587,7 @@ export const DataStoreProvider: React.FC<{ children: React.ReactNode }> = ({ chi
       return {
         id: p.id,
         name: p.name,
-        budget: p.budget_estimate,
+        budget: p.budget_estimate ?? 0,
         invoiced: pInvoiced,
         collected: pCollected,
         expenses: pExpTotal,

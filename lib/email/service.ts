@@ -87,7 +87,7 @@ export async function loadInvoiceEmailContext(
 
   const [{ data: client }, { data: project }] = await Promise.all([
     deps.db.from('clients').select('*').eq('id', invoice.client_id).maybeSingle(),
-    deps.db.from('projects').select('*').eq('id', invoice.project_id).maybeSingle(),
+    deps.db.from('projects').select('id, name').eq('id', invoice.project_id).maybeSingle(),
   ]);
 
   if (!client) {

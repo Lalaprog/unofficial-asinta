@@ -228,7 +228,7 @@ export default function ProjectsPage() {
                     <div className="mt-5 p-3.5 rounded-2xl bg-surface-inset/50 border border-surface-border/70 space-y-2.5">
                       <div className="flex justify-between text-xs">
                         <span className="text-ink-secondary">Budget Estimate:</span>
-                        <span className="font-bold text-navy">{formatPHP(proj.budget_estimate)}</span>
+                        <span className="font-bold text-navy">{proj.budget_estimate == null ? "Unavailable" : formatPHP(proj.budget_estimate)}</span>
                       </div>
                       <div className="flex justify-between text-xs">
                         <span className="text-ink-secondary">Collected / Invoiced:</span>
