@@ -32,6 +32,7 @@ import { EmailHistoryModal } from '@/components/email/EmailHistoryModal';
 import { buildReminderSMS, estimateSMSSegments } from '@/lib/sms/templates';
 import { createClient as createSupabaseBrowserClient } from '@/lib/supabase/client';
 import { formatPeso } from '@/lib/email/format';
+import { PAYMENT_STORAGE_PREFIX, clearPaymentAttempt, isPaymentAmount, readPaymentAttempt, savePaymentAttempt, type InvoicePaymentAttempt } from '@/lib/invoices/payment';
 
 function getNextInvoiceNumber(invoices: Invoice[], year: number): string {
   const prefix = `ASINTA-${year}-`;
@@ -154,6 +155,42 @@ export default function InvoicesPage() {
 
   const [selectedInvoice, setSelectedInvoice] = useState<Invoice | null>(null);
   const [paymentAmount, setPaymentAmount] = useState('');
+  const [pendingAttempt, setPendingAttempt] = useState<InvoicePaymentAttempt | null>(null);
+  const [paymentNotice, setPaymentNotice] = useState('');
+  const [pendingInvoiceIds, setPendingInvoiceIds] = useState<string[]>([]);
+  const updatePendingInvoiceIds = React.useCallback(() => {
+    try {
+      const ids: string[] = [];
+      for (let i = 0; i < localStorage.length; i++) {
+        const key = localStorage.key(i);
+        if (key?.startsWith(PAYMENT_STORAGE_PREFIX)) ids.push(key.slice(PAYMENT_STORAGE_PREFIX.length).split(':')[0]);
+      }
+      setPendingInvoiceIds(ids);
+    } catch {
+      // The submission path checks storage again and fails closed if unavailable.
+    }
+  }, []);
+  React.useEffect(() => {
+    updatePendingInvoiceIds();
+    window.addEventListener('storage', updatePendingInvoiceIds);
+    return () => window.removeEventListener('storage', updatePendingInvoiceIds);
+  }, [updatePendingInvoiceIds]);
+
+  const openPaymentModal = (invoice: Invoice) => {
+    setSelectedInvoice(invoice);
+    setPaymentNotice('');
+    try {
+      const saved = readPaymentAttempt(localStorage, invoice.id);
+      setPendingAttempt(saved);
+      setPaymentAmount(saved?.amount ?? (invoice.amount - invoice.amount_paid).toFixed(2));
+      if (saved) setPaymentNotice('A previous payment attempt is unconfirmed. Retry this exact attempt to resolve it safely; do not enter it again as a new payment.');
+    } catch {
+      setPendingAttempt(null);
+      setPaymentAmount('');
+      setPaymentNotice('The saved payment attempt cannot be read. Do not record another payment for this invoice; contact the administrator.');
+    }
+    setIsPaymentModalOpen(true);
+  };
   const [smsSending, setSmsSending] = useState(false);
   const smsSendLock = React.useRef(false);
   const smsPrepareVersion = React.useRef(0);
@@ -293,14 +330,71 @@ export default function InvoicesPage() {
     paymentLock.current = true;
     setIsRecordingPayment(true);
     try {
-      const success = await recordInvoicePayment(selectedInvoice.id, parseFloat(paymentAmount));
-      if (success) {
-        showToast('success', 'Payment recorded.');
+      // Re-read at submission time, including attempts created by another tab.
+      let attempt = readPaymentAttempt(localStorage, selectedInvoice.id, pendingAttempt?.requestId);
+      if (pendingAttempt && !attempt) {
+        // Another tab resolved this request. Never turn its disappearance into
+        // a fresh payment; the invoice must be reviewed first.
+        setPendingAttempt(null);
+        setPaymentAmount('');
+        updatePendingInvoiceIds();
+        setPaymentNotice('This attempt was resolved in another tab. Refresh and check the invoice and receipt before entering another payment.');
+        return;
+      }
+      if (attempt && !pendingAttempt) {
+        // A request appeared after this dialog opened. Show its actual details
+        // and require a separate confirmation rather than silently sending it.
+        setPendingAttempt(attempt);
+        setPaymentAmount(attempt.amount);
+        updatePendingInvoiceIds();
+        setPaymentNotice('Another tab saved a payment attempt for this invoice. Review the amount before retrying that exact attempt.');
+        return;
+      }
+      if (!attempt) {
+        if (!isPaymentAmount(paymentAmount)) {
+          setPaymentNotice('Enter a positive amount with no more than two decimal places.');
+          return;
+        }
+        attempt = {
+          requestId: crypto.randomUUID(), invoiceId: selectedInvoice.id, amount: paymentAmount,
+          expectedTotal: selectedInvoice.amount, expectedPaid: selectedInvoice.amount_paid,
+          expectedStatus: selectedInvoice.status,
+        };
+        // Do not send if the recovery key cannot be saved on this device.
+        savePaymentAttempt(localStorage, attempt);
+      }
+      setPendingAttempt(attempt);
+      setPaymentAmount(attempt.amount);
+      updatePendingInvoiceIds();
+      const result = await recordInvoicePayment(attempt);
+      if (result.outcome === 'unconfirmed' || result.outcome === 'request_mismatch' || result.outcome === 'unavailable') {
+        setPaymentNotice(result.outcome === 'request_mismatch'
+          ? 'This saved request conflicts with an existing payment. Do not submit a new payment; contact the administrator.'
+          : result.outcome === 'unavailable'
+            ? 'Protected payments are unavailable. The earlier result may be unconfirmed: keep this attempt and contact the administrator.'
+            : 'The result is not confirmed. Retry this exact attempt here; it will not be recorded twice with the same request ID.');
+        return;
+      }
+      clearPaymentAttempt(localStorage, attempt);
+      setPendingAttempt(null);
+      updatePendingInvoiceIds();
+      if (result.outcome === 'recorded' || result.outcome === 'already_recorded') {
+        showToast('success', result.outcome === 'already_recorded' ? 'The earlier payment was already recorded.' : 'Payment recorded.');
         setIsPaymentModalOpen(false);
         setPaymentAmount('');
+      } else if (result.outcome === 'stale') {
+        if (result.invoice) setSelectedInvoice(result.invoice);
+        setPaymentAmount('');
+        setPaymentNotice('The invoice changed since you opened it. This attempt did not record a payment. Check whether the receipt was already recorded before entering another payment.');
+      } else {
+        if (result.invoice) setSelectedInvoice(result.invoice);
+        setPaymentAmount('');
+        setPaymentNotice(result.outcome === 'not_found'
+          ? 'This invoice was not found. This attempt did not record a payment.'
+          : 'This payment cannot be recorded against the current invoice balance or status. This attempt did not record a payment; review the invoice.');
       }
     } catch {
-      showToast('error', 'Could not confirm whether the payment was recorded. Refresh and check the invoice before trying again.');
+      setPaymentNotice('The payment attempt could not be safely saved or resolved on this device. Do not enter another payment; contact the administrator.');
     } finally {
       paymentLock.current = false;
       setIsRecordingPayment(false);
@@ -452,18 +546,14 @@ export default function InvoicesPage() {
                         View invoice
                       </Button>
 
-                      {inv.status !== 'paid' && (
+                      {((inv.status !== 'paid' && inv.status !== 'cancelled') || pendingInvoiceIds.includes(inv.id)) && (
                         <Button
                           variant="primary"
                           size="sm"
-                          onClick={() => {
-                            setSelectedInvoice(inv);
-                            setPaymentAmount(String(balance));
-                            setIsPaymentModalOpen(true);
-                          }}
+                          onClick={() => openPaymentModal(inv)}
                           leftIcon={<DollarSign className="w-3.5 h-3.5" />}
                         >
-                          Record payment
+                          {pendingInvoiceIds.includes(inv.id) ? 'Resolve payment' : 'Record payment'}
                         </Button>
                       )}
 
@@ -611,15 +701,17 @@ export default function InvoicesPage() {
               </div>
             </div>
 
+            {paymentNotice && <p role="status" className="rounded-lg border border-status-warning/30 bg-status-warning/10 p-3 text-ink-primary">{paymentNotice}</p>}
             <Input
               label="Payment Amount Received (PHP ₱)"
               type="number"
               value={paymentAmount}
               onChange={(e) => setPaymentAmount(e.target.value)}
+              disabled={Boolean(pendingAttempt)}
               required
               min="0.01"
               step="0.01"
-              max={selectedInvoice.amount - selectedInvoice.amount_paid}
+              max={pendingAttempt ? undefined : (selectedInvoice.amount - selectedInvoice.amount_paid).toFixed(2)}
             />
 
             <div className="pt-2 flex justify-end space-x-2">
@@ -627,7 +719,7 @@ export default function InvoicesPage() {
                 Cancel
               </Button>
               <Button variant="primary" type="submit" isLoading={isRecordingPayment}>
-                {isRecordingPayment ? 'Recording payment…' : 'Confirm Payment Receipt'}
+                {isRecordingPayment ? 'Checking payment…' : pendingAttempt ? 'Retry same payment attempt' : 'Confirm Payment Receipt'}
               </Button>
             </div>
           </form>

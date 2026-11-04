@@ -62,7 +62,8 @@ const BUNDLES = [
       name === '20261103000001_attendance_history.sql' ||
       name === '20261103000002_payroll_input_snapshot.sql' ||
       name === '20261103000003_sms_history.sql' ||
-      name === '20261103000004_payroll_attendance_matrix.sql',
+      name === '20261103000004_payroll_attendance_matrix.sql' ||
+      name === '20261104000000_atomic_invoice_payments.sql',
   },
 ];
 
