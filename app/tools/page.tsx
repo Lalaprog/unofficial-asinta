@@ -16,6 +16,7 @@ import { FilterSummary } from '@/components/ui/FilterSummary';
 import { Badge } from '@/components/ui/Badge';
 import { Input } from '@/components/ui/Input';
 import { Select } from '@/components/ui/Select';
+import { SearchableSelect } from '@/components/ui/SearchableSelect';
 import { Modal } from '@/components/ui/Modal';
 import { EmptyState } from '@/components/ui/EmptyState';
 import { WorkspaceHeader } from '@/components/ui/WorkspaceHeader';
@@ -290,21 +291,18 @@ export default function ToolsPage() {
             </Select>
           </div>
 
-          <Select
+          <SearchableSelect
             label="Assigned Project Site"
+            searchLabel="Search project sites"
             value={formData.project_id}
             onChange={(e) => setFormData({ ...formData, project_id: e.target.value })}
-          >
-            <option value="">Asinta Studio Central Depot (Batangas)</option>
-            {formData.project_id && !projects.some((project) => project.id === formData.project_id) && (
-              <option value={formData.project_id}>Assigned project unavailable</option>
-            )}
-            {projects.map((p) => (
-              <option key={p.id} value={p.id}>
-                {p.name}
-              </option>
-            ))}
-          </Select>
+            fixedOption={{ value: '', label: 'Asinta Studio Central Depot (Batangas)' }}
+            options={[
+              ...(formData.project_id && !projects.some((project) => project.id === formData.project_id)
+                ? [{ value: formData.project_id, label: 'Assigned project unavailable' }] : []),
+              ...projects.map((project) => ({ value: project.id, label: project.name })),
+            ]}
+          />
 
           <div className="pt-3 flex justify-end space-x-2">
             <Button

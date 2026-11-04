@@ -21,6 +21,7 @@ import { WorkspaceFilters } from '@/components/ui/WorkspaceFilters';
 import { Badge } from '@/components/ui/Badge';
 import { Input } from '@/components/ui/Input';
 import { Select } from '@/components/ui/Select';
+import { SearchableSelect } from '@/components/ui/SearchableSelect';
 import { Modal } from '@/components/ui/Modal';
 import { useToast } from '@/components/ui/Toast';
 import { formatPesoCompact } from '@/lib/email/format';
@@ -316,20 +317,16 @@ export default function ProjectsPage() {
               required
             />
 
-            <Select
+            <SearchableSelect
               label="Client"
+              searchLabel="Search clients"
               error={showFormErrors ? projectValidation.errors.client_id : undefined}
               value={formData.client_id}
               onChange={(e) => setFormData({ ...formData, client_id: e.target.value })}
+              fixedOption={{ value: '', label: 'Select an existing client...' }}
+              options={clients.map((client) => ({ value: client.id, label: `${client.name} (${client.contact_person})` }))}
               required
-            >
-              <option value="">Select an existing client...</option>
-              {clients.map((c) => (
-                <option key={c.id} value={c.id}>
-                  {c.name} ({c.contact_person})
-                </option>
-              ))}
-            </Select>
+            />
 
             <Input
               label="Site Location"
