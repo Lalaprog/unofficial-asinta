@@ -1,0 +1,20 @@
+import { readFileSync } from 'node:fs';
+import { describe, expect, it } from 'vitest';
+
+const html = readFileSync('docs/email-templates/SUPABASE_MAGIC_LINK.html', 'utf8');
+
+describe('copy-and-paste Supabase Magic Link email', () => {
+  it('uses eight ordered digit boxes only for an eight-character token', () => {
+    expect(html).toContain('{{ if eq (len .Token) 8 }}');
+    const digits = [...html.matchAll(/\{\{ slice \.Token (\d) (\d) \}\}/g)].map((m) => [Number(m[1]), Number(m[2])]);
+    expect(digits).toEqual(Array.from({ length: 8 }, (_, i) => [i, i + 1]));
+    expect(html).toMatch(/\{\{ else \}\}[\s\S]*?\{\{ \.Token \}\}[\s\S]*?\{\{ end \}\}/);
+  });
+
+  it('keeps a full copyable code and the existing sign-in link', () => {
+    expect(html).toMatch(/For easy copying:[\s\S]*?\{\{ \.Token \}\}/);
+    expect(html).toContain('href="{{ .ConfirmationURL }}"');
+    expect(html).not.toMatch(/<(?:script|img)\b/i);
+    expect(html).not.toMatch(/https?:\/\//i);
+  });
+});
