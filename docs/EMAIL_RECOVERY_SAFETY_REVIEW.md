@@ -1,15 +1,15 @@
 # Email-code recovery: safety review and rollout prerequisites
 
-Status: **draft, not deployed, and not ready for live use.** A disabled-by-default recovery flow and proposed safeguards have been implemented and tested with synthetic data, not real hosted sign-ins. No live database, Supabase Auth settings, email templates, or SMTP changes have been made, and no real message was sent. The intended feature is Founder/Supervisor sign-in by emailed code, with an optional password change, using the existing email provider and preserving enrolled MFA.
+Status (2026-11-05): **recovery remains disabled and is not ready for live use.** The application is deployed with recovery flags off, and the additive session-assurance prerequisite was installed on the live database. The revised restrictive table policy/helper migration is installed on the live database as `20261105010501`; catalog and read-only simulated-claims checks passed, but real hosted MFA and Storage checks remain outstanding. Supabase Auth settings, email templates, and SMTP are unchanged; no real message was sent. Synthetic tests do not prove real hosted sign-ins. The intended feature is Founder/Supervisor sign-in by emailed code, with an optional password change, using the existing email provider and preserving enrolled MFA.
 
 ## Why a sign-in form alone is not sufficient
 
 Supabase describes an email OTP or magic link as an `aal1` session: it has verified the first factor, but not an enrolled authenticator. Supabase requires the application to enforce second-factor authorization in the app, APIs and database. A new recovery form could ask for the authenticator code, yet an `aal1` token can be used against Supabase directly without going through the form. Restricting only the new UI or middleware would not close that path.
 
-Read-only inspection of the hosted project on 2026-11-05 (Asia/Singapore) found:
+Read-only inspection before the policy/helper migration on 2026-11-05 (Asia/Singapore) found:
 
 - Public business tables have RLS enabled, but no restrictive MFA policies. Existing access policies check role and site assignment, not the session's MFA level.
-- Founder expense receipt storage policies check `is_founder()` but not assurance level.
+- Before the rollout, Founder expense receipt storage policies checked `is_founder()` but not assurance level. The installed migration guards that helper after verifying the exact existing storage policies and private buckets. There is no restrictive storage policy: future storage policy/bucket changes can bypass the safeguard and must be audited.
 - Several authenticated, `SECURITY DEFINER` functions—including project visibility and finance mutations—do not automatically inherit restrictive table policies. They must be reviewed individually.
 - Founder MFA enforcement in `middleware.ts` and `requireFounder()` is opt-in. Existing login normally presents an enrolled authenticator challenge, but those checks alone do not enforce MFA on direct Supabase access. Supervisor MFA is not currently enforced by that middleware.
 - The browser data provider can begin loading the ledger as soon as a profile is set; a protection rollout must account for loading before the MFA challenge completes.
@@ -34,7 +34,7 @@ The current app-level password cooldown only guards the app login endpoint; it d
 
 The installed Auth SDK has an important server-side distinction: calling `getAuthenticatorAssuranceLevel()` without a JWT reads the session's cached `user.factors`, whereas supplying a JWT makes it fetch the user from Auth. The draft checks the signed JWT and current verified factors in the database instead of treating cached session data as proof that no factor is enrolled. JWT expiration, factor enrollment/removal races, already-issued sessions and actual hosted Auth behavior still require review.
 
-## Draft application prerequisite (not deployed)
+## Application prerequisite (deployed; recovery remains off)
 
 `supabase/migrations/20261105000000_session_assurance_prerequisite.sql` adds an authenticated-only boolean RPC for the current session; it does not itself restrict database access. `lib/auth/session-assurance.ts` and the draft API changes use it to fail closed for Founder actions, Supervisor worker creation, password setup and integration status. The selected AI endpoint also uses the Founder guard.
 
