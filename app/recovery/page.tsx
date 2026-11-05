@@ -71,8 +71,8 @@ export default function RecoveryChoicePage() {
         </div>
         {changing ? (
           <form onSubmit={savePassword} noValidate className="space-y-4">
-            <Input label="New password" type="password" autoComplete="new-password" value={password} error={passwordError} reserveMessageSpace onChange={e => { setPassword(e.target.value); setPasswordError(undefined); }} required />
-            <Input label="Confirm new password" type="password" autoComplete="new-password" value={confirmation} error={confirmationError} reserveMessageSpace onChange={e => { setConfirmation(e.target.value); setConfirmationError(undefined); }} required />
+            <Input label="New password" type="password" autoComplete="new-password" value={password} error={passwordError} onChange={e => { setPassword(e.target.value); setPasswordError(undefined); }} required />
+            <Input label="Confirm new password" type="password" autoComplete="new-password" value={confirmation} error={confirmationError} onChange={e => { setConfirmation(e.target.value); setConfirmationError(undefined); }} required />
             <p className="text-xs text-ink-secondary">Use at least 8 characters with letters and numbers.</p>
             {error && <p role="alert" className="text-xs text-status-danger">{error}</p>}
             <div className="flex gap-2">
