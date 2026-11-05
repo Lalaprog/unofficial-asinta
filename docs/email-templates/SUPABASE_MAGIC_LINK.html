@@ -14,7 +14,7 @@
       <table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0" style="max-width:560px;background-color:#ffffff;border:1px solid #e1e6ed;border-radius:16px;">
         <tr><td style="padding:28px 28px 22px;border-bottom:1px solid #e9edf3;">
           <table role="presentation" cellspacing="0" cellpadding="0" border="0"><tr>
-            <td align="center" width="42" height="52" style="width:42px;height:52px;"><img src="https://unofficial-asinta.vercel.app/brand/asinta-emblem-email.png" width="25" height="48" alt="Asinta" style="display:block;width:25px;height:48px;border:0;outline:none;text-decoration:none;"></td>
+            {{ if .SiteURL }}<td align="center" width="42" height="52" style="width:42px;height:52px;"><img src="{{ .SiteURL }}/brand/asinta-emblem-email.png" width="25" height="48" alt="Asinta" style="display:block;width:25px;height:48px;border:0;outline:none;text-decoration:none;"></td>{{ end }}
             <td style="padding-left:12px;">
               <div style="font-size:13px;line-height:18px;font-weight:bold;letter-spacing:1.2px;color:#0b1f3a;">ASINTA ARCHITECTS</div>
               <div style="font-size:11px;line-height:17px;letter-spacing:1px;color:#657386;">BALE WORKSPACE</div>
