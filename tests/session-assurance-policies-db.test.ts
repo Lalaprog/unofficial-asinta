@@ -10,6 +10,7 @@ const tables = ['advance_requests','advances','attendance','audit_log','clients'
 const founder = '00000000-0000-0000-0000-000000000001';
 const supervisor = '00000000-0000-0000-0000-000000000002';
 const other = '00000000-0000-0000-0000-000000000003';
+const unenrolledFounder = '00000000-0000-0000-0000-000000000005';
 
 async function createFixture() {
   const db = new PGlite();
@@ -22,7 +23,7 @@ async function createFixture() {
     create table auth.mfa_factors(user_id uuid, status text);
     insert into auth.mfa_factors values ('${founder}','verified'),('${supervisor}','verified');
     create table public.users(id uuid primary key, name text, role text);
-    insert into public.users values ('${founder}','Founder','founder'),('${supervisor}','Supervisor','supervisor'),('${other}','Other','supervisor');
+    insert into public.users values ('${founder}','Founder','founder'),('${supervisor}','Supervisor','supervisor'),('${other}','Other','supervisor'),('${unenrolledFounder}','Unenrolled founder','founder');
     alter table public.users enable row level security;
     grant select, insert, update, delete on public.users to authenticated;
     create policy old_role_rules on public.users for all to authenticated using (true) with check (true);
@@ -43,11 +44,16 @@ async function createFixture() {
     drop policy old_role_rules on public.audit_log;
     create policy audit_select on public.audit_log for select to authenticated using (true);
     create policy audit_insert on public.audit_log for insert to authenticated with check (true);
-    create table storage.objects(id int primary key, value text);
-    insert into storage.objects values (1,'receipt');
+    create table storage.buckets(id text primary key, public boolean);
+    insert into storage.buckets values ('receipts',false);
+    create table storage.objects(id int primary key, value text, bucket_id text default 'receipts');
+    insert into storage.objects values (1,'receipt','receipts');
     alter table storage.objects enable row level security;
     grant select, insert, update, delete on storage.objects to authenticated;
-    create policy old_storage_rules on storage.objects for all to authenticated using (true) with check (true);
+    create policy "Founders can read expense receipts" on storage.objects for select to authenticated using (bucket_id='receipts' and public.is_founder());
+    create policy "Founders can upload expense receipts" on storage.objects for insert to authenticated with check (bucket_id='receipts' and public.is_founder());
+    create policy "Founders can update expense receipts" on storage.objects for update to authenticated using (bucket_id='receipts' and public.is_founder());
+    create policy "Founders can delete expense receipts" on storage.objects for delete to authenticated using (bucket_id='receipts' and public.is_founder());
   `);
   await db.exec(assurance);
   return db;
@@ -90,6 +96,22 @@ describe('draft table and storage assurance policies', () => {
     } finally { await db.close(); }
   }, 30000);
 
+  it('rejects unreviewed storage policies, modified predicates, or public buckets before changing roles', async () => {
+    for (const change of [
+      'create policy dangerous on storage.objects for select to authenticated using (true)',
+      'drop policy "Founders can read expense receipts" on storage.objects',
+      'alter policy "Founders can read expense receipts" on storage.objects using (true)',
+      "update storage.buckets set public=true where id='receipts'",
+    ]) {
+      const db = await createFixture();
+      try {
+        await db.exec(change);
+        await expect(db.exec(migration)).rejects.toThrow(/Storage policies differ|Unexpected public bucket/);
+        expect((await db.query<{count:number}>("select count(*)::int as count from pg_policies where policyname='mfa_session_required'")).rows[0].count).toBe(0);
+      } finally { await db.close(); }
+    }
+  }, 30000);
+
   it('blocks aal1 enrolled users on every listed table and storage while preserving bootstrap and authorized sessions', async () => {
     const db = await createFixture();
     try {
@@ -111,10 +133,11 @@ describe('draft table and storage assurance policies', () => {
         expect((await db.query<{result:boolean}>('select public.is_founder() as result')).rows[0].result).toBe(false);
         expect((await db.query<{result:boolean}>("select public.is_supervisor_assigned('00000000-0000-0000-0000-000000000009') as result")).rows[0].result).toBe(false);
         await identity(db,who,'aal2');
-        for (const table of [...tables.map(t => `public.${t}`), 'storage.objects']) {
+        for (const table of tables.map(t => `public.${t}`)) {
           expect((await db.query(`select * from ${table}`)).rows, table).toHaveLength(1);
         }
-        expect((await db.query('select * from public.users')).rows).toHaveLength(who === founder ? 3 : 1);
+        expect((await db.query('select * from storage.objects')).rows).toHaveLength(who === founder ? 1 : 0);
+        expect((await db.query('select * from public.users')).rows).toHaveLength(who === founder ? 4 : 1);
         expect((await db.query<{result:boolean}>('select public.is_founder() as result')).rows[0].result).toBe(who === founder);
         expect((await db.query<{result:boolean}>("select public.is_supervisor_assigned('00000000-0000-0000-0000-000000000009') as result")).rows[0].result).toBe(who === supervisor);
         expect((await db.query("update public.audit_log set value='changed' returning id")).rows).toHaveLength(0);
@@ -122,12 +145,18 @@ describe('draft table and storage assurance policies', () => {
       }
       // No verified factor is enrolled for this synthetic account.
       await identity(db,other,'aal1');
-      for (const table of [...tables.map(t => `public.${t}`), 'storage.objects']) {
+      for (const table of tables.map(t => `public.${t}`)) {
         expect((await db.query(`select * from ${table}`)).rows, table).toHaveLength(1);
       }
+      expect((await db.query('select * from storage.objects')).rows).toHaveLength(0);
       expect((await db.query("insert into public.expenses values (2,'allowed') returning id")).rows).toHaveLength(1);
       expect((await db.query("update public.expenses set value='allowed' where id=2 returning id")).rows).toHaveLength(1);
       expect((await db.query('delete from public.expenses where id=2 returning id')).rows).toHaveLength(1);
+      // The reviewed storage policies still permit an unenrolled Founder at aal1.
+      await identity(db,unenrolledFounder,'aal1');
+      expect((await db.query('select * from storage.objects')).rows).toHaveLength(1);
+      expect((await db.query("update storage.objects set value='allowed' where id=1 returning id")).rows).toHaveLength(1);
+      await expect(db.query("insert into storage.objects values (2,'wrong bucket','other')")).rejects.toThrow(/row-level security/);
       await identity(db,other,'invalid');
       expect((await db.query('select * from public.users')).rows).toHaveLength(0);
       expect((await db.query('select * from public.expenses')).rows).toHaveLength(0);

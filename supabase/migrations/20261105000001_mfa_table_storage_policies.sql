@@ -1,6 +1,6 @@
 -- DRAFT: DO NOT APPLY TO A HOSTED PROJECT until the full MFA rollout is ready.
 -- Requires the session_assurance_satisfied() prerequisite. This is only table
--- and storage RLS plus the audited role helpers used by selected privileged
+-- RLS plus the audited role helpers used by selected privileged
 -- functions. All other SECURITY DEFINER functions and service-role routes need
 -- separate review; it is not sufficient to enable email recovery.
 -- Existing permissive policies remain in force (the restrictive rules AND with
@@ -68,6 +68,37 @@ BEGIN
     WHERE n.nspname = 'storage' AND c.relname = 'objects'
       AND c.relkind IN ('r','p') AND c.relrowsecurity) THEN
     RAISE EXCEPTION 'Expected RLS-enabled storage.objects missing';
+  END IF;
+
+  -- Hosted storage.objects is owned by supabase_storage_admin, not the
+  -- migration executor. Its four existing receipt policies already call
+  -- is_founder(). Require their *exact* reviewed definitions, and a private
+  -- receipts bucket, before guarding that helper below. This is a one-time
+  -- snapshot, NOT a restrictive storage policy: later storage policy/bucket
+  -- changes must be re-audited and can otherwise bypass this protection.
+  LOCK TABLE storage.objects, storage.buckets IN SHARE MODE;
+  IF EXISTS (SELECT 1 FROM storage.buckets WHERE public IS DISTINCT FROM false)
+    OR NOT EXISTS (SELECT 1 FROM storage.buckets WHERE id = 'receipts' AND public IS FALSE) THEN
+    RAISE EXCEPTION 'Unexpected public bucket or missing private receipts bucket';
+  END IF;
+  PERFORM pg_catalog.set_config('search_path', '', true);
+  IF (SELECT pg_catalog.count(*) FROM pg_catalog.pg_policy
+      WHERE polrelid = 'storage.objects'::pg_catalog.regclass) <> 4
+    OR (SELECT pg_catalog.count(*) FROM pg_catalog.pg_policy p
+      WHERE p.polrelid = 'storage.objects'::pg_catalog.regclass
+        AND p.polpermissive AND p.polroles = ARRAY['authenticated'::pg_catalog.regrole::pg_catalog.oid]
+        AND ((p.polname = 'Founders can read expense receipts' AND p.polcmd = 'r')
+          OR (p.polname = 'Founders can update expense receipts' AND p.polcmd = 'w')
+          OR (p.polname = 'Founders can delete expense receipts' AND p.polcmd = 'd'))
+        AND pg_catalog.pg_get_expr(p.polqual, p.polrelid) = $predicate$((bucket_id = 'receipts'::text) AND public.is_founder())$predicate$
+        AND p.polwithcheck IS NULL) <> 3
+    OR (SELECT pg_catalog.count(*) FROM pg_catalog.pg_policy p
+      WHERE p.polrelid = 'storage.objects'::pg_catalog.regclass
+        AND p.polpermissive AND p.polroles = ARRAY['authenticated'::pg_catalog.regrole::pg_catalog.oid]
+        AND p.polname = 'Founders can upload expense receipts' AND p.polcmd = 'a'
+        AND p.polqual IS NULL
+        AND pg_catalog.pg_get_expr(p.polwithcheck, p.polrelid) = $predicate$((bucket_id = 'receipts'::text) AND public.is_founder())$predicate$) <> 1 THEN
+    RAISE EXCEPTION 'Storage policies differ from the reviewed receipt-only policies';
   END IF;
 END $$;
 
@@ -206,7 +237,5 @@ DROP POLICY IF EXISTS mfa_profile_delete ON public.users;
 CREATE POLICY mfa_profile_delete ON public.users AS RESTRICTIVE FOR DELETE TO authenticated
   USING ((SELECT public.session_assurance_satisfied()));
 
-DROP POLICY IF EXISTS mfa_session_required ON storage.objects;
-CREATE POLICY mfa_session_required ON storage.objects AS RESTRICTIVE FOR ALL TO authenticated
-  USING ((SELECT public.session_assurance_satisfied()))
-  WITH CHECK ((SELECT public.session_assurance_satisfied()));
+-- Storage access is gated by the verified existing receipt policies calling
+-- the guarded is_founder() helper. No storage.objects policy is created here.
