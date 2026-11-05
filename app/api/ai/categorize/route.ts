@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { analyzeExpenseWithAI } from '@/lib/ai/groq';
 import { createServerSupabaseClient } from '@/lib/supabase/server';
 import { enforceRateLimit } from '@/lib/api/rateLimitGuard';
+import { requireFounder } from '@/lib/auth/serverRole';
 
 /**
  * Groq AI expense categorization.
@@ -12,31 +13,13 @@ export async function POST(req: NextRequest) {
   try {
     const supabase = createServerSupabaseClient();
 
-    const {
-      data: { user },
-      error: authError,
-    } = await supabase.auth.getUser();
-
-    if (authError || !user) {
-      return NextResponse.json({ error: 'Authentication required' }, { status: 401 });
-    }
-
-    // RLS guarantees the caller can only read their own profile row.
-    const { data: profile, error: profileError } = await supabase
-      .from('users')
-      .select('role')
-      .eq('id', user.id)
-      .maybeSingle();
-
-    if (profileError || !profile || profile.role !== 'founder') {
-      return NextResponse.json(
-        { error: 'Only Founders may use AI expense categorization' },
-        { status: 403 }
-      );
+    const founder = await requireFounder(supabase);
+    if (!founder.ok || !founder.userId) {
+      return NextResponse.json({ error: founder.error || 'Authentication required' }, { status: founder.status });
     }
 
     // Groq tokens are paid per request.
-    const limited = enforceRateLimit('aiSuggest', req.headers, user.id);
+    const limited = enforceRateLimit('aiSuggest', req.headers, founder.userId);
     if (limited) return limited;
 
     const body = await req.json();

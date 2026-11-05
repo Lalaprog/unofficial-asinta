@@ -147,10 +147,14 @@ describe('audit log is append-only', () => {
     expect(rescoped.length).toBeGreaterThanOrEqual(20);
   });
 
-  it('never defines an update or delete policy on audit_log', () => {
+  it('never grants update or delete access through a permissive audit_log policy', () => {
+    // Restrictive policies can only narrow an existing permission, not grant
+    // one. Continue to reject UPDATE, DELETE and ALL for every policy that
+    // could grant access; the isolated database test covers the interaction.
     const policies = sql
       .split(';')
-      .filter((statement) => /create policy/i.test(statement) && /audit_log/i.test(statement));
+      .filter((statement) => /create policy/i.test(statement) && /audit_log/i.test(statement))
+      .filter((statement) => !/create\s+policy\s+(?:"[^"]+"|[\w]+)\s+on\s+public\.audit_log\s+as\s+restrictive\b/i.test(statement));
 
     expect(policies.length).toBeGreaterThan(0);
     for (const policy of policies) {

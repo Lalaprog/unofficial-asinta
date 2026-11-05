@@ -1,0 +1,40 @@
+# Email-code recovery: coordinated rollout (draft)
+
+**Do not apply or merge yet.** The code is disabled by default and synthetic tests are not a real hosted end-to-end test. The existing branch preview may point to the production Supabase project; do not use it for signed-in testing until the prerequisite is installed and the owner understands the impact. No live setting has been changed and no real email has been sent.
+
+## Owner preparation
+
+- Confirm a quiet window and that each user with an enrolled authenticator can access it. Active sessions may need to sign in and verify again. Keep a signed-in Supabase project administrator available for recovery if someone is locked out. Do not share authentication codes, email passwords, app passwords or service keys in chat or PRs.
+- Identify whether the existing invoice sender is personal Gmail or Google Workspace, and confirm the account owner can privately manage its SMTP credentials. A Google app password generally requires two-step verification and can be disallowed by Workspace policy; if unavailable, stop and review the provider's supported authentication, rather than buying a service or weakening account security.
+- Agree before changing live permissions, Auth settings or sending real test mail. Separate Supabase Auth SMTP settings from the app's Nodemailer settings; do not alter the latter or interrupt invoice email.
+
+## Technical checks before any change
+
+1. Re-inventory actual hosted RLS tables, views, storage buckets, column grants, accessible `SECURITY DEFINER` functions and bodies, triggers and all service-role APIs. The draft's one-time preflight rejects unfamiliar exposed relations and definer signatures, but it does not validate the body of a known function or protect new objects created later. Confirm the reviewed functions still require the guarded role helpers. Verify the migration executor has access to `auth.mfa_factors` and can bypass its RLS as needed; never grant factor-table access to ordinary users.
+2. Confirm the hosted Auth configuration enforces MFA for password changes and factor removal, and test session expiry, factor enrollment/removal races and existing signed URLs. An issued signed URL can remain valid until it expires. Test with the owner's own controlled accounts only when explicitly approved; synthetic database tests do not prove hosted Auth, Realtime or Storage behavior.
+3. Prepare a backup and recovery operator. Never run `supabase db push` or paste the full generated upgrade bundle: this project's hosted migration versions do not match repository filenames. Read and apply only reviewed individual migrations using a coordinated plan; record hosted version IDs and checksums. Ensure migrations run transactionally and confirm expected grants/policies after each.
+4. Supabase currently allows public signup. `shouldCreateUser: false` prevents signup through this app's request, but direct Supabase Auth requests can still use project settings. Review whether to disable public signup without disrupting service-role Founder account provisioning, and test that explicitly before changing it. Supabase Auth's own email/verification limits apply; the app's 3-per-5-min limiter is only per server instance, counts requests and can be bypassed by direct Auth calls. Do not present it as a distributed defense. Custom SMTP also changes who can receive Auth emails and may affect other Auth flows.
+
+## Safe rollout order (owner-approved window)
+
+1. Install and verify **only** additive `20261105000000_session_assurance_prerequisite.sql` on the intended project. Alone, it does not protect data or enable recovery. Check execute grants, function owner, and caller-only boolean behavior. Retain the previous deployment.
+2. Coordinate the app deployment and the restrictive policy/helper migration `20261105000001_mfa_table_storage_policies.sql`. The new app fails closed without step 1. The policies and role helpers may affect old clients and active sessions; policy migration and application cutover need a short coordinated window, with users ready to refresh. Do not enable Auth email code or SMTP before coverage and access are validated. Apply transactionally; a failed preflight must leave existing permissions unchanged.
+3. With both switches still off, verify existing Founder and Supervisor password sign-in, enrolled-factor challenge, unenrolled access, refresh, logout, cross-tab behavior, attendance, project privacy, payroll reads, receipt storage and API actions. Use only non-mutating checks unless the owner specifically approves other test actions. Confirm temporary-password onboarding still works; audit every live boundary again. Check error and retry handling. If any fail, stop.
+4. With explicit approval, configure Supabase Dashboard → Authentication → SMTP separately for the existing Gmail/Workspace sender. Typical Google SMTP is `smtp.gmail.com`, with port 465 (TLS) or 587 (STARTTLS), but use the provider/account's supported settings. The mailbox owner enters its email and app password **privately in Supabase**, never in chat. Verify sender address and any Workspace policy. Google quotas are shared with other messages from that account, and Supabase Free supports custom SMTP with separate limits.
+5. In Supabase Auth email templates, change the **Magic Link** template to include `{{ .Token }}` as the sign-in code (retain or remove a link only after reviewing other consumers). Review the site URL and redirect allowlist; the previous site URL was localhost, while the Vercel project currently has `https://unofficial-asinta.vercel.app` assigned—confirm the actual user-facing URL before editing it. Existing 8-digit/one-hour OTP settings and 60-second send frequency should be reviewed for the firm, not silently changed. Template, URL and SMTP changes affect project-wide Auth flows.
+6. Only after the above checks, enable `EMAIL_CODE_SIGNIN_ENABLED=true` and `NEXT_PUBLIC_EMAIL_CODE_SIGNIN_ENABLED=true` in the intended Vercel environment and deploy. The public flag is build-time. Neither flag protects Supabase's direct Auth API, so they are not a substitute for the database safeguards or Auth settings.
+7. With separate consent to send real email, test an owner-controlled address, expired/incorrect/reused codes, both roles (enrolled and unenrolled), mandatory authenticator challenge, optional password change now and later, and refresh/resume. Do not use real client addresses or financial transactions for the test. Confirm invoice email remains unaffected. The generic request response deliberately does not guarantee delivery.
+
+## If something goes wrong
+
+- Stop issuing new app requests by disabling both app flags and redeploying; this does **not** disable direct Supabase Auth or invalidate codes already sent. Keep users informed and preserve the last working deployment and administrator access.
+- Do not simply drop restrictive policies or revert the guarded role helpers while email OTP/magic-link sessions can still exist: an already-issued `aal1` token could then bypass MFA. Work out how to stop Auth issuance, expire/revoke affected sessions and codes, and restore previous helper/policy definitions with the owner before weakening controls. Disabling all email Auth can also disable password sign-in, so it is not an automatic rollback button.
+- If SMTP or the template causes trouble, restore the prior Auth settings carefully; these settings affect other Auth emails. Keep the existing invoice sender's Nodemailer configuration unchanged. Verify the system's working state after any rollback and do not claim a rollback was completed without checking.
+
+## References
+
+- [Supabase MFA enforcement](https://supabase.com/docs/guides/auth/auth-mfa)
+- [Supabase custom SMTP](https://supabase.com/docs/guides/auth/auth-smtp)
+- [Supabase email passwordless](https://supabase.com/docs/guides/auth/auth-email-passwordless)
+- [Google app passwords](https://support.google.com/accounts/answer/185833?hl=en)
+- [Workspace sending limits](https://support.google.com/a/answer/166852?hl=en)

@@ -136,5 +136,6 @@ export function createFakeSupabase(
           : { data: { user: null }, error: { message: 'Auth session missing' } },
     },
     from: db.from,
+    rpc: async () => ({ data: true, error: null }),
   };
 }

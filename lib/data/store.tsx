@@ -238,7 +238,10 @@ const round2 = (n: number) => Math.round(n * 100) / 100;
 
 export const DataStoreProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
   const supabase = useMemo(() => createSupabaseClient(), []);
-  const { user, isLoading: authLoading } = useAuth();
+  const { user: authUser, isLoading: authLoading, assurance } = useAuth();
+  // Never hydrate cached ledger data, subscribe, or issue data requests until
+  // the current session has passed the server-verified assurance check.
+  const user = assurance === 'ready' ? authUser : null;
   const { showToast } = useToast();
 
   const [isLoaded, setIsLoaded] = useState(false);
@@ -273,7 +276,7 @@ export const DataStoreProvider: React.FC<{ children: React.ReactNode }> = ({ chi
   // -------------------------------------------------------------------------
   const loadAll = useCallback(
     async (options?: { silent?: boolean }) => {
-      if (inFlightRef.current !== null) return;
+      if (!activeSessionRef.current || inFlightRef.current !== null) return;
       const token = ++requestSequence.current;
       const requestSession = activeSessionRef.current;
       inFlightRef.current = token;
@@ -413,7 +416,7 @@ export const DataStoreProvider: React.FC<{ children: React.ReactNode }> = ({ chi
   // Load when a user is authenticated (with instant sessionStorage cache
   // hydration + live Supabase Realtime & background sync); clear when signed out.
   useEffect(() => {
-    if (authLoading) return;
+    if (authLoading && sessionKey) return;
     if (loadedSessionRef.current !== sessionKey) {
       loadedSessionRef.current = sessionKey;
       clearAll();

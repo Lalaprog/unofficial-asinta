@@ -8,7 +8,7 @@
 -- will fail. Check with verify-live.sql before running.
 --
 -- GENERATED FILE — do not edit. Regenerate with `npm run build:apply-sql`.
--- Generated: 2026-11-04T16:18:19.846Z
+-- Generated: 2026-11-04T18:56:43.405Z
 --
 -- Source files (in execution order) and their SHA-256:
 --   20260913000000_bale_schema.sql  df054d9d265045b9…
@@ -28,6 +28,8 @@
 --   20261104000000_visible_projects.sql  415a7e6e38f962b0…
 --   20261104000001_project_column_privacy.sql  a4b99e9d35b55fa9…
 --   20261104000002_login_cooldown.sql  d0104d7dc1291e09…
+--   20261105000000_session_assurance_prerequisite.sql  e8e39a25a33a5331…
+--   20261105000001_mfa_table_storage_policies.sql  03272558e2116214…
 --
 -- After running: execute supabase/apply/verify-live.sql and confirm every
 -- row reports PASS. Procedure: docs/MIGRATION_RUNBOOK.md.
@@ -2374,5 +2376,251 @@ BEGIN
 END $$;
 REVOKE ALL ON FUNCTION public.reserve_login_attempt(text,uuid), public.finish_login_attempt(text,uuid,text) FROM PUBLIC, anon, authenticated;
 GRANT EXECUTE ON FUNCTION public.reserve_login_attempt(text,uuid), public.finish_login_attempt(text,uuid,text) TO service_role;
+
+
+-- @@ source: 20261105000000_session_assurance_prerequisite.sql
+
+-- Additive MFA-assurance prerequisite. This migration does not restrict any
+-- existing access or change an account. It must be installed and verified before
+-- an application calls the function. Hosted migration versions may differ;
+-- follow the documented rollout, not an unconditional `supabase db push`.
+--
+-- Only the authenticated caller's own verified-factor presence is consulted.
+-- The return value is boolean; factor identifiers, types and secrets are never
+-- returned. auth.uid() and auth.jwt() reflect Supabase-verified request claims.
+CREATE OR REPLACE FUNCTION public.session_assurance_satisfied()
+RETURNS boolean
+LANGUAGE sql STABLE SECURITY DEFINER
+SET search_path = ''
+AS $$
+  SELECT CASE
+    WHEN auth.uid() IS NULL THEN false
+    WHEN (auth.jwt()->>'aal') NOT IN ('aal1', 'aal2') OR (auth.jwt()->>'aal') IS NULL THEN false
+    WHEN (auth.jwt()->>'aal') = 'aal2' THEN true
+    ELSE NOT EXISTS (
+      SELECT 1 FROM auth.mfa_factors AS factor
+      WHERE factor.user_id = auth.uid() AND factor.status = 'verified'
+    )
+  END;
+$$;
+
+REVOKE ALL ON FUNCTION public.session_assurance_satisfied() FROM PUBLIC, anon;
+GRANT EXECUTE ON FUNCTION public.session_assurance_satisfied() TO authenticated;
+
+
+-- @@ source: 20261105000001_mfa_table_storage_policies.sql
+
+-- DRAFT: DO NOT APPLY TO A HOSTED PROJECT until the full MFA rollout is ready.
+-- Requires the session_assurance_satisfied() prerequisite. This is only table
+-- and storage RLS plus the audited role helpers used by selected privileged
+-- functions. All other SECURITY DEFINER functions and service-role routes need
+-- separate review; it is not sufficient to enable email recovery.
+-- Existing permissive policies remain in force (the restrictive rules AND with
+-- them). An unenrolled user can continue with aal1, while an enrolled user
+-- requires aal2. The own profile read exception is only for MFA bootstrapping.
+
+-- Refuse deployment if a listed table is missing or no longer has RLS, or
+-- if an unexpected public relation is accessible to authenticated clients.
+-- This does not discover definer functions; audit those separately.
+DO $$
+DECLARE
+  t text;
+  expected text[] := ARRAY['advance_requests', 'advances', 'attendance', 'audit_log', 'clients', 'email_logs', 'email_templates', 'expenses', 'invoices', 'payroll', 'project_supervisors', 'projects', 'reminder_dispatches', 'sms_logs', 'tools', 'user_notifications', 'vendor_memory', 'workers', 'users'];
+BEGIN
+  IF pg_catalog.to_regprocedure('public.session_assurance_satisfied()') IS NULL THEN
+    RAISE EXCEPTION 'Missing session assurance prerequisite';
+  END IF;
+  FOREACH t IN ARRAY expected LOOP
+    IF NOT EXISTS (SELECT 1 FROM pg_catalog.pg_class c
+      JOIN pg_catalog.pg_namespace n ON n.oid = c.relnamespace
+      WHERE n.nspname = 'public' AND c.relname = t
+        AND c.relkind IN ('r','p') AND c.relrowsecurity) THEN
+      RAISE EXCEPTION 'Expected RLS-enabled public table missing: %', t;
+    END IF;
+  END LOOP;
+  IF EXISTS (SELECT 1 FROM pg_catalog.pg_class c
+    JOIN pg_catalog.pg_namespace n ON n.oid = c.relnamespace
+    WHERE n.nspname = 'public' AND c.relkind IN ('r','p','v','m')
+      AND NOT (c.relname = ANY(expected))
+      AND (pg_catalog.has_table_privilege('authenticated', c.oid, 'SELECT, INSERT, UPDATE, DELETE')
+        OR pg_catalog.has_any_column_privilege('authenticated', c.oid, 'SELECT, INSERT, UPDATE'))) THEN
+    RAISE EXCEPTION 'Unexpected authenticated-accessible public relation: review before deployment';
+  END IF;
+  -- SECURITY DEFINER bypasses RLS. Refuse unexpected callable functions; the
+  -- named functions still require their bodies/grants to be reviewed at rollout.
+  IF EXISTS (
+    SELECT 1 FROM pg_catalog.pg_proc p
+    JOIN pg_catalog.pg_namespace n ON n.oid = p.pronamespace
+    WHERE n.nspname = 'public' AND p.prosecdef
+      AND (pg_catalog.has_function_privilege('authenticated', p.oid, 'EXECUTE')
+        OR pg_catalog.has_function_privilege('anon', p.oid, 'EXECUTE'))
+      AND NOT EXISTS (
+        SELECT 1 FROM unnest(ARRAY[
+          pg_catalog.to_regprocedure('public.session_assurance_satisfied()'),
+          pg_catalog.to_regprocedure('public.current_user_role()'),
+          pg_catalog.to_regprocedure('public.is_founder()'),
+          pg_catalog.to_regprocedure('public.is_supervisor_assigned(uuid)'),
+          pg_catalog.to_regprocedure('public.visible_projects()'),
+          pg_catalog.to_regprocedure('public.approve_advance_requests(uuid[])'),
+          pg_catalog.to_regprocedure('public.review_advance_request(uuid,text)'),
+          pg_catalog.to_regprocedure('public.issue_advance_request(uuid)'),
+          pg_catalog.to_regprocedure('public.record_advance_deduction_atomic(uuid,numeric)'),
+          pg_catalog.to_regprocedure('public.set_advance_status_atomic(uuid,text)'),
+          pg_catalog.to_regprocedure('public.set_payroll_status_atomic(uuid,text)'),
+          pg_catalog.to_regprocedure('public.audit_advance_request_change()'),
+          pg_catalog.to_regprocedure('public.notify_advance_request_event()'),
+          pg_catalog.to_regprocedure('public.rls_auto_enable()')
+        ]) AS allowed(function_oid) WHERE allowed.function_oid = p.oid
+      )
+  ) THEN
+    RAISE EXCEPTION 'Unexpected callable SECURITY DEFINER function: review before deployment';
+  END IF;
+  IF NOT EXISTS (SELECT 1 FROM pg_catalog.pg_class c
+    JOIN pg_catalog.pg_namespace n ON n.oid = c.relnamespace
+    WHERE n.nspname = 'storage' AND c.relname = 'objects'
+      AND c.relkind IN ('r','p') AND c.relrowsecurity) THEN
+    RAISE EXCEPTION 'Expected RLS-enabled storage.objects missing';
+  END IF;
+END $$;
+
+-- These helpers are used inside the currently audited privileged business
+-- functions, which bypass table RLS. Evaluate assurance before role/site access.
+-- Keep the return values non-null: older functions use IF NOT is_founder().
+-- Every other callable definer function still requires an independent audit.
+CREATE OR REPLACE FUNCTION public.is_founder()
+RETURNS boolean LANGUAGE sql STABLE SECURITY DEFINER SET search_path = '' AS $$
+  SELECT public.session_assurance_satisfied() IS TRUE AND EXISTS (
+    SELECT 1 FROM public.users WHERE id = auth.uid() AND role = 'founder'
+  );
+$$;
+CREATE OR REPLACE FUNCTION public.is_supervisor_assigned(proj_id uuid)
+RETURNS boolean LANGUAGE sql STABLE SECURITY DEFINER SET search_path = '' AS $$
+  SELECT public.session_assurance_satisfied() IS TRUE AND EXISTS (
+    SELECT 1 FROM public.project_supervisors WHERE supervisor_id = auth.uid() AND project_id = proj_id
+  );
+$$;
+
+DROP POLICY IF EXISTS mfa_session_required ON public.advance_requests;
+CREATE POLICY mfa_session_required ON public.advance_requests AS RESTRICTIVE FOR ALL TO authenticated
+  USING ((SELECT public.session_assurance_satisfied()))
+  WITH CHECK ((SELECT public.session_assurance_satisfied()));
+
+DROP POLICY IF EXISTS mfa_session_required ON public.advances;
+CREATE POLICY mfa_session_required ON public.advances AS RESTRICTIVE FOR ALL TO authenticated
+  USING ((SELECT public.session_assurance_satisfied()))
+  WITH CHECK ((SELECT public.session_assurance_satisfied()));
+
+DROP POLICY IF EXISTS mfa_session_required ON public.attendance;
+CREATE POLICY mfa_session_required ON public.attendance AS RESTRICTIVE FOR ALL TO authenticated
+  USING ((SELECT public.session_assurance_satisfied()))
+  WITH CHECK ((SELECT public.session_assurance_satisfied()));
+
+DROP POLICY IF EXISTS mfa_session_required ON public.audit_log;
+CREATE POLICY mfa_session_required ON public.audit_log AS RESTRICTIVE FOR ALL TO authenticated
+  USING ((SELECT public.session_assurance_satisfied()))
+  WITH CHECK ((SELECT public.session_assurance_satisfied()));
+
+DROP POLICY IF EXISTS mfa_session_required ON public.clients;
+CREATE POLICY mfa_session_required ON public.clients AS RESTRICTIVE FOR ALL TO authenticated
+  USING ((SELECT public.session_assurance_satisfied()))
+  WITH CHECK ((SELECT public.session_assurance_satisfied()));
+
+DROP POLICY IF EXISTS mfa_session_required ON public.email_logs;
+CREATE POLICY mfa_session_required ON public.email_logs AS RESTRICTIVE FOR ALL TO authenticated
+  USING ((SELECT public.session_assurance_satisfied()))
+  WITH CHECK ((SELECT public.session_assurance_satisfied()));
+
+DROP POLICY IF EXISTS mfa_session_required ON public.email_templates;
+CREATE POLICY mfa_session_required ON public.email_templates AS RESTRICTIVE FOR ALL TO authenticated
+  USING ((SELECT public.session_assurance_satisfied()))
+  WITH CHECK ((SELECT public.session_assurance_satisfied()));
+
+DROP POLICY IF EXISTS mfa_session_required ON public.expenses;
+CREATE POLICY mfa_session_required ON public.expenses AS RESTRICTIVE FOR ALL TO authenticated
+  USING ((SELECT public.session_assurance_satisfied()))
+  WITH CHECK ((SELECT public.session_assurance_satisfied()));
+
+DROP POLICY IF EXISTS mfa_session_required ON public.invoices;
+CREATE POLICY mfa_session_required ON public.invoices AS RESTRICTIVE FOR ALL TO authenticated
+  USING ((SELECT public.session_assurance_satisfied()))
+  WITH CHECK ((SELECT public.session_assurance_satisfied()));
+
+DROP POLICY IF EXISTS mfa_session_required ON public.payroll;
+CREATE POLICY mfa_session_required ON public.payroll AS RESTRICTIVE FOR ALL TO authenticated
+  USING ((SELECT public.session_assurance_satisfied()))
+  WITH CHECK ((SELECT public.session_assurance_satisfied()));
+
+DROP POLICY IF EXISTS mfa_session_required ON public.project_supervisors;
+CREATE POLICY mfa_session_required ON public.project_supervisors AS RESTRICTIVE FOR ALL TO authenticated
+  USING ((SELECT public.session_assurance_satisfied()))
+  WITH CHECK ((SELECT public.session_assurance_satisfied()));
+
+DROP POLICY IF EXISTS mfa_session_required ON public.projects;
+CREATE POLICY mfa_session_required ON public.projects AS RESTRICTIVE FOR ALL TO authenticated
+  USING ((SELECT public.session_assurance_satisfied()))
+  WITH CHECK ((SELECT public.session_assurance_satisfied()));
+
+DROP POLICY IF EXISTS mfa_session_required ON public.reminder_dispatches;
+CREATE POLICY mfa_session_required ON public.reminder_dispatches AS RESTRICTIVE FOR ALL TO authenticated
+  USING ((SELECT public.session_assurance_satisfied()))
+  WITH CHECK ((SELECT public.session_assurance_satisfied()));
+
+DROP POLICY IF EXISTS mfa_session_required ON public.sms_logs;
+CREATE POLICY mfa_session_required ON public.sms_logs AS RESTRICTIVE FOR ALL TO authenticated
+  USING ((SELECT public.session_assurance_satisfied()))
+  WITH CHECK ((SELECT public.session_assurance_satisfied()));
+
+DROP POLICY IF EXISTS mfa_session_required ON public.tools;
+CREATE POLICY mfa_session_required ON public.tools AS RESTRICTIVE FOR ALL TO authenticated
+  USING ((SELECT public.session_assurance_satisfied()))
+  WITH CHECK ((SELECT public.session_assurance_satisfied()));
+
+DROP POLICY IF EXISTS mfa_session_required ON public.user_notifications;
+CREATE POLICY mfa_session_required ON public.user_notifications AS RESTRICTIVE FOR ALL TO authenticated
+  USING ((SELECT public.session_assurance_satisfied()))
+  WITH CHECK ((SELECT public.session_assurance_satisfied()));
+
+DROP POLICY IF EXISTS mfa_session_required ON public.vendor_memory;
+CREATE POLICY mfa_session_required ON public.vendor_memory AS RESTRICTIVE FOR ALL TO authenticated
+  USING ((SELECT public.session_assurance_satisfied()))
+  WITH CHECK ((SELECT public.session_assurance_satisfied()));
+
+DROP POLICY IF EXISTS mfa_session_required ON public.workers;
+CREATE POLICY mfa_session_required ON public.workers AS RESTRICTIVE FOR ALL TO authenticated
+  USING ((SELECT public.session_assurance_satisfied()))
+  WITH CHECK ((SELECT public.session_assurance_satisfied()));
+
+-- Only the signed-in user's own profile can be read at aal1 while a verified
+-- factor awaits challenge. It does not grant profile access: existing permissive
+-- policies still apply. Never allow writes through the bootstrap exception.
+-- Role helpers below become false until MFA is complete. Explicitly permit a
+-- caller to read their own profile for bootstrap; the restrictive policy below
+-- still limits all other profile reads and writes. This is no broader than the
+-- existing Founder and Supervisor own-profile access.
+DROP POLICY IF EXISTS mfa_profile_bootstrap ON public.users;
+CREATE POLICY mfa_profile_bootstrap ON public.users FOR SELECT TO authenticated
+  USING (id = (SELECT auth.uid()));
+
+DROP POLICY IF EXISTS mfa_profile_read ON public.users;
+CREATE POLICY mfa_profile_read ON public.users AS RESTRICTIVE FOR SELECT TO authenticated
+  USING (
+    ((id = (SELECT auth.uid())) AND (SELECT auth.jwt()->>'aal') IN ('aal1', 'aal2'))
+    OR (SELECT public.session_assurance_satisfied())
+  );
+DROP POLICY IF EXISTS mfa_profile_insert ON public.users;
+CREATE POLICY mfa_profile_insert ON public.users AS RESTRICTIVE FOR INSERT TO authenticated
+  WITH CHECK ((SELECT public.session_assurance_satisfied()));
+DROP POLICY IF EXISTS mfa_profile_update ON public.users;
+CREATE POLICY mfa_profile_update ON public.users AS RESTRICTIVE FOR UPDATE TO authenticated
+  USING ((SELECT public.session_assurance_satisfied()))
+  WITH CHECK ((SELECT public.session_assurance_satisfied()));
+DROP POLICY IF EXISTS mfa_profile_delete ON public.users;
+CREATE POLICY mfa_profile_delete ON public.users AS RESTRICTIVE FOR DELETE TO authenticated
+  USING ((SELECT public.session_assurance_satisfied()));
+
+DROP POLICY IF EXISTS mfa_session_required ON storage.objects;
+CREATE POLICY mfa_session_required ON storage.objects AS RESTRICTIVE FOR ALL TO authenticated
+  USING ((SELECT public.session_assurance_satisfied()))
+  WITH CHECK ((SELECT public.session_assurance_satisfied()));
 
 commit;

@@ -4,8 +4,9 @@
  */
 
 import { isMfaEnforcementEnabled } from '@/lib/auth/mfa';
+import { requireSessionAssurance, type AssuranceClient } from '@/lib/auth/session-assurance';
 
-export interface MinimalSupabaseAuthClient {
+export interface MinimalSupabaseAuthClient extends AssuranceClient {
   auth: {
     getUser: () => Promise<{ data: { user: { id: string; email?: string | null } | null }; error: unknown }>;
     mfa?: {
@@ -50,6 +51,11 @@ export async function requireFounder(supabase: MinimalSupabaseAuthClient): Promi
   if (profileError || !profile || profile.role !== 'founder') {
     return { ok: false, status: 403, error: 'This action is restricted to Founder accounts' };
   }
+
+  // A registered factor must be completed even when the separate mandatory
+  // Founder enrollment flag is off. The prerequisite RPC must already exist.
+  const assurance = await requireSessionAssurance(supabase);
+  if (!assurance.ok) return assurance;
 
   /**
    * Founder MFA enforcement (opt-in, see lib/auth/mfa.ts).

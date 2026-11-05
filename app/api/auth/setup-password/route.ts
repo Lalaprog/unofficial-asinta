@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { createServerSupabaseClient } from '@/lib/supabase/server';
 import { validatePasswordStrength } from '@/lib/users/admin';
+import { requireSessionAssurance } from '@/lib/auth/session-assurance';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -26,6 +27,13 @@ export async function POST(request: NextRequest) {
       { ok: false, error: 'Authentication required.' },
       { status: 401, headers: { 'Cache-Control': 'private, no-store' } }
     );
+  }
+
+  const assurance = await requireSessionAssurance(supabase);
+  if (!assurance.ok) {
+    return NextResponse.json({ ok: false, error: assurance.error }, {
+      status: assurance.status, headers: { 'Cache-Control': 'private, no-store' },
+    });
   }
 
   let body: { newPassword?: unknown } = {};

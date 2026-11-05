@@ -22,14 +22,14 @@ interface AppShellProps {
 }
 
 export const AppShell: React.FC<AppShellProps> = ({ children, requireFounder = false }) => {
-  const { user, isFounder, isLoading: authLoading } = useAuth();
+  const { user, isFounder, isLoading: authLoading, assurance } = useAuth();
   const { isLoaded, loadError, refresh } = useDataStore();
   const router = useRouter();
 
   // Once the session and ledger are loaded, silently pre-warm the role's routes
   // so subsequent page navigation is instantaneous.
   useEffect(() => {
-    if (!user || !isLoaded) return;
+    if (!user || !isLoaded || assurance !== 'ready') return;
     const routes = isFounder
       ? [
           '/dashboard',
@@ -59,7 +59,13 @@ export const AppShell: React.FC<AppShellProps> = ({ children, requireFounder = f
     }, 300);
 
     return () => window.clearTimeout(timer);
-  }, [user, isLoaded, isFounder, router]);
+  }, [user, isLoaded, isFounder, router, assurance]);
+
+  useEffect(() => {
+    if (user && (assurance === 'required' || assurance === 'unavailable')) {
+      router.replace('/');
+    }
+  }, [user, assurance, router]);
 
   // Guard against transient network/hydration blips before redirecting to `/`
   const sessionGone = !authLoading && !user;
@@ -122,6 +128,11 @@ export const AppShell: React.FC<AppShellProps> = ({ children, requireFounder = f
         subtitle="Your BALE ledger records remain safely saved"
       />
     );
+  }
+
+  // Do not render cached workspace content while assurance is unresolved.
+  if (user && assurance !== 'ready') {
+    return <AsintaLoader variant="fullscreen" title="Checking account security…" subtitle="Preparing your workspace securely" />;
   }
 
   // 1b. Resolving authentication session

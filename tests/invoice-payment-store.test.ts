@@ -16,7 +16,7 @@ vi.mock('@/lib/supabase/client', () => ({createClient: () => ({
     },
   }),
 })}));
-vi.mock('@/lib/auth/authContext',()=>{const user={id:'founder',email:'founder@example.test',role:'founder'};return {useAuth:()=>({user,isFounder:true})}});
+vi.mock('@/lib/auth/authContext',()=>{const user={id:'founder',email:'founder@example.test',role:'founder'};return {useAuth:()=>({assurance:'ready',user,isFounder:true})}});
 vi.mock('@/components/ui/Toast',()=>({useToast:()=>({showToast:mock.toast})}));
 vi.mock('@/lib/audit/log',()=>({writeAuditEntry:mock.audit,auditFailureMessage:()=>''}));
 import {DataStoreProvider,useDataStore} from '@/lib/data/store';

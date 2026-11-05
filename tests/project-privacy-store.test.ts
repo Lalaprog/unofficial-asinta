@@ -5,12 +5,13 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 const mock = vi.hoisted(() => ({
   role: 'founder' as 'founder' | 'supervisor' | 'signedout',
+  assurance: 'ready' as 'ready' | 'required' | 'checking' | 'unavailable',
   projects: [] as any[], calls: [] as Array<{kind:string;table?:string;selection?:string;payload?:any}>,
   reloadError: false, nextLoad: null as null | Promise<{data:any[]; error:null}>, toast: vi.fn(),
   founder: {id:'user', email:'founder@example.test', role:'founder'},
   supervisor: {id:'user', email:'founder@example.test', role:'supervisor'},
 }));
-vi.mock('@/lib/auth/authContext', () => ({useAuth: () => ({user: mock.role === 'signedout' ? null : mock.role === 'founder' ? mock.founder : mock.supervisor, isLoading:false})}));
+vi.mock('@/lib/auth/authContext', () => ({useAuth: () => ({assurance:mock.assurance,user: mock.role === 'signedout' ? null : mock.role === 'founder' ? mock.founder : mock.supervisor, isLoading:false})}));
 vi.mock('@/components/ui/Toast', () => ({useToast: () => ({showToast:mock.toast})}));
 vi.mock('@/lib/supabase/client', () => ({createClient: () => ({
   rpc: (name:string) => {
@@ -33,10 +34,25 @@ let store:ReturnType<typeof useDataStore>;
 function Probe(){store=useDataStore();return null;}
 const project = {id:'p',name:'Site',client_id:'private-client',location:'Lipa',budget_estimate:'90000',status:'active' as const,start_date:'2026-01-01',target_completion_date:'2026-12-31',created_at:'2026-01-01T00:00:00Z'};
 const setup = async () => {render(React.createElement(DataStoreProvider,null,React.createElement(Probe)));await waitFor(()=>expect(store.isLoaded).toBe(true));};
-beforeEach(()=>{mock.role='founder';mock.projects=[project];mock.calls=[];mock.reloadError=false;mock.nextLoad=null;mock.toast.mockReset();sessionStorage.clear();});
+beforeEach(()=>{mock.role='founder';mock.assurance='ready';mock.projects=[project];mock.calls=[];mock.reloadError=false;mock.nextLoad=null;mock.toast.mockReset();sessionStorage.clear();});
 afterEach(()=>cleanup());
 
 describe('project privacy in the shared store',()=>{
+  it('does not hydrate, fetch or retain ledger data before assurance and loads after verification',async()=>{
+    mock.assurance='required';
+    sessionStorage.setItem('bale-ledger-cache:v2:user:founder',JSON.stringify({projects:[project]}));
+    const view=render(React.createElement(DataStoreProvider,null,React.createElement(Probe)));
+    await act(async()=>{});
+    expect(store.projects).toHaveLength(0);
+    expect(mock.calls).toHaveLength(0);
+    expect(sessionStorage.getItem('bale-ledger-cache:v2:user:founder')).toBeNull();
+    mock.assurance='ready';
+    view.rerender(React.createElement(DataStoreProvider,null,React.createElement(Probe)));
+    await waitFor(()=>expect(store.projects).toHaveLength(1));
+    mock.assurance='checking';
+    view.rerender(React.createElement(DataStoreProvider,null,React.createElement(Probe)));
+    await waitFor(()=>expect(store.projects).toHaveLength(0));
+  });
   it('loads via the role-aware function and preserves Founder details',async()=>{
     await setup();
     expect(store.projects[0]).toMatchObject({client_id:'private-client',budget_estimate:90000});
