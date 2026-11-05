@@ -57,7 +57,7 @@ export function ExpenseDetailsModal({ expense, projects, onClose, onUpdate, onRe
     } catch { setError('The update was not confirmed. Refresh and check the expense before retrying.'); }
     finally { lock.current = false; setSaving(false); }
   };
-  return <Modal isOpen={Boolean(expense)} onClose={onClose} dismissOnBackdrop={!saving} dismissOnEscape={!saving} showCloseButton={!saving} title={editing ? 'Edit expense' : 'Expense details'} maxWidth="lg">
+  return <Modal isOpen={Boolean(expense)} onClose={onClose} dismissOnBackdrop={!saving} dismissOnEscape={!saving} showCloseButton={!saving} title={editing ? 'Edit expense' : 'Expense details'} maxWidth="5xl" presentation="workspace">
     {expense && (editing ? <form onSubmit={save} className="space-y-4" noValidate>
       <Input label="Expense title" value={form.description} onChange={e => setForm({...form,description:e.target.value})} required />
       <Textarea label="Description" maxLength={5000} rows={3} value={form.details} onChange={e => setForm({...form,details:e.target.value})} />
@@ -72,20 +72,20 @@ export function ExpenseDetailsModal({ expense, projects, onClose, onUpdate, onRe
       <Input label="Supplier" value={form.vendor} onChange={e => setForm({...form,vendor:e.target.value})} />
       <Textarea label="Notes / receipt number" rows={2} value={form.notes} onChange={e => setForm({...form,notes:e.target.value})} />
       {error && <p role="alert" className="text-xs text-status-danger">{error}</p>}
-      <div className="flex justify-end gap-2"><Button type="button" variant="secondary" onClick={() => setEditing(false)} disabled={saving}>Cancel</Button><Button type="submit" variant="primary" isLoading={saving}>Save changes</Button></div>
+      <div className="flex flex-col-reverse gap-2 sm:flex-row sm:justify-end"><Button type="button" variant="secondary" onClick={() => setEditing(false)} disabled={saving}>Cancel</Button><Button type="submit" variant="primary" isLoading={saving}>Save changes</Button></div>
     </form> : <div className="space-y-4 text-sm">
       <div><p className="text-xs font-semibold text-ink-secondary">Title</p><p className="mt-1 break-words font-bold text-navy">{expense.description}</p></div>
       {expense.details && <div><p className="text-xs font-semibold text-ink-secondary">Description</p><p className="mt-1 whitespace-pre-wrap break-words text-ink-primary">{expense.details}</p></div>}
-      <dl className="grid grid-cols-2 gap-3 rounded-xl bg-surface-inset/50 p-3 text-xs">
+      <dl className="grid grid-cols-2 gap-3 rounded-xl bg-surface-inset/50 p-4 text-sm">
         <div><dt className="text-ink-secondary">Receipt total</dt><dd className="mt-1 font-bold text-navy">{formatPeso(expense.amount)}</dd></div>
         <div><dt className="text-ink-secondary">Date</dt><dd className="mt-1 font-semibold text-navy">{expense.expense_date}</dd></div>
         <div><dt className="text-ink-secondary">Project</dt><dd className="mt-1 font-semibold text-navy">{projects.find(project => project.id === expense.project_id)?.name || 'Unavailable'}</dd></div>
         <div><dt className="text-ink-secondary">Category</dt><dd className="mt-1 font-semibold capitalize text-navy">{expense.category}</dd></div>
         {expense.vendor && <div><dt className="text-ink-secondary">Supplier</dt><dd className="mt-1 break-words font-semibold text-navy">{expense.vendor}</dd></div>}
       </dl>
-      {expense.line_items?.length ? <div><h3 className="mb-2 text-xs font-bold text-navy">Receipt items</h3><div className="overflow-x-auto rounded-xl border border-surface-border"><table className="w-full min-w-[300px] text-left text-xs"><thead className="bg-surface-inset text-ink-secondary"><tr><th className="p-3">Item</th><th className="p-3">Quantity</th><th className="p-3 text-right">Amount</th></tr></thead><tbody>{expense.line_items.map((item,index) => <tr key={index} className="border-t border-surface-border"><td className="p-3 break-words">{item.name}</td><td className="p-3">{item.quantity || '—'}</td><td className="p-3 text-right tabular-nums">{item.amount == null ? '—' : formatPeso(item.amount)}</td></tr>)}</tbody></table></div>{subtotal !== null && <p className="mt-2 text-xs text-ink-secondary">Items subtotal: {formatPeso(subtotal)}{difference !== null && Math.abs(difference) >= 0.01 ? ` · Difference from receipt total: ${formatPeso(difference)} (e.g. tax, delivery or discounts)` : null}</p>}</div> : <p className="text-xs text-ink-secondary">No item breakdown recorded.</p>}
+      {expense.line_items?.length ? <div><h3 className="mb-2 text-xs font-bold text-navy">Receipt items</h3><div className="overflow-x-auto rounded-xl border border-surface-border"><table className="w-full min-w-[300px] text-left text-sm"><thead className="bg-surface-inset text-ink-secondary"><tr><th className="p-3">Item</th><th className="p-3">Quantity</th><th className="p-3 text-right">Amount</th></tr></thead><tbody>{expense.line_items.map((item,index) => <tr key={index} className="border-t border-surface-border"><td className="p-3 break-words">{item.name}</td><td className="p-3">{item.quantity || '—'}</td><td className="p-3 text-right tabular-nums">{item.amount == null ? '—' : formatPeso(item.amount)}</td></tr>)}</tbody></table></div>{subtotal !== null && <p className="mt-2 text-xs text-ink-secondary">Items subtotal: {formatPeso(subtotal)}{difference !== null && Math.abs(difference) >= 0.01 ? ` · Difference from receipt total: ${formatPeso(difference)} (e.g. tax, delivery or discounts)` : null}</p>}</div> : <p className="text-xs text-ink-secondary">No item breakdown recorded.</p>}
       {expense.notes && <div><p className="text-xs font-semibold text-ink-secondary">Notes / receipt number</p><p className="mt-1 whitespace-pre-wrap break-words text-ink-primary">{expense.notes}</p></div>}
-      <div className="flex flex-wrap justify-end gap-2">{expense.receipt_url && <Button type="button" variant="secondary" onClick={() => onReceipt(expense.receipt_url!)}>View receipt photo</Button>}<Button type="button" variant="primary" onClick={startEditing}>Edit expense</Button></div>
+      <div className="flex flex-col-reverse gap-2 sm:flex-row sm:justify-end">{expense.receipt_url && <Button type="button" variant="secondary" onClick={() => onReceipt(expense.receipt_url!)}>View receipt photo</Button>}<Button type="button" variant="primary" onClick={startEditing}>Edit expense</Button></div>
     </div>)}
   </Modal>;
 }

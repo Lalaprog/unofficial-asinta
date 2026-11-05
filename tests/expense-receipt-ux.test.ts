@@ -18,6 +18,7 @@ describe('expense receipt review',()=>{
   it('removes voice controls, opens a review with short editable description and keeps full OCR separate',async()=>{
     render(React.createElement(ExpensesPage));expect(screen.queryByText(/voice note/i)).toBeNull();await scan();
     const dialog=screen.getByRole('dialog',{name:'Record Site Expense'});expect((within(dialog).getByLabelText('Expense title') as HTMLInputElement).value).toBe('CEMENT');
+    await waitFor(()=>expect(document.activeElement).toBe(dialog)); expect(dialog.className).toContain('max-w-5xl');
     expect((within(dialog).getByLabelText('Amount (PHP ₱)') as HTMLInputElement).value).toBe('');expect((within(dialog).getByLabelText('Expense Date') as HTMLInputElement).value).toBe('');
     expect(dialog.querySelector('pre')?.textContent).toBe(reading);expect(within(dialog).getByText(/Text read from the receipt \(not saved\)/)).toBeTruthy();expect(within(dialog).getByAltText('Receipt photo awaiting your review')).toBeTruthy();
     expect(mock.create).not.toHaveBeenCalled();expect(mock.upload).not.toHaveBeenCalled();
