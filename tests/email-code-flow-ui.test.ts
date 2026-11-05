@@ -64,6 +64,18 @@ describe('email-code sign-in interface', () => {
     await waitFor(()=>expect(mock.replace).toHaveBeenCalledWith('/recovery'));
     expect(mock.factors).not.toHaveBeenCalled();
   });
+  it('shows field-level guidance without submitting invalid login or email requests', async () => {
+    render(React.createElement(LoginPage));
+    fireEvent.click(screen.getByText('Sign In'));
+    expect(screen.getByText('Enter your work email.')).toBeTruthy();
+    expect(screen.getByText('Enter your password.')).toBeTruthy();
+    expect(mock.login).not.toHaveBeenCalled();
+    fireEvent.click(screen.getByText('Forgot your password? Sign in with an email code'));
+    fireEvent.change(screen.getByLabelText('Work Email'), {target:{value:'invalid'}});
+    fireEvent.click(screen.getByText('Send sign-in code'));
+    expect(screen.getByText('Enter a valid email, such as name@example.com.')).toBeTruthy();
+    expect(fetch).not.toHaveBeenCalled();
+  });
   it('does not proceed when an email code is invalid, expired or already used', async () => {
     mock.codeVerify.mockResolvedValue({data:{user:null,session:null},error:{message:'expired'}});
     render(React.createElement(LoginPage));

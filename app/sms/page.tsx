@@ -12,6 +12,7 @@ import { Input, Textarea } from '@/components/ui/Input';
 import { Select } from '@/components/ui/Select';
 import { Modal } from '@/components/ui/Modal';
 import { WorkspaceHeader } from '@/components/ui/WorkspaceHeader';
+import { EmptyState } from '@/components/ui/EmptyState';
 import { WorkspaceFilters } from '@/components/ui/WorkspaceFilters';
 import { createClient } from '@/lib/supabase/client';
 import { buildReminderSMS, detectReminderType, estimateSMSSegments } from '@/lib/sms/templates';
@@ -284,7 +285,7 @@ export default function SMSPage() {
               </details>;
             })}
           </div>
-          {invalidDates ? <p id="sms-date-error" role="alert" className="p-6 text-sm text-status-danger">Choose an end date on or after the start date.</p> : searchSettling || (history.loading && !history.items.length) ? <p className="p-6 text-sm text-ink-secondary" role="status">Loading SMS history…</p> : history.error ? <div className="p-6 text-sm text-status-danger" role="alert"><p>{history.error}</p><Button variant="secondary" size="sm" onClick={history.retry} className="mt-2">Try again</Button></div> : !history.items.length ? <p className="p-8 text-center text-sm text-ink-secondary">No SMS dispatch logs match these filters.</p> : null}
+          {invalidDates ? <p id="sms-date-error" role="alert" className="p-6 text-sm text-status-danger">Choose an end date on or after the start date.</p> : searchSettling || (history.loading && !history.items.length) ? <p className="p-6 text-sm text-ink-secondary" role="status">Loading SMS history…</p> : history.error ? <div className="p-6 text-sm text-status-danger" role="alert"><p>{history.error}</p><Button variant="secondary" size="sm" onClick={history.retry} className="mt-2">Try again</Button></div> : !history.items.length ? <EmptyState title="No SMS messages to show" description="No SMS dispatch logs match these filters." /> : null}
           {history.hasMore && !history.error && <div className="p-4 border-t border-surface-border/60"><Button variant="secondary" size="sm" onClick={history.loadMore} isLoading={history.loading} disabled={history.loading}>Load more</Button></div>}
           <p className="px-4 pb-4 text-[11px] text-ink-muted">Pages reflect the history at the time each is loaded. Refresh to see new or changed attempts.</p>
         </div>

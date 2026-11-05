@@ -15,6 +15,7 @@ import {
 import { Button } from '@/components/ui/Button';
 import { FilterSummary } from '@/components/ui/FilterSummary';
 import { WorkspaceHeader } from '@/components/ui/WorkspaceHeader';
+import { EmptyState } from '@/components/ui/EmptyState';
 import { WorkspaceFilters } from '@/components/ui/WorkspaceFilters';
 import { useToast } from '@/components/ui/Toast';
 import { Badge } from '@/components/ui/Badge';
@@ -393,9 +394,7 @@ function IssuedAdvancesPanel() {
             })}
 
             {filteredAdvances.length === 0 && (
-              <div className="p-12 text-center text-xs text-ink-secondary">
-                {advances.length === 0 ? 'No issued advances have been recorded yet.' : 'No advances match the current search or filters. Clear filters to see all advances.'}
-              </div>
+              <EmptyState title={advances.length === 0 ? 'No advances yet' : 'No advances match'} description={advances.length === 0 ? 'No issued advances have been recorded yet.' : 'No advances match the current search or filters. Clear filters to see all advances.'} />
             )}
           </div>
         </div>

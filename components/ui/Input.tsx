@@ -10,12 +10,14 @@ export interface InputProps extends React.InputHTMLAttributes<HTMLInputElement> 
   hint?: string;
   leftIcon?: React.ReactNode;
   rightIcon?: React.ReactNode;
+  /** Reserve room for short validation messages to avoid layout jumps. */
+  reserveMessageSpace?: boolean;
 }
 
 const LABEL_CLASSES = 'text-xs font-semibold text-ink-secondary';
 
 export const Input = React.forwardRef<HTMLInputElement, InputProps>(
-  ({ className, label, error, hint, leftIcon, rightIcon, id, 'aria-describedby': callerDescription, 'aria-invalid': callerInvalid, ...props }, ref) => {
+  ({ className, label, error, hint, leftIcon, rightIcon, reserveMessageSpace, id, 'aria-describedby': callerDescription, 'aria-invalid': callerInvalid, ...props }, ref) => {
     // useId guarantees a unique id per field. The previous label-derived id
     // produced duplicate DOM ids whenever a page reused a label ("Start Date").
     const generatedId = useId();
@@ -53,16 +55,14 @@ export const Input = React.forwardRef<HTMLInputElement, InputProps>(
           />
           {rightIcon && <div className="absolute right-3 text-ink-muted">{rightIcon}</div>}
         </div>
-        {error && (
-          <p id={errorId} className="text-xs font-medium text-status-danger">
-            {error}
-          </p>
-        )}
-        {hint && !error && (
-          <p id={hintId} className="text-xs text-ink-secondary">
-            {hint}
-          </p>
-        )}
+        {reserveMessageSpace ? (
+          <div className="min-h-8 text-xs leading-4" aria-live="polite">
+            {error ? <p id={errorId} className="font-medium text-status-danger">{error}</p> : hint ? <p id={hintId} className="text-ink-secondary">{hint}</p> : null}
+          </div>
+        ) : <>
+          {error && <p id={errorId} className="text-xs font-medium text-status-danger">{error}</p>}
+          {hint && !error && <p id={hintId} className="text-xs text-ink-secondary">{hint}</p>}
+        </>}
       </div>
     );
   }

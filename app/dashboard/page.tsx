@@ -2,6 +2,7 @@
 
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import Link from 'next/link';
+import { ChevronDown } from 'lucide-react';
 import { AppShell } from '@/components/layout/AppShell';
 import { useDataStore } from '@/lib/data/store';
 import type { Invoice, ToolCondition } from '@/types';
@@ -697,32 +698,30 @@ export default function FounderDashboard() {
             <p className="mt-2 text-[11px] font-medium text-ink-muted">
               Snapshot as of {formatDatePH(metrics.asOfDate)}
             </p>
-            <div className="mt-3 flex w-full max-w-sm min-w-0 items-center gap-2">
-              <label htmlFor="dashboard-project-scope" className="shrink-0 text-[11px] font-semibold text-ink-secondary">
-                Project scope
-              </label>
-              <select
-                id="dashboard-project-scope"
-                value={activeProject?.id ?? ''}
-                onChange={(event) => setSelectedProjectId(event.target.value || null)}
-                aria-describedby="dashboard-project-scope-hint"
-                aria-busy={!isLoaded}
-                disabled={!isLoaded}
-                className="min-h-11 w-full min-w-0 rounded-lg border border-[#ded7c9] bg-white px-3 py-2 text-base font-medium text-navy transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand focus-visible:ring-offset-2 disabled:opacity-60 sm:text-sm"
-              >
-                <option value="">All projects</option>
-                {metrics.projects.map((project) => (
-                  <option key={project.id} value={project.id}>
-                    {(projectNameCounts.get(project.name.trim().toLocaleLowerCase()) ?? 0) > 1
-                      ? `${project.name} — ${project.location || 'No location'} · ${project.id}`
-                      : project.name}
-                  </option>
-                ))}
-              </select>
+            <div className="mt-4 inline-flex w-full max-w-sm items-center gap-3 rounded-xl border border-[#e3dccd] bg-white/75 px-3 py-1 shadow-sm transition-colors focus-within:border-brand/50 focus-within:ring-2 focus-within:ring-brand/15 sm:w-auto">
+              <label htmlFor="dashboard-project-scope" className="shrink-0 text-[10px] font-bold uppercase tracking-wider text-ink-muted">Project</label>
+              <div className="relative min-w-0 flex-1">
+                <select
+                  id="dashboard-project-scope"
+                  aria-label="Project scope"
+                  value={activeProject?.id ?? ''}
+                  onChange={(event) => setSelectedProjectId(event.target.value || null)}
+                  aria-busy={!isLoaded}
+                  disabled={!isLoaded}
+                  className="min-h-11 w-full min-w-0 appearance-none bg-transparent py-2 pl-1 pr-8 text-base font-semibold text-navy outline-none disabled:opacity-60 sm:min-w-44 sm:text-sm"
+                >
+                  <option value="">All projects</option>
+                  {metrics.projects.map((project) => (
+                    <option key={project.id} value={project.id}>
+                      {(projectNameCounts.get(project.name.trim().toLocaleLowerCase()) ?? 0) > 1
+                        ? `${project.name} — ${project.location || 'No location'} · ${project.id}`
+                        : project.name}
+                    </option>
+                  ))}
+                </select>
+                <ChevronDown aria-hidden="true" className="pointer-events-none absolute right-1 top-1/2 h-4 w-4 -translate-y-1/2 text-brand" />
+              </div>
             </div>
-            <p id="dashboard-project-scope-hint" className="mt-1 text-[10px] text-ink-muted">
-              Current project options come from loaded data.
-            </p>
           </div>
 
           <div className="relative z-10 flex shrink-0 flex-wrap items-center gap-2">

@@ -32,8 +32,8 @@ describe('dashboard project scope selector', () => {
     const selector = screen.getByRole('combobox', { name: 'Project scope' }) as HTMLSelectElement;
     expect(Array.from(selector.options).map((option) => option.textContent)).toEqual(['All projects', 'Alpha', 'Beta', 'Gamma']);
     expect(selector.value).toBe('');
-    expect(selector.getAttribute('aria-describedby')).toBe('dashboard-project-scope-hint');
-    expect(screen.getByText('Current project options come from loaded data.')).toBeTruthy();
+    expect(selector.getAttribute('aria-label')).toBe('Project scope');
+    expect(screen.queryByText('Current project options come from loaded data.')).toBeNull();
     // The existing all-project receivables total includes historical projects.
     expect(within(balancesCard()).getAllByLabelText('₱8,500.00').length).toBeGreaterThan(0);
     fireEvent.change(selector, { target: { value: 'alpha' } });

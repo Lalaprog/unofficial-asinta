@@ -39,6 +39,8 @@ export default function LoginPage() {
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [showPassword, setShowPassword] = useState(false);
+  const [fieldErrors, setFieldErrors] = useState<{ email?: string; password?: string; code?: string }>({});
+  const emailError = () => !email.trim() ? 'Enter your work email.' : !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email.trim()) ? 'Enter a valid email, such as name@example.com.' : undefined;
   const [error, setError] = useState<string | null>(null);
   const [isLoading, setIsLoading] = useState(false);
   const [isEnteringWorkspace, setIsEnteringWorkspace] = useState(false);
@@ -144,7 +146,11 @@ export default function LoginPage() {
   };
 
   const handleEmailRequest = async (event: React.FormEvent) => {
-    event.preventDefault(); setError(null); setIsLoading(true);
+    event.preventDefault(); setError(null);
+    const invalidEmail = emailError();
+    setFieldErrors({ email: invalidEmail });
+    if (invalidEmail) return;
+    setIsLoading(true);
     try {
       const response = await fetch('/api/auth/email-code', {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
@@ -165,7 +171,8 @@ export default function LoginPage() {
   const handleEmailCode = async (event: React.FormEvent) => {
     event.preventDefault(); setError(null);
     const code = emailCode.replace(/\s/g, '');
-    if (!/^\d{6,10}$/.test(code)) { setError('Enter the numeric code from your email.'); return; }
+    if (!/^\d{6,10}$/.test(code)) { setFieldErrors({ code: 'Enter the numeric code from your email.' }); return; }
+    setFieldErrors({});
     setIsLoading(true);
     try {
       const { data, error: verifyError } = await supabase.auth.verifyOtp({
@@ -200,6 +207,10 @@ export default function LoginPage() {
   const handleSubmit = async (event: React.FormEvent) => {
     event.preventDefault();
     setError(null);
+    const invalidEmail = emailError();
+    const invalidPassword = password ? undefined : 'Enter your password.';
+    setFieldErrors({ email: invalidEmail, password: invalidPassword });
+    if (invalidEmail || invalidPassword) return;
     setIsLoading(true);
 
     try {
@@ -283,11 +294,6 @@ export default function LoginPage() {
             </div>
             <div className="relative z-10 space-y-3">
               <div className="flex items-center justify-between gap-2">
-                <div className="inline-flex items-center gap-3 rounded-xl bg-white px-3.5 py-2 shadow-md">
-                  <AsintaEmblem size={28} />
-                  <div className="h-5 w-px bg-surface-border" />
-                  <AsintaWordmark height={18} />
-                </div>
                 <div className="inline-flex items-center rounded-lg bg-white/95 px-2.5 py-1 shadow-sm">
                   <BaleLogo height={16} />
                 </div>
@@ -330,12 +336,6 @@ export default function LoginPage() {
 
             {/* Center Emblem, Wordmark & Brand Story */}
             <div className="relative z-10 space-y-5 my-8">
-              <div className="inline-flex items-center gap-3.5 rounded-2xl bg-white px-4 py-3 shadow-xl">
-                <AsintaEmblem size={38} />
-                <div className="h-7 w-px bg-surface-border" />
-                <AsintaWordmark height={22} />
-              </div>
-
               {/* Clean architectural accent rule + discipline pills (replaces ASCII ticks) */}
               <div className="space-y-2.5">
                 <div className="w-10 h-0.5 bg-sky-400 rounded-full" />
@@ -371,9 +371,6 @@ export default function LoginPage() {
           {/* Right Panel: Sign-In / 2FA Form */}
           <div className="lg:col-span-7 p-6 sm:p-10 flex flex-col justify-center bg-white">
             <div className="mb-6">
-              <div className="hidden lg:block mb-2">
-                <AsintaWordmark height={20} />
-              </div>
               <h1 className="text-lg font-extrabold text-navy tracking-tight">
                 Sign in to your account
               </h1>
@@ -396,6 +393,7 @@ export default function LoginPage() {
             {mfaChallenge ? (
               <form
                 onSubmit={handleVerifyMfa}
+                noValidate
                 className="space-y-5 animate-page-enter"
               >
                 <div className="flex items-center justify-between">
@@ -480,27 +478,28 @@ export default function LoginPage() {
                 </div>
               </div>
             ) : signinMode !== 'password' ? (
-              <form onSubmit={signinMode === 'email-request' ? handleEmailRequest : handleEmailCode} className="space-y-4">
+              <form onSubmit={signinMode === 'email-request' ? handleEmailRequest : handleEmailCode} noValidate className="space-y-4">
                 <p className="text-xs text-ink-secondary leading-relaxed">
                   {signinMode === 'email-request'
                     ? 'We’ll send a sign-in code to your work email. If you use an authenticator, you’ll still need its code.'
                     : emailCodeMessage}
                 </p>
                 {error && <div role="alert" className="p-3 rounded-xl bg-status-danger-bg text-status-danger text-xs">{error}</div>}
-                <Input label="Work Email" type="email" value={email} onChange={e => setEmail(e.target.value)}
+                <Input label="Work Email" type="email" value={email} error={fieldErrors.email} reserveMessageSpace onChange={e => { setEmail(e.target.value); setFieldErrors(previous => ({ ...previous, email: undefined })); }}
                   autoComplete="off" autoCapitalize="none" spellCheck={false} disabled={signinMode === 'email-code'} required />
                 {signinMode === 'email-code' && <Input label="Email Sign-In Code" type="text" inputMode="numeric"
-                  autoComplete="one-time-code" value={emailCode} onChange={e => setEmailCode(e.target.value)} required />}
+                  autoComplete="one-time-code" value={emailCode} error={fieldErrors.code} reserveMessageSpace onChange={e => { setEmailCode(e.target.value); setFieldErrors(previous => ({ ...previous, code: undefined })); }} required />}
                 <Button type="submit" variant="primary" className="w-full" disabled={isLoading}>
                   {signinMode === 'email-request' ? 'Send sign-in code' : 'Verify sign-in code'}
                 </Button>
                 <Button type="button" variant="ghost" className="w-full" onClick={() => {
-                  setError(null); setEmailCode(''); setSigninMode(signinMode === 'email-code' ? 'email-request' : 'password');
+                  setError(null); setFieldErrors({}); setEmailCode(''); setSigninMode(signinMode === 'email-code' ? 'email-request' : 'password');
                 }}>{signinMode === 'email-code' ? 'Request another code' : 'Back to password sign-in'}</Button>
               </form>
             ) : (
               <form
                 onSubmit={handleSubmit}
+                noValidate
                 autoComplete="off"
                 className="space-y-4"
               >
@@ -515,13 +514,15 @@ export default function LoginPage() {
                   label="Work Email"
                   type="email"
                   name="bale_work_email"
+                  error={fieldErrors.email}
+                  reserveMessageSpace
                   autoComplete="off"
                   autoCorrect="off"
                   autoCapitalize="none"
                   spellCheck={false}
                   placeholder="name@asinta.ph"
                   value={email}
-                  onChange={(event) => setEmail(event.target.value)}
+                  onChange={(event) => { setEmail(event.target.value); setFieldErrors(previous => ({ ...previous, email: undefined })); }}
                   leftIcon={<Mail className="w-4 h-4" />}
                   required
                 />
@@ -531,13 +532,15 @@ export default function LoginPage() {
                     label="Password"
                     type={showPassword ? 'text' : 'password'}
                     name="bale_work_password"
+                    error={fieldErrors.password}
+                    reserveMessageSpace
                     autoComplete="off"
                     autoCorrect="off"
                     autoCapitalize="none"
                     spellCheck={false}
                     placeholder="Enter your password"
                     value={password}
-                    onChange={(event) => setPassword(event.target.value)}
+                    onChange={(event) => { setPassword(event.target.value); setFieldErrors(previous => ({ ...previous, password: undefined })); }}
                     leftIcon={<Lock className="w-4 h-4" />}
                     className="pr-14"
                     required
@@ -564,7 +567,7 @@ export default function LoginPage() {
                   </Button>
                 </div>
                 {emailCodeEnabled && <Button type="button" variant="ghost" size="sm" className="w-full"
-                  onClick={() => { setError(null); clearRecoveryChoice(); setSigninMode('email-request'); }}>
+                  onClick={() => { setError(null); setFieldErrors({}); clearRecoveryChoice(); setSigninMode('email-request'); }}>
                   Forgot your password? Sign in with an email code
                 </Button>}
               </form>
