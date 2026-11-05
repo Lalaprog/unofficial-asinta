@@ -1003,10 +1003,11 @@ export default function ExpensesPage() {
         dismissOnEscape={!isSubmitting && !isUploadingReceipt}
         showCloseButton={!isSubmitting && !isUploadingReceipt}
         title="Record Site Expense"
-        description="Enter the details. Suggestions may come from the Groq model or the built-in rules — you confirm every field."
-        maxWidth="lg"
+        description="Review and correct every field before saving."
+        maxWidth="5xl"
+        presentation="workspace"
       >
-        <form onSubmit={handleAddSubmit} className="space-y-4 text-xs">
+        <form onSubmit={handleAddSubmit} className={draft ? "grid gap-5 text-sm lg:grid-cols-[minmax(0,0.9fr)_minmax(0,1.1fr)] lg:items-start lg:gap-6" : "space-y-4 text-sm"}>
           {/* DRAFT REVIEW — what the AI read, what the rules verified, and what
               is still missing. The Founder confirms; nothing is saved yet. */}
           {draft && (
@@ -1025,14 +1026,14 @@ export default function ExpensesPage() {
                 </Badge>
               </div>
 
-              <div className="grid gap-2 text-[11px] sm:grid-cols-2">
-                <div className="rounded-xl border border-slate-200 bg-white p-2">
+              <div className="grid grid-cols-2 gap-2 text-xs">
+                <div className="min-w-0 break-words rounded-xl border border-slate-200 bg-white p-2">
                   <span className="text-ink-secondary">Amount</span>
                   <div className="font-bold text-navy">
                     {draft.amount !== null ? formatPeso(draft.amount) : 'Not stated — left blank'}
                   </div>
                 </div>
-                <div className="rounded-xl border border-slate-200 bg-white p-2">
+                <div className="min-w-0 break-words rounded-xl border border-slate-200 bg-white p-2">
                   <span className="text-ink-secondary">Category</span>
                   <div className="font-bold text-navy">
                     {draft.category
@@ -1046,20 +1047,20 @@ export default function ExpensesPage() {
                       : 'Not determined'}
                   </div>
                 </div>
-                <div className="rounded-xl border border-slate-200 bg-white p-2">
+                <div className="min-w-0 break-words rounded-xl border border-slate-200 bg-white p-2">
                   <span className="text-ink-secondary">Project</span>
                   <div className="font-bold text-navy">
                     {draft.projectLabel || 'Not matched — choose the project'}
                   </div>
                 </div>
-                <div className="rounded-xl border border-slate-200 bg-white p-2">
+                <div className="min-w-0 break-words rounded-xl border border-slate-200 bg-white p-2">
                   <span className="text-ink-secondary">Supplier</span>
                   <div className="font-bold text-navy">{draft.vendor || 'Not named'}</div>
                 </div>
               </div>
 
               {draft.evidence.length > 0 && (
-                <details className="rounded-xl border border-slate-200 bg-white p-2.5 text-[11px]">
+                <details className="rounded-xl border border-slate-200 bg-white p-2.5 text-xs">
                   <summary className="cursor-pointer font-semibold text-navy">
                     Why these values? (evidence)
                   </summary>
@@ -1072,7 +1073,7 @@ export default function ExpensesPage() {
               )}
 
               {draft.unresolved.length > 0 && (
-                <div className="rounded-xl border border-status-warning/20 bg-status-warning-bg p-2.5 text-[11px] text-status-warning">
+                <div className="rounded-xl border border-status-warning/20 bg-status-warning-bg p-2.5 text-xs text-status-warning">
                   <div className="font-semibold">Needs your input</div>
                   <ul className="mt-1 space-y-1">
                     {draft.unresolved.map((line, index) => (
@@ -1083,19 +1084,19 @@ export default function ExpensesPage() {
               )}
 
               {draft.degradedReason && (
-                <p className="rounded-xl border border-status-warning/20 bg-status-warning-bg p-2.5 text-[11px] text-status-warning">
+                <p className="rounded-xl border border-status-warning/20 bg-status-warning-bg p-2.5 text-xs text-status-warning">
                   {draft.degradedReason}
                 </p>
               )}
 
               {contextWarnings.map((warning) => (
-                <p key={warning} className="rounded-xl border border-status-warning/20 bg-status-warning-bg p-2.5 text-[11px] text-status-warning">
+                <p key={warning} className="rounded-xl border border-status-warning/20 bg-status-warning-bg p-2.5 text-xs text-status-warning">
                   {warning}
                 </p>
               ))}
 
               {draftExtractedText && (
-                <details className="rounded-xl border border-slate-200 bg-white p-2.5 text-[11px]">
+                <details className="rounded-xl border border-slate-200 bg-white p-2.5 text-xs">
                   <summary className="cursor-pointer font-semibold text-navy">
                     Text read from the receipt (not saved)
                   </summary>
@@ -1107,15 +1108,16 @@ export default function ExpensesPage() {
 
               {pendingReceiptPreview && (
                 <div className="rounded-xl border border-slate-200 bg-white p-2.5">
-                  <div className="text-[11px] font-semibold text-navy">
+                  <div className="text-xs font-semibold text-navy">
                     Check every field against this photo
                   </div>
                   <img
                     src={pendingReceiptPreview}
                     alt="Receipt photo awaiting your review"
-                    className="mt-2 max-h-56 w-full rounded-lg object-contain"
+                    className="mt-2 max-h-72 w-full rounded-lg object-contain lg:max-h-96"
                   />
-                  <p className="mt-1 text-[10px] text-ink-muted">
+                  <a href={pendingReceiptPreview} target="_blank" rel="noopener noreferrer" className="mt-2 inline-flex min-h-11 items-center rounded-lg px-2 text-sm font-semibold text-navy underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand">Open photo full size</a>
+                  <p className="mt-1 text-xs text-ink-muted">
                     {formData.receipt_url ? 'The photo has been uploaded to private storage.' : 'This photo is uploaded to private storage only when you save the expense.'}
                   </p>
                   <button type="button" onClick={handleRemoveReceipt} className="mt-1 min-h-11 rounded-lg px-2 text-xs font-semibold text-status-danger hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand">
@@ -1125,7 +1127,7 @@ export default function ExpensesPage() {
               )}
 
               {draftWarnings && (
-                <div className="space-y-1 text-[11px]">
+                <div className="space-y-1 text-xs">
                   <p className="text-ink-muted">Checks below are based on the initial draft and may not reflect later edits.</p>
                   {draftWarnings.duplicates.length > 0 && (
                     <p className="rounded-xl border border-status-danger/20 bg-status-danger-bg p-2.5 text-status-danger">
@@ -1151,16 +1153,17 @@ export default function ExpensesPage() {
                 </div>
               )}
 
-              <p className="flex items-start gap-1.5 text-[10px] text-ink-muted">
+              <p className="flex items-start gap-1.5 text-xs text-ink-muted">
                 <Info className="mt-0.5 h-3 w-3 shrink-0" />
                 <span>
-                  AI output is assistive and unreviewed until you save. Editing any field below is
+                  AI output is assistive and unreviewed until you save. Editing any field beside or below is
                   expected — the ledger records what you confirm, not what the model suggested.
                 </span>
               </p>
             </div>
           )}
 
+          <div className="min-w-0 space-y-4">
           <Select
             label="Associated Project Site"
             value={formData.project_id}
@@ -1184,7 +1187,7 @@ export default function ExpensesPage() {
                 type="button"
                 onClick={handleAnalyzeWithAI}
                 disabled={!formData.description || isAnalyzing}
-                className="text-[11px] text-navy font-bold hover:underline inline-flex items-center space-x-1"
+                className="inline-flex min-h-11 items-center space-x-1 text-xs font-bold text-navy hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand"
               >
                 <Sparkles className="w-3 h-3 text-navy" />
                 <span>{isAnalyzing ? 'Analyzing with AI...' : 'Analyze with Groq AI'}</span>
@@ -1243,7 +1246,7 @@ export default function ExpensesPage() {
                 </Badge>
               </div>
 
-              <div className="grid grid-cols-2 gap-2 text-[11px]">
+              <div className="grid grid-cols-2 gap-2 text-xs">
                 <div className="p-2 rounded-xl bg-white border border-slate-200">
                   <span className="text-ink-secondary">Suggested Category:</span>
                   <div className="font-semibold text-navy">{aiResult.category}</div>
@@ -1257,7 +1260,7 @@ export default function ExpensesPage() {
               </div>
 
               {/* Evidence replaces the old invented "% confidence" figure. */}
-              <div className="text-[11px] text-ink-secondary bg-white p-2.5 rounded-xl border border-slate-200 space-y-1">
+              <div className="text-xs text-ink-secondary bg-white p-2.5 rounded-xl border border-slate-200 space-y-1">
                 <div>
                   <span className="font-semibold text-navy">Why: </span>
                   {aiResult.reasoning}
@@ -1275,8 +1278,8 @@ export default function ExpensesPage() {
               </div>
 
               {/* Founder Confirmation Actions */}
-              <div className="pt-1 flex items-center justify-between">
-                <span className="text-[10px] text-ink-muted italic">
+              <div className="flex flex-wrap items-center justify-between gap-3 pt-1">
+                <span className="text-xs text-ink-muted italic">
                   * AI suggestions require Founder confirmation before recording
                 </span>
 
@@ -1352,14 +1355,14 @@ export default function ExpensesPage() {
                 <div className="mt-2 flex items-center justify-between gap-3 rounded-xl border border-status-success/20 bg-status-success-bg px-3 py-2">
                   <div className="min-w-0 flex items-center gap-2 text-status-success">
                     <CheckCircle2 className="h-4 w-4 shrink-0" />
-                    <span className="truncate text-[11px] font-semibold">
+                    <span className="truncate text-xs font-semibold">
                       Receipt Attached ✓{receiptFileName ? ` — ${receiptFileName}` : ''}
                     </span>
                   </div>
                   <button
                     type="button"
                     onClick={handleRemoveReceipt}
-                    className="shrink-0 text-[11px] font-bold text-status-danger hover:underline"
+                    className="shrink-0 text-xs font-bold text-status-danger hover:underline"
                   >
                     Remove
                   </button>
@@ -1376,13 +1379,14 @@ export default function ExpensesPage() {
             rows={2}
           />
 
-          <div className="pt-4 flex justify-end space-x-2">
+          <div className="flex flex-col-reverse gap-2 pt-4 sm:flex-row sm:justify-end">
             <Button type="button" variant="secondary" onClick={() => setIsAddModalOpen(false)} disabled={isSubmitting || isUploadingReceipt}>
               Cancel
             </Button>
             <Button variant="primary" type="submit" isLoading={isSubmitting} disabled={isUploadingReceipt}>
               {isSubmitting ? 'Saving expense…' : isUploadingReceipt ? 'Uploading receipt…' : 'Confirm & Save Expense'}
             </Button>
+          </div>
           </div>
         </form>
       </Modal>

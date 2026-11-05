@@ -11,9 +11,9 @@ interface ModalProps {
   title: string;
   description?: string;
   children: React.ReactNode;
-  maxWidth?: 'sm' | 'md' | 'lg' | 'xl' | '2xl' | 'full';
+  maxWidth?: 'sm' | 'md' | 'lg' | 'xl' | '2xl' | '5xl' | 'full';
   /** Use a safe-area-aware sheet for viewport-bound mobile flows. */
-  presentation?: 'center' | 'bottom-sheet' | 'top-sheet';
+  presentation?: 'center' | 'bottom-sheet' | 'top-sheet' | 'workspace';
   /** Use "alertdialog" for messages that must interrupt (e.g. session expiry). */
   role?: 'dialog' | 'alertdialog';
   /** Set false when an accidental outside click must not dismiss (session warnings). */
@@ -80,6 +80,12 @@ export const Modal: React.FC<ModalProps> = ({
       if (!panel) return;
       const active = document.activeElement as HTMLElement | null;
       if (active && panel.contains(active)) return;
+      // Review workspaces begin with important context. Focusing a field below
+      // would scroll past it and may open the mobile keyboard immediately.
+      if (presentation === 'workspace') {
+        panel.focus({ preventScroll: true });
+        return;
+      }
 
       const firstInput = panel.querySelector<HTMLElement>(
         'input:not(:disabled):not([type="hidden"]), select:not(:disabled), textarea:not(:disabled)'
@@ -136,7 +142,7 @@ export const Modal: React.FC<ModalProps> = ({
       // Return focus to whatever opened the dialog.
       previouslyFocusedRef.current?.focus?.();
     };
-  }, [isOpen]);
+  }, [isOpen, presentation]);
 
   if (!isOpen) return null;
 
@@ -146,6 +152,7 @@ export const Modal: React.FC<ModalProps> = ({
     lg: 'max-w-lg',
     xl: 'max-w-xl',
     '2xl': 'max-w-2xl',
+    '5xl': 'max-w-5xl',
     full: 'max-w-4xl',
   };
 
@@ -155,6 +162,7 @@ export const Modal: React.FC<ModalProps> = ({
         clsx(
           'fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-4 overflow-y-auto',
           presentation === 'bottom-sheet' && 'items-end p-0 sm:p-0 lg:items-center lg:p-4',
+          presentation === 'workspace' && 'items-end p-0 sm:items-center sm:p-4',
           presentation === 'top-sheet' && 'inset-x-0 top-[calc(4rem+env(safe-area-inset-top))] bottom-0 items-start justify-start p-0 sm:p-0 lg:inset-0 lg:items-center lg:justify-center lg:p-4'
         )
       )}
@@ -174,6 +182,7 @@ export const Modal: React.FC<ModalProps> = ({
           clsx(
             'relative w-full bg-white rounded-2xl border border-surface-border shadow-2xl z-10 transition-all max-h-[86dvh] flex flex-col my-auto',
             presentation === 'center' && 'animate-dialog-enter',
+            presentation === 'workspace' && 'max-h-[calc(100dvh-env(safe-area-inset-top)-0.5rem)] rounded-t-2xl rounded-b-none my-0 pb-[env(safe-area-inset-bottom)] animate-sheet-up sm:max-h-[92dvh] sm:rounded-2xl sm:my-auto sm:pb-0 sm:animate-dialog-enter',
             presentation === 'bottom-sheet' && 'max-h-[calc(100dvh-env(safe-area-inset-top)-1rem)] rounded-t-2xl rounded-b-none my-0 pb-[env(safe-area-inset-bottom)] animate-sheet-up lg:max-h-[86dvh] lg:rounded-2xl lg:my-auto lg:pb-0 lg:animate-dialog-enter',
             presentation === 'top-sheet' && 'max-h-[calc(100dvh-4rem-env(safe-area-inset-top))] rounded-t-none rounded-b-2xl my-0 pb-[env(safe-area-inset-bottom)] animate-dropdown-enter lg:max-h-[86dvh] lg:rounded-2xl lg:my-auto lg:pb-0',
             'focus:outline-none',
@@ -192,7 +201,7 @@ export const Modal: React.FC<ModalProps> = ({
               {title}
             </h3>
             {description && (
-              <p id={descriptionId} className="text-xs text-ink-secondary mt-0.5">
+              <p id={descriptionId} className={clsx("text-xs text-ink-secondary mt-0.5", presentation === 'workspace' && "text-sm")}>
                 {description}
               </p>
             )}
@@ -212,7 +221,7 @@ export const Modal: React.FC<ModalProps> = ({
         {/* Content */}
         <div
           data-modal-scroll-body="true"
-          className="p-5 sm:p-6 overflow-y-auto flex-1 overscroll-contain"
+          className={clsx("p-5 sm:p-6 overflow-y-auto flex-1 overscroll-contain", presentation === 'workspace' && "min-h-0 scroll-pb-6")}
         >
           {children}
         </div>

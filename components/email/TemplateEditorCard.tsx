@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useCallback, useEffect, useState } from 'react';
+import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { AlertCircle, CheckCircle2, Eye, FileText, RotateCcw, Save } from 'lucide-react';
 import { Button } from '@/components/ui/Button';
 import { Badge } from '@/components/ui/Badge';
@@ -10,6 +10,16 @@ import { Modal } from '@/components/ui/Modal';
 import { Card, CardHeader, CardTitle, CardDescription, CardContent } from '@/components/ui/Card';
 import { useDataStore } from '@/lib/data/store';
 import { useToast } from '@/components/ui/Toast';
+
+const FIELD_LABELS: Record<string, string> = {
+  client_contact_name: 'Client Name', client_company_name: 'Client / Company',
+  project_name: 'Project Name', invoice_number: 'Invoice Number', issue_date: 'Invoice Date',
+  invoice_amount: 'Invoice Amount', amount_paid: 'Amount Paid', outstanding_balance: 'Outstanding Balance',
+  due_date: 'Due Date', invoice_notes: 'Invoice Notes', firm_email: 'Firm Email',
+  firm_contact_number: 'Firm Contact Number',
+};
+const fieldLabel = (field: string) => FIELD_LABELS[field] || field.replace(/_/g, ' ');
+type EditorField = 'subject' | 'body';
 
 interface TemplateResponse {
   template: {
@@ -53,6 +63,34 @@ export const TemplateEditorCard: React.FC = () => {
   const [previewInvoiceId, setPreviewInvoiceId] = useState('');
   const [showRestoreConfirm, setShowRestoreConfirm] = useState(false);
   const [isRestoring, setIsRestoring] = useState(false);
+  const [insertTarget, setInsertTarget] = useState<EditorField>('body');
+  const subjectRef = useRef<HTMLInputElement>(null);
+  const bodyRef = useRef<HTMLTextAreaElement>(null);
+  const selections = useRef<Record<EditorField, [number, number] | null>>({ subject: null, body: null });
+  const previewRevision = useRef(0);
+  const invalidatePreview = () => { previewRevision.current += 1; setPreview(null); setWarnings([]); };
+  const rememberSelection = (field: EditorField, input: HTMLInputElement | HTMLTextAreaElement) => {
+    selections.current[field] = [input.selectionStart ?? input.value.length, input.selectionEnd ?? input.value.length];
+  };
+  const insertField = (placeholder: string) => {
+    if (!data?.supportedPlaceholders.includes(placeholder)) return;
+    const field = insertTarget;
+    const value = field === 'subject' ? subject : body;
+    const selection = selections.current[field] || [value.length, value.length];
+    const start = Math.min(selection[0], value.length);
+    const end = Math.min(selection[1], value.length);
+    const token = `{{${placeholder}}}`;
+    const next = value.slice(0, start) + token + value.slice(end);
+    const position = start + token.length;
+    selections.current[field] = [position, position];
+    if (field === 'subject') setSubject(next); else setBody(next);
+    invalidatePreview();
+    requestAnimationFrame(() => {
+      const input = field === 'subject' ? subjectRef.current : bodyRef.current;
+      input?.focus(); input?.setSelectionRange(position, position);
+      selections.current[field] = [position, position];
+    });
+  };
 
   const loadTemplate = useCallback(async () => {
     try {
@@ -62,6 +100,8 @@ export const TemplateEditorCard: React.FC = () => {
         setError(payload?.error || 'Failed to load the email template');
         return;
       }
+      previewRevision.current += 1; setPreview(null);
+      selections.current = { subject: null, body: null };
       setData(payload as TemplateResponse);
       setSubject(payload.template.subject_template);
       setBody(payload.template.body_template);
@@ -75,6 +115,7 @@ export const TemplateEditorCard: React.FC = () => {
   }, [loadTemplate]);
 
   const handlePreview = async () => {
+    const revision = previewRevision.current;
     setIsPreviewing(true);
     setError(null);
     try {
@@ -88,6 +129,7 @@ export const TemplateEditorCard: React.FC = () => {
         }),
       });
       const payload = await res.json().catch(() => null);
+      if (revision !== previewRevision.current) return;
       if (!res.ok) {
         setError(payload?.error || 'Failed to render the preview');
         setPreview(null);
@@ -102,7 +144,7 @@ export const TemplateEditorCard: React.FC = () => {
       });
       setWarnings(payload.warnings || []);
     } catch {
-      setError('Network error while rendering the preview');
+      if (revision === previewRevision.current) setError('Network error while rendering the preview');
     } finally {
       setIsPreviewing(false);
     }
@@ -175,9 +217,8 @@ export const TemplateEditorCard: React.FC = () => {
           )}
         </div>
         <CardDescription>
-          Edit the Initial Request for Payment wording. Placeholders are replaced with authoritative
-          invoice data when each email is sent. Saving creates a new version — previously sent
-          emails keep their exact stored content.
+          Personalize the first request-for-payment email. Insert fields by name and preview the result before saving.
+          Each message uses the invoice&apos;s current details; previously sent emails stay unchanged.
         </CardDescription>
       </CardHeader>
       <CardContent className="space-y-4 text-xs">
@@ -192,46 +233,44 @@ export const TemplateEditorCard: React.FC = () => {
 
         {data && (
           <>
-            <div className="p-3 rounded-xl bg-surface-inset/60 border border-surface-border">
-              <div className="font-bold text-navy uppercase text-[11px] mb-2">Supported Placeholders</div>
-              <div className="flex flex-wrap gap-1.5">
-                {data.supportedPlaceholders.map((placeholder) => (
-                  <span
-                    key={placeholder}
-                    className={`px-2 py-0.5 rounded-md font-mono text-[10px] border ${
-                      data.importantPlaceholders.includes(placeholder)
-                        ? 'bg-navy/5 border-navy/30 text-navy font-bold'
-                        : 'bg-white border-surface-border text-ink-secondary'
-                    }`}
-                  >
-                    {'{{'}{placeholder}{'}}'}
-                  </span>
-                ))}
+            <div className="rounded-xl border border-surface-border bg-surface-inset/60 p-4 space-y-3">
+              <div><p className="text-sm font-bold text-navy">Insert a field</p><p className="mt-1 text-xs text-ink-secondary">Choose where to insert, place your cursor in the text, then select a field. Its value is filled in when the email is prepared.</p></div>
+              <div className="flex flex-wrap items-center gap-2" aria-label="Field destination">
+                <span className="text-xs font-semibold text-ink-secondary">Insert into:</span>
+                {(['body', 'subject'] as const).map(field => <button key={field} type="button" aria-pressed={insertTarget === field} disabled={isSaving || isRestoring} onClick={() => setInsertTarget(field)} className={`min-h-11 rounded-lg border px-3 text-xs font-semibold focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand ${insertTarget === field ? 'border-navy bg-navy text-white' : 'border-surface-border bg-white text-navy'}`}>{field === 'body' ? 'Message' : 'Subject'}</button>)}
               </div>
-              <div className="text-[10px] text-ink-muted mt-2">
-                Bold placeholders are important billing fields — removing them triggers a warning.
-                Unknown placeholders are rejected.
+              <div className="flex flex-wrap gap-2">
+                {data.supportedPlaceholders.map(placeholder => <button key={placeholder} type="button" disabled={isSaving || isRestoring} onClick={() => insertField(placeholder)} aria-label={`Insert ${fieldLabel(placeholder)} into ${insertTarget === 'body' ? 'message' : 'subject'}`} className="min-h-11 rounded-lg border border-surface-border bg-white px-3 text-xs font-semibold text-navy hover:border-brand focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand">+ {fieldLabel(placeholder)}</button>)}
               </div>
+              <p className="text-xs text-ink-secondary">Fields appear in braces while editing. Preview to see them filled in. Project, invoice number, balance and due date are important billing details.</p>
             </div>
 
             {warnings.length > 0 && (
               <div className="p-3 rounded-xl bg-status-warning-bg border border-status-warning/20 text-status-warning">
-                Warning: important billing placeholders missing from the template:{' '}
-                <span className="font-mono font-semibold">{warnings.join(', ')}</span>
+                Important billing fields missing from the template:{' '}
+                <span className="font-semibold">{warnings.map(fieldLabel).join(', ')}</span>
               </div>
             )}
 
             <Input
-              label="Subject Template"
+              label="Email subject"
+              ref={subjectRef}
               value={subject}
-              onChange={(e) => setSubject(e.target.value)}
+              disabled={isSaving || isRestoring}
+              onFocus={e => { setInsertTarget('subject'); rememberSelection('subject', e.currentTarget); }}
+              onSelect={e => rememberSelection('subject', e.currentTarget)}
+              onChange={e => { setSubject(e.target.value); rememberSelection('subject', e.currentTarget); invalidatePreview(); }}
             />
             <Textarea
-              label="Body Template (plain text with placeholders)"
+              label="Email message"
+              ref={bodyRef}
               rows={14}
               value={body}
-              onChange={(e) => setBody(e.target.value)}
-              className="font-mono text-[11px]"
+              disabled={isSaving || isRestoring}
+              onFocus={e => { setInsertTarget('body'); rememberSelection('body', e.currentTarget); }}
+              onSelect={e => rememberSelection('body', e.currentTarget)}
+              onChange={e => { setBody(e.target.value); rememberSelection('body', e.currentTarget); invalidatePreview(); }}
+              className="leading-relaxed"
             />
 
             <div className="flex flex-col sm:flex-row sm:items-end gap-3">
@@ -239,7 +278,7 @@ export const TemplateEditorCard: React.FC = () => {
                 <Select
                   label="Preview Data Source"
                   value={previewInvoiceId}
-                  onChange={(e) => setPreviewInvoiceId(e.target.value)}
+                  onChange={(e) => { setPreviewInvoiceId(e.target.value); invalidatePreview(); }}
                 >
                   <option value="">Safe sample data</option>
                   {invoices
@@ -254,12 +293,13 @@ export const TemplateEditorCard: React.FC = () => {
                     })}
                 </Select>
               </div>
-              <div className="flex items-center gap-2">
+              <div className="flex flex-wrap items-center gap-2">
                 <Button
                   variant="secondary"
                   size="sm"
                   onClick={handlePreview}
                   isLoading={isPreviewing}
+                  disabled={isSaving || isRestoring}
                   leftIcon={<Eye className="w-3.5 h-3.5" />}
                 >
                   Preview
@@ -269,6 +309,7 @@ export const TemplateEditorCard: React.FC = () => {
                   size="sm"
                   onClick={handleSave}
                   isLoading={isSaving}
+                  disabled={isRestoring}
                   leftIcon={<Save className="w-3.5 h-3.5" />}
                 >
                   Save New Version
@@ -277,6 +318,7 @@ export const TemplateEditorCard: React.FC = () => {
                   variant="ghost"
                   size="sm"
                   onClick={() => setShowRestoreConfirm(true)}
+                  disabled={isSaving || isRestoring}
                   leftIcon={<RotateCcw className="w-3.5 h-3.5" />}
                 >
                   Restore Default
