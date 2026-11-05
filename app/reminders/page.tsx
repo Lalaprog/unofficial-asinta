@@ -16,6 +16,7 @@ import { Badge } from '@/components/ui/Badge';
 import { Textarea } from '@/components/ui/Input';
 import { Modal } from '@/components/ui/Modal';
 import { WorkspaceHeader } from '@/components/ui/WorkspaceHeader';
+import { EmptyState } from '@/components/ui/EmptyState';
 import { useToast } from '@/components/ui/Toast';
 import { createClient } from '@/lib/supabase/client';
 import { buildReminderSMS, estimateSMSSegments } from '@/lib/sms/templates';
@@ -209,9 +210,8 @@ export default function RemindersPage() {
         {/* Queue */}
         <div className="space-y-4">
           {queue.length === 0 && (
-            <div className="p-12 text-center text-xs text-ink-secondary bg-white rounded-xl border border-surface-border">
-              <BellRing className="w-8 h-8 mx-auto mb-3 text-ink-muted" />
-              No reminders in this view. Eligible invoices appear here unless paused or hidden in this session.
+            <div className="bg-white rounded-xl border border-surface-border">
+              <EmptyState title="No reminders to show" description="No reminders in this view. Eligible invoices appear here unless paused or hidden in this session." icon={<BellRing className="relative h-7 w-7" />} />
             </div>
           )}
 

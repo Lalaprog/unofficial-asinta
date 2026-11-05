@@ -69,6 +69,14 @@ describe('email-code recovery preparation', () => {
     expect((await updatePassword(req('/api/auth/recovery-password',{newPassword:'Secure12345'}))).status).toBe(200);
     expect(mock.updateUser).toHaveBeenCalledWith({password:'Secure12345'});
   });
+  it('distinguishes a repeated password from other provider errors', async () => {
+    mock.updateUser.mockResolvedValueOnce({error:{code:'same_password'}});
+    const repeated = await updatePassword(req('/api/auth/recovery-password',{newPassword:'Secure12345'}));
+    expect(repeated.status).toBe(400);
+    expect((await repeated.json()).error).toBe('Choose a password different from your current password.');
+    mock.updateUser.mockResolvedValueOnce({error:{code:'unexpected_failure'}});
+    expect((await (await updatePassword(req('/api/auth/recovery-password',{newPassword:'Secure12345'}))).json()).error).toBe('Could not change your password. Please try again.');
+  });
   it('completes mandatory temporary-password setup only when a password is actually changed', async () => {
     mock.user={id:'user-1',user_metadata:{must_change_password:true,keep:'value'}};
     expect((await updatePassword(req('/api/auth/recovery-password',{newPassword:'Secure12345'}))).status).toBe(200);

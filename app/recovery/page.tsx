@@ -17,6 +17,8 @@ export default function RecoveryChoicePage() {
   const [password, setPassword] = useState('');
   const [confirmation, setConfirmation] = useState('');
   const [error, setError] = useState<string | null>(null);
+  const [passwordError, setPasswordError] = useState<string | undefined>();
+  const [confirmationError, setConfirmationError] = useState<string | undefined>();
   const [saving, setSaving] = useState(false);
 
   useEffect(() => {
@@ -33,7 +35,11 @@ export default function RecoveryChoicePage() {
 
   const savePassword = async (event: React.FormEvent) => {
     event.preventDefault(); setError(null);
-    if (password !== confirmation) { setError('The passwords do not match.'); return; }
+    const missingPassword = !password ? 'Enter a new password.' : undefined;
+    const invalidConfirmation = !confirmation ? 'Confirm your new password.' : password !== confirmation ? 'The passwords do not match.' : undefined;
+    setPasswordError(missingPassword);
+    setConfirmationError(invalidConfirmation);
+    if (missingPassword || invalidConfirmation) return;
     setSaving(true);
     try {
       const response = await fetch('/api/auth/recovery-password', {
@@ -42,7 +48,8 @@ export default function RecoveryChoicePage() {
       });
       const body = await response.json().catch(() => ({}));
       if (!response.ok) {
-        setError(body.error || 'Could not change your password. Please try again.');
+        if (body.error === 'Choose a password different from your current password.') setPasswordError(body.error);
+        else setError(body.error || 'Could not change your password. Please try again.');
         return;
       }
       setPassword(''); setConfirmation(''); continueToWorkspace();
@@ -63,13 +70,13 @@ export default function RecoveryChoicePage() {
           <p className="mt-2 text-xs text-ink-secondary leading-relaxed">Would you like to change your password now? You can also continue without changing it.</p>
         </div>
         {changing ? (
-          <form onSubmit={savePassword} className="space-y-4">
-            <Input label="New password" type="password" autoComplete="new-password" value={password} onChange={e => setPassword(e.target.value)} required />
-            <Input label="Confirm new password" type="password" autoComplete="new-password" value={confirmation} onChange={e => setConfirmation(e.target.value)} required />
+          <form onSubmit={savePassword} noValidate className="space-y-4">
+            <Input label="New password" type="password" autoComplete="new-password" value={password} error={passwordError} reserveMessageSpace onChange={e => { setPassword(e.target.value); setPasswordError(undefined); }} required />
+            <Input label="Confirm new password" type="password" autoComplete="new-password" value={confirmation} error={confirmationError} reserveMessageSpace onChange={e => { setConfirmation(e.target.value); setConfirmationError(undefined); }} required />
             <p className="text-xs text-ink-secondary">Use at least 8 characters with letters and numbers.</p>
             {error && <p role="alert" className="text-xs text-status-danger">{error}</p>}
             <div className="flex gap-2">
-              <Button type="button" variant="secondary" onClick={() => { setChanging(false); setPassword(''); setConfirmation(''); setError(null); }} disabled={saving}>Back</Button>
+              <Button type="button" variant="secondary" onClick={() => { setChanging(false); setPassword(''); setConfirmation(''); setError(null); setPasswordError(undefined); setConfirmationError(undefined); }} disabled={saving}>Back</Button>
               <Button type="submit" variant="primary" isLoading={saving}>Save and continue</Button>
             </div>
           </form>

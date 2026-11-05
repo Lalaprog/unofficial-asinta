@@ -7,7 +7,6 @@ import { useDataStore } from '@/lib/data/store';
 import { useAuth } from '@/lib/auth/authContext';
 import { ProjectStatus } from '@/types';
 import {
-  FolderKanban,
   Plus,
   Search,
   Calendar,
@@ -17,6 +16,7 @@ import {
 import { Button } from '@/components/ui/Button';
 import { FilterSummary } from '@/components/ui/FilterSummary';
 import { WorkspaceHeader } from '@/components/ui/WorkspaceHeader';
+import { EmptyState } from '@/components/ui/EmptyState';
 import { WorkspaceFilters } from '@/components/ui/WorkspaceFilters';
 import { Badge } from '@/components/ui/Badge';
 import { Input } from '@/components/ui/Input';
@@ -190,15 +190,16 @@ export default function ProjectsPage() {
               >
                 <div className="min-w-0">
                   {/* Top line */}
-                  <div className="flex items-start justify-between gap-3">
+                  <div className="-mx-4 -mt-4 flex min-h-28 items-start justify-between gap-3 rounded-t-xl bg-[#0b1f3a] bg-cover bg-center p-4 pb-6 sm:-mx-5 sm:-mt-5 sm:p-5 sm:pb-7"
+                    style={{ backgroundImage: "linear-gradient(90deg, rgba(11,31,58,.96), rgba(11,31,58,.72)), url('/brand/project-blueprint.webp')" }}>
                     <div className="space-y-1 min-w-0 flex-1">
                       {isFounder && (
-                        <div className="text-xs font-medium text-ink-secondary break-words">
+                        <div className="text-xs font-medium text-white/80 break-words">
                           {client?.name || 'Private Client'}
                         </div>
                       )}
                       <h3
-                        className="text-lg font-bold text-navy group-hover:text-navy-light transition-colors break-words"
+                        className="text-lg font-bold text-white transition-colors break-words"
                         title={proj.name}
                       >
                         {proj.name}
@@ -282,12 +283,10 @@ export default function ProjectsPage() {
         </div>
 
         {filteredProjects.length === 0 && (
-          <div className="p-12 text-center bg-white rounded-xl border border-surface-border text-ink-secondary">
-            <FolderKanban className="w-10 h-10 mx-auto text-ink-muted mb-2" />
-            <div className="font-bold text-navy text-sm">No projects to show</div>
-            <div className="text-xs text-ink-secondary mt-1">
-              {accessibleProjects.length === 0 ? 'There are no projects available to you yet.' : 'No project matches the current search or filters. Clear filters to see all projects.'}
-            </div>
+          <div className="rounded-xl border border-surface-border bg-white">
+            <EmptyState title={accessibleProjects.length === 0 ? 'No projects yet' : 'No projects match'}
+              description={accessibleProjects.length === 0 ? 'There are no projects available to you yet.' : 'Try clearing the search or filters.'}
+              action={accessibleProjects.length === 0 && isFounder ? <Button variant="primary" size="sm" onClick={() => setIsCreateModalOpen(true)}>Create your first project</Button> : accessibleProjects.length > 0 ? <Button variant="secondary" size="sm" onClick={() => { setSearchQuery(''); setStatusFilter('all'); }}>Clear filters</Button> : undefined} />
           </div>
         )}
       </div>

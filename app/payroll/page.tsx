@@ -14,6 +14,7 @@ import {
 import { Button } from '@/components/ui/Button';
 import { FilterSummary } from '@/components/ui/FilterSummary';
 import { WorkspaceHeader } from '@/components/ui/WorkspaceHeader';
+import { EmptyState } from '@/components/ui/EmptyState';
 import { WorkspaceFilters } from '@/components/ui/WorkspaceFilters';
 import { useToast } from '@/components/ui/Toast';
 import { Badge } from '@/components/ui/Badge';
@@ -368,9 +369,7 @@ export default function PayrollPage() {
             })}
 
             {filteredPayroll.length === 0 && (
-              <div className="p-12 text-center text-xs text-ink-secondary">
-                {payroll.length === 0 ? 'No payroll vouchers have been recorded yet.' : 'No payroll vouchers match the current search or filters. Clear filters to see all vouchers.'}
-              </div>
+              <EmptyState title={payroll.length === 0 ? 'No payroll vouchers yet' : 'No payroll vouchers match'} description={payroll.length === 0 ? 'No payroll vouchers have been recorded yet.' : 'No payroll vouchers match the current search or filters. Clear filters to see all vouchers.'} />
             )}
           </div>
         </div>

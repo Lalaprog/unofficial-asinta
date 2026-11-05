@@ -180,7 +180,7 @@ export const Sidebar: React.FC = () => {
                     : 'text-ink-secondary hover:bg-surface-inset hover:text-navy'
                 }`}
                 aria-expanded={isExpanded}
-                aria-controls={isExpanded ? `sidebar-group-${group.id}` : undefined}
+                aria-controls={`sidebar-group-${group.id}`}
               >
                 <span className="truncate">{group.title}</span>
                 <ChevronDown
@@ -189,8 +189,9 @@ export const Sidebar: React.FC = () => {
                 />
               </button>
 
-              {isExpanded && (
-                <nav id={`sidebar-group-${group.id}`} aria-label={group.title} className="space-y-0.5 pb-1">
+              <div className={`grid transition-[grid-template-rows,opacity] duration-300 ease-out motion-reduce:transition-none ${isExpanded ? 'grid-rows-[1fr] opacity-100' : 'grid-rows-[0fr] opacity-0'}`}>
+                <nav id={`sidebar-group-${group.id}`} aria-label={group.title} aria-hidden={!isExpanded} className="min-h-0 overflow-hidden">
+                  <div className="space-y-0.5 pb-1">
                   {group.items.map((item) => {
                     const Icon = item.icon;
                     const isActive = isItemActive(item.href, pathname, currentTab, isFounder);
@@ -198,6 +199,7 @@ export const Sidebar: React.FC = () => {
                       <Link
                         key={item.href}
                         href={item.href}
+                        tabIndex={isExpanded ? undefined : -1}
                         aria-current={isActive ? 'page' : undefined}
                         className={`group ml-1 flex min-h-10 items-center gap-2.5 rounded-lg px-3 text-xs font-medium transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand focus-visible:ring-inset ${
                           isActive
@@ -213,8 +215,9 @@ export const Sidebar: React.FC = () => {
                       </Link>
                     );
                   })}
+                  </div>
                 </nav>
-              )}
+              </div>
             </section>
           );
         })}

@@ -2,6 +2,7 @@
 
 import React from 'react';
 import { clsx } from 'clsx';
+import { FolderOpen } from 'lucide-react';
 
 interface EmptyStateProps {
   title: string;
@@ -30,11 +31,10 @@ export const EmptyState: React.FC<EmptyStateProps> = ({
       className
     )}
   >
-    {icon && (
-      <div className="w-12 h-12 rounded-2xl bg-surface-inset border border-surface-border flex items-center justify-center text-ink-secondary">
-        {icon}
-      </div>
-    )}
+    <div aria-hidden="true" className="relative mb-1 flex h-14 w-14 items-center justify-center text-brand/65">
+      <span className="absolute inset-0 rotate-6 rounded-2xl border border-brand/10 bg-brand/[0.035]" />
+      {icon || <FolderOpen className="relative h-7 w-7" strokeWidth={1.4} />}
+    </div>
     <div className="text-sm font-bold text-navy">{title}</div>
     {description && (
       <p className="text-xs text-ink-secondary max-w-sm leading-relaxed">{description}</p>

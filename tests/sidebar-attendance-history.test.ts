@@ -41,6 +41,20 @@ describe('attendance history in desktop navigation', () => {
     expect(within(workforce).getByRole('link', { name: 'Bale Requests & Advances' }).getAttribute('href')).toBe('/advances');
   });
 
+  it('keeps collapsed links out of the keyboard and accessibility tree', () => {
+    render(React.createElement(Sidebar));
+    const button = screen.getByRole('button', {name:'Overview & Projects'});
+    const panelId = button.getAttribute('aria-controls')!;
+    expect(button.getAttribute('aria-expanded')).toBe('true');
+    fireEvent.click(button);
+    expect(button.getAttribute('aria-expanded')).toBe('false');
+    const panel = document.getElementById(panelId)!;
+    expect(panel.getAttribute('aria-hidden')).toBe('true');
+    expect(Array.from(panel.querySelectorAll('a')).every(link => link.tabIndex === -1)).toBe(true);
+    fireEvent.click(button);
+    expect(screen.getByRole('link', {name:'Dashboard'}).tabIndex).not.toBe(-1);
+  });
+
   it('highlights only the correct Founder item when the URL changes', () => {
     route.pathname = '/attendance';
     const view = render(React.createElement(Sidebar));

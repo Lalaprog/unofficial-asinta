@@ -30,7 +30,7 @@ export async function POST(request: NextRequest) {
         data: { ...user.user_metadata, must_change_password: false, password_changed_at: new Date().toISOString() },
       } : {}),
     });
-    if (updateError) return NextResponse.json({ ok: false, error: 'Could not change your password. Please try again.' }, { status: 400, headers });
+    if (updateError) return NextResponse.json({ ok: false, error: updateError.code === 'same_password' ? 'Choose a password different from your current password.' : 'Could not change your password. Please try again.' }, { status: 400, headers });
     return NextResponse.json({ ok: true }, { headers });
   } catch {
     return NextResponse.json({ ok: false, error: 'The password change could not be confirmed. Sign in again before retrying.' }, { status: 503, headers });

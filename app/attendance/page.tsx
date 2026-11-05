@@ -974,10 +974,11 @@ function AttendancePageInner() {
     <AppShell>
       <div key={activeTab} className="animate-panel-enter w-full space-y-4">
         {/* Clean Dedicated Page Header for each separated view */}
-        <div className="animate-mobile-lift blueprint-accent flex flex-col gap-3 border-b border-surface-border/60 pb-3 sm:flex-row sm:items-center sm:justify-between">
+        <div className="animate-mobile-lift blueprint-accent relative flex flex-col gap-4 overflow-hidden rounded-2xl border border-[#e3ddd2] bg-[#f8f6f0] px-4 py-5 shadow-sm sm:flex-row sm:items-end sm:justify-between sm:px-6 sm:py-6">
           <div className="min-w-0">
+            <p className="mb-1.5 text-[11px] font-bold uppercase tracking-[0.14em] text-brand">Workforce &amp; attendance</p>
             <div className="flex items-center gap-2.5">
-              <h1 className="text-xl sm:text-2xl font-semibold text-navy tracking-tight break-words">
+              <h1 className="text-2xl sm:text-3xl font-semibold text-navy tracking-tight break-words">
                 {activeTab === 'history'
                   ? 'Attendance History'
                   : activeTab === 'workforce'

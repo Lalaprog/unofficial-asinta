@@ -20,6 +20,7 @@ import {
 import { Button } from '@/components/ui/Button';
 import { FilterSummary } from '@/components/ui/FilterSummary';
 import { WorkspaceHeader } from '@/components/ui/WorkspaceHeader';
+import { EmptyState } from '@/components/ui/EmptyState';
 import { WorkspaceFilters } from '@/components/ui/WorkspaceFilters';
 import { Badge } from '@/components/ui/Badge';
 import { Input, Textarea } from '@/components/ui/Input';
@@ -504,9 +505,7 @@ export default function InvoicesPage() {
             })}
 
             {filteredInvoices.length === 0 && (
-              <div className="p-12 text-center text-xs text-ink-secondary">
-                {invoices.length === 0 ? 'No invoices have been recorded yet.' : 'No invoices match the current search or filters. Clear filters to see all invoices.'}
-              </div>
+              <EmptyState title={invoices.length === 0 ? 'No invoices yet' : 'No invoices match'} description={invoices.length === 0 ? 'No invoices have been recorded yet.' : 'No invoices match the current search or filters. Clear filters to see all invoices.'} />
             )}
           </div>
         </div>
