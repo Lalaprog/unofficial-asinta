@@ -1,3 +1,4 @@
+import type { ExpenseLineItem } from '@/types';
 import { evidenceAppearsIn, validateModelDraft, type DraftContext, type ExpenseDraft } from '@/lib/ai/draft';
 
 /** A short *verbatim* excerpt, never a generated claim or a dump of OCR text. */
@@ -40,4 +41,24 @@ export function buildReceiptDraft(fields: Record<string, unknown>, text: string,
   if (!draft.expenseDate) unresolved.push('The receipt date needs your input.');
   if (!vendor && !unresolved.some((item) => item.toLowerCase().includes('supplier'))) unresolved.push('The supplier could not be verified — enter it if needed.');
   return { ...draft, description, category, categorySource: category ? draft.categorySource : 'none', vendor: vendor ? draft.vendor : null, vendorToken: vendor ? draft.vendorToken : null, noteEvidence: null, unresolved };
+}
+
+/** Model-reported receipt lines remain suggestions, never the ledger total. */
+export function buildReceiptItems(candidate: unknown, text: string): ExpenseLineItem[] {
+  if (!Array.isArray(candidate)) return [];
+  const result: ExpenseLineItem[] = [];
+  for (const raw of candidate.slice(0, 100)) {
+    if (!raw || typeof raw !== 'object') continue;
+    const row = raw as Record<string, unknown>;
+    const quote = typeof row.line_quote === 'string' ? row.line_quote.trim() : '';
+    const name = typeof row.name === 'string' ? row.name.trim() : '';
+    if (!quote || /[\r\n]/.test(quote) || !text.split(/\r?\n/).some(line => line.trim() === quote)) continue;
+    if (!name || name.length > 160 || !quote.includes(name) || /^(?:sub\s*total|total|tax|vat|change|cash|balance)\b/i.test(name)) continue;
+    const quantity = typeof row.quantity === 'string' && row.quantity.trim().length <= 60 && quote.includes(row.quantity.trim()) ? row.quantity.trim() || null : null;
+    const amountCandidate = typeof row.amount === 'number' && Number.isFinite(row.amount) && row.amount >= 0 && row.amount <= 9999999999.99 && Math.abs(Math.round(row.amount * 100) - row.amount * 100) < 1e-7 ? row.amount : null;
+    const printedAmounts = quote.match(/\d[\d,]*(?:\.\d{1,2})?/g) || [];
+    const amount = amountCandidate !== null && printedAmounts.some(part => Number(part.replace(/,/g, '')) === amountCandidate) ? amountCandidate : null;
+    result.push({ name, quantity, amount });
+  }
+  return result;
 }

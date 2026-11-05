@@ -6,7 +6,10 @@ import { useDataStore } from '@/lib/data/store';
 import { useAuth } from '@/lib/auth/authContext';
 import { useToast } from '@/components/ui/Toast';
 import { createClient } from '@/lib/supabase/client';
-import { ExpenseCategory } from '@/types';
+import { ExpenseCategory, type Expense, type ExpenseLineItem } from '@/types';
+import { ExpenseItemsEditor } from '@/components/expenses/ExpenseItemsEditor';
+import { ExpenseDetailsModal } from '@/components/expenses/ExpenseDetailsModal';
+import { itemInputs, prepareExpenseItems, type ItemInput } from '@/lib/expenses/items';
 import {
   Plus,
   Search,
@@ -56,6 +59,7 @@ export default function ExpensesPage() {
     expenses,
     projects,
     createExpense,
+    updateExpense,
     createAdvance,
     workers,
   } = useDataStore();
@@ -69,11 +73,14 @@ export default function ExpensesPage() {
   // Modal states
   const [isAddModalOpen, setIsAddModalOpen] = useState(false);
   const [selectedReceiptUrl, setSelectedReceiptUrl] = useState<string | null>(null);
+  const [selectedExpense, setSelectedExpense] = useState<Expense | null>(null);
+  const [itemRows, setItemRows] = useState<ItemInput[]>([]);
 
   // Form State
   const [formData, setFormData] = useState({
     project_id: '',
     description: '',
+    details: '',
     amount: '',
     category: 'materials' as ExpenseCategory | '',
     expense_date: new Date().toISOString().split('T')[0],
@@ -152,7 +159,9 @@ export default function ExpensesPage() {
       exp.description.toLowerCase().includes(searchQuery.toLowerCase()) ||
       proj?.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
       (exp.notes && exp.notes.toLowerCase().includes(searchQuery.toLowerCase())) ||
-      (exp.vendor && exp.vendor.toLowerCase().includes(searchQuery.toLowerCase()));
+      (exp.vendor && exp.vendor.toLowerCase().includes(searchQuery.toLowerCase())) ||
+      (exp.details && exp.details.toLowerCase().includes(searchQuery.toLowerCase())) ||
+      Boolean(exp.line_items?.some(item => item.name.toLowerCase().includes(searchQuery.toLowerCase())));
 
     const matchesCategory = categoryFilter === 'all' || exp.category === categoryFilter;
     const matchesProject = projectFilter === 'all' || exp.project_id === projectFilter;
@@ -204,6 +213,9 @@ export default function ExpensesPage() {
   const handleAddSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (expenseSubmitLock.current || isUploadingReceipt || !formData.project_id || !formData.description || !formData.amount || !formData.expense_date || !formData.category) return;
+    const parsedItems = prepareExpenseItems(itemRows);
+    if (parsedItems.error) { showToast('error', parsedItems.error); return; }
+    if (formData.details.length > 5000) { showToast('error', 'Keep details under 5,000 characters.'); return; }
     if (!user) {
       showToast('error', 'You must be signed in to record expenses.');
       return;
@@ -238,6 +250,8 @@ export default function ExpensesPage() {
       const newExp = await createExpense({
         project_id: formData.project_id,
         description: formData.description,
+        details: formData.details.trim() || null,
+        line_items: parsedItems.items.length ? parsedItems.items : null,
         category: formData.category,
         amount: amountNum,
         expense_date: formData.expense_date,
@@ -298,6 +312,7 @@ export default function ExpensesPage() {
         setFormData({
           project_id: '',
           description: '',
+          details: '',
           amount: '',
           category: 'materials',
           expense_date: new Date().toISOString().split('T')[0],
@@ -307,6 +322,7 @@ export default function ExpensesPage() {
         });
         setAiResult(null);
         setAiAccepted(false);
+        setItemRows([]);
         setReceiptFileName(null);
         setDraft(null);
         setDraftWarnings(null);
@@ -467,6 +483,7 @@ export default function ExpensesPage() {
     setFormData((previous) => input.kind === 'receipt' ? {
       ...previous,
       description: nextDraft.description,
+      details: '',
       amount: nextDraft.amount !== null ? String(nextDraft.amount) : '',
       expense_date: nextDraft.expenseDate ?? '',
       project_id: nextDraft.projectId ?? '',
@@ -609,6 +626,7 @@ export default function ExpensesPage() {
         return;
       }
 
+      setItemRows(itemInputs(Array.isArray(payload.items) ? payload.items as ExpenseLineItem[] : []));
       setPendingReceiptFile(file);
       setReceiptFileName(file.name);
       setPendingReceiptPreview((previous) => {
@@ -727,7 +745,7 @@ export default function ExpensesPage() {
                   const file = event.target.files?.[0];
                   event.target.value = '';
                   if (file) {
-                    const hasUnfinishedEntry = Boolean(formData.project_id || formData.description || formData.amount || formData.vendor || formData.notes || formData.receipt_url || pendingReceiptFile || draft || formData.category !== 'materials' || formData.expense_date !== new Date().toISOString().split('T')[0]);
+                    const hasUnfinishedEntry = Boolean(formData.project_id || formData.description || formData.details || itemRows.length || formData.amount || formData.vendor || formData.notes || formData.receipt_url || pendingReceiptFile || draft || formData.category !== 'materials' || formData.expense_date !== new Date().toISOString().split('T')[0]);
                     if (hasUnfinishedEntry) setReceiptToConfirm(file);
                     else void handleDraftFromReceipt(file);
                   }
@@ -932,6 +950,7 @@ export default function ExpensesPage() {
                       <div className="text-[11px] text-ink-secondary">Disbursed</div>
                     </div>
 
+                    <Button variant="secondary" size="sm" onClick={() => setSelectedExpense(exp)}>View details</Button>
                     {exp.receipt_url ? (
                       <Button
                         variant="secondary"
@@ -1159,7 +1178,7 @@ export default function ExpensesPage() {
           <div className="space-y-1">
             <div className="flex items-center justify-between">
               <label htmlFor="expense-description" className="text-xs font-semibold text-ink-secondary">
-                Expense Description
+                Expense title
               </label>
               <button
                 type="button"
@@ -1174,12 +1193,14 @@ export default function ExpensesPage() {
             <Input
               id="expense-description"
               placeholder="e.g. Cement and construction materials"
-              hint={draftInputKind === 'receipt' ? 'Edit this short description. Check it against the photo; the full reading is shown separately above.' : undefined}
+              hint={draftInputKind === 'receipt' ? 'Review this short title against the receipt.' : undefined}
               value={formData.description}
               onChange={(e) => setFormData({ ...formData, description: e.target.value })}
               required
             />
           </div>
+
+          <Textarea label="Description (optional)" placeholder="Add more details about this purchase" maxLength={5000} rows={2} value={formData.details} onChange={e => setFormData({ ...formData, details:e.target.value })} />
 
           <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
             <Input
@@ -1201,6 +1222,9 @@ export default function ExpensesPage() {
               required
             />
           </div>
+
+          {draftInputKind === 'receipt' && itemRows.length > 0 && <p className="text-xs text-status-warning">These items are suggestions from the photo. Check and correct each one before saving.</p>}
+          <ExpenseItemsEditor rows={itemRows} onChange={setItemRows} receiptTotal={formData.amount} />
 
           {/* GROQ AI SUGGESTION BOX */}
           {aiResult && (
@@ -1376,6 +1400,8 @@ export default function ExpensesPage() {
           if (file) void handleDraftFromReceipt(file);
         }}
       />
+
+      <ExpenseDetailsModal expense={selectedExpense} projects={projects} onClose={() => setSelectedExpense(null)} onUpdate={updateExpense} onReceipt={path => { setSelectedExpense(null); void openReceiptPreview(path); }} />
 
       {/* RECEIPT PREVIEW MODAL — private bucket, so the src is a short-lived signature */}
       <Modal

@@ -485,10 +485,10 @@ export default function LoginPage() {
                     : emailCodeMessage}
                 </p>
                 {error && <div role="alert" className="p-3 rounded-xl bg-status-danger-bg text-status-danger text-xs">{error}</div>}
-                <Input label="Work Email" type="email" value={email} error={fieldErrors.email} reserveMessageSpace onChange={e => { setEmail(e.target.value); setFieldErrors(previous => ({ ...previous, email: undefined })); }}
+                <Input label="Work Email" type="email" value={email} error={fieldErrors.email} onChange={e => { setEmail(e.target.value); setFieldErrors(previous => ({ ...previous, email: undefined })); }}
                   autoComplete="off" autoCapitalize="none" spellCheck={false} disabled={signinMode === 'email-code'} required />
                 {signinMode === 'email-code' && <Input label="Email Sign-In Code" type="text" inputMode="numeric"
-                  autoComplete="one-time-code" value={emailCode} error={fieldErrors.code} reserveMessageSpace onChange={e => { setEmailCode(e.target.value); setFieldErrors(previous => ({ ...previous, code: undefined })); }} required />}
+                  autoComplete="one-time-code" value={emailCode} error={fieldErrors.code} onChange={e => { setEmailCode(e.target.value); setFieldErrors(previous => ({ ...previous, code: undefined })); }} required />}
                 <Button type="submit" variant="primary" className="w-full" disabled={isLoading}>
                   {signinMode === 'email-request' ? 'Send sign-in code' : 'Verify sign-in code'}
                 </Button>
@@ -515,7 +515,6 @@ export default function LoginPage() {
                   type="email"
                   name="bale_work_email"
                   error={fieldErrors.email}
-                  reserveMessageSpace
                   autoComplete="off"
                   autoCorrect="off"
                   autoCapitalize="none"
@@ -533,7 +532,6 @@ export default function LoginPage() {
                     type={showPassword ? 'text' : 'password'}
                     name="bale_work_password"
                     error={fieldErrors.password}
-                    reserveMessageSpace
                     autoComplete="off"
                     autoCorrect="off"
                     autoCapitalize="none"

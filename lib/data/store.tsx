@@ -76,7 +76,7 @@ interface DataStoreContextType {
 
   // Expense Actions
   createExpense: (data: Omit<Expense, 'id' | 'created_at'>) => Promise<Expense | null>;
-  updateExpense: (id: string, data: Partial<Expense>) => Promise<Expense | null>;
+  updateExpense: (id: string, data: Partial<Expense>, expectedRevision?: number) => Promise<Expense | null>;
   deleteExpense: (id: string) => Promise<boolean>;
 
   // Bale / Advance Actions
@@ -854,10 +854,10 @@ export const DataStoreProvider: React.FC<{ children: React.ReactNode }> = ({ chi
     return mapped;
   };
 
-  const updateExpense = async (id: string, data: Partial<Expense>): Promise<Expense | null> => {
+  const updateExpense = async (id: string, data: Partial<Expense>, expectedRevision?: number): Promise<Expense | null> => {
     const before = expenses.find((e) => e.id === id) ?? null;
     const row = await runMutation('Update expense', (db) =>
-      db.from('expenses').update(data).eq('id', id).select().single()
+      (expectedRevision === undefined ? db.from('expenses').update(data).eq('id', id) : db.from('expenses').update(data).eq('id', id).eq('revision', expectedRevision)).select().single()
     );
     const mapped = row ? mapExpense(row) : null;
     if (mapped) {

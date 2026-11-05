@@ -76,10 +76,20 @@ import type { ExpenseCategory } from '@/lib/ai/categories';
 // The category list lives in one place only — see lib/ai/categories.ts.
 export type { ExpenseCategory };
 
+export interface ExpenseLineItem {
+  name: string;
+  quantity: string | null;
+  amount: number | null;
+}
+
 export interface Expense {
   id: string;
   project_id: string;
   description: string;
+  /** Optional longer details and receipt items; the expense amount remains authoritative. */
+  details?: string | null;
+  line_items?: ExpenseLineItem[] | null;
+  revision?: number;
   category: ExpenseCategory;
   amount: number;
   expense_date: string;

@@ -51,6 +51,7 @@ Return ONLY this JSON object:
 {
   "receipt_text": "<the readable text of the receipt, line by line, verbatim>",
   "description": "<one short, verbatim item or service as it appears in receipt_text, max 120 characters, or null>",
+  "items": [{"name": "<item name exactly as printed>", "quantity": "<quantity as printed, or null>", "amount": <line total as a number, or null>, "line_quote": "<exact line from receipt_text>"}],
   "amount": <the total amount as a number, or null>,
   "amount_quote": "<the exact text on the receipt showing that total, or null>",
   "date": "<YYYY-MM-DD or null>",
@@ -64,6 +65,7 @@ Return ONLY this JSON object:
 
 Hard rules:
 - The description is one exact item/service excerpt, not the entire receipt, supplier, total, tax or a guess. If uncertain, use null.
+- Extract only item lines that are legible; omit totals, tax and payment lines. Quote each item line exactly. If none are legible, return an empty items array.
 - Read what is there. NEVER guess a number that is not legible: use null.
 - If the image is not a receipt, or is too blurry to read, return receipt_text "" and nulls.
 - amount must be the TOTAL, not a line item. If you cannot tell which is the total, use null.

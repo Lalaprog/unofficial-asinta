@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { createServerSupabaseClient } from '@/lib/supabase/server';
 import { requireFounder } from '@/lib/auth/serverRole';
 import { enforceRateLimit } from '@/lib/api/rateLimitGuard';
-import { buildReceiptDraft } from '@/lib/ai/receiptDraft';
+import { buildReceiptDraft, buildReceiptItems } from '@/lib/ai/receiptDraft';
 import { loadDraftData } from '@/lib/ai/draftData';
 import { readReceiptImage, validateReceiptImagePayload } from '@/lib/ai/receiptVision';
 
@@ -68,6 +68,7 @@ export async function POST(req: NextRequest) {
       {
         ok: true,
         draft,
+        items: buildReceiptItems(reading.fields.items, reading.text),
         read: {
           model: reading.model,
           usedFallbackModel: Boolean(reading.usedFallback),
