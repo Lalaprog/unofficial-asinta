@@ -41,6 +41,9 @@ export function createFakeDb(seed: Record<string, Row[]> = {}): FakeDb {
           if (ignoreDuplicates) return { data: [], error: null };
           return { data: null, error: { code: '23505', message: 'duplicate key value violates unique constraint' } };
         }
+        if (table === 'email_templates' && rows.some((r) => r.template_type === row.template_type)) {
+          return { data: null, error: { code: '23505', message: 'duplicate template_type' } };
+        }
         rows.push(row);
         return { data: [row], error: null };
       }

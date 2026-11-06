@@ -4,8 +4,8 @@ A plain-language record of work still to consider. This is a planning document, 
 
 ## Agreed final-stretch work
 
-- [ ] **Founder-friendly message templates:** Saved request-for-payment email and SMS templates have readable fields and previews in this work. Invoice edits are one-time only, and email edits require an updated preview before confirmation. The automatic reminder email template is still to do. Previews must not send messages, and missing important invoice details should be called out.
-- [ ] **Optional project photos:** Implementation in progress: private Founder-managed project card photos with the preferred blueprint as fallback. Rollout and real-device checks are still needed; allow JPEG, PNG or WebP up to 3 MB (larger phone photos need resizing first). Photos use private storage and project-scoped server authorization.
+- [ ] **Founder-friendly message templates:** Saved request-for-payment email and SMS templates have readable fields and previews. Invoice edits are one-time only, and email edits require an updated preview before confirmation. This work adds an editable reminder email template and safe preview; scheduled email delivery remains unfinished. Previews must not send messages, and missing important invoice details should be called out.
+- [ ] **Optional project photos:** Delivered in PR #81: private Founder-managed project card photos with the preferred blueprint as fallback. Real-device and hosted upload/download checks are still needed; allow JPEG, PNG or WebP up to 3 MB (larger phone photos need resizing first). Photos use private storage and project-scoped server authorization.
 - [ ] **Automatic invoice reminders:** Provide one persistent Founder master switch for email and SMS, retaining invoice-level controls. Target three days before, on the due date, three days after, then weekly; Monday–Saturday, 8 a.m.–6 p.m. Manila. Handle dates outside the window without missing or flooding, check scheduling/provider constraints and costs, expose readiness/failures, and guard duplicate sends. OFF prevents new sends; work already in flight may finish. Keep automatic sending OFF during tests; do not send real messages without approval.
 - [ ] **Final UI and empty-state audit:** Distinguish no records, filters with no results, loading and errors; offer actions appropriate to each role. Remove redundant development-oriented explanations and model configuration from everyday screens while preserving essential safety warnings and useful controls. Preserve the liked dashboard mobile view.
 - [ ] **User's real-world checks:** On real devices, check saved expense draft/photo recovery and receipt scanning, and review AI suggestions against the actual receipt. The user will handle real-data testing and report issues.
@@ -27,7 +27,7 @@ A plain-language record of work still to consider. This is a planning document, 
 
 ## Already delivered
 
-The dashboard project selector, initial email-template field insertion, expense item details and review, one saved expense draft per Founder, same-page receipt viewer, and clearer receipt-AI errors have been delivered. Saved SMS templates and compact message editors were deployed in PR #80. A saved draft is not a ledger entry; saving remains explicit. Do not reopen completed work unless a practical issue is found.
+The dashboard project selector, initial email-template field insertion, expense item details and review, one saved expense draft per Founder, same-page receipt viewer, private project photos, and clearer receipt-AI errors have been delivered. Saved SMS templates and compact message editors were deployed in PR #80. A saved draft is not a ledger entry; saving remains explicit. Do not reopen completed work unless a practical issue is found.
 
 ## Deliberately on hold
 
