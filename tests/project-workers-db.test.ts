@@ -1,0 +1,54 @@
+import { PGlite } from '@electric-sql/pglite';
+import { readFileSync } from 'node:fs';
+import { describe, expect, it } from 'vitest';
+const migration = readFileSync('supabase/migrations/20261107000002_project_worker_lists.sql','utf8');
+const founder='00000000-0000-0000-0000-000000000001', supervisor='00000000-0000-0000-0000-000000000002', other='00000000-0000-0000-0000-000000000003';
+const p1='10000000-0000-0000-0000-000000000001', p2='10000000-0000-0000-0000-000000000002', w1='20000000-0000-0000-0000-000000000001', nw='20000000-0000-0000-0000-000000000002';
+describe('project workforce database safeguards',()=>{
+  it('enforces role and site scope, preserves history, and makes registration atomic and retry-safe',async()=>{
+    const db=new PGlite();
+    try {
+      await db.exec(`create role anon; create role authenticated; create role service_role; create schema app_private;
+        grant usage on schema public to anon, authenticated, service_role;
+        alter default privileges in schema public grant all on tables to anon, authenticated;
+        create table public.users(id uuid primary key, role text not null);
+        create table public.projects(id uuid primary key);
+        create table public.workers(id uuid primary key,name text not null,position text not null,contact_number text not null,pay_rate numeric(10,2) not null,pay_rate_type text not null,active boolean not null);
+        create table public.project_supervisors(project_id uuid,supervisor_id uuid,unique(project_id,supervisor_id));
+        create table public.attendance(worker_id uuid,project_id uuid);
+        create function public.session_assurance_satisfied() returns boolean language sql stable as $$ select current_setting('test.aal',true)='aal2' $$;
+        create function public.is_founder() returns boolean language sql stable as $$ select public.session_assurance_satisfied() and current_setting('test.actor',true)='${founder}' $$;
+        create function public.is_supervisor_assigned(proj uuid) returns boolean language sql stable security definer as $$ select public.session_assurance_satisfied() and exists(select 1 from public.project_supervisors where project_id=proj and supervisor_id::text=current_setting('test.actor',true)) $$;
+        insert into public.users values ('${founder}','founder'),('${supervisor}','supervisor'),('${other}','supervisor');
+        insert into public.projects values ('${p1}'),('${p2}');
+        insert into public.project_supervisors values ('${p1}','${supervisor}');
+        insert into public.workers values ('${w1}','Existing','Mason','—',500,'daily',true);
+        insert into public.attendance values ('${w1}','${p1}');`);
+      await db.exec(migration); await db.exec('set role service_role');
+      await expect(db.query('select public.set_project_worker_guarded($1,$2,$3,true)',[supervisor,p2,w1])).rejects.toThrow(/access required/i);
+      await expect(db.query('select public.set_project_worker_guarded($1,$2,$3,true)',[other,p1,w1])).rejects.toThrow(/access required/i);
+      await db.query('select public.set_project_worker_guarded($1,$2,$3,true)',[supervisor,p1,w1]);
+      await db.query('select public.set_project_worker_guarded($1,$2,$3,true)',[founder,p2,w1]);
+      const args=[supervisor,p1,nw,'New Person','Carpenter','0912',850,'daily'];
+      const sql='select public.create_project_worker_guarded($1,$2,$3,$4,$5,$6,$7,$8) as result';
+      expect((await db.query<{result:{replayed:boolean}}>(sql,args)).rows[0].result.replayed).toBe(false);
+      expect((await db.query<{result:{replayed:boolean}}>(sql,args)).rows[0].result.replayed).toBe(true);
+      await expect(db.query(sql,[supervisor,p1,nw,'Different','Carpenter','0912',850,'daily'])).rejects.toThrow(/does not match/i);
+      await expect(db.query(sql,[supervisor,p1,w1,'Overwrite','Mason','',1,'daily'])).rejects.toThrow();
+      await db.query('select public.set_project_worker_guarded($1,$2,$3,false)',[supervisor,p1,w1]);
+      await db.exec('reset role');
+      expect((await db.query('select name,pay_rate from public.workers where id=$1',[w1])).rows[0]).toMatchObject({name:'Existing',pay_rate:'500.00'});
+      expect((await db.query('select * from public.attendance')).rows).toHaveLength(1);
+      expect((await db.query('select * from public.project_worker_assignments where project_id=$1 and worker_id=$2 and active',[p2,w1])).rows).toHaveLength(1);
+      expect((await db.query('select * from public.workers')).rows).toHaveLength(2);
+      await db.exec(`set role authenticated; set test.actor='${supervisor}'; set test.aal='aal2'`);
+      expect((await db.query('select * from public.project_worker_assignments where project_id=$1',[p2])).rows).toHaveLength(0);
+      expect((await db.query('select * from public.project_worker_assignments where project_id=$1',[p1])).rows).toHaveLength(2);
+      await expect(db.query('select public.set_project_worker_guarded($1,$2,$3,true)',[founder,p1,w1])).rejects.toThrow(/permission denied/i);
+      await expect(db.query('update public.project_worker_assignments set active=true')).rejects.toThrow(/permission denied/i);
+      await db.exec("set test.aal='aal1'");
+      expect((await db.query('select * from public.project_worker_assignments')).rows).toHaveLength(0);
+      await db.exec('set role anon'); await expect(db.query('select * from public.project_worker_assignments')).rejects.toThrow(/permission denied/i);
+    } finally {await db.close();}
+  });
+});

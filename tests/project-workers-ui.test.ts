@@ -1,0 +1,51 @@
+// @vitest-environment jsdom
+import React from 'react';
+import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+const state = vi.hoisted(() => ({ workers: [
+  {id:'20000000-0000-0000-0000-000000000001',name:'Mara Cruz',position:'Mason',contact_number:'091234',active:true,pay_rate:500,pay_rate_type:'daily',created_at:''},
+  {id:'20000000-0000-0000-0000-000000000002',name:'Juan Cruz',position:'Carpenter',contact_number:'—',active:true,pay_rate:500,pay_rate_type:'daily',created_at:''},
+], refresh: vi.fn(async()=>{}) }));
+vi.mock('@/lib/data/store',()=>({useDataStore:()=>({workers:state.workers,refresh:state.refresh,isLoaded:true,loadError:null})}));
+import { ProjectWorkers } from '@/components/projects/ProjectWorkers';
+let ids:string[];
+beforeEach(()=>{
+  ids=[];
+  vi.stubGlobal('fetch',vi.fn(async(_url:string,opts?:RequestInit)=>{
+    if(opts?.method==='POST') {const body=JSON.parse(String(opts.body));if(body.action==='assign') ids.push(body.workerId);if(body.action==='remove') ids=ids.filter(id=>id!==body.workerId);return {ok:true,json:async()=>({ok:true})};}
+    return {ok:true,json:async()=>({workerIds:ids})};
+  }));
+});
+afterEach(()=>{cleanup();vi.unstubAllGlobals();vi.clearAllMocks();});
+describe('project team UI',()=>{
+  it('starts empty, searches existing workers and adds a selected profile to this project',async()=>{
+    render(React.createElement(ProjectWorkers,{projectId:'10000000-0000-0000-0000-000000000001'}));
+    await screen.findByText(/No workers have been assigned/);
+    expect(screen.getByText(/past attendance does not automatically assign/)).toBeTruthy();
+    fireEvent.click(screen.getByRole('button',{name:'Add worker'}));
+    fireEvent.change(screen.getByLabelText('Search existing workers'),{target:{value:'Mara'}});
+    expect(screen.queryByText('Juan Cruz')).toBeNull();
+    fireEvent.click(screen.getByRole('button',{name:'Add Mara Cruz'}));
+    await screen.findByText('Mara Cruz added to this project.');
+    expect(ids).toEqual([state.workers[0].id]);
+    const post=vi.mocked(fetch).mock.calls.find(([,opts])=>opts?.method==='POST');
+    expect(JSON.parse(String(post?.[1]?.body))).toMatchObject({action:'assign',workerId:state.workers[0].id});
+    expect(screen.getByText(/does not mark attendance or change payroll/)).toBeTruthy();
+  });
+  it('requires confirmation before removal and explains the existing records are preserved',async()=>{
+    ids=[state.workers[0].id];
+    render(React.createElement(ProjectWorkers,{projectId:'10000000-0000-0000-0000-000000000001'}));
+    fireEvent.click(await screen.findByRole('button',{name:'Remove Mara Cruz from project'}));
+    expect(screen.getByText(/attendance, payroll and Bale records will not be deleted/)).toBeTruthy();
+    expect(vi.mocked(fetch).mock.calls.filter(([,o])=>o?.method==='POST')).toHaveLength(0);
+    fireEvent.click(screen.getByRole('button',{name:'Remove from project',hidden:false}));
+    await waitFor(()=>expect(ids).toHaveLength(0));
+  });
+  it('shows a matching-name warning before registering a duplicate',async()=>{
+    render(React.createElement(ProjectWorkers,{projectId:'10000000-0000-0000-0000-000000000001'}));
+    await screen.findByText(/No workers have been assigned/);fireEvent.click(screen.getByRole('button',{name:'Add worker'}));
+    fireEvent.click(screen.getByRole('button',{name:'Register a new worker'}));
+    fireEvent.change(screen.getByLabelText('Full name'),{target:{value:'Mara'}});
+    expect(screen.getByText(/Similar existing names: Mara Cruz/)).toBeTruthy();
+  });
+});

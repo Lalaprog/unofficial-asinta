@@ -14,7 +14,7 @@ vi.mock('@/lib/supabase/server', () => ({ createServerSupabaseClient: () => ({
 }) }));
 vi.mock('@/lib/supabase/admin', () => ({
   isServiceRoleConfigured: () => true,
-  createServiceRoleClient: () => { mock.service(); return { from: () => ({ upsert: mock.workerWrite }) }; },
+  createServiceRoleClient: () => { mock.service(); return { from: () => ({ insert: mock.workerWrite }) }; },
 }));
 
 import { requireFounder } from '@/lib/auth/serverRole';
@@ -75,6 +75,13 @@ describe('server-side assurance gate', () => {
     expect((await registerWorker(request('/api/workers',{name:'Synthetic Worker',position:'Mason',pay_rate:500}))).status).toBe(201);
     expect(mock.service).toHaveBeenCalledTimes(1);
     expect(mock.workerWrite).toHaveBeenCalledTimes(1);
+  });
+
+  it('never uses an upsert to overwrite an existing worker from Supervisor registration', async () => {
+    mock.workerWrite.mockReturnValue({select: () => ({single: async () => ({data:null,error:{message:'duplicate'}})})});
+    const response = await registerWorker(request('/api/workers',{id:'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa',name:'Existing',position:'Mason',pay_rate:1}));
+    expect(response.status).toBe(400);
+    expect(mock.workerWrite).toHaveBeenCalledWith(expect.objectContaining({id:'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa'}));
   });
 
   it('blocks password setup before invoking Auth when the factor is unverified', async () => {

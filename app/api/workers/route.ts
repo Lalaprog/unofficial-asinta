@@ -110,7 +110,8 @@ export async function POST(request: NextRequest) {
 
   const { data: created, error: insertError } = await dbClient
     .from('workers')
-    .upsert(insertPayload, { onConflict: 'id' })
+    // Registration must not overwrite an existing worker via a supplied id.
+    .insert(insertPayload)
     .select()
     .single();
 
