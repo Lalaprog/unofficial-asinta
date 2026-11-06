@@ -29,6 +29,7 @@ import { getBudgetSummary } from '@/lib/projects/budgetSummary';
 import { validateProjectForm } from '@/lib/projects/form';
 import { useToast } from '@/components/ui/Toast';
 import { ProjectWorkforceLogs } from '@/components/projects/ProjectWorkforceLogs';
+import { ProjectPhotoManager } from '@/components/projects/ProjectPhotoManager';
 
 export default function ProjectDetailPage() {
   const params = useParams();
@@ -222,6 +223,8 @@ export default function ProjectDetailPage() {
             )}
           </div>
         </div>
+
+        {isFounder && <ProjectPhotoManager projectId={project.id} />}
 
         {/* Tab Navigation */}
         <div className="grid grid-cols-2 gap-x-2 border-b border-surface-border/80 sm:flex sm:flex-wrap">

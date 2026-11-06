@@ -1,10 +1,10 @@
 import { createClient } from '@supabase/supabase-js';
 
 /**
- * Trusted service-role Supabase client for SERVER-SIDE scheduled operations
- * only (e.g. /api/cron/reminders). The service-role key bypasses RLS by
- * design, so this module must NEVER be imported from client components and
- * the key must NEVER be prefixed with NEXT_PUBLIC_.
+ * Trusted service-role Supabase client for carefully authorized SERVER-SIDE
+ * operations (e.g. scheduled reminders and private project photos). It bypasses
+ * RLS: routes must independently verify authorization and project scope before
+ * using it. Never import it from client components or expose the key publicly.
  */
 export function isServiceRoleConfigured(): boolean {
   return Boolean(
