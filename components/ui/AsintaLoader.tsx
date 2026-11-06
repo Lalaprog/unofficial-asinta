@@ -10,7 +10,7 @@ interface AsintaLoaderProps {
 
 /**
  * Pure, wordless Architectural Isometric & Drafting Loader.
- * Retains the isometric structural box with a gentle drafting-line motion.
+ * Retains the isometric structural box and a smooth drafting-compass ring.
  */
 export const AsintaLoader: React.FC<AsintaLoaderProps> = ({
   variant = 'fullscreen',
@@ -24,10 +24,17 @@ export const AsintaLoader: React.FC<AsintaLoaderProps> = ({
     <div className="relative w-20 h-20 flex items-center justify-center select-none motion-safe:animate-in motion-safe:fade-in motion-safe:zoom-in-95 duration-150">
       <span className="sr-only">Loading…</span>
 
-      {/* Static drafting corners; the box remains the focus, not a spinner. */}
-      <svg className="absolute w-20 h-20" viewBox="0 0 100 100" fill="none" aria-hidden="true">
-        <path d="M8 28 V8 H28 M72 8 H92 V28 M92 72 V92 H72 M28 92 H8 V72" stroke="#CBD5E1" strokeWidth="1.5" strokeLinecap="round" />
-        <path d="M8 28 V8 H28 M72 8 H92 V28 M92 72 V92 H72 M28 92 H8 V72" stroke="#1B4978" strokeWidth="1.6" strokeLinecap="round" strokeDasharray="12 164" className="motion-safe:animate-[archStroke_4s_ease-in-out_infinite]" />
+      {/* The drafting compass circles the unchanged isometric box. */}
+      <svg
+        className="absolute w-20 h-20 motion-safe:animate-[spin_4.5s_linear_infinite]"
+        viewBox="0 0 100 100"
+        fill="none"
+        xmlns="http://www.w3.org/2000/svg"
+        aria-hidden="true"
+        data-loader-ring="true"
+      >
+        <circle cx="50" cy="50" r="45" stroke="#CBD5E1" strokeWidth="1" strokeDasharray="4 6" />
+        <circle cx="50" cy="50" r="45" stroke="#1B4978" strokeWidth="1.75" strokeLinecap="round" strokeDasharray="65 220" />
       </svg>
 
       {/* Inner 3D Isometric Architectural Structure Wireframe */}
