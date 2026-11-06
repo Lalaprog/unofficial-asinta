@@ -39,6 +39,8 @@ export interface ReceiptReadResult {
   model: string;
   /** Present when ok is false. Safe to show to a Founder. */
   reason?: string;
+  rateLimited?: boolean;
+  retryAfterSeconds?: number;
   /** True when a fallback model answered instead of the primary. */
   usedFallback?: boolean;
 }
@@ -128,7 +130,7 @@ export async function readReceiptImage(
         : status === 400 || status === 413
           ? 'The receipt reader could not process this image. Try a clear JPEG, PNG or WebP photo.'
           : 'The receipt reader is temporarily unavailable or could not produce a usable reading. Please try again later.';
-  return { ok: false, text: '', fields: {}, model, reason };
+  return { ok: false, text: '', fields: {}, model, reason, rateLimited: status === 429, retryAfterSeconds: result.ok ? undefined : result.retryAfterSeconds };
 
 }
 

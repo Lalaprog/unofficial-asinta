@@ -20,7 +20,7 @@ describe('friendly email template editor', () => {
     const body=await screen.findByLabelText('Email message') as HTMLTextAreaElement;
     body.focus(); body.setSelectionRange(5,11); fireEvent.select(body);
     fireEvent.click(screen.getByRole('button',{name:'Insert Client Name into message'}));
-    await waitFor(()=>expect(body.value).toBe('Dear {{client_contact_name}},'));
+    await waitFor(()=>expect(body.value).toBe('Dear ‹Client Name›,'));
     fireEvent.click(screen.getByRole('button',{name:'Preview'}));
     expect(await screen.findByText(/Rendered Preview/)).toBeTruthy();
     expect((screen.getByTitle('Template HTML preview') as HTMLIFrameElement).srcdoc).toContain('Juan Dela Cruz');
@@ -32,7 +32,7 @@ describe('friendly email template editor', () => {
     const subject=await screen.findByLabelText('Email subject') as HTMLInputElement;
     fireEvent.click(screen.getByRole('button',{name:'Subject'}));
     fireEvent.click(screen.getByRole('button',{name:'Insert Invoice Number into subject'}));
-    expect(subject.value).toBe('Subject{{invoice_number}}');
+    expect(subject.value).toBe('Subject‹Invoice Number›');
     expect((screen.getByLabelText('Email message') as HTMLTextAreaElement).value).toBe('Dear client,');
     expect(vi.mocked(fetch).mock.calls.every(([url])=>String(url).startsWith('/api/email/templates'))).toBe(true);
   });
@@ -50,4 +50,22 @@ describe('friendly email template editor', () => {
     await waitFor(()=>expect(screen.getByRole('button',{name:'Preview'})).toBeTruthy());
     expect(screen.queryByText('stale')).toBeNull();
   });
+  it('loads old saved tokens as friendly fields and saves compatible tokens, not labels', async () => {
+    const existing={...template,template:{...template.template,body_template:'Dear {{client_contact_name}}, {{invoice_number}}'}};
+    vi.mocked(fetch).mockImplementation(async (url: string | URL | Request,options?:RequestInit)=>{
+      if(String(url).startsWith('/api/email/templates') && !options?.method) return {ok:true,json:async()=>existing} as Response;
+      return {ok:true,json:async()=>({version:3,warnings:[]})} as Response;
+    });
+    render(React.createElement(TemplateEditorCard));const body=await screen.findByLabelText('Email message') as HTMLTextAreaElement;
+    expect(body.value).toBe('Dear ‹Client Name›, ‹Invoice Number›');
+    fireEvent.click(screen.getByRole('button',{name:'Save New Version'}));
+    await waitFor(()=>expect(vi.mocked(fetch).mock.calls.some(([,options])=>options?.method==='PUT')).toBe(true));
+    const put=vi.mocked(fetch).mock.calls.find(([,options])=>options?.method==='PUT')!;expect(JSON.parse(String(put[1]?.body)).body_template).toBe(existing.template.body_template);
+  });
+  it('blocks preview and save if a field has been partly edited',async()=>{
+    render(React.createElement(TemplateEditorCard));const body=await screen.findByLabelText('Email message');fireEvent.change(body,{target:{value:'Hello ‹Client Nam›'}});
+    fireEvent.click(screen.getByRole('button',{name:'Preview'}));expect(screen.getByText(/A field was changed/)).toBeTruthy();
+    fireEvent.click(screen.getByRole('button',{name:'Save New Version'}));expect(vi.mocked(fetch).mock.calls.every(([url])=>String(url).startsWith('/api/email/templates'))).toBe(true);
+  });
+
 });
