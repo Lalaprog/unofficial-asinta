@@ -89,7 +89,7 @@ export interface MinimalAdminSupabaseClient {
     };
   };
   from: (table: string) => any;
-  rpc: (name: string, args: Record<string, unknown>) => PromiseLike<{ data: any; error: { message: string } | null }>;
+  rpc: (name: string, args: Record<string, unknown>) => PromiseLike<{ data: any; error: { message: string; code?: string } | null }>;
 }
 
 export interface CreateTeamAccountInput {
@@ -712,8 +712,14 @@ export async function deleteTeamAccount(params: {
     return { status: 500, body: { ok: false, error: 'Profile removal not confirmed. Check the profile and audit before retrying; Auth removal was not attempted.' } };
   }
   const { data: deletedProfile, error: profileError } = profileResult;
+  // PostgREST reports PGRST202 when it cannot find this RPC in its schema
+  // cache; no profile operation was executed. Do not expose technical schema
+  // errors or imply that removal succeeded on installations missing the guard.
+  if (profileError?.code === 'PGRST202') {
+    return { status: 503, body: { ok: false, error: 'Team account removal is temporarily unavailable. The account was not removed; please contact your administrator.' } };
+  }
   if (profileError || !deletedProfile || deletedProfile.id !== cleanTargetId) {
-    return { status: 500, body: { ok: false, error: `Profile removal not confirmed: ${profileError?.message || 'unexpected database response'}. Check the profile and audit before retrying; Auth removal was not attempted.` } };
+    return { status: 500, body: { ok: false, error: 'Profile removal not confirmed. Check the profile and audit before retrying; Auth removal was not attempted.' } };
   }
 
   const authDelete = await adminClient.auth.admin.deleteUser(cleanTargetId)
