@@ -17,6 +17,7 @@ import {
   validateTemplate,
 } from './templates';
 import { isValidEmail } from './format';
+import { createHash } from 'node:crypto';
 import type { SendEmailParams, SendEmailResult } from './mailer';
 
 // Minimal structural type for the Supabase PostgREST client we rely on.
@@ -158,6 +159,8 @@ export interface SendRequestForPaymentInput {
   /** Unique key per confirmed attempt; repeats never send twice. */
   idempotencyKey: string;
   sentBy: string;
+  /** Optional for compatibility with already-open older clients. */
+  previewFingerprint?: string;
 }
 
 export type SendRequestForPaymentResult =
@@ -195,6 +198,20 @@ function renderWithTemplates(
     }
     return { failure: { status: 500, error: 'Failed to render the email template' } };
   }
+}
+
+/** Detect changes to the reviewed recipient, invoice details or rendered message.
+ * This is a best-effort check immediately before dispatch, not a database lock. */
+export function emailPreviewFingerprint(context: InvoiceEmailContext, rendered: RenderedEmail): string {
+  return createHash('sha256').update(JSON.stringify({
+    invoiceId: context.invoice.id,
+    invoiceStatus: context.invoice.status,
+    recipient: context.recipient,
+    data: context.templateData,
+    subject: rendered.subject,
+    bodyText: rendered.bodyText,
+    bodyHtml: rendered.bodyHtml,
+  })).digest('hex');
 }
 
 /** Renders a preview without sending (used by the Founder preview modal). */
@@ -266,6 +283,10 @@ export async function sendRequestForPayment(
       duplicate: true,
       error: existing.error_message || undefined,
     };
+  }
+
+  if (input.previewFingerprint && input.previewFingerprint !== emailPreviewFingerprint(context, rendered)) {
+    return { ok: false, error: { status: 409, error: 'The invoice, recipient, or message has changed. Update the preview and confirm it again before sending.' } };
   }
 
   // 1. Create the pending log BEFORE sending (exact snapshots included).

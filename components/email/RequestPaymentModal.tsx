@@ -1,15 +1,18 @@
 'use client';
 
-import React, { useCallback, useEffect, useState } from 'react';
+import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { AlertCircle, CheckCircle2, Mail, RefreshCw, Send } from 'lucide-react';
 import { Button } from '@/components/ui/Button';
 import { Badge } from '@/components/ui/Badge';
 import { Input, Textarea } from '@/components/ui/Input';
 import { Modal } from '@/components/ui/Modal';
 import { formatDatePH, formatPeso } from '@/lib/email/format';
+import { SUPPORTED_PLACEHOLDERS } from '@/lib/email/templates';
+import { fieldLabel, friendlyField, fromFriendlyTemplate, toFriendlyTemplate } from '@/lib/email/friendlyFields';
 
 interface PreviewResponse {
   subject: string;
+  previewFingerprint: string;
   bodyText: string;
   bodyHtml: string;
   warnings: string[];
@@ -58,6 +61,12 @@ export const RequestPaymentModal: React.FC<RequestPaymentModalProps> = ({
   const [preview, setPreview] = useState<PreviewResponse | null>(null);
   const [subjectTemplate, setSubjectTemplate] = useState('');
   const [bodyTemplate, setBodyTemplate] = useState('');
+  const [reviewed, setReviewed] = useState<{ subject: string; body: string } | null>(null);
+  const [insertTarget, setInsertTarget] = useState<'subject' | 'body'>('body');
+  const [chosenField, setChosenField] = useState<string>(SUPPORTED_PLACEHOLDERS[0]);
+  const subjectRef = useRef<HTMLInputElement>(null);
+  const bodyRef = useRef<HTMLTextAreaElement>(null);
+  const previewRevision = useRef(0);
   const [previewTab, setPreviewTab] = useState<'html' | 'text'>('html');
   const [error, setError] = useState<string | null>(null);
   const [isRefreshing, setIsRefreshing] = useState(false);
@@ -75,36 +84,52 @@ export const RequestPaymentModal: React.FC<RequestPaymentModalProps> = ({
     async (subject?: string, body?: string) => {
       if (!invoiceId) return;
       const isInitial = subject === undefined;
+      let rawSubject: string | undefined;
+      let rawBody: string | undefined;
+      if (!isInitial) {
+        const parsedSubject = fromFriendlyTemplate(subject, [...SUPPORTED_PLACEHOLDERS]);
+        const parsedBody = fromFriendlyTemplate(body ?? '', [...SUPPORTED_PLACEHOLDERS]);
+        if (!parsedSubject.ok || !parsedBody.ok) {
+          setError(!parsedSubject.ok ? parsedSubject.error : !parsedBody.ok ? parsedBody.error : 'Check the fields.');
+          return;
+        }
+        rawSubject = parsedSubject.value;
+        rawBody = parsedBody.value;
+      }
+      const revision = ++previewRevision.current;
       if (isInitial) setIsLoading(true);
       else setIsRefreshing(true);
+      setRecipientConfirmed(false);
       setError(null);
 
       try {
         const res = await fetch('/api/email/preview', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            invoiceId,
-            subjectTemplate: subject,
-            bodyTemplate: body,
-          }),
+          body: JSON.stringify({ invoiceId, subjectTemplate: rawSubject, bodyTemplate: rawBody }),
         });
         const data = await res.json().catch(() => null);
+        if (revision !== previewRevision.current) return;
         if (!res.ok) {
           setError(data?.error || 'Failed to build the email preview');
           if (isInitial) setPreview(null);
           return;
         }
+        const friendlySubject = isInitial ? toFriendlyTemplate(data.template.subjectTemplate, [...SUPPORTED_PLACEHOLDERS]) : subject;
+        const friendlyBody = isInitial ? toFriendlyTemplate(data.template.bodyTemplate, [...SUPPORTED_PLACEHOLDERS]) : body ?? '';
         setPreview(data as PreviewResponse);
         if (isInitial) {
-          setSubjectTemplate(data.template.subjectTemplate);
-          setBodyTemplate(data.template.bodyTemplate);
+          setSubjectTemplate(friendlySubject);
+          setBodyTemplate(friendlyBody);
         }
+        setReviewed({ subject: friendlySubject, body: friendlyBody });
       } catch {
-        setError('Network error while building the preview');
+        if (revision === previewRevision.current) setError('Network error while building the preview');
       } finally {
-        setIsLoading(false);
-        setIsRefreshing(false);
+        if (revision === previewRevision.current) {
+          setIsLoading(false);
+          setIsRefreshing(false);
+        }
       }
     },
     [invoiceId]
@@ -113,16 +138,43 @@ export const RequestPaymentModal: React.FC<RequestPaymentModalProps> = ({
   useEffect(() => {
     if (isOpen && invoiceId) {
       setPreview(null);
+      setReviewed(null);
+      setIsRefreshing(false);
       setSendResult(null);
       setRecipientConfirmed(false);
       setError(null);
       setIdempotencyKey(newIdempotencyKey());
       loadPreview();
     }
+    return () => { previewRevision.current += 1; };
   }, [isOpen, invoiceId, loadPreview]);
 
+  const previewIsCurrent = Boolean(reviewed && reviewed.subject === subjectTemplate && reviewed.body === bodyTemplate);
+  const editWording = (field: 'subject' | 'body', value: string) => {
+    if (field === 'subject') setSubjectTemplate(value);
+    else setBodyTemplate(value);
+    setRecipientConfirmed(false);
+    setError(null);
+  };
+  const insertField = () => {
+    const element = insertTarget === 'subject' ? subjectRef.current : bodyRef.current;
+    if (!element) return;
+    const value = insertTarget === 'subject' ? subjectTemplate : bodyTemplate;
+    const start = element.selectionStart ?? value.length;
+    const end = element.selectionEnd ?? start;
+    const token = friendlyField(chosenField);
+    editWording(insertTarget, value.slice(0, start) + token + value.slice(end));
+    requestAnimationFrame(() => { element.focus(); element.setSelectionRange(start + token.length, start + token.length); });
+  };
+
   const handleSend = async () => {
-    if (!invoiceId || !recipientConfirmed || isSending) return;
+    if (!invoiceId || !preview || !preview.previewFingerprint || !recipientConfirmed || !previewIsCurrent || isSending || isRefreshing) return;
+    const subject = fromFriendlyTemplate(subjectTemplate, [...SUPPORTED_PLACEHOLDERS]);
+    const body = fromFriendlyTemplate(bodyTemplate, [...SUPPORTED_PLACEHOLDERS]);
+    if (!subject.ok || !body.ok) {
+      setError(!subject.ok ? subject.error : !body.ok ? body.error : 'Check the fields.');
+      return;
+    }
     setIsSending(true);
     setError(null);
 
@@ -132,14 +184,16 @@ export const RequestPaymentModal: React.FC<RequestPaymentModalProps> = ({
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           invoiceId,
-          subjectTemplate,
-          bodyTemplate,
+          subjectTemplate: subject.value,
+          bodyTemplate: body.value,
+          previewFingerprint: preview.previewFingerprint,
           idempotencyKey,
         }),
       });
       const data = await res.json().catch(() => null);
       if (!res.ok) {
         setError(data?.error || 'Failed to send the email');
+        if (res.status === 409) { setReviewed(null); setRecipientConfirmed(false); }
         return;
       }
       setSendResult(data as SendResponse);
@@ -164,6 +218,9 @@ export const RequestPaymentModal: React.FC<RequestPaymentModalProps> = ({
       title="Send Request for Payment"
       description="Preview and email the official Request for Payment. Financial details are loaded server-side and remain authoritative."
       maxWidth="full"
+      dismissOnBackdrop={!isSending}
+      dismissOnEscape={!isSending}
+      showCloseButton={!isSending}
     >
       {isLoading && (
         <div className="p-10 text-center text-xs text-ink-secondary">
@@ -233,10 +290,10 @@ export const RequestPaymentModal: React.FC<RequestPaymentModalProps> = ({
           <div className="p-4 rounded-2xl bg-surface-inset/60 border border-surface-border">
             <div className="flex items-center justify-between mb-3">
               <span className="font-bold text-navy uppercase text-[11px] tracking-wider">
-                Authoritative Invoice Data (server-loaded)
+                Invoice details
               </span>
               <Badge variant="navy" size="sm">
-                Template v{preview.template.version}
+                Saved template
               </Badge>
             </div>
             <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
@@ -297,36 +354,42 @@ export const RequestPaymentModal: React.FC<RequestPaymentModalProps> = ({
 
           {preview.warnings?.length > 0 && (
             <div className="p-3 rounded-xl bg-status-warning-bg border border-status-warning/20 text-status-warning">
-              Warning: the message is missing important billing placeholders:{' '}
-              <span className="font-mono font-semibold">{preview.warnings.join(', ')}</span>
+              The message is missing these important billing fields:{' '}
+              <span className="font-mono font-semibold">{preview.warnings.map(fieldLabel).join(', ')}</span>
             </div>
           )}
 
-          {/* Editable wording */}
+          {/* One-time edits do not change the saved Settings template. */}
           <div className="space-y-3">
+            <p className="text-ink-secondary">You can adjust this email for this invoice. Your saved template in Settings will not change.</p>
             <Input
-              label="Email Subject (editable — placeholders allowed)"
+              ref={subjectRef}
+              label="Email subject"
               value={subjectTemplate}
-              onChange={(e) => setSubjectTemplate(e.target.value)}
+              disabled={isRefreshing || isSending}
+              onFocus={() => setInsertTarget('subject')}
+              onChange={(e) => editWording('subject', e.target.value)}
             />
             <Textarea
-              label="Message Wording (editable — introductory/closing text, project notes, payment instructions)"
+              ref={bodyRef}
+              label="Email message"
               rows={10}
               value={bodyTemplate}
-              onChange={(e) => setBodyTemplate(e.target.value)}
-              className="font-mono text-[11px]"
+              disabled={isRefreshing || isSending}
+              onFocus={() => setInsertTarget('body')}
+              onChange={(e) => editWording('body', e.target.value)}
             />
-            <div className="flex justify-end">
-              <Button
-                variant="secondary"
-                size="sm"
-                onClick={() => loadPreview(subjectTemplate, bodyTemplate)}
-                isLoading={isRefreshing}
-                leftIcon={<RefreshCw className="w-3.5 h-3.5" />}
-              >
-                Update Preview
-              </Button>
+            <div className="flex flex-wrap items-end gap-2">
+              <label className="text-xs font-semibold text-ink-secondary">Insert a field into {insertTarget === 'body' ? 'message' : 'subject'}
+                <select aria-label="Choose email field" value={chosenField} onChange={(e) => setChosenField(e.target.value)} disabled={isRefreshing || isSending} className="block min-h-11 rounded-lg border border-surface-border bg-white px-3 text-ink-primary mt-1">
+                  {SUPPORTED_PLACEHOLDERS.map((field) => <option key={field} value={field}>{fieldLabel(field)}</option>)}
+                </select>
+              </label>
+              <Button type="button" variant="secondary" size="sm" onClick={insertField} disabled={isRefreshing || isSending}>Insert field</Button>
+              <Button type="button" variant="secondary" size="sm" onClick={() => loadPreview(subjectTemplate, bodyTemplate)} isLoading={isRefreshing} disabled={isSending} leftIcon={<RefreshCw className="w-3.5 h-3.5" />}>Update Preview</Button>
             </div>
+            <p className="text-ink-secondary">Fields appear as names in brackets, such as ‹Client Name›. To remove a field, delete its whole name and brackets.</p>
+            {!previewIsCurrent && <p role="status" className="text-status-warning">Your message has changed. Update the preview before confirming.</p>}
           </div>
 
           {/* Rendered previews */}
@@ -386,6 +449,7 @@ export const RequestPaymentModal: React.FC<RequestPaymentModalProps> = ({
               <input
                 type="checkbox"
                 checked={recipientConfirmed}
+                disabled={!previewIsCurrent || isRefreshing || isSending || !preview.previewFingerprint}
                 onChange={(e) => setRecipientConfirmed(e.target.checked)}
                 className="mt-0.5 w-4 h-4 rounded border-surface-border text-navy focus:ring-navy/30"
               />
@@ -409,7 +473,7 @@ export const RequestPaymentModal: React.FC<RequestPaymentModalProps> = ({
                 variant="primary"
                 size="sm"
                 onClick={handleSend}
-                disabled={!recipientConfirmed || isSending || isRefreshing}
+                disabled={!recipientConfirmed || !previewIsCurrent || !preview.previewFingerprint || isSending || isRefreshing}
                 isLoading={isSending}
                 leftIcon={!isSending ? <Send className="w-3.5 h-3.5" /> : undefined}
               >

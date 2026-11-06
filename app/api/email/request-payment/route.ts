@@ -45,6 +45,7 @@ export async function POST(req: NextRequest) {
         bodyTemplate: typeof body.bodyTemplate === 'string' ? body.bodyTemplate : undefined,
         idempotencyKey: typeof body.idempotencyKey === 'string' ? body.idempotencyKey : '',
         sentBy: founder.userId as string,
+        previewFingerprint: typeof body.previewFingerprint === 'string' ? body.previewFingerprint : undefined,
       }
     );
 

@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { createServerSupabaseClient } from '@/lib/supabase/server';
 import { requireFounder } from '@/lib/auth/serverRole';
 import { getFirmEmailIdentity } from '@/lib/email/mailer';
-import { previewRequestForPayment } from '@/lib/email/service';
+import { emailPreviewFingerprint, previewRequestForPayment } from '@/lib/email/service';
 import {
   SAMPLE_TEMPLATE_DATA,
   DEFAULT_INITIAL_REQUEST_BODY,
@@ -95,6 +95,7 @@ export async function POST(req: NextRequest) {
     const { context, rendered } = result;
     return NextResponse.json({
       sample: false,
+      previewFingerprint: emailPreviewFingerprint(context, rendered),
       subject: rendered.subject,
       bodyText: rendered.bodyText,
       bodyHtml: rendered.bodyHtml,

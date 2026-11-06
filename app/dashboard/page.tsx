@@ -12,7 +12,8 @@ import { Badge } from '@/components/ui/Badge';
 import { Button } from '@/components/ui/Button';
 import { Card } from '@/components/ui/Card';
 import { Modal } from '@/components/ui/Modal';
-import { buildReminderSMS } from '@/lib/sms/templates';
+import { Textarea } from '@/components/ui/Input';
+import { buildReminderSMS, estimateSMSSegments } from '@/lib/sms/templates';
 import { formatDatePH, formatPeso } from '@/lib/email/format';
 
 const TOOL_CONDITION_LABELS: Record<ToolCondition, string> = {
@@ -567,6 +568,7 @@ export default function FounderDashboard() {
   const [smsModalOpen, setSmsModalOpen] = useState(false);
   const [selectedInvoiceForSMS, setSelectedInvoiceForSMS] = useState<Invoice | null>(null);
   const [smsSending, setSmsSending] = useState(false);
+  const [smsDraft, setSmsDraft] = useState('');
   const smsSendLock = useRef(false);
   const [smsSuccessMessage, setSmsSuccessMessage] = useState<string | null>(null);
 
@@ -574,6 +576,7 @@ export default function FounderDashboard() {
 
   const handleOpenSMSModal = (invoice: Invoice) => {
     setSelectedInvoiceForSMS(invoice);
+    setSmsDraft(buildSmsPreviewMessage(invoice));
     setSmsSuccessMessage(null);
     setSmsModalOpen(true);
   };
@@ -593,11 +596,11 @@ export default function FounderDashboard() {
   };
 
   const handleSendInvoiceSMS = async () => {
-    if (!selectedInvoiceForSMS || smsSendLock.current) return;
+    if (!selectedInvoiceForSMS || !smsDraft.trim() || smsDraft.length > 1000 || smsSendLock.current) return;
     smsSendLock.current = true;
     setSmsSending(true);
     try {
-      const sent = await sendSMS({ invoiceId: selectedInvoiceForSMS.id, message: buildSmsPreviewMessage(selectedInvoiceForSMS) });
+      const sent = await sendSMS({ invoiceId: selectedInvoiceForSMS.id, message: smsDraft.trim() });
       if (sent) setSmsSuccessMessage('Reminder handed to the PhilSMS gateway — see the SMS log for its status.');
     } finally {
       smsSendLock.current = false;
@@ -1795,12 +1798,8 @@ export default function FounderDashboard() {
                 </div>
 
                 <div className="space-y-1.5">
-                  <label className="text-xs font-semibold text-ink-secondary">
-                    SMS Message Preview (PhilSMS)
-                  </label>
-                  <div className="rounded-xl border border-slate-200 bg-slate-50 p-3 font-sans text-xs leading-relaxed text-ink-primary">
-                    {buildSmsPreviewMessage(selectedInvoiceForSMS)}
-                  </div>
+                  <Textarea label="SMS message" rows={5} value={smsDraft} maxLength={1000} disabled={smsSending} onChange={(event) => setSmsDraft(event.target.value)} />
+                  <p className="text-ink-secondary">Changes apply only to this message. {estimateSMSSegments(smsDraft).segments} SMS segment{estimateSMSSegments(smsDraft).segments === 1 ? '' : 's'} estimated.</p>
                 </div>
 
                 <p className="text-ink-secondary">If sending is unconfirmed, check the dispatch log and provider before retrying; it may have been sent.</p>
@@ -1812,6 +1811,7 @@ export default function FounderDashboard() {
                     type="button"
                     variant="primary"
                     onClick={handleSendInvoiceSMS}
+                    disabled={!smsDraft.trim() || smsSending}
                     isLoading={smsSending}
                   >
                     Send PhilSMS Now
