@@ -17,6 +17,14 @@ import {
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
 
+// Database numerics can arrive as numbers or strings. Never treat a missing or
+// malformed paid amount as zero: doing so could overstate the balance.
+function invoiceNumber(value: unknown): number {
+  if (typeof value === 'number') return value;
+  if (typeof value !== 'string' || !/^[+-]?(?:\d+(?:\.\d*)?|\.\d+)$/.test(value.trim())) return Number.NaN;
+  return Number(value);
+}
+
 /**
  * Secure scheduled-reminder endpoint.
  *
@@ -118,9 +126,9 @@ async function runReminderCron(req: NextRequest) {
       const normalizedPhone = normalizePhilippineMobile(client?.phone);
       const eligibility = checkReminderEligibility({
         invoiceStatus: invoice.status,
-        invoiceAmount: Number(invoice.amount) || 0,
-        amountPaid: Number(invoice.amount_paid) || 0,
-        automaticRemindersEnabled: Boolean(invoice.automatic_reminders_enabled),
+        invoiceAmount: invoiceNumber(invoice.amount),
+        amountPaid: invoiceNumber(invoice.amount_paid),
+        automaticRemindersEnabled: invoice.automatic_reminders_enabled === true,
         remindersPausedUntil: invoice.reminders_paused_until,
         clientPhoneNormalized: normalizedPhone,
         now,

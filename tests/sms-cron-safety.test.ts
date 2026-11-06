@@ -45,6 +45,22 @@ describe('scheduled SMS duplicate safety', () => {
     expect(send).not.toHaveBeenCalled();
   });
 
+  it.each([null, '', 'not-a-number', '0x10', -1])('never sends with an invalid amount paid: %s', async (amountPaid) => {
+    db.tables.invoices[0].amount_paid = amountPaid;
+    const send = vi.fn(); vi.stubGlobal('fetch', send);
+    const result = await (await GET(request())).json();
+    expect(result.results[0]).toMatchObject({outcome: 'skipped', reason: 'invalid_invoice_amount'});
+    expect(send).not.toHaveBeenCalled();
+  });
+
+  it('never sends when the pause cannot be interpreted', async () => {
+    db.tables.invoices[0].reminders_paused_until = 'not-a-date';
+    const send = vi.fn(); vi.stubGlobal('fetch', send);
+    const result = await (await GET(request())).json();
+    expect(result.results[0]).toMatchObject({outcome: 'skipped', reason: 'invalid_pause'});
+    expect(send).not.toHaveBeenCalled();
+  });
+
   it('rechecks the switch before dispatch, after a slot was claimed', async () => {
     const originalFrom = db.from; let reads = 0;
     db.from = (table: string) => {
