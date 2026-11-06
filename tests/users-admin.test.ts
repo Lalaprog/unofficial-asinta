@@ -30,7 +30,7 @@ function makeMockAdminClient(options?: {
   const workerDeactivateSpy = vi.fn(async () => ({ error: null }));
   const attendanceNullSpy = vi.fn(async () => ({ error: null }));
   const rpcSpy = vi.fn(async (name: string, args: Record<string, unknown>) => ({
-    data: name === 'delete_team_profile_guarded' ? { id: args.p_target } : { ...targetUser, id: args.p_target, name: args.p_name, role: args.p_role },
+    data: name === 'delete_team_profile_guarded' ? { id: args.p_target } : name === 'replace_supervisor_projects_guarded' ? { project_count: (args.p_projects as string[]).length } : { ...targetUser, id: args.p_target, name: args.p_name, role: args.p_role },
     error: null,
   }));
   const expensesNullSpy = vi.fn(async () => ({ error: null }));
@@ -351,6 +351,24 @@ describe('updateTeamAccount & deleteTeamAccount safety guards', () => {
 });
 
 describe('team administration partial outcomes', () => {
+  it('uses the atomic assignment RPC when a supervisor is assigned several projects', async () => {
+    const { client, rpcSpy, supervisorInsertSpy } = makeMockAdminClient();
+    const res = await updateTeamAccount({ callerId:'founder-1', input:{userId:'sup-1',assignedProjectIds:['proj-1','proj-2']}, adminClient:client });
+    expect(res.body.ok).toBe(true);
+    expect(res.body.assignedProjectIds).toEqual(['proj-1','proj-2']);
+    expect(rpcSpy).toHaveBeenCalledWith('replace_supervisor_projects_guarded', {p_actor:'founder-1',p_target:'sup-1',p_projects:['proj-1','proj-2']});
+    expect(supervisorInsertSpy).not.toHaveBeenCalled();
+  });
+  it('warns when assignment outcome is unconfirmed without a fallback delete and insert', async () => {
+    const { client, rpcSpy, supervisorInsertSpy } = makeMockAdminClient();
+    rpcSpy.mockImplementationOnce(async (_name,args) => ({data:{id:args.p_target,name:'Supervisor',role:'supervisor'},error:null}) as never);
+    rpcSpy.mockImplementationOnce(async () => { throw new Error('lost response'); });
+    const res = await updateTeamAccount({ callerId:'founder-1', input:{userId:'sup-1',assignedProjectIds:['proj-1']}, adminClient:client });
+    expect(res.body.warnings?.join(' ')).toMatch(/assignments were not confirmed/i);
+    expect(res.body.assignedProjectIds).toBeUndefined();
+    expect(supervisorInsertSpy).not.toHaveBeenCalled();
+  });
+
   it('does not return or audit a password as reset when Auth rejects it', async () => {
     const { client, updateUserByIdSpy, auditInsertSpy } = makeMockAdminClient();
     updateUserByIdSpy.mockImplementationOnce(async () => ({ data: { user: null }, error: { message: 'auth failed' } }) as never);
