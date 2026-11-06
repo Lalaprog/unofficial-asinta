@@ -82,6 +82,33 @@ Asinta Architects
 
 This email was generated through the BALE management system.`;
 
+/** One neutral template for future automatic reminders at every stage. */
+export const REMINDER_EMAIL_TEMPLATE_TYPE = 'upcoming_reminder' as const;
+export const DEFAULT_REMINDER_SUBJECT = 'Payment reminder – {{project_name}} – {{invoice_number}}';
+export const DEFAULT_REMINDER_BODY = `Dear {{client_contact_name}},
+
+Good day. This is a reminder about the outstanding balance for {{project_name}}.
+
+Invoice Number: {{invoice_number}}
+Outstanding Balance: {{outstanding_balance}}
+Payment Due Date: {{due_date}}
+
+If payment has already been made, please disregard this reminder and send us the payment confirmation for our records. For questions, please reply to this email.
+
+Thank you and God bless.
+
+Asinta Architects
+{{firm_email}}
+{{firm_contact_number}}`;
+
+/** In addition to unknown tokens, reject incomplete token syntax. */
+export function validateReminderEmailTemplate(subject: string, body: string): TemplateValidationResult {
+  const result = validateTemplate(subject, body);
+  const leftover = (subject + '\n' + body).replace(/\{\{[a-z_]+\}\}/g, '');
+  const malformed = leftover.includes('{{') || leftover.includes('}}');
+  return { ...result, valid: result.valid && !malformed && Boolean(subject.trim()) && Boolean(body.trim()) && subject.length <= 500 && body.length <= 10000 && !/[\r\n]/.test(subject) };
+}
+
 export interface TemplateInvoiceData {
   clientContactPerson?: string | null;
   clientCompanyName?: string | null;

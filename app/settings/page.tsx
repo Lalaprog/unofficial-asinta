@@ -401,6 +401,7 @@ export default function SettingsPage() {
 
         {/* Email Templates (Founder only) */}
         {isFounder && <TemplateEditorCard />}
+        {isFounder && <TemplateEditorCard kind="reminder" />}
         {isFounder && <SmsTemplateCard />}
 
         {/* SMTP Test Email (Founder only) */}

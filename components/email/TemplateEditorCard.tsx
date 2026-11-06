@@ -40,7 +40,10 @@ interface PreviewState {
  * Templates are safe text with {{placeholders}} — never raw executable HTML.
  * Every save creates a new version; historical email snapshots never change.
  */
-export const TemplateEditorCard: React.FC = () => {
+export const TemplateEditorCard: React.FC<{kind?: 'initial' | 'reminder'}> = ({kind = 'initial'}) => {
+  const reminder = kind === 'reminder';
+  const endpoint = reminder ? '/api/email/reminder-template' : '/api/email/templates?type=initial_request';
+  const saveEndpoint = reminder ? '/api/email/reminder-template' : '/api/email/templates';
   const { invoices, clients } = useDataStore();
   const { showToast } = useToast();
 
@@ -64,6 +67,7 @@ export const TemplateEditorCard: React.FC = () => {
   const bodyRef = useRef<HTMLTextAreaElement>(null);
   const selections = useRef<Record<EditorField, [number, number] | null>>({ subject: null, body: null });
   const previewRevision = useRef(0);
+  const saveLock = useRef(false);
   const invalidatePreview = () => { previewRevision.current += 1; setPreview(null); setWarnings([]); setError(null); };
   const rememberSelection = (field: EditorField, input: HTMLInputElement | HTMLTextAreaElement) => {
     selections.current[field] = [input.selectionStart ?? input.value.length, input.selectionEnd ?? input.value.length];
@@ -90,7 +94,7 @@ export const TemplateEditorCard: React.FC = () => {
 
   const loadTemplate = useCallback(async () => {
     try {
-      const res = await fetch('/api/email/templates?type=initial_request', { cache: 'no-store' });
+      const res = await fetch(endpoint, { cache: 'no-store' });
       const payload = await res.json().catch(() => null);
       if (!res.ok) {
         setError(payload?.error || 'Failed to load the email template');
@@ -104,7 +108,7 @@ export const TemplateEditorCard: React.FC = () => {
     } catch {
       setError('Network error while loading the template');
     }
-  }, []);
+  }, [endpoint]);
 
   useEffect(() => {
     loadTemplate();
@@ -159,16 +163,19 @@ export const TemplateEditorCard: React.FC = () => {
   };
 
   const handleSave = async () => {
+    if (saveLock.current) return;
     const parsed = parseEditor();
     if (!parsed) return;
+    saveLock.current = true;
     setIsSaving(true);
     setError(null);
     try {
-      const res = await fetch('/api/email/templates', {
+      const res = await fetch(saveEndpoint, {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          template_type: 'initial_request',
+          template_type: reminder ? 'upcoming_reminder' : 'initial_request',
+          ...(reminder ? {version:data?.template.version} : {}),
           subject_template: parsed.subject,
           body_template: parsed.body,
         }),
@@ -184,18 +191,21 @@ export const TemplateEditorCard: React.FC = () => {
     } catch {
       setError('Network error while saving the template');
     } finally {
+      saveLock.current = false;
       setIsSaving(false);
     }
   };
 
   const handleRestoreDefault = async () => {
+    if (saveLock.current || !data) return;
+    saveLock.current = true;
     setIsRestoring(true);
     setError(null);
     try {
-      const res = await fetch('/api/email/templates', {
+      const res = await fetch(saveEndpoint, {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ template_type: 'initial_request', restore_default: true }),
+        body: JSON.stringify({ template_type: reminder ? 'upcoming_reminder' : 'initial_request', restore_default: true, ...(reminder ? {version:data.template.version} : {}) }),
       });
       const payload = await res.json().catch(() => null);
       if (!res.ok) {
@@ -208,6 +218,7 @@ export const TemplateEditorCard: React.FC = () => {
     } catch {
       setError('Network error while restoring the default');
     } finally {
+      saveLock.current = false;
       setIsRestoring(false);
     }
   };
@@ -218,7 +229,7 @@ export const TemplateEditorCard: React.FC = () => {
         <div className="flex flex-wrap items-center justify-between gap-2">
           <div className="flex items-center space-x-2.5">
             <FileText className="w-5 h-5 text-navy" />
-            <CardTitle>Email Templates — Request for Payment</CardTitle>
+            <CardTitle>{reminder ? 'Email template — payment reminders' : 'Email Templates — Request for Payment'}</CardTitle>
           </div>
           <div className="flex items-center gap-2">
             {data && <Badge variant={data.isSystemDefault ? 'neutral' : 'navy'} size="sm">{data.isSystemDefault ? 'Default' : 'Customized'}</Badge>}
@@ -226,8 +237,7 @@ export const TemplateEditorCard: React.FC = () => {
           </div>
         </div>
         <CardDescription>
-          Personalize the first request-for-payment email. Insert fields by name and preview the result before saving.
-          Each message uses the invoice&apos;s current details; previously sent emails stay unchanged.
+          {reminder ? 'Prepare a standard email for future automatic payment reminders. Automatic reminder emails are not active yet; saving this template will not send one.' : 'Personalize the first request-for-payment email. Insert fields by name and preview the result before saving. Each message uses the invoice’s current details; previously sent emails stay unchanged.'}
         </CardDescription>
       </CardHeader>
       <CardContent id={editorId} hidden={!editorOpen} className="space-y-4 text-xs">
@@ -401,7 +411,7 @@ export const TemplateEditorCard: React.FC = () => {
         <div className="space-y-4 text-xs">
           <p className="text-ink-secondary leading-relaxed">
             This saves the system default as a <span className="font-semibold text-navy">new
-            version</span> of the Initial Request for Payment template. Emails that were already
+            version</span> of the {reminder ? 'payment reminder' : 'Initial Request for Payment'} template. Emails that were already
             sent keep their exact stored content and are not affected.
           </p>
           <div className="flex justify-end space-x-2">

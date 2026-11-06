@@ -83,4 +83,21 @@ describe('friendly email template editor', () => {
     fireEvent.click(screen.getByRole('button',{name:'Edit & preview'}));expect((screen.getByLabelText('Email message') as HTMLTextAreaElement).value).toBe('My unsaved wording');
   });
 
+  it('keeps reminder wording separate and does not turn on or send reminders',async()=>{
+    const reminderTemplate={...template,template:{...template.template,template_type:'upcoming_reminder',version:4,body_template:'Dear {{client_contact_name}}'}};
+    vi.mocked(fetch).mockImplementation(async (url:string | URL | Request,options?:RequestInit)=>{
+      if(String(url)==='/api/email/reminder-template' && !options?.method) return {ok:true,json:async()=>reminderTemplate} as Response;
+      if(String(url)==='/api/email/preview'){const input=JSON.parse(String(options?.body));const rendered=renderEmail(input.subjectTemplate,input.bodyTemplate,SAMPLE_TEMPLATE_DATA);return {ok:true,json:async()=>({sample:true,...rendered,warnings:[]})} as Response;}
+      return {ok:true,json:async()=>({version:5,warnings:[]})} as Response;
+    });
+    render(React.createElement(TemplateEditorCard,{kind:'reminder'}));
+    expect(screen.getByText(/not active yet/)).toBeTruthy();fireEvent.click(screen.getByRole('button',{name:'Edit & preview'}));
+    const body=await screen.findByLabelText('Email message') as HTMLTextAreaElement;expect(body.value).toContain('‹Client Name›');
+    fireEvent.change(body,{target:{value:'Dear ‹Client Name›'}});fireEvent.click(screen.getByRole('button',{name:'Preview'}));await screen.findByText(/Rendered Preview/);
+    fireEvent.click(screen.getByRole('button',{name:'Save New Version'}));await waitFor(()=>expect(vi.mocked(fetch).mock.calls.some(([url,opts])=>String(url)==='/api/email/reminder-template' && opts?.method==='PUT')).toBe(true));
+    const call=vi.mocked(fetch).mock.calls.find(([url,opts])=>String(url)==='/api/email/reminder-template' && opts?.method==='PUT')!;
+    expect(JSON.parse(String(call[1]?.body))).toMatchObject({version:4,body_template:'Dear {{client_contact_name}}'});
+    expect(vi.mocked(fetch).mock.calls.every(([url])=>['/api/email/reminder-template','/api/email/preview'].includes(String(url)))).toBe(true);
+  });
+
 });
