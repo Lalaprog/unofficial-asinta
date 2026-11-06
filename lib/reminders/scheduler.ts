@@ -188,10 +188,17 @@ export function checkReminderEligibility(input: ReminderEligibilityInput): Remin
   if (input.invoiceStatus === 'paid') return { eligible: false, reason: 'invoice_paid' };
   if (input.invoiceStatus === 'cancelled') return { eligible: false, reason: 'invoice_cancelled' };
   if (input.invoiceStatus === 'draft') return { eligible: false, reason: 'invoice_draft' };
+  if (!['pending', 'partially_paid', 'overdue'].includes(input.invoiceStatus)) return { eligible: false, reason: 'invalid_invoice_status' };
+  if (!Number.isFinite(input.invoiceAmount) || !Number.isFinite(input.amountPaid) || input.invoiceAmount < 0 || input.amountPaid < 0) {
+    return { eligible: false, reason: 'invalid_invoice_amount' };
+  }
   if (balance <= 0) return { eligible: false, reason: 'zero_balance' };
   if (!input.automaticRemindersEnabled) return { eligible: false, reason: 'invoice_reminders_disabled' };
-  if (input.remindersPausedUntil && new Date(input.remindersPausedUntil).getTime() > now.getTime()) {
-    return { eligible: false, reason: 'reminders_paused' };
+  if (!Number.isFinite(now.getTime())) return { eligible: false, reason: 'invalid_current_time' };
+  if (input.remindersPausedUntil != null) {
+    const pauseTime = new Date(input.remindersPausedUntil).getTime();
+    if (!Number.isFinite(pauseTime)) return { eligible: false, reason: 'invalid_pause' };
+    if (pauseTime > now.getTime()) return { eligible: false, reason: 'reminders_paused' };
   }
   if (!input.clientPhoneNormalized) return { eligible: false, reason: 'invalid_phone' };
 

@@ -61,6 +61,15 @@ describe('invoice eligibility safety checks', () => {
     );
   });
 
+  it('fails closed on malformed or unsupported invoice details and pause dates', () => {
+    expect(checkReminderEligibility({ ...base, invoiceStatus: 'unknown' }).reason).toBe('invalid_invoice_status');
+    expect(checkReminderEligibility({ ...base, invoiceAmount: NaN }).reason).toBe('invalid_invoice_amount');
+    expect(checkReminderEligibility({ ...base, amountPaid: Infinity }).reason).toBe('invalid_invoice_amount');
+    expect(checkReminderEligibility({ ...base, amountPaid: -1 }).reason).toBe('invalid_invoice_amount');
+    expect(checkReminderEligibility({ ...base, remindersPausedUntil: 'not a date' }).reason).toBe('invalid_pause');
+    expect(checkReminderEligibility({ ...base, now: new Date('invalid') }).reason).toBe('invalid_current_time');
+  });
+
   it('allows an unpaid, enabled, unpaused invoice with a valid phone', () => {
     expect(checkReminderEligibility(base).eligible).toBe(true);
   });
