@@ -374,24 +374,11 @@ export default function SettingsPage() {
 
                 <div className="p-4 rounded-2xl bg-surface-inset/50 border border-surface-border space-y-2">
                   <div className="flex items-center justify-between">
-                    <span className="font-bold text-navy">Automatic SMS Reminders</span>
-                    <Badge
-                      variant={integrationStatus?.automaticRemindersEnabled ? 'success' : 'neutral'}
-                      size="sm"
-                    >
-                      {!integrationStatus
-                        ? statusState === 'loading' ? 'Checking' : 'Unknown'
-                        : integrationStatus.automaticRemindersEnabled
-                          ? 'Enabled globally'
-                          : 'Disabled (default)'}
-                    </Badge>
+                    <span className="font-bold text-navy">Automatic reminders</span>
+                    <Badge variant="neutral" size="sm">Not active</Badge>
                   </div>
                   <div className="text-ink-secondary">
-                    Scheduled reminders run only when enabled globally AND per invoice.
-                  </div>
-                  <div className="text-[11px] text-ink-muted">
-                    Controlled by <span className="font-mono">AUTOMATIC_REMINDERS_ENABLED</span> on
-                    the server; sends Mon–Sat 8AM–6PM Asia/Manila only.
+                    Automatic email and SMS reminders are still being prepared. Manual messages remain available.
                   </div>
                 </div>
               </div>
