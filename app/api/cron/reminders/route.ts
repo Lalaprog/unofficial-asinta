@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { createServiceRoleClient, isServiceRoleConfigured } from '@/lib/supabase/admin';
 import { deliverAndLogSMS } from '@/lib/sms/deliver';
+import { readReminderSettings } from '@/lib/reminders/settings';
 import { normalizePhilippineMobile } from '@/lib/sms/phone';
 import { buildReminderSMS, DEFAULT_SMS_TEMPLATE, validateSMSTemplate } from '@/lib/sms/templates';
 import {
@@ -25,7 +26,8 @@ export const dynamic = 'force-dynamic';
  * request with a header. See docs/COMMUNICATIONS_SETUP.md.
  *
  * Safety model:
- * - Global switch (AUTOMATIC_REMINDERS_ENABLED) must be 'true'.
+ * - Server switch (AUTOMATIC_REMINDERS_ENABLED) and persisted Founder master
+ *   and SMS switches must all be on. The Founder switch is rollout-locked off.
  * - Invoice-level automatic_reminders_enabled must be true and not paused.
  * - Paid / cancelled / zero-balance invoices are excluded.
  * - Sends only Monday–Saturday, 8:00 AM–6:00 PM Asia/Manila.
@@ -70,6 +72,11 @@ async function runReminderCron(req: NextRequest) {
   }
 
   const db = createServiceRoleClient();
+  const settings = await readReminderSettings(db);
+  if (!settings) return NextResponse.json({ error: 'Reminder settings unavailable; no reminders were sent.' }, { status: 503 });
+  if (!settings.master_enabled || !settings.sms_enabled) {
+    return NextResponse.json({ ran: false, reason: 'founder_reminders_disabled', message: 'Automatic SMS reminders are off.' });
+  }
   // Fail closed if the saved template cannot be read; never silently send an
   // old/default message when a Founder may have saved different wording.
   const { data: smsTemplateRow, error: smsTemplateError } = await db.from('sms_template_settings').select('message_template').eq('singleton', true).maybeSingle();
@@ -210,6 +217,15 @@ async function runReminderCron(req: NextRequest) {
       // Shared delivery + honest logging (see lib/sms/deliver.ts). The
       // reminder_dispatches transition stays here because it is specific to
       // the scheduled-reminder pipeline.
+      // Check the saved switch again immediately before starting a new send.
+      // A provider request already in flight cannot be recalled.
+      const currentSettings = await readReminderSettings(db);
+      if (!currentSettings || !currentSettings.master_enabled || !currentSettings.sms_enabled) {
+        await db.from('reminder_dispatches').update({ status: 'skipped', error_message: 'Automatic reminder settings unavailable or disabled.' }).eq('id', dispatchId);
+        record.outcome = 'skipped'; record.reason = 'reminders_disabled_or_unavailable';
+        skipped += 1; results.push(record); continue;
+      }
+
       const outcome = await deliverAndLogSMS({
         db,
         invoiceId: invoice.id,

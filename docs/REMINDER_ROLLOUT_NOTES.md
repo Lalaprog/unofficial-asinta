@@ -1,15 +1,19 @@
 # Automatic reminder rollout notes
 
 The combined reminder feature is **not finished or enabled** by this change.
-The current production scheduler remains SMS-only and uses the existing
-server-level switch plus each invoice's own switch. The new email template is
-for the future reminder feature; editing or previewing it does not send a message.
+The existing scheduler remains SMS-only. A staged settings foundation adds a
+Founder-only saved master and channel preferences, with a database constraint
+that forces the master OFF until a separately reviewed rollout. The cron checks
+both the server switch and saved master/SMS settings, failing closed on missing
+or unreadable settings. No settings UI or automatic email delivery is present.
+Editing or previewing the reminder email template does not send a message.
 
 ## Remaining work before the Founder switch is usable
 
-- Persist a Founder-only master switch and independent email/SMS choices. Keep
-  the default off; preserve manual sends and invoice-level pauses. Show when
-  both channels are selected and that SMS may cost money.
+- The default-off, Founder-only settings storage and API exist as a foundation;
+  activation is deliberately blocked at both API and database level. Build the
+  settings UI and unlock it only alongside complete delivery safeguards. Preserve
+  manual sends and invoice-level pauses; show both-channel and SMS cost warnings.
 - Connect the switch to **both** dispatch paths. Recheck the master and channel
   before each new send; work already in flight may finish. Treat unreadable
   settings as off, not as permission to send.
@@ -32,3 +36,5 @@ for the future reminder feature; editing or previewing it does not send a messag
   it on or issue a real message without separate authorization.
 - Keep hosted and local migration histories distinct; inspect each additive
   migration before rollout. Never blindly apply the whole migration queue.
+
+- Vercel project metadata on 2026-11-06 listed no configured cron definitions. This does not rule out an external scheduler; check separately before activation.

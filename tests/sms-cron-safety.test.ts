@@ -23,6 +23,7 @@ beforeEach(() => {
     invoices: [{ id: 'i1', invoice_number: 'I-1', client_id: 'c1', project_id: 'p1', amount: 100, amount_paid: 0,
       due_date: '2026-11-02', status: 'pending', automatic_reminders_enabled: true, reminders_paused_until: null }],
     clients: [{ id: 'c1', name: 'Client', contact_person: 'Contact', phone: '09178421190' }],
+    reminder_settings: [{singleton:true, master_enabled:true, email_enabled:false, sms_enabled:true, revision:1}],
     projects: [{ id: 'p1', name: 'Project' }], email_logs: [], sms_logs: [], reminder_dispatches: [], sms_template_settings: [],
   });
   mock.getDb.mockReturnValue(db);
@@ -30,6 +31,33 @@ beforeEach(() => {
 afterEach(() => { vi.useRealTimers(); vi.unstubAllEnvs(); vi.unstubAllGlobals(); vi.clearAllMocks(); });
 
 describe('scheduled SMS duplicate safety', () => {
+  it('fails closed if the settings row is missing, malformed or disabled', async () => {
+    const send = vi.fn(); vi.stubGlobal('fetch', send);
+    db.tables.reminder_settings = [];
+    expect((await GET(request())).status).toBe(503);
+    db.tables.reminder_settings = [{singleton:true, master_enabled:'true', email_enabled:false, sms_enabled:true, revision:1}];
+    expect((await GET(request())).status).toBe(503);
+    db.tables.reminder_settings = [{singleton:true, master_enabled:false, email_enabled:true, sms_enabled:true, revision:1}];
+    expect((await (await GET(request())).json()).reason).toBe('founder_reminders_disabled');
+    db.tables.reminder_settings[0].master_enabled = true;
+    db.tables.reminder_settings[0].sms_enabled = false;
+    expect((await (await GET(request())).json()).reason).toBe('founder_reminders_disabled');
+    expect(send).not.toHaveBeenCalled();
+  });
+
+  it('rechecks the switch before dispatch, after a slot was claimed', async () => {
+    const originalFrom = db.from; let reads = 0;
+    db.from = (table: string) => {
+      if (table === 'reminder_settings' && ++reads === 2) db.tables.reminder_settings[0].master_enabled = false;
+      return originalFrom(table);
+    };
+    const send = vi.fn(); vi.stubGlobal('fetch', send);
+    const result = await (await GET(request())).json();
+    expect(result.results[0].reason).toBe('reminders_disabled_or_unavailable');
+    expect(db.tables.reminder_dispatches[0].status).toBe('skipped');
+    expect(send).not.toHaveBeenCalled();
+  });
+
   it('does not retry an unconfirmed provider timeout on the same key', async () => {
     const send = vi.fn().mockRejectedValue(new Error('timeout'));
     vi.stubGlobal('fetch', send);
