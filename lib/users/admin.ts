@@ -559,21 +559,30 @@ export async function updateTeamAccount(params: {
     ? 'Auth update and password reset were not confirmed. Do not share the proposed password; check Supabase Auth before retrying.'
     : 'Auth metadata update was not confirmed. Check Supabase Auth and the profile before retrying.');
 
-  // Sync supervisor project assignments when `assignedProjectIds` is provided.
+  // Replace project assignments in a single database transaction. A failed or
+  // lost response is unconfirmed; never attempt a separate delete/insert.
   let assignedProjectIds: string[] | undefined;
   if (Array.isArray(input.assignedProjectIds) || nextRole === 'founder') {
-    const assignmentDeleteError = await mutationFailed(() => adminClient.from('project_supervisors').delete().eq('supervisor_id', targetUserId));
-    if (assignmentDeleteError) warnings.push('Removing old project assignments was not confirmed. Check assigned sites.');
-    assignedProjectIds =
-      nextRole === 'supervisor' ? normalizeProjectIds(input.assignedProjectIds) : [];
-    if (!assignmentDeleteError && assignedProjectIds.length > 0) {
-      const assignmentInsertError = await mutationFailed(() => adminClient.from('project_supervisors').insert(
-        assignedProjectIds!.map((projectId) => ({
-          project_id: projectId,
-          supervisor_id: targetUserId,
-        }))
-      ));
-      if (assignmentInsertError) warnings.push('New project assignments were not confirmed. Check assigned sites before the user signs in.');
+    const requested = nextRole === 'supervisor' ? normalizeProjectIds(input.assignedProjectIds) : [];
+    if (nextRole === 'supervisor') {
+      try {
+        const result = await adminClient.rpc('replace_supervisor_projects_guarded', {
+          p_actor: callerId, p_target: targetUserId, p_projects: requested,
+        });
+        if (result.error || !result.data || result.data.project_count !== requested.length) {
+          warnings.push('Project assignments were not confirmed. Refresh and check assigned sites before retrying.');
+        } else {
+          assignedProjectIds = requested;
+        }
+      } catch {
+        warnings.push('Project assignments were not confirmed. Refresh and check assigned sites before retrying.');
+      }
+    } else {
+      // A Founder cannot retain Supervisor project access. Existing account
+      // role-change behavior is unchanged; this separate cleanup is reported.
+      const error = await mutationFailed(() => adminClient.from('project_supervisors').delete().eq('supervisor_id', targetUserId));
+      if (error) warnings.push('Removing old project assignments was not confirmed. Check assigned sites.');
+      else assignedProjectIds = [];
     }
   }
 
