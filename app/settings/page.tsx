@@ -104,7 +104,7 @@ export default function SettingsPage() {
 
   return (
     <AppShell>
-      <div className="space-y-5 sm:space-y-6 max-w-6xl">
+      <div className="w-full space-y-5 sm:space-y-6">
         <WorkspaceHeader eyebrow={isFounder ? 'Administration' : 'Your account'}
           title={isFounder ? 'Firm Settings' : 'Supervisor Profile'}
           description={isFounder ? 'Review security, integrations and communication settings.' : 'Review account details, assigned sites and roster status.'}
@@ -331,7 +331,7 @@ export default function SettingsPage() {
                         value={testPhone}
                         onChange={(event) => setTestPhone(event.target.value)}
                         placeholder="09XXXXXXXXX or +639XXXXXXXXX"
-                        className="min-w-0 flex-1 rounded-xl border border-surface-border bg-white px-3 py-2 text-xs"
+                        className="min-h-11 sm:min-h-9 min-w-0 flex-1 rounded-lg border border-surface-border bg-white px-3 py-2 sm:py-1.5 text-base sm:text-sm"
                       />
                       <Button type="submit" size="sm" isLoading={isTestingSms} disabled={!integrationStatus?.philsmsConfigured || isTestingSms || !testPhone.trim()}>
                         Send Test SMS
@@ -400,8 +400,13 @@ export default function SettingsPage() {
         )}
 
         {/* Email Templates (Founder only) */}
-        {isFounder && <TemplateEditorCard />}
-        {isFounder && <TemplateEditorCard kind="reminder" />}
+        {isFounder && <section aria-label="Email templates" className="space-y-3">
+          <h2 className="text-base font-semibold text-navy">Email templates</h2>
+          <div className="grid items-start gap-4 xl:grid-cols-2">
+            <TemplateEditorCard />
+            <TemplateEditorCard kind="reminder" />
+          </div>
+        </section>}
         {isFounder && <SmsTemplateCard />}
 
         {/* SMTP Test Email (Founder only) */}

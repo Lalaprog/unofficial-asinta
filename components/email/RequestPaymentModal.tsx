@@ -438,7 +438,7 @@ export const RequestPaymentModal: React.FC<RequestPaymentModalProps> = ({
             />
             <div className="flex flex-wrap items-end gap-2">
               <label className="text-xs font-semibold text-ink-secondary">Insert a field into {insertTarget === 'body' ? 'message' : 'subject'}
-                <select aria-label="Choose email field" value={chosenField} onChange={(e) => setChosenField(e.target.value)} disabled={isRefreshing || isSending} className="block min-h-11 sm:min-h-10 rounded-lg border border-surface-border bg-white px-3 text-ink-primary mt-1">
+                <select aria-label="Choose email field" value={chosenField} onChange={(e) => setChosenField(e.target.value)} disabled={isRefreshing || isSending} className="block min-h-11 sm:min-h-9 rounded-lg border border-surface-border bg-white px-3 text-ink-primary mt-1">
                   {SUPPORTED_PLACEHOLDERS.map((field) => <option key={field} value={field}>{fieldLabel(field)}</option>)}
                 </select>
               </label>

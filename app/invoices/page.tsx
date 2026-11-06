@@ -673,7 +673,7 @@ export default function InvoicesPage() {
           return (
             <div className="space-y-6">
               {/* Printable Invoice Board */}
-              <div className="p-6 sm:p-8 rounded-2xl bg-white border border-slate-300 shadow-sm font-sans space-y-6 text-ink-primary">
+              <div data-print-document="invoice" className="p-6 sm:p-8 rounded-2xl bg-white border border-slate-300 shadow-sm font-sans space-y-6 text-ink-primary">
                 {/* Header */}
                 <div className="flex items-start justify-between pb-6 border-b-2 border-navy">
                   <div>
