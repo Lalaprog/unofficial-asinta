@@ -46,7 +46,7 @@ export function SearchableSelect({
               setSearchOpen((open) => !open);
               setQuery('');
             }}
-            className="min-h-11 rounded-lg text-xs font-semibold text-brand underline-offset-2 hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand focus-visible:ring-offset-2 disabled:opacity-50"
+            className="min-h-11 sm:min-h-9 rounded-lg text-xs font-semibold text-brand underline-offset-2 hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand focus-visible:ring-offset-2 disabled:opacity-50"
           >
             {searchOpen ? 'Close search' : searchLabel}
           </button>
@@ -60,7 +60,7 @@ export function SearchableSelect({
               onKeyDown={(event) => { if (event.key === 'Enter') event.preventDefault(); }}
               disabled={disabled}
               autoComplete="off"
-              className="w-full min-h-11 rounded-lg border border-surface-border bg-white px-3.5 py-2.5 text-base text-ink-primary focus:border-brand focus:outline-none focus:ring-2 focus:ring-brand/15 sm:text-sm"
+              className="w-full min-h-11 sm:min-h-9 rounded-lg border border-surface-border bg-white px-3.5 py-2 sm:py-1.5 text-base text-ink-primary focus:border-brand focus:outline-none focus:ring-2 focus:ring-brand/15 sm:text-sm"
             />
             {filter && (
               <p role="status" className="text-xs text-ink-secondary">

@@ -414,3 +414,45 @@
     border: 1px solid #E2E8F0 !important;
   }
 }
+
+/* Print only the actual invoice/payslip, never the dialog or workspace behind it. */
+@media print {
+  @page { size: A4; margin: 12mm; }
+  body:has([data-print-document]) {
+    background: white !important;
+    margin: 0 !important;
+    overflow: visible !important;
+  }
+  body:has([data-print-document]) *:not(:has([data-print-document])):not([data-print-document]):not([data-print-document] *) {
+    display: none !important;
+  }
+  body:has([data-print-document]) *:has([data-print-document]) {
+    position: static !important;
+    display: block !important;
+    width: auto !important;
+    height: auto !important;
+    max-width: none !important;
+    max-height: none !important;
+    overflow: visible !important;
+    margin: 0 !important;
+    padding: 0 !important;
+    border: 0 !important;
+    box-shadow: none !important;
+    transform: none !important;
+    animation: none !important;
+  }
+  [data-print-document] {
+    box-shadow: none !important;
+    border: 0 !important;
+    border-radius: 0 !important;
+    padding: 0 !important;
+    overflow: visible !important;
+    color: #111 !important;
+    print-color-adjust: exact;
+    -webkit-print-color-adjust: exact;
+  }
+  [data-print-document] .overflow-x-auto { overflow: visible !important; }
+  [data-print-document] table { width: 100%; table-layout: fixed; }
+  [data-print-document] th, [data-print-document] td { overflow-wrap: anywhere; }
+  [data-print-document] tr { break-inside: avoid; }
+}

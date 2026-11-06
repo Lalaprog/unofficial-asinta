@@ -229,7 +229,7 @@ export const TemplateEditorCard: React.FC<{kind?: 'initial' | 'reminder'}> = ({k
         <div className="flex flex-wrap items-center justify-between gap-2">
           <div className="flex items-center space-x-2.5">
             <FileText className="w-5 h-5 text-navy" />
-            <CardTitle>{reminder ? 'Email template — payment reminders' : 'Email Templates — Request for Payment'}</CardTitle>
+            <CardTitle>{reminder ? 'Automatic reminder' : 'First payment request'}</CardTitle>
           </div>
           <div className="flex items-center gap-2">
             {data && <Badge variant={data.isSystemDefault ? 'neutral' : 'navy'} size="sm">{data.isSystemDefault ? 'Default' : 'Customized'}</Badge>}
@@ -256,7 +256,7 @@ export const TemplateEditorCard: React.FC<{kind?: 'initial' | 'reminder'}> = ({k
               <div><p className="text-sm font-bold text-navy">Insert a field</p><p className="mt-1 text-xs text-ink-secondary">Choose where to insert, place your cursor in the text, then select a field. Its value is filled in when the email is prepared.</p></div>
               <div className="flex flex-wrap items-center gap-2" aria-label="Field destination">
                 <span className="text-xs font-semibold text-ink-secondary">Insert into:</span>
-                {(['body', 'subject'] as const).map(field => <button key={field} type="button" aria-pressed={insertTarget === field} disabled={isSaving || isRestoring} onClick={() => setInsertTarget(field)} className={`min-h-11 sm:min-h-10 rounded-lg border px-3 text-xs font-semibold focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand ${insertTarget === field ? 'border-navy bg-navy text-white' : 'border-surface-border bg-white text-navy'}`}>{field === 'body' ? 'Message' : 'Subject'}</button>)}
+                {(['body', 'subject'] as const).map(field => <button key={field} type="button" aria-pressed={insertTarget === field} disabled={isSaving || isRestoring} onClick={() => setInsertTarget(field)} className={`min-h-11 sm:min-h-9 rounded-lg border px-3 text-xs font-semibold focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand ${insertTarget === field ? 'border-navy bg-navy text-white' : 'border-surface-border bg-white text-navy'}`}>{field === 'body' ? 'Message' : 'Subject'}</button>)}
               </div>
               <div className="flex flex-wrap items-end gap-2">
                 <div className="min-w-0 flex-1 sm:max-w-xs"><Select label="Choose field" value={chosenField} onChange={event => setChosenField(event.target.value)} disabled={isSaving || isRestoring}>

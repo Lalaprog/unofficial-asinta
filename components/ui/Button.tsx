@@ -28,8 +28,8 @@ export const Button = React.forwardRef<HTMLButtonElement, ButtonProps>(
     ref
   ) => {
     const sizeClasses = {
-      sm: 'min-h-11 px-3 py-1.5 text-xs font-medium rounded-lg gap-1.5 sm:min-h-10',
-      md: 'min-h-11 sm:min-h-10 px-3.5 py-2 text-sm font-medium rounded-lg gap-2',
+      sm: 'min-h-11 px-3 py-1.5 text-xs font-medium rounded-lg gap-1.5 sm:min-h-9 sm:py-1.5',
+      md: 'min-h-11 sm:min-h-9 px-3.5 py-2 sm:py-1.5 text-sm font-medium rounded-lg gap-2',
       lg: 'min-h-11 px-6 py-3 text-base font-semibold rounded-lg gap-2.5',
     };
 

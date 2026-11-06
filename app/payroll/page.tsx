@@ -505,7 +505,7 @@ export default function PayrollPage() {
           return (
             <div className="space-y-6">
               {/* Printable Payslip Card */}
-              <div className="p-6 rounded-2xl bg-white border border-slate-300 font-sans space-y-5 text-ink-primary">
+              <div data-print-document="payslip" className="p-6 rounded-2xl bg-white border border-slate-300 font-sans space-y-5 text-ink-primary">
                 {/* Header */}
                 <div className="flex items-start justify-between pb-4 border-b-2 border-navy">
                   <div className="flex items-center gap-3">
