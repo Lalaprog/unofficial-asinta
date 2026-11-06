@@ -30,6 +30,7 @@ import { validateProjectForm } from '@/lib/projects/form';
 import { useToast } from '@/components/ui/Toast';
 import { ProjectWorkforceLogs } from '@/components/projects/ProjectWorkforceLogs';
 import { ProjectPhotoManager } from '@/components/projects/ProjectPhotoManager';
+import { ProjectWorkers } from '@/components/projects/ProjectWorkers';
 
 export default function ProjectDetailPage() {
   const params = useParams();
@@ -65,7 +66,7 @@ export default function ProjectDetailPage() {
     .map((ps) => ps.supervisor_id);
   const assignedSupervisors = users.filter((u) => assignedSupervisorIds.includes(u.id));
 
-  const [activeTab, setActiveTab] = useState<'overview' | 'invoices' | 'expenses' | 'tools' | 'attendance'>('overview');
+  const [activeTab, setActiveTab] = useState<'overview' | 'invoices' | 'expenses' | 'tools' | 'attendance' | 'workers'>('overview');
   const [isEditModalOpen, setIsEditModalOpen] = useState(false);
   const [isDeleteDialogOpen, setIsDeleteDialogOpen] = useState(false);
   const [isSaving, setIsSaving] = useState(false);
@@ -233,6 +234,7 @@ export default function ProjectDetailPage() {
             ...(isFounder ? [{ id: 'invoices', label: `Invoices (${projInvoices.length})` }] : []),
             ...(isFounder ? [{ id: 'expenses', label: `Expenses (${projExpenses.length})` }] : []),
             { id: 'tools', label: `Site Tools (${projTools.length})` },
+            { id: 'workers', label: 'Project Workers' },
             { id: 'attendance', label: `Workforce Logs (${projAttendance.length} loaded)` },
           ].map((tab) => (
             <button
@@ -496,6 +498,8 @@ export default function ProjectDetailPage() {
             </div>
           </div>
         )}
+
+        {activeTab === 'workers' && <ProjectWorkers key={id} projectId={id} />}
 
         {/* TAB 5: ATTENDANCE */}
         {activeTab === 'attendance' && (
