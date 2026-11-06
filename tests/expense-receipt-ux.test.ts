@@ -84,4 +84,21 @@ describe('expense receipt review',()=>{
     expect(mock.create).not.toHaveBeenCalled();expect(mock.toast).toHaveBeenCalledWith('error',expect.stringContaining('changed elsewhere'));
   });
 
+  it('shows an advisory cooldown and keeps manual entry available without silently retrying',async()=>{
+    vi.mocked(fetch).mockResolvedValueOnce({ok:false,status:429,json:async()=>({error:'Limit reached',rateLimited:true,retryAfterSeconds:1})} as Response);
+    render(React.createElement(ExpensesPage));
+    fireEvent.change(screen.getByLabelText('Scan a receipt photo'),{target:{files:[new File(['photo'],'new.jpg',{type:'image/jpeg'})]}});
+    await screen.findByText(/Receipt scanning is temporarily limited/);
+    expect((screen.getByLabelText('Scan a receipt photo') as HTMLInputElement).disabled).toBe(true);
+    expect(screen.getByText(/Try again in about/)).toBeTruthy();expect(fetch).toHaveBeenCalledTimes(1);
+    fireEvent.click(screen.getAllByRole('button',{name:'Record Expense'})[0]);expect(screen.getByRole('dialog',{name:'Record Site Expense'})).toBeTruthy();
+    await waitFor(()=>expect((screen.getByLabelText('Scan a receipt photo',{selector:'input'}) as HTMLInputElement).disabled).toBe(false),{timeout:3000});
+    expect(fetch).toHaveBeenCalledTimes(1);
+  });
+  it('does not invent or enforce a cooldown when no reliable wait was supplied',async()=>{
+    vi.mocked(fetch).mockResolvedValueOnce({ok:false,status:429,json:async()=>({error:'Limit reached',rateLimited:true})} as Response);
+    render(React.createElement(ExpensesPage));fireEvent.change(screen.getByLabelText('Scan a receipt photo'),{target:{files:[new File(['photo'],'new.jpg',{type:'image/jpeg'})]}});
+    await screen.findByText(/a wait time was not provided/);expect((screen.getByLabelText('Scan a receipt photo') as HTMLInputElement).disabled).toBe(false);expect(fetch).toHaveBeenCalledTimes(1);
+  });
+
 });

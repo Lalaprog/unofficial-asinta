@@ -55,6 +55,7 @@ import {
 import { EXPENSE_CATEGORY_LABELS } from '@/lib/ai/categories';
 import { resolveReceiptForSubmission } from '@/lib/expenses/receiptSubmission';
 import { VISION_MAX_IMAGE_BYTES } from '@/lib/ai/models';
+import { formatRetryWait, validRetryAfter } from '@/lib/ai/cooldown';
 
 export default function ExpensesPage() {
   const { user } = useAuth();
@@ -119,6 +120,20 @@ export default function ExpensesPage() {
   // Draft from a line of text or a receipt photo.
   const [quickText, setQuickText] = useState('');
   const [isDrafting, setIsDrafting] = useState(false);
+  const [receiptLimitNotice, setReceiptLimitNotice] = useState(false);
+  const [receiptRetryAt, setReceiptRetryAt] = useState<number | null>(null);
+  const [retryClock, setRetryClock] = useState(0);
+  React.useEffect(() => {
+    if (!receiptRetryAt) return;
+    const timer = window.setInterval(() => {
+      const now = Date.now();
+      setRetryClock(now);
+      if (now >= receiptRetryAt) window.clearInterval(timer);
+    }, 1000);
+    return () => window.clearInterval(timer);
+  }, [receiptRetryAt]);
+  const receiptRetrySeconds = receiptRetryAt ? Math.max(0, Math.ceil((receiptRetryAt - retryClock) / 1000)) : 0;
+
   const [receiptToConfirm, setReceiptToConfirm] = useState<File | null>(null);
   const [confirmNewTextDraft, setConfirmNewTextDraft] = useState(false);
   const [draft, setDraft] = useState<ExpenseDraft | null>(null);
@@ -735,6 +750,8 @@ export default function ExpensesPage() {
       showToast('error', check.error || 'Receipt scanning accepts JPEG, PNG or WebP up to 4 MB. You can attach a photo up to 5 MB manually.');
       return;
     }
+    if (receiptRetrySeconds > 0) return;
+    setReceiptLimitNotice(false); setReceiptRetryAt(null);
     setIsDrafting(true);
 
     try {
@@ -747,6 +764,11 @@ export default function ExpensesPage() {
       const payload = await response.json().catch(() => null);
 
       if (!response.ok || !payload?.ok || !payload?.draft) {
+        if (response.status === 429 || payload?.rateLimited === true) {
+          const wait = validRetryAfter(payload?.retryAfterSeconds);
+          setReceiptLimitNotice(true);
+          if (wait) { const now = Date.now(); setRetryClock(now); setReceiptRetryAt(now + wait * 1000); }
+        }
         // Honest failure: the manual path is untouched and we say so.
         showToast(
           'error',
@@ -875,7 +897,7 @@ export default function ExpensesPage() {
               Draft expense
             </Button>
 
-            <label className="inline-flex min-h-11 cursor-pointer items-center gap-2 rounded-xl border border-surface-border bg-surface-inset px-3 py-2 text-[11px] font-semibold text-navy transition-all hover:bg-slate-200 focus-within:ring-2 focus-within:ring-brand focus-within:ring-offset-2">
+            <label className={`inline-flex min-h-11 items-center gap-2 rounded-xl border border-surface-border bg-surface-inset px-3 py-2 text-[11px] font-semibold text-navy transition-all focus-within:ring-2 focus-within:ring-brand focus-within:ring-offset-2 ${receiptRetrySeconds > 0 ? 'cursor-not-allowed opacity-60' : 'cursor-pointer hover:bg-slate-200'}`}>
               <ScanLine className="h-3.5 w-3.5" />
               <span>{isDrafting ? 'Reading…' : 'Scan a receipt photo'}</span>
               <input
@@ -883,7 +905,7 @@ export default function ExpensesPage() {
                 accept="image/*"
                 capture="environment"
                 className="sr-only"
-                disabled={isDrafting}
+                disabled={isDrafting || receiptRetrySeconds > 0}
                 onChange={(event) => {
                   const file = event.target.files?.[0];
                   event.target.value = '';
@@ -898,6 +920,10 @@ export default function ExpensesPage() {
 
           </div>
 
+          {receiptLimitNotice && <div className="rounded-xl border border-status-warning/20 bg-status-warning-bg p-3 text-sm text-status-warning">
+            <span role="status">Receipt scanning is temporarily limited. Your previous entry is safe; you can attach the photo and enter details manually.</span>{' '}
+            {receiptRetryAt ? <span aria-live="off">{receiptRetrySeconds > 0 ? `Try again in about ${formatRetryWait(receiptRetrySeconds)}.` : 'You can try again now; availability is not guaranteed.'}</span> : <span>Try again later; a wait time was not provided.</span>}
+          </div>}
           <p className="text-[11px] leading-relaxed text-ink-muted">
             Scanning sends the photo to Groq for reading (JPEG, PNG or WebP up to 4 MB).
             Check every suggestion against the photo. If something is unclear, enter it yourself.

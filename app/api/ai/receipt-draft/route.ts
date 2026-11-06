@@ -51,8 +51,10 @@ export async function POST(req: NextRequest) {
           ok: false,
           error: reading.reason,
           manualEntryAvailable: true,
+          rateLimited: reading.rateLimited === true,
+          ...(reading.retryAfterSeconds ? { retryAfterSeconds: reading.retryAfterSeconds } : {}),
         },
-        { status: 502 }
+        { status: reading.rateLimited ? 429 : 502, headers: { 'Cache-Control': 'no-store', ...(reading.retryAfterSeconds ? { 'Retry-After': String(reading.retryAfterSeconds) } : {}) } }
       );
     }
 

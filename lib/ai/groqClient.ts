@@ -10,10 +10,11 @@
  */
 
 import { GROQ_CHAT_ENDPOINT } from '@/lib/ai/models';
+import { formatRetryWait, parseRetryAfterHeader } from '@/lib/ai/cooldown';
 
 export type GroqJsonResult =
   | { ok: true; parsed: unknown; model: string }
-  | { ok: false; reason: string; status?: number; model: string };
+  | { ok: false; reason: string; status?: number; retryAfterSeconds?: number; model: string };
 
 export interface GroqJsonRequest {
   model: string;
@@ -25,14 +26,6 @@ export interface GroqJsonRequest {
   timeoutMs?: number;
   /** Sentinel used by tests and by callers that want no network at all. */
   apiKey?: string;
-}
-
-/** Strips anything that looks like a credential from provider error bodies. */
-function safeSnippet(body: string): string {
-  return body
-    .replace(/gsk_[A-Za-z0-9]+/g, '[redacted-key]')
-    .replace(/\s+/g, ' ')
-    .slice(0, 200);
 }
 
 /**
@@ -72,19 +65,17 @@ export async function requestGroqJson(request: GroqJsonRequest): Promise<GroqJso
     });
 
     if (!response.ok) {
-      // Never assume the body is readable: a mocked fetch, an aborted response,
-      // or a proxy error page can all lack it, and a TypeError here would be
-      // reported as "the request failed" instead of the real HTTP status.
-      let body = '';
-      try {
-        body = typeof response.text === 'function' ? await response.text() : '';
-      } catch {
-        body = '';
-      }
+      // Provider response bodies may contain sensitive details. Do not return
+      // or log them; only retain a validated advisory retry interval.
+      const retryAfterSeconds = response.status === 429
+        ? parseRetryAfterHeader(response.headers?.get('retry-after')) : undefined;
       return {
         ok: false,
         status: response.status,
-        reason: `Groq returned HTTP ${response.status}${body ? `: ${safeSnippet(body)}` : '.'}`,
+        retryAfterSeconds,
+        reason: response.status === 429
+          ? `AI suggestions have reached their usage limit.${retryAfterSeconds ? ` Try again in about ${formatRetryWait(retryAfterSeconds)}.` : ' Try again later.'}`
+          : `Groq returned HTTP ${response.status}.`,
         model: request.model,
       };
     }
@@ -111,7 +102,7 @@ export async function requestGroqJson(request: GroqJsonRequest): Promise<GroqJso
       ok: false,
       reason: aborted
         ? `The Groq request timed out after ${Math.round((request.timeoutMs ?? 20_000) / 1000)}s.`
-        : `The Groq request failed: ${caught instanceof Error ? caught.message : 'network error'}.`,
+        : 'The Groq request failed due to a network error.',
       model: request.model,
     };
   } finally {

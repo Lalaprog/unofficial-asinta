@@ -10,15 +10,8 @@ import { Modal } from '@/components/ui/Modal';
 import { Card, CardHeader, CardTitle, CardDescription, CardContent } from '@/components/ui/Card';
 import { useDataStore } from '@/lib/data/store';
 import { useToast } from '@/components/ui/Toast';
+import { fieldLabel, friendlyField, fromFriendlyTemplate, toFriendlyTemplate } from '@/lib/email/friendlyFields';
 
-const FIELD_LABELS: Record<string, string> = {
-  client_contact_name: 'Client Name', client_company_name: 'Client / Company',
-  project_name: 'Project Name', invoice_number: 'Invoice Number', issue_date: 'Invoice Date',
-  invoice_amount: 'Invoice Amount', amount_paid: 'Amount Paid', outstanding_balance: 'Outstanding Balance',
-  due_date: 'Due Date', invoice_notes: 'Invoice Notes', firm_email: 'Firm Email',
-  firm_contact_number: 'Firm Contact Number',
-};
-const fieldLabel = (field: string) => FIELD_LABELS[field] || field.replace(/_/g, ' ');
 type EditorField = 'subject' | 'body';
 
 interface TemplateResponse {
@@ -68,7 +61,7 @@ export const TemplateEditorCard: React.FC = () => {
   const bodyRef = useRef<HTMLTextAreaElement>(null);
   const selections = useRef<Record<EditorField, [number, number] | null>>({ subject: null, body: null });
   const previewRevision = useRef(0);
-  const invalidatePreview = () => { previewRevision.current += 1; setPreview(null); setWarnings([]); };
+  const invalidatePreview = () => { previewRevision.current += 1; setPreview(null); setWarnings([]); setError(null); };
   const rememberSelection = (field: EditorField, input: HTMLInputElement | HTMLTextAreaElement) => {
     selections.current[field] = [input.selectionStart ?? input.value.length, input.selectionEnd ?? input.value.length];
   };
@@ -79,7 +72,7 @@ export const TemplateEditorCard: React.FC = () => {
     const selection = selections.current[field] || [value.length, value.length];
     const start = Math.min(selection[0], value.length);
     const end = Math.min(selection[1], value.length);
-    const token = `{{${placeholder}}}`;
+    const token = friendlyField(placeholder);
     const next = value.slice(0, start) + token + value.slice(end);
     const position = start + token.length;
     selections.current[field] = [position, position];
@@ -103,8 +96,8 @@ export const TemplateEditorCard: React.FC = () => {
       previewRevision.current += 1; setPreview(null);
       selections.current = { subject: null, body: null };
       setData(payload as TemplateResponse);
-      setSubject(payload.template.subject_template);
-      setBody(payload.template.body_template);
+      setSubject(toFriendlyTemplate(payload.template.subject_template, payload.supportedPlaceholders));
+      setBody(toFriendlyTemplate(payload.template.body_template, payload.supportedPlaceholders));
     } catch {
       setError('Network error while loading the template');
     }
@@ -114,7 +107,19 @@ export const TemplateEditorCard: React.FC = () => {
     loadTemplate();
   }, [loadTemplate]);
 
+  const parseEditor = () => {
+    if (!data) return null;
+    const parsedSubject = fromFriendlyTemplate(subject, data.supportedPlaceholders);
+    const parsedBody = fromFriendlyTemplate(body, data.supportedPlaceholders);
+    if (!parsedSubject.ok || !parsedBody.ok) {
+      setError(!parsedSubject.ok ? parsedSubject.error : !parsedBody.ok ? parsedBody.error : 'Check the fields.');
+      return null;
+    }
+    return { subject: parsedSubject.value, body: parsedBody.value };
+  };
   const handlePreview = async () => {
+    const parsed = parseEditor();
+    if (!parsed) return;
     const revision = previewRevision.current;
     setIsPreviewing(true);
     setError(null);
@@ -124,8 +129,8 @@ export const TemplateEditorCard: React.FC = () => {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           invoiceId: previewInvoiceId || undefined,
-          subjectTemplate: subject,
-          bodyTemplate: body,
+          subjectTemplate: parsed.subject,
+          bodyTemplate: parsed.body,
         }),
       });
       const payload = await res.json().catch(() => null);
@@ -151,6 +156,8 @@ export const TemplateEditorCard: React.FC = () => {
   };
 
   const handleSave = async () => {
+    const parsed = parseEditor();
+    if (!parsed) return;
     setIsSaving(true);
     setError(null);
     try {
@@ -159,8 +166,8 @@ export const TemplateEditorCard: React.FC = () => {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           template_type: 'initial_request',
-          subject_template: subject,
-          body_template: body,
+          subject_template: parsed.subject,
+          body_template: parsed.body,
         }),
       });
       const payload = await res.json().catch(() => null);
@@ -242,7 +249,7 @@ export const TemplateEditorCard: React.FC = () => {
               <div className="flex flex-wrap gap-2">
                 {data.supportedPlaceholders.map(placeholder => <button key={placeholder} type="button" disabled={isSaving || isRestoring} onClick={() => insertField(placeholder)} aria-label={`Insert ${fieldLabel(placeholder)} into ${insertTarget === 'body' ? 'message' : 'subject'}`} className="min-h-11 rounded-lg border border-surface-border bg-white px-3 text-xs font-semibold text-navy hover:border-brand focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand">+ {fieldLabel(placeholder)}</button>)}
               </div>
-              <p className="text-xs text-ink-secondary">Fields appear in braces while editing. Preview to see them filled in. Project, invoice number, balance and due date are important billing details.</p>
+              <p className="text-xs text-ink-secondary">Fields appear as names in brackets, such as ‹Client Name›. Preview to see them filled in. To remove a field, delete its whole name and brackets. Project, invoice number, balance and due date are important billing details.</p>
             </div>
 
             {warnings.length > 0 && (
