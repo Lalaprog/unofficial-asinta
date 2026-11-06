@@ -38,7 +38,7 @@ export const Select = React.forwardRef<HTMLSelectElement, SelectProps>(
             aria-describedby={describedBy}
             className={twMerge(
               clsx(
-                'w-full min-h-11 bg-white text-ink-primary text-base sm:text-sm rounded-lg border border-surface-border py-2.5 px-3.5 pr-8 appearance-none transition-colors duration-150',
+                'w-full min-h-11 sm:min-h-10 bg-white text-ink-primary text-base sm:text-sm rounded-lg border border-surface-border py-2 px-3 pr-8 appearance-none transition-colors duration-150',
                 'focus:border-brand focus:ring-2 focus:ring-brand/15 focus:outline-none cursor-pointer',
                 error && 'border-status-danger ring-1 ring-status-danger/30 bg-status-danger-bg/40',
                 className

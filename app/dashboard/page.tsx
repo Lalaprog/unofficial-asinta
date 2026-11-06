@@ -14,6 +14,7 @@ import { Card } from '@/components/ui/Card';
 import { Modal } from '@/components/ui/Modal';
 import { Textarea } from '@/components/ui/Input';
 import { buildReminderSMS, estimateSMSSegments } from '@/lib/sms/templates';
+import { loadSMSTemplate } from '@/lib/sms/loadTemplate';
 import { formatDatePH, formatPeso } from '@/lib/email/format';
 
 const TOOL_CONDITION_LABELS: Record<ToolCondition, string> = {
@@ -569,19 +570,29 @@ export default function FounderDashboard() {
   const [selectedInvoiceForSMS, setSelectedInvoiceForSMS] = useState<Invoice | null>(null);
   const [smsSending, setSmsSending] = useState(false);
   const [smsDraft, setSmsDraft] = useState('');
+  const [smsPreparing, setSmsPreparing] = useState(false);
+  const [smsTemplateError, setSmsTemplateError] = useState(false);
+  const smsPrepareVersion = useRef(0);
   const smsSendLock = useRef(false);
   const [smsSuccessMessage, setSmsSuccessMessage] = useState<string | null>(null);
 
   const formatPHP = formatPeso;
 
-  const handleOpenSMSModal = (invoice: Invoice) => {
+  const handleOpenSMSModal = async (invoice: Invoice) => {
+    const version = ++smsPrepareVersion.current;
     setSelectedInvoiceForSMS(invoice);
-    setSmsDraft(buildSmsPreviewMessage(invoice));
-    setSmsSuccessMessage(null);
-    setSmsModalOpen(true);
+    setSmsDraft(''); setSmsSuccessMessage(null); setSmsTemplateError(false); setSmsPreparing(true); setSmsModalOpen(true);
+    try {
+      const template = await loadSMSTemplate();
+      if (version === smsPrepareVersion.current) setSmsDraft(buildSmsPreviewMessage(invoice, template));
+    } catch {
+      if (version === smsPrepareVersion.current) setSmsTemplateError(true);
+    } finally {
+      if (version === smsPrepareVersion.current) setSmsPreparing(false);
+    }
   };
 
-  const buildSmsPreviewMessage = (invoice: Invoice): string => {
+  const buildSmsPreviewMessage = (invoice: Invoice, template: string): string => {
     const client = clients.find((item) => item.id === invoice.client_id);
     const project = projects.find((item) => item.id === invoice.project_id);
     return buildReminderSMS({
@@ -592,11 +603,11 @@ export default function FounderDashboard() {
       outstandingBalance: Math.max(0, invoice.amount - invoice.amount_paid),
       dueDate: invoice.due_date,
       paymentRequestSentDate: null,
-    });
+    }, template);
   };
 
   const handleSendInvoiceSMS = async () => {
-    if (!selectedInvoiceForSMS || !smsDraft.trim() || smsDraft.length > 1000 || smsSendLock.current) return;
+    if (!selectedInvoiceForSMS || smsPreparing || smsTemplateError || !smsDraft.trim() || smsDraft.length > 1000 || smsSendLock.current) return;
     smsSendLock.current = true;
     setSmsSending(true);
     try {
@@ -878,7 +889,7 @@ export default function FounderDashboard() {
                 {oldestOverdueInvoice && (
                   <button
                     type="button"
-                    onClick={() => handleOpenSMSModal(oldestOverdueInvoice)}
+                    onClick={() => void handleOpenSMSModal(oldestOverdueInvoice)}
                     className="inline-flex min-h-8 items-center gap-1 rounded-lg border border-[#e3ddd2] bg-[#faf8f3] px-2.5 py-1 text-[11px] font-semibold text-navy transition-colors hover:border-brand/35 hover:text-brand"
                   >
                     Remind client
@@ -1344,7 +1355,7 @@ export default function FounderDashboard() {
                         variant="ghost"
                         size="sm"
                         className="min-h-10"
-                        onClick={() => handleOpenSMSModal(oldestOverdueInvoice)}
+                        onClick={() => void handleOpenSMSModal(oldestOverdueInvoice)}
                       >
                         Send reminder
                       </Button>
@@ -1760,7 +1771,7 @@ export default function FounderDashboard() {
 
       <Modal
         isOpen={smsModalOpen}
-        onClose={() => setSmsModalOpen(false)}
+        onClose={() => { smsPrepareVersion.current += 1; setSmsModalOpen(false); }}
         dismissOnBackdrop={!smsSending}
         dismissOnEscape={!smsSending}
         showCloseButton={!smsSending}
@@ -1774,7 +1785,7 @@ export default function FounderDashboard() {
                 {smsSuccessMessage}
                 <div className="mt-3"><Button type="button" variant="secondary" size="sm" onClick={() => setSmsModalOpen(false)}>Done</Button></div>
               </div>
-            ) : (
+            ) : smsPreparing ? <p role="status">Preparing message…</p> : smsTemplateError ? <div role="alert" className="space-y-3"><p>Could not load the saved SMS template.</p><Button type="button" variant="secondary" onClick={() => void handleOpenSMSModal(selectedInvoiceForSMS)}>Try again</Button></div> : (
               <>
                 <div className="space-y-2 rounded-xl border border-surface-border bg-surface-inset p-3.5">
                   <div className="flex justify-between gap-3">
@@ -1799,6 +1810,7 @@ export default function FounderDashboard() {
 
                 <div className="space-y-1.5">
                   <Textarea label="SMS message" rows={5} value={smsDraft} maxLength={1000} disabled={smsSending} onChange={(event) => setSmsDraft(event.target.value)} />
+                  {smsDraft.length > 1000 && <p role="alert" className="text-status-danger">This message is longer than 1,000 characters. Edit it before sending.</p>}
                   <p className="text-ink-secondary">Changes apply only to this message. {estimateSMSSegments(smsDraft).segments} SMS segment{estimateSMSSegments(smsDraft).segments === 1 ? '' : 's'} estimated.</p>
                 </div>
 
@@ -1811,7 +1823,7 @@ export default function FounderDashboard() {
                     type="button"
                     variant="primary"
                     onClick={handleSendInvoiceSMS}
-                    disabled={!smsDraft.trim() || smsSending}
+                    disabled={!smsDraft.trim() || smsDraft.length > 1000 || smsSending}
                     isLoading={smsSending}
                   >
                     Send PhilSMS Now

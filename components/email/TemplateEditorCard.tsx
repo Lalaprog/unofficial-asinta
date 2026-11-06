@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useCallback, useEffect, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useId, useRef, useState } from 'react';
 import { AlertCircle, CheckCircle2, Eye, FileText, RotateCcw, Save } from 'lucide-react';
 import { Button } from '@/components/ui/Button';
 import { Badge } from '@/components/ui/Badge';
@@ -57,6 +57,9 @@ export const TemplateEditorCard: React.FC = () => {
   const [showRestoreConfirm, setShowRestoreConfirm] = useState(false);
   const [isRestoring, setIsRestoring] = useState(false);
   const [insertTarget, setInsertTarget] = useState<EditorField>('body');
+  const [editorOpen, setEditorOpen] = useState(false);
+  const [chosenField, setChosenField] = useState('client_contact_name');
+  const editorId = useId();
   const subjectRef = useRef<HTMLInputElement>(null);
   const bodyRef = useRef<HTMLTextAreaElement>(null);
   const selections = useRef<Record<EditorField, [number, number] | null>>({ subject: null, body: null });
@@ -211,24 +214,23 @@ export const TemplateEditorCard: React.FC = () => {
 
   return (
     <Card>
-      <CardHeader>
-        <div className="flex items-center justify-between">
+      <CardHeader className={editorOpen ? undefined : 'pb-0'}>
+        <div className="flex flex-wrap items-center justify-between gap-2">
           <div className="flex items-center space-x-2.5">
             <FileText className="w-5 h-5 text-navy" />
             <CardTitle>Email Templates — Request for Payment</CardTitle>
           </div>
-          {data && (
-            <Badge variant={data.isSystemDefault ? 'neutral' : 'navy'} size="sm">
-              v{data.template.version} {data.isSystemDefault ? '(system default)' : '(customized)'}
-            </Badge>
-          )}
+          <div className="flex items-center gap-2">
+            {data && <Badge variant={data.isSystemDefault ? 'neutral' : 'navy'} size="sm">{data.isSystemDefault ? 'Default' : 'Customized'}</Badge>}
+            <Button type="button" variant="secondary" size="sm" aria-expanded={editorOpen} aria-controls={editorId} onClick={() => setEditorOpen(!editorOpen)}>{editorOpen ? 'Close editor' : 'Edit & preview'}</Button>
+          </div>
         </div>
         <CardDescription>
           Personalize the first request-for-payment email. Insert fields by name and preview the result before saving.
           Each message uses the invoice&apos;s current details; previously sent emails stay unchanged.
         </CardDescription>
       </CardHeader>
-      <CardContent className="space-y-4 text-xs">
+      <CardContent id={editorId} hidden={!editorOpen} className="space-y-4 text-xs">
         {!data && !error && <div className="text-ink-secondary p-2">Loading template…</div>}
 
         {error && (
@@ -244,10 +246,13 @@ export const TemplateEditorCard: React.FC = () => {
               <div><p className="text-sm font-bold text-navy">Insert a field</p><p className="mt-1 text-xs text-ink-secondary">Choose where to insert, place your cursor in the text, then select a field. Its value is filled in when the email is prepared.</p></div>
               <div className="flex flex-wrap items-center gap-2" aria-label="Field destination">
                 <span className="text-xs font-semibold text-ink-secondary">Insert into:</span>
-                {(['body', 'subject'] as const).map(field => <button key={field} type="button" aria-pressed={insertTarget === field} disabled={isSaving || isRestoring} onClick={() => setInsertTarget(field)} className={`min-h-11 rounded-lg border px-3 text-xs font-semibold focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand ${insertTarget === field ? 'border-navy bg-navy text-white' : 'border-surface-border bg-white text-navy'}`}>{field === 'body' ? 'Message' : 'Subject'}</button>)}
+                {(['body', 'subject'] as const).map(field => <button key={field} type="button" aria-pressed={insertTarget === field} disabled={isSaving || isRestoring} onClick={() => setInsertTarget(field)} className={`min-h-11 sm:min-h-10 rounded-lg border px-3 text-xs font-semibold focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand ${insertTarget === field ? 'border-navy bg-navy text-white' : 'border-surface-border bg-white text-navy'}`}>{field === 'body' ? 'Message' : 'Subject'}</button>)}
               </div>
-              <div className="flex flex-wrap gap-2">
-                {data.supportedPlaceholders.map(placeholder => <button key={placeholder} type="button" disabled={isSaving || isRestoring} onClick={() => insertField(placeholder)} aria-label={`Insert ${fieldLabel(placeholder)} into ${insertTarget === 'body' ? 'message' : 'subject'}`} className="min-h-11 rounded-lg border border-surface-border bg-white px-3 text-xs font-semibold text-navy hover:border-brand focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand">+ {fieldLabel(placeholder)}</button>)}
+              <div className="flex flex-wrap items-end gap-2">
+                <div className="min-w-0 flex-1 sm:max-w-xs"><Select label="Choose field" value={chosenField} onChange={event => setChosenField(event.target.value)} disabled={isSaving || isRestoring}>
+                  {data.supportedPlaceholders.map(placeholder => <option key={placeholder} value={placeholder}>{fieldLabel(placeholder)}</option>)}
+                </Select></div>
+                <Button type="button" variant="secondary" size="sm" disabled={isSaving || isRestoring} onClick={() => insertField(chosenField)}>Insert field</Button>
               </div>
               <p className="text-xs text-ink-secondary">Fields appear as names in brackets, such as ‹Client Name›. Preview to see them filled in. To remove a field, delete its whole name and brackets. Project, invoice number, balance and due date are important billing details.</p>
             </div>
@@ -271,7 +276,7 @@ export const TemplateEditorCard: React.FC = () => {
             <Textarea
               label="Email message"
               ref={bodyRef}
-              rows={14}
+              rows={8}
               value={body}
               disabled={isSaving || isRestoring}
               onFocus={e => { setInsertTarget('body'); rememberSelection('body', e.currentTarget); }}

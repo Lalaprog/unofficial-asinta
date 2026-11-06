@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useCallback, useEffect, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useId, useRef, useState } from 'react';
 import { AlertCircle, CheckCircle2, Mail, RefreshCw, Send } from 'lucide-react';
 import { Button } from '@/components/ui/Button';
 import { Badge } from '@/components/ui/Badge';
@@ -63,6 +63,8 @@ export const RequestPaymentModal: React.FC<RequestPaymentModalProps> = ({
   const [bodyTemplate, setBodyTemplate] = useState('');
   const [reviewed, setReviewed] = useState<{ subject: string; body: string } | null>(null);
   const [insertTarget, setInsertTarget] = useState<'subject' | 'body'>('body');
+  const [editing, setEditing] = useState(false);
+  const editorId = useId();
   const [chosenField, setChosenField] = useState<string>(SUPPORTED_PLACEHOLDERS[0]);
   const subjectRef = useRef<HTMLInputElement>(null);
   const bodyRef = useRef<HTMLTextAreaElement>(null);
@@ -139,6 +141,7 @@ export const RequestPaymentModal: React.FC<RequestPaymentModalProps> = ({
     if (isOpen && invoiceId) {
       setPreview(null);
       setReviewed(null);
+      setEditing(false);
       setIsRefreshing(false);
       setSendResult(null);
       setRecipientConfirmed(false);
@@ -359,39 +362,6 @@ export const RequestPaymentModal: React.FC<RequestPaymentModalProps> = ({
             </div>
           )}
 
-          {/* One-time edits do not change the saved Settings template. */}
-          <div className="space-y-3">
-            <p className="text-ink-secondary">You can adjust this email for this invoice. Your saved template in Settings will not change.</p>
-            <Input
-              ref={subjectRef}
-              label="Email subject"
-              value={subjectTemplate}
-              disabled={isRefreshing || isSending}
-              onFocus={() => setInsertTarget('subject')}
-              onChange={(e) => editWording('subject', e.target.value)}
-            />
-            <Textarea
-              ref={bodyRef}
-              label="Email message"
-              rows={10}
-              value={bodyTemplate}
-              disabled={isRefreshing || isSending}
-              onFocus={() => setInsertTarget('body')}
-              onChange={(e) => editWording('body', e.target.value)}
-            />
-            <div className="flex flex-wrap items-end gap-2">
-              <label className="text-xs font-semibold text-ink-secondary">Insert a field into {insertTarget === 'body' ? 'message' : 'subject'}
-                <select aria-label="Choose email field" value={chosenField} onChange={(e) => setChosenField(e.target.value)} disabled={isRefreshing || isSending} className="block min-h-11 rounded-lg border border-surface-border bg-white px-3 text-ink-primary mt-1">
-                  {SUPPORTED_PLACEHOLDERS.map((field) => <option key={field} value={field}>{fieldLabel(field)}</option>)}
-                </select>
-              </label>
-              <Button type="button" variant="secondary" size="sm" onClick={insertField} disabled={isRefreshing || isSending}>Insert field</Button>
-              <Button type="button" variant="secondary" size="sm" onClick={() => loadPreview(subjectTemplate, bodyTemplate)} isLoading={isRefreshing} disabled={isSending} leftIcon={<RefreshCw className="w-3.5 h-3.5" />}>Update Preview</Button>
-            </div>
-            <p className="text-ink-secondary">Fields appear as names in brackets, such as ‹Client Name›. To remove a field, delete its whole name and brackets.</p>
-            {!previewIsCurrent && <p role="status" className="text-status-warning">Your message has changed. Update the preview before confirming.</p>}
-          </div>
-
           {/* Rendered previews */}
           <div>
             <div className="flex items-center justify-between mb-2">
@@ -441,6 +411,42 @@ export const RequestPaymentModal: React.FC<RequestPaymentModalProps> = ({
                 {preview.bodyText}
               </pre>
             )}
+          </div>
+
+          {/* One-time edits do not change the saved Settings template. */}
+          <div className="space-y-3">
+            <Button type="button" variant="secondary" size="sm" aria-expanded={editing} aria-controls={editorId} onClick={() => setEditing(!editing)}>{editing ? 'Close editor' : 'Edit message'}</Button>
+            {!previewIsCurrent && <div className="flex flex-wrap items-center gap-2"><p role="status" className="text-status-warning">Your message has changed. Update the preview before confirming.</p><Button type="button" variant="secondary" size="sm" onClick={() => loadPreview(subjectTemplate, bodyTemplate)} isLoading={isRefreshing} disabled={isSending}>Update Preview</Button></div>}
+            <div id={editorId} hidden={!editing} className="space-y-3">
+            <p className="text-ink-secondary">You can adjust this email for this invoice. Your saved template in Settings will not change.</p>
+            <Input
+              ref={subjectRef}
+              label="Email subject"
+              value={subjectTemplate}
+              disabled={isRefreshing || isSending}
+              onFocus={() => setInsertTarget('subject')}
+              onChange={(e) => editWording('subject', e.target.value)}
+            />
+            <Textarea
+              ref={bodyRef}
+              label="Email message"
+              rows={10}
+              value={bodyTemplate}
+              disabled={isRefreshing || isSending}
+              onFocus={() => setInsertTarget('body')}
+              onChange={(e) => editWording('body', e.target.value)}
+            />
+            <div className="flex flex-wrap items-end gap-2">
+              <label className="text-xs font-semibold text-ink-secondary">Insert a field into {insertTarget === 'body' ? 'message' : 'subject'}
+                <select aria-label="Choose email field" value={chosenField} onChange={(e) => setChosenField(e.target.value)} disabled={isRefreshing || isSending} className="block min-h-11 sm:min-h-10 rounded-lg border border-surface-border bg-white px-3 text-ink-primary mt-1">
+                  {SUPPORTED_PLACEHOLDERS.map((field) => <option key={field} value={field}>{fieldLabel(field)}</option>)}
+                </select>
+              </label>
+              <Button type="button" variant="secondary" size="sm" onClick={insertField} disabled={isRefreshing || isSending}>Insert field</Button>
+              {previewIsCurrent && <Button type="button" variant="secondary" size="sm" onClick={() => loadPreview(subjectTemplate, bodyTemplate)} isLoading={isRefreshing} disabled={isSending} leftIcon={<RefreshCw className="w-3.5 h-3.5" />}>Update Preview</Button>}
+            </div>
+            <p className="text-ink-secondary">Fields appear as names in brackets, such as ‹Client Name›. To remove a field, delete its whole name and brackets.</p>
+            </div>
           </div>
 
           {/* Confirmation */}

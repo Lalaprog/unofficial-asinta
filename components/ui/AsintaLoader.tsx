@@ -1,6 +1,6 @@
 'use client';
 
-import React from 'react';
+import React, { useEffect, useState } from 'react';
 
 interface AsintaLoaderProps {
   title?: string;
@@ -10,41 +10,24 @@ interface AsintaLoaderProps {
 
 /**
  * Pure, wordless Architectural Isometric & Drafting Loader.
- * Renders an animated 3D isometric structural wireframe with a precision
- * drafting ring — zero text clutter.
+ * Retains the isometric structural box with a gentle drafting-line motion.
  */
 export const AsintaLoader: React.FC<AsintaLoaderProps> = ({
   variant = 'fullscreen',
 }) => {
+  const [takingLonger, setTakingLonger] = useState(false);
+  useEffect(() => {
+    const timer = window.setTimeout(() => setTakingLonger(true), 8000);
+    return () => window.clearTimeout(timer);
+  }, []);
   const graphic = (
-    <div className="relative w-20 h-20 flex items-center justify-center select-none animate-in fade-in zoom-in-95 duration-150">
+    <div className="relative w-20 h-20 flex items-center justify-center select-none motion-safe:animate-in motion-safe:fade-in motion-safe:zoom-in-95 duration-150">
       <span className="sr-only">Loading…</span>
 
-      {/* Outer rotating architectural drafting compass ring */}
-      <svg
-        className="w-20 h-20 animate-[spin_6s_linear_infinite]"
-        viewBox="0 0 100 100"
-        fill="none"
-        xmlns="http://www.w3.org/2000/svg"
-        aria-hidden="true"
-      >
-        <circle
-          cx="50"
-          cy="50"
-          r="45"
-          stroke="#CBD5E1"
-          strokeWidth="1"
-          strokeDasharray="4 6"
-        />
-        <circle
-          cx="50"
-          cy="50"
-          r="45"
-          stroke="#1B4978"
-          strokeWidth="1.75"
-          strokeLinecap="round"
-          strokeDasharray="65 220"
-        />
+      {/* Static drafting corners; the box remains the focus, not a spinner. */}
+      <svg className="absolute w-20 h-20" viewBox="0 0 100 100" fill="none" aria-hidden="true">
+        <path d="M8 28 V8 H28 M72 8 H92 V28 M92 72 V92 H72 M28 92 H8 V72" stroke="#CBD5E1" strokeWidth="1.5" strokeLinecap="round" />
+        <path d="M8 28 V8 H28 M72 8 H92 V28 M92 72 V92 H72 M28 92 H8 V72" stroke="#1B4978" strokeWidth="1.6" strokeLinecap="round" strokeDasharray="12 164" className="motion-safe:animate-[archStroke_4s_ease-in-out_infinite]" />
       </svg>
 
       {/* Inner 3D Isometric Architectural Structure Wireframe */}
@@ -60,21 +43,21 @@ export const AsintaLoader: React.FC<AsintaLoaderProps> = ({
           points="32,8 54,20.5 32,33 10,20.5"
           fill="#1B4978"
           fillOpacity="0.16"
-          className="animate-[pulse_1.6s_ease-in-out_infinite]"
+          className="motion-safe:animate-[pulse_1.6s_ease-in-out_infinite]"
         />
         {/* Left structural elevation plane */}
         <polygon
           points="10,20.5 32,33 32,56 10,43.5"
           fill="#0B1F3A"
           fillOpacity="0.10"
-          className="animate-[pulse_1.6s_ease-in-out_0.25s_infinite]"
+          className="motion-safe:animate-[pulse_1.6s_ease-in-out_0.25s_infinite]"
         />
         {/* Right structural elevation plane */}
         <polygon
           points="54,20.5 32,33 32,56 54,43.5"
           fill="#1B4978"
           fillOpacity="0.22"
-          className="animate-[pulse_1.6s_ease-in-out_0.5s_infinite]"
+          className="motion-safe:animate-[pulse_1.6s_ease-in-out_0.5s_infinite]"
         />
 
         {/* Animated drafting wireframe strokes */}
@@ -83,7 +66,7 @@ export const AsintaLoader: React.FC<AsintaLoaderProps> = ({
           stroke="#0B1F3A"
           strokeWidth="2"
           strokeLinejoin="round"
-          className="animate-[archStroke_1.8s_ease-in-out_infinite]"
+          className="motion-safe:animate-[archStroke_1.8s_ease-in-out_infinite]"
         />
         <path
           d="M10 20.5 L32 33 L54 20.5 M32 33 L32 56"
@@ -105,16 +88,17 @@ export const AsintaLoader: React.FC<AsintaLoaderProps> = ({
   );
 
   if (variant === 'inline') {
-    return <div className="w-full py-10 flex items-center justify-center">{graphic}</div>;
+    return <div role="status" aria-live="polite" className="w-full py-10 flex flex-col items-center justify-center gap-3">{graphic}{takingLonger && <p className="text-xs text-ink-secondary">Still loading…</p>}</div>;
   }
 
   return (
     <div
       role="status"
       aria-live="polite"
-      className="fixed inset-0 z-[100] bg-surface/80 backdrop-blur-xs flex items-center justify-center"
+      className="fixed inset-0 z-[100] bg-surface/80 backdrop-blur-xs flex flex-col items-center justify-center gap-3"
     >
       {graphic}
+      {takingLonger && <p className="text-xs text-ink-secondary">Still loading…</p>}
     </div>
   );
 };

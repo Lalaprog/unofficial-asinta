@@ -46,21 +46,32 @@ export function formatDateForSMS(isoDate: string | null | undefined): string {
  * - Uses the "emailed on" wording ONLY when a successful email log exists.
  * - Prefers the contact person, then the company name, then "Valued Client".
  */
-export function buildReminderSMS(data: ReminderSMSData): string {
-  const clientName = resolveClientGreetingName(data.contactPerson, data.companyName);
-  const balance = formatPesoForSMS(data.outstandingBalance);
-  const dueDate = formatDateForSMS(data.dueDate);
+export const SMS_FIELDS = ['client_contact_name', 'invoice_number', 'project_name', 'outstanding_balance', 'due_date', 'email_reference'] as const;
+export const SMS_IMPORTANT_FIELDS = ['invoice_number', 'project_name', 'outstanding_balance', 'due_date'] as const;
+export const DEFAULT_SMS_TEMPLATE = 'Dear {{client_contact_name}}, this is a gentle reminder regarding {{invoice_number}} for {{project_name}}. ' +
+  'The outstanding balance is {{outstanding_balance}}, due on {{due_date}}. ' +
+  '{{email_reference}} Thank you and God bless. This is a system-generated message. Please do not reply.';
 
-  const emailReference = data.paymentRequestSentDate
-    ? `Please refer to the Request for Payment emailed on ${formatDateForSMS(data.paymentRequestSentDate)}.`
-    : 'Please review the payment details for this invoice.';
+export function validateSMSTemplate(template: string): { valid: boolean; missing: string[] } {
+  const fields = [...template.matchAll(/\{\{([a-z_]+)\}\}/g)].map(match => match[1]);
+  const remaining = template.replace(/\{\{[a-z_]+\}\}/g, '');
+  const valid = Boolean(template.trim()) && template.length <= 1000 && !remaining.includes('{{') && !remaining.includes('}}') && fields.every(field => (SMS_FIELDS as readonly string[]).includes(field));
+  return { valid, missing: SMS_IMPORTANT_FIELDS.filter(field => !fields.includes(field)) };
+}
 
-  return (
-    `Dear ${clientName}, this is a gentle reminder regarding ${data.invoiceNumber} for ${data.projectName}. ` +
-    `The outstanding balance is ${balance}, due on ${dueDate}. ` +
-    `${emailReference} Thank you and God bless. ` +
-    `This is a system-generated message. Please do not reply.`
-  );
+/** The default is byte-for-byte equivalent to the original reminder wording. */
+export function buildReminderSMS(data: ReminderSMSData, template: string = DEFAULT_SMS_TEMPLATE): string {
+  if (!validateSMSTemplate(template).valid) throw new Error('Invalid SMS template');
+  const emailDate = formatDateForSMS(data.paymentRequestSentDate);
+  const values: Record<string, string> = {
+    client_contact_name: resolveClientGreetingName(data.contactPerson, data.companyName),
+    invoice_number: data.invoiceNumber,
+    project_name: data.projectName,
+    outstanding_balance: formatPesoForSMS(data.outstandingBalance),
+    due_date: formatDateForSMS(data.dueDate),
+    email_reference: emailDate ? `Please refer to the Request for Payment emailed on ${emailDate}.` : 'Please review the payment details for this invoice.',
+  };
+  return template.replace(/\{\{([a-z_]+)\}\}/g, (_, key: string) => values[key]);
 }
 
 /**

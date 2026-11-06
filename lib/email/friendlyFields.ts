@@ -11,6 +11,7 @@ const FIELD_LABELS: Record<string, string> = {
   invoice_notes: 'Invoice Notes',
   firm_email: 'Firm Email',
   firm_contact_number: 'Firm Contact Number',
+  email_reference: 'Previous Email Note',
 };
 
 export const fieldLabel = (field: string) => FIELD_LABELS[field] || field.replace(/_/g, ' ');

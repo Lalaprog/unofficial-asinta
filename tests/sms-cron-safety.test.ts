@@ -23,7 +23,7 @@ beforeEach(() => {
     invoices: [{ id: 'i1', invoice_number: 'I-1', client_id: 'c1', project_id: 'p1', amount: 100, amount_paid: 0,
       due_date: '2026-11-02', status: 'pending', automatic_reminders_enabled: true, reminders_paused_until: null }],
     clients: [{ id: 'c1', name: 'Client', contact_person: 'Contact', phone: '09178421190' }],
-    projects: [{ id: 'p1', name: 'Project' }], email_logs: [], sms_logs: [], reminder_dispatches: [],
+    projects: [{ id: 'p1', name: 'Project' }], email_logs: [], sms_logs: [], reminder_dispatches: [], sms_template_settings: [],
   });
   mock.getDb.mockReturnValue(db);
 });
@@ -59,4 +59,19 @@ describe('scheduled SMS duplicate safety', () => {
     expect(bodies.flatMap((body) => body.results.map((row: { outcome: string }) => row.outcome)).sort()).toEqual(['duplicate_skipped', 'sent']);
     expect(send).toHaveBeenCalledTimes(1);
   });
+  it('renders the saved template for scheduled messages without sending real SMS in this test', async () => {
+    db.tables.sms_template_settings.push({singleton:true,message_template:'Custom {{invoice_number}} for {{client_contact_name}}.'});
+    const send=vi.fn(async()=>({ok:true,status:200,json:async()=>({status:'success'})}));vi.stubGlobal('fetch',send);
+    const result=await (await GET(request())).json();expect(result.results[0].outcome).toBe('sent');
+    expect(db.tables.sms_logs[0].message).toBe('Custom I-1 for Contact.');expect(send).toHaveBeenCalledTimes(1);
+  });
+  it('refuses invalid saved templates rather than silently sending the old default',async()=>{
+    db.tables.sms_template_settings.push({singleton:true,message_template:'{{unknown}}'});const send=vi.fn();vi.stubGlobal('fetch',send);
+    expect((await GET(request())).status).toBe(503);expect(send).not.toHaveBeenCalled();expect(db.tables.reminder_dispatches).toHaveLength(0);
+  });
+  it('does not send a message that expands past the SMS limit',async()=>{
+    db.tables.projects[0].name='p'.repeat(40);db.tables.sms_template_settings.push({singleton:true,message_template:'x'.repeat(970)+'{{project_name}}'});const send=vi.fn();vi.stubGlobal('fetch',send);
+    const result=await (await GET(request())).json();expect(result.results[0].outcome).toBe('skipped');expect(send).not.toHaveBeenCalled();
+  });
+
 });

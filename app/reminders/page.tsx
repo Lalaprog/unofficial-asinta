@@ -20,6 +20,7 @@ import { EmptyState } from '@/components/ui/EmptyState';
 import { useToast } from '@/components/ui/Toast';
 import { createClient } from '@/lib/supabase/client';
 import { buildReminderSMS, estimateSMSSegments } from '@/lib/sms/templates';
+import { loadSMSTemplate } from '@/lib/sms/loadTemplate';
 import { formatPeso, formatDatePH } from '@/lib/email/format';
 import {
   REMINDER_LEAD_DAYS,
@@ -67,6 +68,10 @@ export default function RemindersPage() {
   const [status, setStatus] = useState<IntegrationStatus | null>(null);
   const [sendingId, setSendingId] = useState<string | null>(null);
   const [togglingId, setTogglingId] = useState<string | null>(null);
+  const [smsTemplate, setSmsTemplate] = useState<string | null>(null);
+  const [smsTemplateError, setSmsTemplateError] = useState(false);
+  const [preparingId, setPreparingId] = useState<string | null>(null);
+  const prepareLock = useRef(false);
 
   // Edit-and-approve modal
   const [editInvoice, setEditInvoice] = useState<Invoice | null>(null);
@@ -85,6 +90,13 @@ export default function RemindersPage() {
     return () => {
       active = false;
     };
+  }, []);
+
+  useEffect(() => {
+    let active = true;
+    const refresh = () => { loadSMSTemplate().then(template => { if (active) { setSmsTemplate(template); setSmsTemplateError(false); } }).catch(() => { if (active) { setSmsTemplate(null); setSmsTemplateError(true); } }); };
+    refresh(); window.addEventListener('focus', refresh);
+    return () => { active = false; window.removeEventListener('focus', refresh); };
   }, []);
 
   const now = Date.now();
@@ -149,7 +161,7 @@ export default function RemindersPage() {
     return log?.sent_at || null;
   };
 
-  const buildMessageFor = (inv: Invoice): string => {
+  const buildMessageFor = (inv: Invoice, template: string): string => {
     const client = clients.find((c) => c.id === inv.client_id);
     const project = projects.find((p) => p.id === inv.project_id);
     return buildReminderSMS({
@@ -160,11 +172,21 @@ export default function RemindersPage() {
       outstandingBalance: inv.amount - inv.amount_paid,
       dueDate: inv.due_date,
       paymentRequestSentDate: emailDates[inv.id] || null,
-    });
+    }, template);
+  };
+
+  const prepareMessage = async (inv: Invoice) => {
+    if (prepareLock.current) return;
+    prepareLock.current = true; setPreparingId(inv.id);
+    try {
+      const template = await loadSMSTemplate();
+      setSmsTemplate(template); setSmsTemplateError(false); setEditInvoice(inv); setEditMessage(buildMessageFor(inv, template)); setConfirmed(false); setSentNotice(false);
+    } catch { setSmsTemplate(null); setSmsTemplateError(true); showToast('error', 'Could not load the saved SMS template. Try again.'); }
+    finally { prepareLock.current = false; setPreparingId(null); }
   };
 
   const handleApproveAndSend = async (inv: Invoice, message: string) => {
-    if (sendLock.current || !confirmed || !message.trim()) return;
+    if (sendLock.current || !confirmed || !message.trim() || message.length > 1000) return;
     sendLock.current = true;
     setSendingId(inv.id);
     try {
@@ -220,7 +242,7 @@ export default function RemindersPage() {
             const project = projects.find((p) => p.id === inv.project_id);
             const balance = inv.amount - inv.amount_paid;
             const type = classifyReminderStage(inv.due_date, todayIso);
-            const preview = buildMessageFor(inv);
+            const preview = smsTemplate ? buildMessageFor(inv, smsTemplate) : '';
             const estimate = estimateSMSSegments(preview);
             const next = nextEligibleReminder(inv.due_date, todayIso);
             const lastSms = latestSmsDate(inv.id);
@@ -263,24 +285,16 @@ export default function RemindersPage() {
                     <Button
                       variant="secondary"
                       size="sm"
-                      onClick={() => {
-                        setEditInvoice(inv);
-                        setEditMessage(preview);
-                        setConfirmed(false);
-                        setSentNotice(false);
-                      }}
+                      onClick={() => void prepareMessage(inv)}
+                      disabled={Boolean(preparingId)}
                     >
                       Edit
                     </Button>
                     <Button
                       variant="primary"
                       size="sm"
-                      onClick={() => {
-                        setEditInvoice(inv);
-                        setEditMessage(preview);
-                        setConfirmed(false);
-                        setSentNotice(false);
-                      }}
+                      onClick={() => void prepareMessage(inv)}
+                      disabled={Boolean(preparingId)}
                       leftIcon={<Send className="w-3.5 h-3.5" />}
                     >
                       Approve &amp; Send
@@ -307,7 +321,7 @@ export default function RemindersPage() {
                 </div>
 
                 <div className="p-3 rounded-xl bg-slate-50 border border-slate-200 text-xs text-ink-primary leading-relaxed">
-                  {preview}
+                  {preview || (smsTemplateError ? 'SMS template unavailable. Select Edit or Approve & Send to retry.' : 'Loading SMS template…')}
                 </div>
                 <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 text-[11px] text-ink-secondary">
                   <span>
@@ -417,6 +431,7 @@ export default function RemindersPage() {
                   disabled={Boolean(sendingId)}
                 />
 
+                {editMessage.length > 1000 && <p role="alert" className="text-status-danger">This message is longer than 1,000 characters. Edit it before sending.</p>}
                 {(() => {
                   const estimate = estimateSMSSegments(editMessage);
                   return (
@@ -454,7 +469,7 @@ export default function RemindersPage() {
                     variant="primary"
                     onClick={() => handleApproveAndSend(editInvoice, editMessage.trim())}
                     isLoading={sendingId === editInvoice.id}
-                    disabled={!confirmed || !editMessage.trim() || sendingId === editInvoice.id}
+                    disabled={!confirmed || !editMessage.trim() || editMessage.length > 1000 || sendingId === editInvoice.id}
                     leftIcon={sendingId !== editInvoice.id ? <Send className="w-3.5 h-3.5" /> : undefined}
                   >
                     Approve &amp; Send Now

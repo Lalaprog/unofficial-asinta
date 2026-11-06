@@ -4,7 +4,7 @@ A plain-language record of work still to consider. This is a planning document, 
 
 ## Agreed final-stretch work
 
-- [ ] **Founder-friendly message templates:** The existing request-for-payment email editor and its one-time invoice message editor now use readable fields while preserving saved templates. Invoice email edits must be previewed again before confirmation. Still add a saved, previewable SMS template and appropriate templates for automatic reminder emails. Previews must not send messages, and missing important invoice details should be called out.
+- [ ] **Founder-friendly message templates:** Saved request-for-payment email and SMS templates have readable fields and previews in this work. Invoice edits are one-time only, and email edits require an updated preview before confirmation. The automatic reminder email template is still to do. Previews must not send messages, and missing important invoice details should be called out.
 - [ ] **Optional project photos:** Let authorized users upload, replace and remove a project image. Keep the preferred blueprint as the default, with legible text, appropriate private access, storage limits and mobile layouts.
 - [ ] **Automatic invoice reminders:** Provide one persistent Founder master switch for email and SMS, retaining invoice-level controls. Target three days before, on the due date, three days after, then weekly; Monday–Saturday, 8 a.m.–6 p.m. Manila. Handle dates outside the window without missing or flooding, check scheduling/provider constraints and costs, expose readiness/failures, and guard duplicate sends. OFF prevents new sends; work already in flight may finish. Keep automatic sending OFF during tests; do not send real messages without approval.
 - [ ] **Final UI and empty-state audit:** Distinguish no records, filters with no results, loading and errors; offer actions appropriate to each role. Remove redundant development-oriented explanations and model configuration from everyday screens while preserving essential safety warnings and useful controls. Preserve the liked dashboard mobile view.
@@ -26,7 +26,7 @@ A plain-language record of work still to consider. This is a planning document, 
 
 ## Already delivered
 
-The dashboard project selector, initial email-template field insertion, expense item details and review, one saved expense draft per Founder, same-page receipt viewer, and clearer receipt-AI errors have been delivered. A saved draft is not a ledger entry; saving remains explicit. Do not reopen completed work unless a practical issue is found.
+The dashboard project selector, initial email-template field insertion, expense item details and review, one saved expense draft per Founder, same-page receipt viewer, and clearer receipt-AI errors have been delivered. The current SMS-template and compact-editor changes require their own database migration and deployment; do not treat them as live until rollout is confirmed. A saved draft is not a ledger entry; saving remains explicit. Do not reopen completed work unless a practical issue is found.
 
 ## Deliberately on hold
 
