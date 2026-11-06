@@ -31,6 +31,7 @@ import { AsintaEmblem, AsintaWordmark } from '@/components/ui/AsintaLogo';
 import { RequestPaymentModal } from '@/components/email/RequestPaymentModal';
 import { EmailHistoryModal } from '@/components/email/EmailHistoryModal';
 import { buildReminderSMS, estimateSMSSegments } from '@/lib/sms/templates';
+import { loadSMSTemplate } from '@/lib/sms/loadTemplate';
 import { createClient as createSupabaseBrowserClient } from '@/lib/supabase/client';
 import { formatPeso } from '@/lib/email/format';
 
@@ -162,6 +163,7 @@ export default function InvoicesPage() {
   const smsPrepareVersion = React.useRef(0);
   const [smsSuccess, setSmsSuccess] = useState<string | null>(null);
   const [smsMessage, setSmsMessage] = useState('');
+  const [smsEditing, setSmsEditing] = useState(false);
   const supabaseBrowser = useMemo(() => createSupabaseBrowserClient(), []);
 
   /**
@@ -172,10 +174,14 @@ export default function InvoicesPage() {
   const openSmsModal = async (inv: Invoice) => {
     const version = ++smsPrepareVersion.current;
     setSmsSuccess(null);
+    setSmsEditing(false);
 
     const client = clients.find((c) => c.id === inv.client_id);
     const proj = projects.find((p) => p.id === inv.project_id);
 
+    let template: string;
+    try { template = await loadSMSTemplate(); }
+    catch { if (version === smsPrepareVersion.current) showToast('error', 'Could not load the saved SMS template. Try again.'); return; }
     let emailedOn: string | null = null;
     try {
       const { data } = await supabaseBrowser
@@ -203,7 +209,7 @@ export default function InvoicesPage() {
         outstandingBalance: inv.amount - inv.amount_paid,
         dueDate: inv.due_date,
         paymentRequestSentDate: emailedOn,
-      })
+      }, template)
     );
     setIsSmsModalOpen(true);
   };
@@ -321,7 +327,7 @@ export default function InvoicesPage() {
   };
 
   const handleSendPhilSMS = async () => {
-    if (!selectedInvoice || !smsMessage.trim() || smsSendLock.current) return;
+    if (!selectedInvoice || !smsMessage.trim() || smsMessage.length > 1000 || smsSendLock.current) return;
     smsSendLock.current = true;
     setSmsSending(true);
     try {
@@ -839,14 +845,17 @@ export default function InvoicesPage() {
                   </div>
                 </div>
 
-                <Textarea
-                  label="Reminder Message (editable before sending)"
-                  rows={5}
-                  value={smsMessage}
-                  onChange={(e) => setSmsMessage(e.target.value)}
-                  maxLength={1000}
-                />
+                <div className="space-y-2">
+                  <div className="text-xs font-semibold text-ink-secondary">Message preview</div>
+                  <div className="max-h-40 overflow-y-auto whitespace-pre-wrap rounded-xl border border-surface-border bg-surface-inset p-3 text-ink-primary">{smsMessage || 'No message yet.'}</div>
+                  <Button type="button" variant="secondary" size="sm" aria-expanded={smsEditing} aria-controls="invoice-sms-editor" disabled={smsSending} onClick={() => setSmsEditing(!smsEditing)}>{smsEditing ? 'Close editor' : 'Edit message'}</Button>
+                  <div id="invoice-sms-editor" hidden={!smsEditing}>
+                    <Textarea label="Reminder message" rows={5} value={smsMessage} onChange={(e) => setSmsMessage(e.target.value)} maxLength={1000} disabled={smsSending} />
+                    <p className="mt-1 text-ink-secondary">Changes apply only to this message.</p>
+                  </div>
+                </div>
 
+                {smsMessage.length > 1000 && <p role="alert" className="text-status-danger">This message is longer than 1,000 characters. Edit it before sending.</p>}
                 {(() => {
                   const estimate = estimateSMSSegments(smsMessage);
                   return (
@@ -866,7 +875,7 @@ export default function InvoicesPage() {
                     variant="primary"
                     onClick={handleSendPhilSMS}
                     isLoading={smsSending}
-                    disabled={smsSending || !smsMessage.trim()}
+                    disabled={smsSending || !smsMessage.trim() || smsMessage.length > 1000}
                     leftIcon={!smsSending ? <Send className="w-3.5 h-3.5" /> : undefined}
                   >
                     Confirm &amp; Send SMS

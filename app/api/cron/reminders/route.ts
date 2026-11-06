@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { createServiceRoleClient, isServiceRoleConfigured } from '@/lib/supabase/admin';
 import { deliverAndLogSMS } from '@/lib/sms/deliver';
 import { normalizePhilippineMobile } from '@/lib/sms/phone';
-import { buildReminderSMS } from '@/lib/sms/templates';
+import { buildReminderSMS, DEFAULT_SMS_TEMPLATE, validateSMSTemplate } from '@/lib/sms/templates';
 import {
   buildDispatchIdempotencyKey,
   checkReminderEligibility,
@@ -70,6 +70,13 @@ async function runReminderCron(req: NextRequest) {
   }
 
   const db = createServiceRoleClient();
+  // Fail closed if the saved template cannot be read; never silently send an
+  // old/default message when a Founder may have saved different wording.
+  const { data: smsTemplateRow, error: smsTemplateError } = await db.from('sms_template_settings').select('message_template').eq('singleton', true).maybeSingle();
+  const smsTemplate = smsTemplateRow?.message_template ?? DEFAULT_SMS_TEMPLATE;
+  if (smsTemplateError || typeof smsTemplate !== 'string' || !validateSMSTemplate(smsTemplate).valid) {
+    return NextResponse.json({ error: 'SMS template unavailable; no reminders were sent.' }, { status: 503 });
+  }
   const todayIso = getManilaClock(now).dateIso;
 
   const { data: invoices, error: invoicesError } = await db
@@ -192,7 +199,11 @@ async function runReminderCron(req: NextRequest) {
         outstandingBalance: (Number(invoice.amount) || 0) - (Number(invoice.amount_paid) || 0),
         dueDate: invoice.due_date,
         paymentRequestSentDate: emailLog?.sent_at || null,
-      });
+      }, smsTemplate);
+      if (message.length > 1000) {
+        await db.from('reminder_dispatches').update({ status: 'skipped', error_message: 'SMS message exceeds 1,000 characters.' }).eq('id', dispatchId);
+        record.outcome = 'skipped'; record.reason = 'message_too_long'; skipped += 1; results.push(record); continue;
+      }
 
       const recipientName = (client?.contact_person || '').trim() || client?.name || 'Client';
 

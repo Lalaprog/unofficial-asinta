@@ -10,6 +10,7 @@ import { Badge } from '@/components/ui/Badge';
 import { Card, CardHeader, CardTitle, CardDescription, CardContent } from '@/components/ui/Card';
 import { AsintaEmblem, AsintaWordmark } from '@/components/ui/AsintaLogo';
 import { TemplateEditorCard } from '@/components/email/TemplateEditorCard';
+import { SmsTemplateCard } from '@/components/email/SmsTemplateCard';
 import { TestEmailCard } from '@/components/email/TestEmailCard';
 import { MfaCard } from '@/components/auth/MfaCard';
 import { WorkspaceHeader } from '@/components/ui/WorkspaceHeader';
@@ -103,7 +104,7 @@ export default function SettingsPage() {
 
   return (
     <AppShell>
-      <div className="space-y-6 max-w-4xl">
+      <div className="space-y-5 sm:space-y-6 max-w-6xl">
         <WorkspaceHeader eyebrow={isFounder ? 'Administration' : 'Your account'}
           title={isFounder ? 'Firm Settings' : 'Supervisor Profile'}
           description={isFounder ? 'Review security, integrations and communication settings.' : 'Review account details, assigned sites and roster status.'}
@@ -400,6 +401,7 @@ export default function SettingsPage() {
 
         {/* Email Templates (Founder only) */}
         {isFounder && <TemplateEditorCard />}
+        {isFounder && <SmsTemplateCard />}
 
         {/* SMTP Test Email (Founder only) */}
         {isFounder && <TestEmailCard />}

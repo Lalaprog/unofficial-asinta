@@ -1,4 +1,5 @@
 // @vitest-environment jsdom
+vi.mock('@/lib/sms/loadTemplate', () => ({ loadSMSTemplate: async () => 'Dear {{client_contact_name}}, invoice {{invoice_number}}.' }));
 import React from 'react';
 import { cleanup, fireEvent, render, screen, within } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
@@ -115,7 +116,7 @@ describe('dashboard project scope selector', () => {
     const send=vi.fn(async()=>true);mocks.store.invoices=[overdue];mocks.store.sendSMS=send;
     render(React.createElement(FounderDashboard));
     fireEvent.click(screen.getAllByRole('button',{name:'Remind client'})[0]);
-    const message=screen.getByLabelText('SMS message') as HTMLTextAreaElement;
+    const message=await screen.findByLabelText('SMS message') as HTMLTextAreaElement;
     expect(message.value).toContain('late');
     fireEvent.change(message,{target:{value:'Personal one-time reminder'}});
     fireEvent.click(screen.getByRole('button',{name:'Send PhilSMS Now'}));
@@ -123,7 +124,7 @@ describe('dashboard project scope selector', () => {
     expect(send).toHaveBeenCalledWith({invoiceId:'late',message:'Personal one-time reminder'});
     fireEvent.click(screen.getByRole('button',{name:'Done'}));
     fireEvent.click(screen.getAllByRole('button',{name:'Remind client'})[0]);
-    expect((screen.getByLabelText('SMS message') as HTMLTextAreaElement).value).not.toContain('Personal one-time reminder');
+    expect((await screen.findByLabelText('SMS message') as HTMLTextAreaElement).value).not.toContain('Personal one-time reminder');
   });
 
 });

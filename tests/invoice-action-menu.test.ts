@@ -1,4 +1,5 @@
 // @vitest-environment jsdom
+vi.mock('@/lib/sms/loadTemplate', () => ({ loadSMSTemplate: async () => 'Dear {{client_contact_name}}, invoice {{invoice_number}}.' }));
 import React from 'react';
 import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
@@ -98,7 +99,8 @@ describe('invoice action menu', () => {
     open('ASINTA-2026-001');
     fireEvent.click(await screen.findByRole('menuitem', { name: 'Send SMS reminder' }));
     const dialog = await screen.findByRole('dialog', { name: 'Send PhilSMS Payment Notification' });
-    expect((within(dialog).getByLabelText('Reminder Message (editable before sending)') as HTMLTextAreaElement).value).toContain('ASINTA-2026-001');
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Edit message' }));
+    expect((within(dialog).getByLabelText('Reminder message') as HTMLTextAreaElement).value).toContain('ASINTA-2026-001');
     expect(mock.sendSMS).not.toHaveBeenCalled();
     await waitFor(() => expect(dialog.contains(document.activeElement)).toBe(true));
     fireEvent.click(within(dialog).getByRole('button', { name: 'Cancel' }));

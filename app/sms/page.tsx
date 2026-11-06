@@ -16,6 +16,7 @@ import { EmptyState } from '@/components/ui/EmptyState';
 import { WorkspaceFilters } from '@/components/ui/WorkspaceFilters';
 import { createClient } from '@/lib/supabase/client';
 import { buildReminderSMS, detectReminderType, estimateSMSSegments } from '@/lib/sms/templates';
+import { loadSMSTemplate } from '@/lib/sms/loadTemplate';
 import { formatPeso, formatDatePH } from '@/lib/email/format';
 import { getManilaClock } from '@/lib/reminders/scheduler';
 import type { SMSLog } from '@/types';
@@ -79,6 +80,7 @@ export default function SMSPage() {
   const [confirmed, setConfirmed] = useState(false);
   const [successNotice, setSuccessNotice] = useState(false);
   const [emailLookupFailed, setEmailLookupFailed] = useState(false);
+  const [templateError, setTemplateError] = useState(false);
   const prepareVersion = useRef(0);
   const sendLock = useRef(false);
   const closeComposer = () => {
@@ -128,6 +130,7 @@ export default function SMSPage() {
     setSelectedInvoiceId(invoiceId);
     setMessage('');
     setEmailLookupFailed(false);
+    setTemplateError(false);
     setConfirmed(false);
     setLatestEmailDate(null);
     if (!invoiceId) {
@@ -141,6 +144,9 @@ export default function SMSPage() {
     const project = projects.find((p) => p.id === invoice.project_id);
 
     setIsPreparing(true);
+    let template: string;
+    try { template = await loadSMSTemplate(); }
+    catch { if (version === prepareVersion.current) { setTemplateError(true); setIsPreparing(false); } return; }
     let emailedOn: string | null = null;
     try {
       // Only a genuinely successful (accepted/delivered) initial-request
@@ -174,14 +180,14 @@ export default function SMSPage() {
         outstandingBalance: invoice.amount - invoice.amount_paid,
         dueDate: invoice.due_date,
         paymentRequestSentDate: emailedOn,
-      })
+      }, template)
     );
     setIsPreparing(false);
   };
 
   const handleComposeSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!selectedInvoiceId || !message.trim() || !confirmed || isPreparing || sendLock.current) return;
+    if (!selectedInvoiceId || !message.trim() || message.length > 1000 || !confirmed || isPreparing || sendLock.current) return;
     sendLock.current = true;
     setIsSending(true);
     try {
@@ -382,6 +388,7 @@ export default function SMSPage() {
                 </div>
               )}
 
+              {templateError && <p role="alert" className="text-status-danger">Could not load the saved SMS template. Choose the invoice again to retry.</p>}
               <Textarea
                 label="Message (plain text — edit before sending)"
                 rows={5}
@@ -393,6 +400,7 @@ export default function SMSPage() {
                 required
               />
 
+              {message.length > 1000 && <p role="alert" className="text-status-danger">This message is longer than 1,000 characters. Edit it before sending.</p>}
               <div className="text-[11px] text-ink-secondary">
                 {segmentEstimate.characterCount} characters · {segmentEstimate.encoding} · est.{' '}
                 {segmentEstimate.segments} SMS segment{segmentEstimate.segments === 1 ? '' : 's'}
@@ -433,7 +441,7 @@ export default function SMSPage() {
                   type="submit"
                   variant="primary"
                   isLoading={isSending}
-                  disabled={!selectedInvoiceId || !message.trim() || !confirmed || isSending || isPreparing}
+                  disabled={!selectedInvoiceId || !message.trim() || message.length > 1000 || !confirmed || isSending || isPreparing}
                   leftIcon={!isSending ? <Send className="w-3.5 h-3.5" /> : undefined}
                 >
                   Confirm &amp; Send SMS

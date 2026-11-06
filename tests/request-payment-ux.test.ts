@@ -30,6 +30,7 @@ afterEach(()=>{cleanup();vi.unstubAllGlobals();});
 describe('one-time invoice email editing',()=>{
   it('shows friendly fields, inserts at the caret, requires an updated preview, and submits only the one-time text',async()=>{
     render(React.createElement(RequestPaymentModal,{isOpen:true,onClose:vi.fn(),invoiceId:'inv-1'}));
+    await screen.findByText('Final Email Preview');fireEvent.click(screen.getByRole('button',{name:'Edit message'}));
     const message=await screen.findByLabelText('Email message') as HTMLTextAreaElement;
     expect(message.value).toBe('Dear ‹Client Name›, please pay ‹Outstanding Balance›.');
     const confirm=screen.getByRole('checkbox') as HTMLInputElement;fireEvent.click(confirm);expect(confirm.checked).toBe(true);
@@ -50,6 +51,7 @@ describe('one-time invoice email editing',()=>{
   });
   it('blocks an incomplete field and never submits an unreviewed message',async()=>{
     render(React.createElement(RequestPaymentModal,{isOpen:true,onClose:vi.fn(),invoiceId:'inv-1'}));
+    await screen.findByText('Final Email Preview');fireEvent.click(screen.getByRole('button',{name:'Edit message'}));
     const message=await screen.findByLabelText('Email message');fireEvent.change(message,{target:{value:'Dear ‹Client Nam›'}});
     fireEvent.click(screen.getByRole('button',{name:'Update Preview'}));expect(screen.getByText(/A field was changed/)).toBeTruthy();
     expect((screen.getByRole('button',{name:'Confirm & Send Email'}) as HTMLButtonElement).disabled).toBe(true);
@@ -57,7 +59,7 @@ describe('one-time invoice email editing',()=>{
   });
   it('requires a fresh preview and confirmation after the server detects a changed invoice',async()=>{
     sendConflict=true;render(React.createElement(RequestPaymentModal,{isOpen:true,onClose:vi.fn(),invoiceId:'inv-1'}));
-    await screen.findByLabelText('Email message');const confirm=screen.getByRole('checkbox') as HTMLInputElement;
+    await screen.findByText('Final Email Preview');const confirm=screen.getByRole('checkbox') as HTMLInputElement;
     fireEvent.click(confirm);fireEvent.click(screen.getByRole('button',{name:'Confirm & Send Email'}));
     await screen.findByText(/invoice, recipient, or message has changed/);expect(confirm.checked).toBe(false);expect(confirm.disabled).toBe(true);
     fireEvent.click(screen.getByRole('button',{name:'Update Preview'}));await waitFor(()=>expect(confirm.disabled).toBe(false));expect(confirm.checked).toBe(false);
@@ -75,6 +77,16 @@ describe('one-time invoice email editing',()=>{
     await act(async () => { resolveOld({ok:true,json:async()=>({...preview(),invoice:{...preview().invoice,invoiceNumber:'INV-OLD'}})} as Response); });
     await waitFor(()=>expect(screen.queryByText('INV-OLD')).toBeNull());
     expect(screen.getAllByText('INV-NEW').length).toBeGreaterThan(0);
+  });
+
+  it('shows the preview first and preserves unfinished edits when the editor is collapsed', async () => {
+    render(React.createElement(RequestPaymentModal,{isOpen:true,onClose:vi.fn(),invoiceId:'inv-1'}));
+    await screen.findByText('Final Email Preview');expect(screen.getByLabelText('Email message').closest('[hidden]')).not.toBeNull();
+    fireEvent.click(screen.getByRole('button',{name:'Edit message'}));const message=screen.getByLabelText('Email message') as HTMLTextAreaElement;
+    fireEvent.change(message,{target:{value:'One-time wording'}});
+    fireEvent.click(screen.getByRole('button',{name:'Close editor'}));expect(screen.getByLabelText('Email message').closest('[hidden]')).not.toBeNull();
+    expect(screen.getByText(/Your message has changed/)).toBeTruthy();expect((screen.getByRole('checkbox') as HTMLInputElement).disabled).toBe(true);
+    fireEvent.click(screen.getByRole('button',{name:'Edit message'}));expect((screen.getByLabelText('Email message') as HTMLTextAreaElement).value).toBe('One-time wording');
   });
 
 });
