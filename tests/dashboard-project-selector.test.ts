@@ -110,4 +110,20 @@ describe('dashboard project scope selector', () => {
     expect(selector.value).toBe('two');
   });
 
+  it('lets a Founder customize the quick SMS without changing future messages', async () => {
+    const overdue={...invoice('late','alpha',1000),due_date:'2020-01-01'};
+    const send=vi.fn(async()=>true);mocks.store.invoices=[overdue];mocks.store.sendSMS=send;
+    render(React.createElement(FounderDashboard));
+    fireEvent.click(screen.getAllByRole('button',{name:'Remind client'})[0]);
+    const message=screen.getByLabelText('SMS message') as HTMLTextAreaElement;
+    expect(message.value).toContain('late');
+    fireEvent.change(message,{target:{value:'Personal one-time reminder'}});
+    fireEvent.click(screen.getByRole('button',{name:'Send PhilSMS Now'}));
+    await screen.findByText(/Reminder handed to the PhilSMS gateway/);
+    expect(send).toHaveBeenCalledWith({invoiceId:'late',message:'Personal one-time reminder'});
+    fireEvent.click(screen.getByRole('button',{name:'Done'}));
+    fireEvent.click(screen.getAllByRole('button',{name:'Remind client'})[0]);
+    expect((screen.getByLabelText('SMS message') as HTMLTextAreaElement).value).not.toContain('Personal one-time reminder');
+  });
+
 });

@@ -272,3 +272,33 @@ describe('previewRequestForPayment', () => {
     }
   });
 });
+
+describe('reviewed email safeguards', () => {
+  it('allows a matching reviewed message and records the customized snapshot', async () => {
+    const db = seedDb(); const deps = makeDeps(db);
+    const preview = await previewRequestForPayment(deps, { invoiceId:'invoice-1', bodyTemplate:'Hello {{client_contact_name}}! Your invoice {{invoice_number}} is due.' });
+    expect(preview.ok).toBe(true); if (!preview.ok) return;
+    const { emailPreviewFingerprint } = await import('@/lib/email/service');
+    const result = await sendRequestForPayment(deps, {invoiceId:'invoice-1', bodyTemplate:'Hello {{client_contact_name}}! Your invoice {{invoice_number}} is due.', previewFingerprint:emailPreviewFingerprint(preview.context,preview.rendered), idempotencyKey:'reviewed-001', sentBy:'founder-1'});
+    expect(result.ok).toBe(true);expect(deps.sendEmail).toHaveBeenCalledTimes(1);
+    expect(db.tables.email_logs[0].body_text).toContain('Hello Dr. Eduardo Laurel!');
+    expect(db.tables.email_templates).toHaveLength(0);
+  });
+  it.each(['amount_paid','recipient','message','status'] as const)('blocks a send when reviewed %s has changed', async (changed) => {
+    const db=seedDb(); const deps=makeDeps(db);const preview=await previewRequestForPayment(deps,{invoiceId:'invoice-1'});
+    expect(preview.ok).toBe(true);if(!preview.ok)return;
+    const {emailPreviewFingerprint}=await import('@/lib/email/service'); const fingerprint=emailPreviewFingerprint(preview.context,preview.rendered);
+    if(changed==='amount_paid')db.tables.invoices[0].amount_paid=700000;
+    if(changed==='recipient')db.tables.clients[0].email='new@example.com';
+    if(changed==='status')db.tables.invoices[0].status='paid';
+    const result=await sendRequestForPayment(deps,{invoiceId:'invoice-1', bodyTemplate:changed==='message'?'A changed message':undefined, previewFingerprint:fingerprint,idempotencyKey:'reviewed-002',sentBy:'founder-1'});
+    expect(result.ok).toBe(false);if(!result.ok)expect(result.error.status).toBe(409);
+    expect(deps.sendEmail).not.toHaveBeenCalled();expect(db.tables.email_logs).toHaveLength(0);
+  });
+  it('still reports a previously accepted key without sending again if the invoice changes later',async()=>{
+    const db=seedDb();const deps=makeDeps(db);const preview=await previewRequestForPayment(deps,{invoiceId:'invoice-1'});if(!preview.ok)throw new Error('preview failed');
+    const {emailPreviewFingerprint}=await import('@/lib/email/service');const input={invoiceId:'invoice-1',previewFingerprint:emailPreviewFingerprint(preview.context,preview.rendered),idempotencyKey:'reviewed-003',sentBy:'founder-1'};
+    expect((await sendRequestForPayment(deps,input)).ok).toBe(true);db.tables.invoices[0].amount_paid=900000;
+    const again=await sendRequestForPayment(deps,input);expect(again.ok && again.duplicate).toBe(true);expect(deps.sendEmail).toHaveBeenCalledTimes(1);
+  });
+});
