@@ -429,6 +429,16 @@ describe('team administration partial outcomes', () => {
     expect(deleteUserSpy).not.toHaveBeenCalled();
   });
 
+  it('explains an unavailable deletion guard without removing the Auth account', async () => {
+    const { client, deleteUserSpy, rpcSpy } = makeMockAdminClient();
+    rpcSpy.mockImplementationOnce(async () => ({ data: null, error: { code: 'PGRST202', message: 'Could not find the function in the schema cache' } }) as never);
+    const res = await deleteTeamAccount({ callerId: 'founder-1', targetUserId: 'sup-1', adminClient: client });
+    expect(res.status).toBe(503);
+    expect(res.body.error).toMatch(/temporarily unavailable.*account was not removed/i);
+    expect(res.body.error).not.toMatch(/PGRST|schema|function/i);
+    expect(deleteUserSpy).not.toHaveBeenCalled();
+  });
+
   it('reports an unknown RPC outcome without attempting Auth deletion', async () => {
     const { client, deleteUserSpy, rpcSpy } = makeMockAdminClient();
     rpcSpy.mockImplementationOnce(async () => { throw new Error('lost response'); });

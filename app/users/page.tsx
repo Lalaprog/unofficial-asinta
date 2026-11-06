@@ -854,7 +854,7 @@ export default function UsersPage() {
                         Permanently remove {editingUser.name} ({editingUser.email})?
                       </div>
                       <div className="text-[11px]">
-                        Removes the Auth account and BALE profile. Attendance and expense records remain, but their attribution to this user is cleared; payroll history remains. Confirm removal and session status in Supabase Auth.
+                        Removes the Auth account and BALE profile. Attendance and expense records remain, but their attribution to this user is cleared; payroll history remains. Removal may be unavailable while safeguards are reviewed. If removal is not confirmed, do not assume access has been revoked; check Supabase Auth.
                       </div>
                       <div className="flex items-center gap-2">
                         <Button
