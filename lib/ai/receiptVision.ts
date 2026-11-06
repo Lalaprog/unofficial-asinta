@@ -19,7 +19,7 @@
  */
 
 import { requestGroqJson } from '@/lib/ai/groqClient';
-import { VISION_FALLBACK_MODELS, getVisionModel, VISION_MAX_IMAGE_BYTES } from '@/lib/ai/models';
+import { getVisionModel, VISION_MAX_IMAGE_BYTES } from '@/lib/ai/models';
 
 export interface ReceiptReadRequest {
   /** e.g. "image/jpeg" */
@@ -73,8 +73,8 @@ Hard rules:
 - Output JSON only. No prose, no markdown.`;
 
 /**
- * Reads one receipt image. Tries the configured vision model first, then a
- * short fallback list, and reports which model answered.
+ * Reads one receipt image using the configured vision model. No automatic
+ * retries: rate limits or outages must not trigger an obsolete fallback.
  */
 export async function readReceiptImage(
   request: ReceiptReadRequest,
@@ -98,45 +98,38 @@ export async function readReceiptImage(
   const mediaType = request.mediaType || 'image/jpeg';
   const dataUri = `data:${mediaType};base64,${request.base64}`;
 
-  const candidates = [getVisionModel(), ...VISION_FALLBACK_MODELS.filter((m) => m !== getVisionModel())];
-  let lastReason = 'No vision model was available.';
-
-  for (const [index, model] of candidates.entries()) {
-    const result = await requestGroqJson({
-      model,
-      system: RECEIPT_READ_SYSTEM_PROMPT,
-      user: [
-        { type: 'text', text: 'Read this receipt and return the JSON described.' },
-        { type: 'image_url', image_url: { url: dataUri } },
-      ],
-      temperature: 0,
-      maxTokens: 1500,
-      timeoutMs: options.timeoutMs ?? 45_000,
-      apiKey: options.apiKey,
-    });
-
-    if (result.ok && result.parsed && typeof result.parsed === 'object') {
-      const fields = result.parsed as Record<string, unknown>;
-      const text = typeof fields.receipt_text === 'string' ? fields.receipt_text : '';
-      return {
-        ok: true,
-        text,
-        fields,
-        model,
-        usedFallback: index > 0,
-      };
-    }
-
-    lastReason = result.ok ? 'The model returned an unusable response.' : result.reason;
+  const model = getVisionModel();
+  const result = await requestGroqJson({
+    model,
+    system: RECEIPT_READ_SYSTEM_PROMPT,
+    user: [
+      { type: 'text', text: 'Read this receipt and return the JSON described.' },
+      { type: 'image_url', image_url: { url: dataUri } },
+    ],
+    temperature: 0,
+    maxTokens: 1500,
+    timeoutMs: options.timeoutMs ?? 45_000,
+    apiKey: options.apiKey,
+  });
+  if (result.ok && result.parsed && typeof result.parsed === 'object' && !Array.isArray(result.parsed)) {
+    const fields = result.parsed as Record<string, unknown>;
+    const text = typeof fields.receipt_text === 'string' ? fields.receipt_text : '';
+    if (text.trim()) return { ok: true, text, fields, model };
   }
+  const status = result.ok ? undefined : result.status;
+  // Log only an HTTP status, never image content, keys, or provider response bodies.
+  console.warn('Receipt AI read failed', { status: status ?? 'unavailable' });
+  const reason = status === 429
+    ? 'The receipt reader has reached its usage limit. Please wait and try again later.'
+    : status === 404
+      ? 'The configured receipt-reading model is unavailable. Please contact the administrator.'
+      : status === 401 || status === 403
+        ? 'The receipt reader is not authorized. Please contact the administrator.'
+        : status === 400 || status === 413
+          ? 'The receipt reader could not process this image. Try a clear JPEG, PNG or WebP photo.'
+          : 'The receipt reader is temporarily unavailable or could not produce a usable reading. Please try again later.';
+  return { ok: false, text: '', fields: {}, model, reason };
 
-  return {
-    ok: false,
-    text: '',
-    fields: {},
-    model: candidates[0],
-    reason: `${lastReason} Type the expense manually — nothing is blocked by this.`,
-  };
 }
 
 /**

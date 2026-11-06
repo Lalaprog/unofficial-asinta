@@ -39,17 +39,6 @@ export function getVisionModel(): string {
 }
 
 /**
- * Vision fallbacks tried in order if the primary model errors (retired ID,
- * preview withdrawal, rate limit). Kept deliberately short: silently walking a
- * long list of models would make failures slow and confusing.
- *
- * The Llama 4 Scout entry is retained only because it may still answer on
- * committed-spend (enterprise) accounts; on free/developer tiers it returns an
- * error and we move on.
- */
-export const VISION_FALLBACK_MODELS = ['meta-llama/llama-4-scout-17b-16e-instruct'];
-
-/**
  * Request limits, from the Groq docs:
  *   - Vision, image passed as a URL: 20 MB per request.
  *   - Vision, image passed as base64: smaller in practice (Groq documents the

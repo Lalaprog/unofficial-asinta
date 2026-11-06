@@ -8,7 +8,10 @@ import { useToast } from '@/components/ui/Toast';
 import { createClient } from '@/lib/supabase/client';
 import { ExpenseCategory, type Expense, type ExpenseLineItem } from '@/types';
 import { ExpenseItemsEditor } from '@/components/expenses/ExpenseItemsEditor';
+import { ReceiptPhotoViewer } from '@/components/expenses/ReceiptPhotoViewer';
 import { ExpenseDetailsModal } from '@/components/expenses/ExpenseDetailsModal';
+import { loadExpenseDraft, saveExpenseDraft, deleteExpenseDraft } from '@/lib/expenses/draftStore';
+import { stableDraftJson, type SavedDraftPayload, type SavedDraftRow } from '@/lib/expenses/savedDraft';
 import { itemInputs, prepareExpenseItems, type ItemInput } from '@/lib/expenses/items';
 import {
   Plus,
@@ -64,7 +67,7 @@ export default function ExpensesPage() {
     workers,
   } = useDataStore();
   const { showToast } = useToast();
-  const supabase = createClient();
+  const supabase = React.useMemo(() => createClient(), []);
 
   const [searchQuery, setSearchQuery] = useState('');
   const [categoryFilter, setCategoryFilter] = useState<string>('all');
@@ -73,6 +76,15 @@ export default function ExpensesPage() {
   // Modal states
   const [isAddModalOpen, setIsAddModalOpen] = useState(false);
   const [selectedReceiptUrl, setSelectedReceiptUrl] = useState<string | null>(null);
+  const [isPhotoViewerOpen, setPhotoViewerOpen] = useState(false);
+  const [savedDraft, setSavedDraft] = useState<SavedDraftRow | null>(null);
+  const [draftLoadState, setDraftLoadState] = useState<'loading' | 'ready' | 'error'>('loading');
+  const [activeDraftId, setActiveDraftId] = useState<string | null>(null);
+  const [isSavingDraft, setIsSavingDraft] = useState(false);
+  const [isOpeningDraft, setIsOpeningDraft] = useState(false);
+  const [showCloseDraft, setShowCloseDraft] = useState(false);
+  const [showDiscardDraft, setShowDiscardDraft] = useState(false);
+  const draftSaveLock = React.useRef(false);
   const [selectedExpense, setSelectedExpense] = useState<Expense | null>(null);
   const [itemRows, setItemRows] = useState<ItemInput[]>([]);
 
@@ -99,9 +111,7 @@ export default function ExpensesPage() {
   const [isLoadingReceipt, setIsLoadingReceipt] = useState(false);
   const [receiptFileName, setReceiptFileName] = useState<string | null>(null);
   /**
-   * A receipt photo captured for the AI read but not yet stored. It is uploaded
-   * only when the Founder saves the expense, so an abandoned draft leaves no
-   * orphan object in the bucket.
+   * A receipt photo remains local until explicitly saving a draft or expense.
    */
   const [pendingReceiptFile, setPendingReceiptFile] = useState<File | null>(null);
   const [pendingReceiptPreview, setPendingReceiptPreview] = useState<string | null>(null);
@@ -110,6 +120,7 @@ export default function ExpensesPage() {
   const [quickText, setQuickText] = useState('');
   const [isDrafting, setIsDrafting] = useState(false);
   const [receiptToConfirm, setReceiptToConfirm] = useState<File | null>(null);
+  const [confirmNewTextDraft, setConfirmNewTextDraft] = useState(false);
   const [draft, setDraft] = useState<ExpenseDraft | null>(null);
   const [draftWarnings, setDraftWarnings] = useState<ExpenseWarningSummary | null>(null);
   const [draftInputKind, setDraftInputKind] = useState<'text' | 'receipt' | null>(null);
@@ -118,6 +129,108 @@ export default function ExpensesPage() {
   const [contextWarnings, setContextWarnings] = useState<string[]>([]);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const expenseSubmitLock = React.useRef(false);
+
+  React.useEffect(() => {
+    let cancelled = false;
+    if (!user?.id) { setSavedDraft(null); setDraftLoadState('loading'); return; }
+    setDraftLoadState('loading');
+    void loadExpenseDraft(supabase, user.id).then(result => {
+      if (cancelled) return;
+      if (result.ok) { setSavedDraft(result.value); setDraftLoadState('ready'); }
+      else { setSavedDraft(null); setDraftLoadState('error'); }
+    });
+    return () => { cancelled = true; };
+  }, [supabase, user?.id]);
+
+  React.useEffect(() => {
+    if (!draft) return;
+    const amount = Number(formData.amount);
+    setDraftWarnings(buildExpenseWarnings({amount:Number.isFinite(amount) ? amount : 0, expenseDate:formData.expense_date || new Date().toISOString().slice(0, 10), vendor:formData.vendor || null, projectId:formData.project_id, category:formData.category || 'other'}, expenses));
+  }, [draft, formData.amount, formData.expense_date, formData.vendor, formData.project_id, formData.category, expenses]);
+
+  const hasUnfinishedEntry = Boolean(formData.project_id || formData.description || formData.details || itemRows.length || formData.amount || formData.vendor || formData.notes || formData.receipt_url || pendingReceiptFile || draft || formData.category !== 'materials' || formData.expense_date !== new Date().toISOString().split('T')[0]);
+  const snapshot = (receiptPath = formData.receipt_url): SavedDraftPayload => ({ version:1, form:{...formData, receipt_url:receiptPath}, rows:itemRows, receiptFileName, draft, draftInputKind, draftModel, draftExtractedText, aiResult, aiAccepted, contextWarnings });
+  const unchangedSavedDraft = savedDraft && activeDraftId === savedDraft.draft_id && !pendingReceiptFile && stableDraftJson(snapshot()) === stableDraftJson(savedDraft.payload);
+
+  React.useEffect(() => {
+    if (!hasUnfinishedEntry || unchangedSavedDraft) return;
+    const warn = (event: BeforeUnloadEvent) => { event.preventDefault(); event.returnValue = ''; };
+    window.addEventListener('beforeunload', warn);
+    return () => window.removeEventListener('beforeunload', warn);
+  }, [hasUnfinishedEntry, unchangedSavedDraft]);
+
+  const resetEntry = () => {
+    setFormData({ project_id:'', description:'', details:'', amount:'', category:'materials', expense_date:new Date().toISOString().split('T')[0], notes:'', receipt_url:null, vendor:'' });
+    setItemRows([]); setReceiptFileName(null); setAiResult(null); setAiAccepted(false);
+    setDraft(null); setDraftWarnings(null); setDraftInputKind(null); setDraftModel(null); setDraftExtractedText(null); setContextWarnings([]);
+    setPendingReceiptFile(null); setPendingReceiptPreview(previous => { if (previous?.startsWith('blob:')) URL.revokeObjectURL(previous); return null; });
+    setActiveDraftId(null);
+  };
+
+  const resumeDraft = async () => {
+    if (!savedDraft || isOpeningDraft) return;
+    if (hasUnfinishedEntry && activeDraftId === savedDraft.draft_id) { setIsAddModalOpen(true); return; }
+    if (hasUnfinishedEntry) { showToast('info', 'Continue or discard the unfinished entry before opening the saved draft.'); return; }
+    setIsOpeningDraft(true);
+    try {
+      const {form,rows,receiptFileName:filename,draft:reading,draftInputKind:kind,draftModel:model,draftExtractedText:text,aiResult:ai,aiAccepted:accepted,contextWarnings:warnings} = savedDraft.payload;
+      let url:string | null = null;
+      if (form.receipt_url) {
+        const signed = await createReceiptSignedUrl(supabase, form.receipt_url);
+        url = signed.url;
+        if (!url) showToast('error', 'The draft is available, but its receipt photo could not be opened. Try again before recording the expense.');
+      }
+      setFormData(form); setItemRows(rows); setReceiptFileName(filename); setDraft(reading); setDraftInputKind(kind); setDraftModel(model); setDraftExtractedText(text); setAiResult(ai); setAiAccepted(accepted);
+      setDraftWarnings(null); setContextWarnings(warnings); setPendingReceiptFile(null);
+      setPendingReceiptPreview(previous => { if (previous?.startsWith('blob:')) URL.revokeObjectURL(previous); return url; });
+      setActiveDraftId(savedDraft.draft_id); setIsAddModalOpen(true);
+    } finally { setIsOpeningDraft(false); }
+  };
+
+  const handleSaveDraft = async (closeAfter = false) => {
+    if (draftSaveLock.current || !user || draftLoadState !== 'ready' || isUploadingReceipt || isSubmitting) {
+      if (draftLoadState === 'error') showToast('error', 'Saved drafts are unavailable. Refresh before trying to save a draft.');
+      return;
+    }
+    draftSaveLock.current = true; setIsSavingDraft(true);
+    try {
+      let receiptPath = formData.receipt_url;
+      if (pendingReceiptFile) {
+        receiptPath = await uploadReceiptFile(pendingReceiptFile);
+        if (!receiptPath) { showToast('error', 'The draft was not saved because the photo could not be uploaded. Your entry is still here.'); return; }
+        setFormData(previous => ({...previous, receipt_url:receiptPath})); setPendingReceiptFile(null);
+      }
+      const id = activeDraftId || crypto.randomUUID();
+      // Keep this identity even if the response is lost: the server may have
+      // committed the draft, and a later expense must use the same ID.
+      setActiveDraftId(id);
+      const result = await saveExpenseDraft(supabase, user.id, savedDraft, id, snapshot(receiptPath));
+      if (!result.ok) { showToast('error', result.message); return; }
+      setSavedDraft(result.value); setActiveDraftId(id); setShowCloseDraft(false);
+      if (closeAfter) setIsAddModalOpen(false);
+      showToast('success', 'Draft saved. It is not an expense yet.');
+    } catch { showToast('error', 'The draft save could not be confirmed. Refresh and check it before retrying.'); }
+    finally { draftSaveLock.current = false; setIsSavingDraft(false); }
+  };
+  const requestCloseEntry = () => {
+    if (isSubmitting || isUploadingReceipt || isSavingDraft) return;
+    if (hasUnfinishedEntry && !unchangedSavedDraft) setShowCloseDraft(true);
+    else setIsAddModalOpen(false);
+  };
+  const discardSavedDraft = async () => {
+    if (!savedDraft || !user || draftSaveLock.current) return;
+    draftSaveLock.current = true; setIsSavingDraft(true);
+    try {
+      const result = await deleteExpenseDraft(supabase, user.id, savedDraft);
+      if (!result.ok) { showToast('error', result.message); return; }
+      setSavedDraft(null); setShowDiscardDraft(false);
+      showToast('success', 'Saved draft discarded. No expense was changed.');
+    } finally { draftSaveLock.current = false; setIsSavingDraft(false); }
+  };
+  const openEntry = () => {
+    if (savedDraft && !hasUnfinishedEntry) void resumeDraft();
+    else setIsAddModalOpen(true);
+  };
 
   // Bale confirmation. A detected advance is NEVER created automatically —
   // the Founder must name the recipient first.
@@ -212,6 +325,7 @@ export default function ExpensesPage() {
 
   const handleAddSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
+    if (activeDraftId && expenses.some(expense => expense.id === activeDraftId)) { showToast('error', 'This draft matches a recorded expense. Check the ledger before doing anything else.'); return; }
     if (expenseSubmitLock.current || isUploadingReceipt || !formData.project_id || !formData.description || !formData.amount || !formData.expense_date || !formData.category) return;
     const parsedItems = prepareExpenseItems(itemRows);
     if (parsedItems.error) { showToast('error', parsedItems.error); return; }
@@ -224,10 +338,17 @@ export default function ExpensesPage() {
     expenseSubmitLock.current = true;
     setIsSubmitting(true);
     try {
+      if (savedDraft && activeDraftId === savedDraft.draft_id) {
+        const latest = await loadExpenseDraft(supabase, user.id);
+        if (!latest.ok || !latest.value || latest.value.draft_id !== savedDraft.draft_id || latest.value.revision !== savedDraft.revision) {
+          showToast('error', 'The saved draft could not be verified or changed elsewhere. Your entry is still here; refresh and check before recording.');
+          return;
+        }
+      }
       const amountNum = parseFloat(formData.amount);
 
-      // A receipt captured for the AI read is uploaded now, not earlier: an
-      // abandoned draft must not leave an orphan object in the bucket.
+      // Upload a local receipt before the ledger write; a saved draft may
+      // already refer to a private object.
       const receipt = await resolveReceiptForSubmission(formData.receipt_url, pendingReceiptFile, uploadReceiptFile);
       if (!receipt.ok) {
         showToast('error', 'The expense was not saved because its receipt could not be uploaded. Your entry is still here.');
@@ -262,9 +383,15 @@ export default function ExpensesPage() {
         ai_bale_detection: aiResult?.isBale || false,
         ai_confirmed: suggestionApplied,
         created_by: user.id,
-      });
+      }, activeDraftId || undefined);
 
+      if (!newExp && activeDraftId) showToast('error', 'The expense could not be confirmed. Check the ledger before retrying.');
       if (newExp) {
+        if (savedDraft && user && activeDraftId === savedDraft.draft_id) {
+          const removed = await deleteExpenseDraft(supabase, user.id, savedDraft);
+          if (removed.ok) setSavedDraft(null);
+          else showToast('error', 'Expense recorded, but the saved draft could not be cleared. Refresh and check the ledger before using it again.');
+        }
         showToast('success', 'Expense recorded.');
         // Track A: record what the Founder actually kept versus what we showed.
         // Counters only — no embeddings, and a failure is reported rather than
@@ -539,7 +666,7 @@ export default function ExpensesPage() {
     );
   };
 
-  const handleDraftFromText = async () => {
+  const handleDraftFromText = async (replaceEntry = false) => {
     if (!quickText.trim() || isDrafting) return;
     setIsDrafting(true);
     setDraftWarnings(null);
@@ -557,6 +684,8 @@ export default function ExpensesPage() {
         return;
       }
 
+      if (replaceEntry) resetEntry();
+      setActiveDraftId(crypto.randomUUID());
       setContextWarnings(Array.isArray(payload.contextWarnings) ? payload.contextWarnings : []);
       const nextDraft = payload.draft as ExpenseDraft;
       setDraftWarnings(
@@ -626,6 +755,7 @@ export default function ExpensesPage() {
         return;
       }
 
+      setActiveDraftId(crypto.randomUUID());
       setItemRows(itemInputs(Array.isArray(payload.items) ? payload.items as ExpenseLineItem[] : []));
       setPendingReceiptFile(file);
       setReceiptFileName(file.name);
@@ -664,6 +794,15 @@ export default function ExpensesPage() {
     }
   };
 
+  const openDraftPhoto = async () => {
+    if (formData.receipt_url && !pendingReceiptFile) {
+      const signed = await createReceiptSignedUrl(supabase, formData.receipt_url);
+      if (!signed.url) { showToast('error', 'The receipt photo could not be opened. Please try again.'); return; }
+      setPendingReceiptPreview(previous => { if (previous?.startsWith('blob:')) URL.revokeObjectURL(previous); return signed.url; });
+    }
+    setPhotoViewerOpen(true);
+  };
+
   const handleRemoveReceipt = () => {
     setFormData((previous) => ({ ...previous, receipt_url: null }));
     setReceiptFileName(null);
@@ -682,11 +821,15 @@ export default function ExpensesPage() {
           title="Site Expenses"
           description="Record and review materials, equipment and other site disbursements."
           action={
-            <Button variant="primary" size="md" onClick={() => setIsAddModalOpen(true)} leftIcon={<Plus className="w-4 h-4" />}>
+            <Button variant="primary" size="md" onClick={openEntry} leftIcon={<Plus className="w-4 h-4" />}>
               Record Expense
             </Button>
           }
         />
+
+        {draftLoadState === 'error' && <div role="status" className="rounded-xl border border-status-warning/20 bg-status-warning-bg p-4 text-sm text-status-warning">Saved drafts could not be checked. Refresh before saving a draft; manual expense entry still works.</div>}
+        {savedDraft && <div className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-brand/20 bg-surface-inset p-4"><div><p className="text-sm font-bold text-navy">Saved expense draft</p><p className="text-xs text-ink-secondary">{expenses.some(expense => expense.id === savedDraft.draft_id) ? 'This draft matches a recorded expense. Check the ledger before discarding it.' : 'Review before recording. Saving a draft does not add an expense.'}</p></div><div className="flex flex-wrap gap-2"><Button type="button" size="sm" variant="secondary" isLoading={isOpeningDraft} onClick={() => void resumeDraft()}>Continue draft</Button><Button type="button" size="sm" variant="ghost" onClick={() => setShowDiscardDraft(true)}>Discard draft</Button></div></div>}
+        {hasUnfinishedEntry && (!savedDraft || activeDraftId !== savedDraft.draft_id) && <div className="rounded-xl border border-brand/20 bg-surface-inset p-4 text-sm text-ink-secondary">You have an unfinished entry on this page. <button type="button" onClick={() => setIsAddModalOpen(true)} className="font-semibold text-navy underline">Continue entry</button>. It is not saved until you choose Save draft or confirm the expense.</div>}
 
         {/* ------------------------------------------------------------------
             Draft from text or a receipt photo.
@@ -724,7 +867,7 @@ export default function ExpensesPage() {
             <Button
               variant="primary"
               size="sm"
-              onClick={handleDraftFromText}
+              onClick={() => { if (hasUnfinishedEntry || savedDraft) setConfirmNewTextDraft(true); else void handleDraftFromText(); }}
               isLoading={isDrafting && draftInputKind !== 'receipt'}
               disabled={!quickText.trim() || isDrafting}
               leftIcon={<Sparkles className="h-3.5 w-3.5" />}
@@ -745,8 +888,7 @@ export default function ExpensesPage() {
                   const file = event.target.files?.[0];
                   event.target.value = '';
                   if (file) {
-                    const hasUnfinishedEntry = Boolean(formData.project_id || formData.description || formData.details || itemRows.length || formData.amount || formData.vendor || formData.notes || formData.receipt_url || pendingReceiptFile || draft || formData.category !== 'materials' || formData.expense_date !== new Date().toISOString().split('T')[0]);
-                    if (hasUnfinishedEntry) setReceiptToConfirm(file);
+                    if (hasUnfinishedEntry || savedDraft) setReceiptToConfirm(file);
                     else void handleDraftFromReceipt(file);
                   }
                 }}
@@ -982,7 +1124,7 @@ export default function ExpensesPage() {
                     <Button
                       variant="primary"
                       size="sm"
-                      onClick={() => setIsAddModalOpen(true)}
+                      onClick={openEntry}
                       leftIcon={<Plus className="w-3.5 h-3.5" />}
                     >
                       Record Expense
@@ -998,20 +1140,21 @@ export default function ExpensesPage() {
       {/* RECORD EXPENSE MODAL WITH GROQ AI ASSISTANT */}
       <Modal
         isOpen={isAddModalOpen}
-        onClose={() => setIsAddModalOpen(false)}
-        dismissOnBackdrop={!isSubmitting && !isUploadingReceipt}
-        dismissOnEscape={!isSubmitting && !isUploadingReceipt}
-        showCloseButton={!isSubmitting && !isUploadingReceipt}
+        onClose={requestCloseEntry}
+        dismissOnBackdrop={!isSubmitting && !isUploadingReceipt && !isSavingDraft}
+        dismissOnEscape={!isSubmitting && !isUploadingReceipt && !isSavingDraft}
+        showCloseButton={!isSubmitting && !isUploadingReceipt && !isSavingDraft}
         title="Record Site Expense"
         description="Review and correct every field before saving."
         maxWidth="5xl"
         presentation="workspace"
       >
-        <form onSubmit={handleAddSubmit} className={draft ? "grid gap-5 text-sm lg:grid-cols-[minmax(0,0.9fr)_minmax(0,1.1fr)] lg:items-start lg:gap-6" : "space-y-4 text-sm"}>
+        <p role="status" className="mb-4 text-xs text-ink-secondary">{unchangedSavedDraft ? 'Draft saved. Changes after this point need saving again.' : 'Unsaved changes — choose Save draft before leaving to continue later.'}</p>
+        <form onSubmit={handleAddSubmit}><fieldset disabled={isSavingDraft || isSubmitting || isUploadingReceipt} className="min-w-0"><div className={draft ? "grid min-w-0 gap-5 text-sm lg:grid-cols-[minmax(0,0.9fr)_minmax(0,1.1fr)] lg:items-start lg:gap-6" : "min-w-0 space-y-4 text-sm"}>
           {/* DRAFT REVIEW — what the AI read, what the rules verified, and what
               is still missing. The Founder confirms; nothing is saved yet. */}
           {draft && (
-            <div className="space-y-3 rounded-2xl border border-status-info/20 bg-status-info-bg/50 p-4">
+            <div className="min-w-0 space-y-3 rounded-2xl border border-status-info/20 bg-status-info-bg/50 p-4 lg:sticky lg:top-0 lg:max-h-[calc(92dvh-10rem)] lg:overflow-y-auto lg:overscroll-contain">
               <div className="flex items-start justify-between gap-2">
                 <div className="flex items-center gap-2 text-navy font-bold">
                   <Bot className="h-4 w-4" />
@@ -1098,7 +1241,7 @@ export default function ExpensesPage() {
               {draftExtractedText && (
                 <details className="rounded-xl border border-slate-200 bg-white p-2.5 text-xs">
                   <summary className="cursor-pointer font-semibold text-navy">
-                    Text read from the receipt (not saved)
+                    Text read from the receipt (not part of the recorded expense)
                   </summary>
                   <pre className="mt-2 max-h-40 overflow-auto whitespace-pre-wrap text-ink-secondary">
                     {draftExtractedText}
@@ -1116,9 +1259,9 @@ export default function ExpensesPage() {
                     alt="Receipt photo awaiting your review"
                     className="mt-2 max-h-72 w-full rounded-lg object-contain lg:max-h-96"
                   />
-                  <a href={pendingReceiptPreview} target="_blank" rel="noopener noreferrer" className="mt-2 inline-flex min-h-11 items-center rounded-lg px-2 text-sm font-semibold text-navy underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand">Open photo full size</a>
+                  <button type="button" onClick={() => void openDraftPhoto()} className="mt-2 inline-flex min-h-11 items-center rounded-lg px-2 text-sm font-semibold text-navy underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand">Open photo full size</button>
                   <p className="mt-1 text-xs text-ink-muted">
-                    {formData.receipt_url ? 'The photo has been uploaded to private storage.' : 'This photo is uploaded to private storage only when you save the expense.'}
+                    {formData.receipt_url ? 'The photo has been uploaded to private storage.' : 'This photo is uploaded to private storage when you save a draft or record the expense.'}
                   </p>
                   <button type="button" onClick={handleRemoveReceipt} className="mt-1 min-h-11 rounded-lg px-2 text-xs font-semibold text-status-danger hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand">
                     Remove receipt photo
@@ -1359,13 +1502,10 @@ export default function ExpensesPage() {
                       Receipt Attached ✓{receiptFileName ? ` — ${receiptFileName}` : ''}
                     </span>
                   </div>
-                  <button
-                    type="button"
-                    onClick={handleRemoveReceipt}
-                    className="shrink-0 text-xs font-bold text-status-danger hover:underline"
-                  >
-                    Remove
-                  </button>
+                  <div className="flex shrink-0 items-center gap-3">
+                    <button type="button" onClick={() => void openReceiptPreview(formData.receipt_url!)} className="min-h-11 text-xs font-bold text-navy hover:underline">View</button>
+                    <button type="button" onClick={handleRemoveReceipt} className="min-h-11 text-xs font-bold text-status-danger hover:underline">Remove</button>
+                  </div>
                 </div>
               )}
             </div>
@@ -1380,17 +1520,26 @@ export default function ExpensesPage() {
           />
 
           <div className="flex flex-col-reverse gap-2 pt-4 sm:flex-row sm:justify-end">
-            <Button type="button" variant="secondary" onClick={() => setIsAddModalOpen(false)} disabled={isSubmitting || isUploadingReceipt}>
+            <Button type="button" variant="secondary" onClick={requestCloseEntry} disabled={isSubmitting || isUploadingReceipt || isSavingDraft}>
               Cancel
             </Button>
-            <Button variant="primary" type="submit" isLoading={isSubmitting} disabled={isUploadingReceipt}>
+            <Button type="button" variant="secondary" onClick={() => void handleSaveDraft(false)} isLoading={isSavingDraft} disabled={draftLoadState !== 'ready' || isSubmitting || isUploadingReceipt}>Save draft</Button>
+            <Button variant="primary" type="submit" isLoading={isSubmitting} disabled={isUploadingReceipt || isSavingDraft}>
               {isSubmitting ? 'Saving expense…' : isUploadingReceipt ? 'Uploading receipt…' : 'Confirm & Save Expense'}
             </Button>
           </div>
           </div>
-        </form>
+        </div></fieldset></form>
       </Modal>
 
+      <ReceiptPhotoViewer isOpen={isPhotoViewerOpen && Boolean(pendingReceiptPreview)} src={pendingReceiptPreview} onClose={() => setPhotoViewerOpen(false)} />
+
+      <Modal isOpen={showCloseDraft} onClose={() => setShowCloseDraft(false)} title="Unfinished expense" description="Save the draft to continue later, keep editing, or discard these unsaved changes." maxWidth="sm" role="alertdialog" dismissOnBackdrop={false} dismissOnEscape={!isSavingDraft} showCloseButton={!isSavingDraft}>
+        <div className="flex flex-col gap-2"><Button type="button" variant="primary" isLoading={isSavingDraft} disabled={draftLoadState !== 'ready'} onClick={() => void handleSaveDraft(true)}>Save draft</Button><Button type="button" variant="secondary" disabled={isSavingDraft} onClick={() => setShowCloseDraft(false)}>Keep editing</Button><Button type="button" variant="ghost" disabled={isSavingDraft} onClick={() => { resetEntry(); setShowCloseDraft(false); setIsAddModalOpen(false); }}>Discard unsaved changes</Button></div>
+      </Modal>
+      <ConfirmDialog isOpen={showDiscardDraft} title="Discard saved draft?" message="The saved draft will be removed. No recorded expense will be changed. An uploaded photo may remain in private storage." confirmLabel="Discard draft" cancelLabel="Keep draft" destructive isPending={isSavingDraft} onCancel={() => setShowDiscardDraft(false)} onConfirm={() => void discardSavedDraft()} />
+
+      <ConfirmDialog isOpen={confirmNewTextDraft} title="Replace unfinished expense?" message="A successful new draft replaces the current entry. If drafting fails, the entry stays. Your saved draft remains until you replace or discard it." confirmLabel="Create new draft" cancelLabel="Keep my entry" onCancel={() => setConfirmNewTextDraft(false)} onConfirm={() => { setConfirmNewTextDraft(false); void handleDraftFromText(true); }} />
       <ConfirmDialog
         isOpen={Boolean(receiptToConfirm)}
         title="Replace unfinished expense?"
@@ -1405,32 +1554,9 @@ export default function ExpensesPage() {
         }}
       />
 
-      <ExpenseDetailsModal expense={selectedExpense} projects={projects} onClose={() => setSelectedExpense(null)} onUpdate={updateExpense} onReceipt={path => { setSelectedExpense(null); void openReceiptPreview(path); }} />
+      <ExpenseDetailsModal expense={selectedExpense} projects={projects} onClose={() => setSelectedExpense(null)} onUpdate={updateExpense} onReceipt={path => { void openReceiptPreview(path); }} />
 
-      {/* RECEIPT PREVIEW MODAL — private bucket, so the src is a short-lived signature */}
-      <Modal
-        isOpen={Boolean(selectedReceiptUrl)}
-        onClose={() => setSelectedReceiptUrl(null)}
-        title="Official Receipt Photo"
-        description="Captured proof of purchase & supplier receipt. Loaded through a signed URL that expires in 5 minutes."
-      >
-        {selectedReceiptUrl && (
-          <div className="space-y-4">
-            <div className="rounded-2xl overflow-hidden border border-surface-border bg-slate-100 flex items-center justify-center max-h-[70vh]">
-              <img
-                src={selectedReceiptUrl}
-                alt="Receipt Voucher"
-                className="w-full h-auto object-contain max-h-[60vh]"
-              />
-            </div>
-            <div className="flex justify-end">
-              <Button variant="primary" size="sm" onClick={() => setSelectedReceiptUrl(null)}>
-                Close Preview
-              </Button>
-            </div>
-          </div>
-        )}
-      </Modal>
+      <ReceiptPhotoViewer isOpen={Boolean(selectedReceiptUrl)} src={selectedReceiptUrl} onClose={() => setSelectedReceiptUrl(null)} />
 
       {/* BALE RECIPIENT CONFIRMATION — nothing is deducted without an explicit choice */}
       <Modal
