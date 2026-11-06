@@ -8,7 +8,7 @@
 -- will fail. Check with verify-live.sql before running.
 --
 -- GENERATED FILE — do not edit. Regenerate with `npm run build:apply-sql`.
--- Generated: 2026-11-05T10:27:42.407Z
+-- Generated: 2026-11-06T02:17:29.633Z
 --
 -- Source files (in execution order) and their SHA-256:
 --   20260913000000_bale_schema.sql  df054d9d265045b9…
@@ -31,6 +31,7 @@
 --   20261105000000_session_assurance_prerequisite.sql  e8e39a25a33a5331…
 --   20261105000001_mfa_table_storage_policies.sql  910f9670a7c9d5d2…
 --   20261105000002_expense_breakdown.sql  c336bdc3b88b3137…
+--   20261106000000_expense_drafts.sql  270d79fc0bd4a57b…
 --
 -- After running: execute supabase/apply/verify-live.sql and confirm every
 -- row reports PASS. Procedure: docs/MIGRATION_RUNBOOK.md.
@@ -2701,5 +2702,30 @@ END $$;
 DROP TRIGGER IF EXISTS bump_expense_revision ON public.expenses;
 CREATE TRIGGER bump_expense_revision BEFORE UPDATE ON public.expenses
 FOR EACH ROW EXECUTE FUNCTION public.bump_expense_revision();
+
+
+-- @@ source: 20261106000000_expense_drafts.sql
+
+-- One private, explicitly saved expense draft per Founder. Drafts are never
+-- included in expenses or any financial total. No existing policy is changed.
+CREATE TABLE public.expense_drafts (
+  owner_id uuid PRIMARY KEY REFERENCES public.users(id) ON DELETE CASCADE,
+  draft_id uuid NOT NULL UNIQUE,
+  revision integer NOT NULL DEFAULT 1 CHECK (revision > 0),
+  payload jsonb NOT NULL CHECK (pg_catalog.jsonb_typeof(payload) = 'object' AND pg_catalog.octet_length(payload::text) <= 100000),
+  updated_at timestamptz NOT NULL DEFAULT now()
+);
+ALTER TABLE public.expense_drafts ENABLE ROW LEVEL SECURITY;
+REVOKE ALL ON public.expense_drafts FROM PUBLIC, anon;
+GRANT SELECT, INSERT, UPDATE, DELETE ON public.expense_drafts TO authenticated;
+GRANT ALL ON public.expense_drafts TO service_role;
+CREATE POLICY "Founders manage their own expense draft" ON public.expense_drafts
+  FOR ALL TO authenticated
+  USING (owner_id = (SELECT auth.uid()) AND (SELECT public.is_founder()))
+  WITH CHECK (owner_id = (SELECT auth.uid()) AND (SELECT public.is_founder()));
+CREATE POLICY "mfa_session_required" ON public.expense_drafts AS RESTRICTIVE
+  FOR ALL TO authenticated
+  USING ((SELECT public.session_assurance_satisfied()))
+  WITH CHECK ((SELECT public.session_assurance_satisfied()));
 
 commit;

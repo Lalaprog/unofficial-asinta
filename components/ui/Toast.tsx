@@ -62,12 +62,12 @@ export const ToastProvider: React.FC<{ children: React.ReactNode }> = ({ childre
             ) : (
               <Info className="w-4 h-4 shrink-0 text-navy mt-0.5" />
             )}
-            <span className="leading-relaxed flex-1">{toast.message}</span>
+            <span className="min-w-0 flex-1 max-h-[40dvh] overflow-y-auto break-words [overflow-wrap:anywhere] leading-relaxed">{toast.message}</span>
             <button
               type="button"
               onClick={() => dismissToast(toast.id)}
               aria-label="Dismiss notification"
-              className="p-0.5 rounded-lg hover:bg-black/5 text-current"
+              className="inline-flex min-h-11 min-w-11 shrink-0 items-center justify-center rounded-lg hover:bg-black/5 text-current"
             >
               <X className="w-3.5 h-3.5" />
             </button>

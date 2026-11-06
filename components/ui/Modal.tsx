@@ -27,6 +27,17 @@ interface ModalProps {
   showCloseButton?: boolean;
 }
 
+// A single topmost dialog owns keyboard handling and the scroll lock. This also
+// allows a receipt viewer to open above an editing dialog without closing it.
+const modalStack: { id: symbol; panel: HTMLElement; returnFocus: HTMLElement | null }[] = [];
+let originalBodyOverflow = '';
+function syncModalVisibility() {
+  modalStack.forEach((item, index) => {
+    if (index === modalStack.length - 1) item.panel.removeAttribute('aria-hidden');
+    else item.panel.setAttribute('aria-hidden', 'true');
+  });
+}
+
 const FOCUSABLE_SELECTOR = [
   'a[href]',
   'button:not(:disabled)',
@@ -56,6 +67,7 @@ export const Modal: React.FC<ModalProps> = ({
   showCloseButton = true,
 }) => {
   const panelRef = useRef<HTMLDivElement>(null);
+  const stackId = useRef(Symbol('modal'));
   const previouslyFocusedRef = useRef<HTMLElement | null>(null);
   const onCloseRef = useRef(onClose);
   const dismissOnEscapeRef = useRef(dismissOnEscape);
@@ -71,13 +83,21 @@ export const Modal: React.FC<ModalProps> = ({
     if (!isOpen) return;
 
     previouslyFocusedRef.current = (document.activeElement as HTMLElement) || null;
+    const panel = panelRef.current;
+    const modalId = stackId.current;
+    if (!panel) return;
+    if (!modalStack.length) originalBodyOverflow = document.body.style.overflow;
+    modalStack.push({ id: modalId, panel, returnFocus: previouslyFocusedRef.current });
     document.body.style.overflow = 'hidden';
+    // Move focus before hiding the parent dialog from assistive technology.
+    if (modalStack.length > 1) panel.focus({ preventScroll: true });
+    syncModalVisibility();
 
     // Move focus into the dialog ONLY when it first opens (not on every parent
     // re-render while the user is typing in an input inside the modal).
     const frame = window.requestAnimationFrame(() => {
       const panel = panelRef.current;
-      if (!panel) return;
+      if (!panel || modalStack[modalStack.length - 1]?.id !== modalId) return;
       const active = document.activeElement as HTMLElement | null;
       if (active && panel.contains(active)) return;
       // Review workspaces begin with important context. Focusing a field below
@@ -100,6 +120,7 @@ export const Modal: React.FC<ModalProps> = ({
     });
 
     const handleKeyDown = (event: KeyboardEvent) => {
+      if (modalStack[modalStack.length - 1]?.id !== modalId) return;
       if (event.key === 'Escape') {
         if (dismissOnEscapeRef.current) onCloseRef.current();
         // Otherwise swallow the key entirely: leaving it unhandled would let a
@@ -137,10 +158,23 @@ export const Modal: React.FC<ModalProps> = ({
 
     return () => {
       window.cancelAnimationFrame(frame);
-      document.body.style.overflow = 'unset';
       window.removeEventListener('keydown', handleKeyDown);
-      // Return focus to whatever opened the dialog.
-      previouslyFocusedRef.current?.focus?.();
+      const wasTop = modalStack[modalStack.length - 1]?.id === modalId;
+      const index = modalStack.findIndex(item => item.id === modalId);
+      const closing = index >= 0 ? modalStack[index] : null;
+      const child = index >= 0 ? modalStack[index + 1] : null;
+      // If parent and child close together, carry the parent's original focus
+      // target forward instead of restoring focus into a removed parent.
+      if (closing && child?.returnFocus && closing.panel.contains(child.returnFocus)) child.returnFocus = closing.returnFocus;
+      if (index >= 0) modalStack.splice(index, 1);
+      syncModalVisibility();
+      if (!modalStack.length) document.body.style.overflow = originalBodyOverflow;
+      if (wasTop) {
+        const target = closing?.returnFocus ?? previouslyFocusedRef.current;
+        const remainingTop = modalStack[modalStack.length - 1]?.panel;
+        if (target?.isConnected && (!remainingTop || remainingTop.contains(target))) target.focus();
+        else remainingTop?.focus({ preventScroll: true });
+      }
     };
   }, [isOpen, presentation]);
 

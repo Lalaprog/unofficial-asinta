@@ -75,7 +75,7 @@ interface DataStoreContextType {
   deleteInvoice: (id: string) => Promise<boolean>;
 
   // Expense Actions
-  createExpense: (data: Omit<Expense, 'id' | 'created_at'>) => Promise<Expense | null>;
+  createExpense: (data: Omit<Expense, 'id' | 'created_at'>, recordId?: string) => Promise<Expense | null>;
   updateExpense: (id: string, data: Partial<Expense>, expectedRevision?: number) => Promise<Expense | null>;
   deleteExpense: (id: string) => Promise<boolean>;
 
@@ -836,9 +836,10 @@ export const DataStoreProvider: React.FC<{ children: React.ReactNode }> = ({ chi
   };
 
   // --- EXPENSE ACTIONS ---
-  const createExpense = async (data: Omit<Expense, 'id' | 'created_at'>): Promise<Expense | null> => {
+  const createExpense = async (data: Omit<Expense, 'id' | 'created_at'>, recordId?: string): Promise<Expense | null> => {
+    const insertData: Omit<Expense, 'id' | 'created_at'> & { id?: string } = recordId ? { ...data, id: recordId } : data;
     const row = await runMutation('Record expense', (db) =>
-      db.from('expenses').insert(data).select().single()
+      db.from('expenses').insert(insertData).select().single()
     );
     const mapped = row ? mapExpense(row) : null;
     if (mapped) {
