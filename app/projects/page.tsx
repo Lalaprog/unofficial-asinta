@@ -26,6 +26,7 @@ import { Modal } from '@/components/ui/Modal';
 import { useToast } from '@/components/ui/Toast';
 import { formatPesoCompact } from '@/lib/email/format';
 import { getBudgetSummary } from '@/lib/projects/budgetSummary';
+import { ProjectCover } from '@/components/projects/ProjectCover';
 import { localDateInputValue, validateProjectForm } from '@/lib/projects/form';
 
 export default function ProjectsPage() {
@@ -190,8 +191,7 @@ export default function ProjectsPage() {
               >
                 <div className="min-w-0">
                   {/* Top line */}
-                  <div className="-mx-4 -mt-4 flex min-h-28 items-start justify-between gap-3 rounded-t-xl bg-[#0b1f3a] bg-cover bg-center p-4 pb-6 sm:-mx-5 sm:-mt-5 sm:p-5 sm:pb-7"
-                    style={{ backgroundImage: "linear-gradient(90deg, rgba(11,31,58,.96), rgba(11,31,58,.72)), url('/brand/project-blueprint.webp')" }}>
+                  <ProjectCover projectId={proj.id}>
                     <div className="space-y-1 min-w-0 flex-1">
                       {isFounder && (
                         <div className="text-xs font-medium text-white/80 break-words">
@@ -208,7 +208,7 @@ export default function ProjectsPage() {
                     <Badge variant={statusBadgeVariant} size="sm" className="shrink-0">
                       {proj.status.replace('_', ' ')}
                     </Badge>
-                  </div>
+                  </ProjectCover>
 
                   {/* Location & Timeline */}
                   <div className="mt-4 space-y-2 text-xs text-ink-secondary">
