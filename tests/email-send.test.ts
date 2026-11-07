@@ -171,6 +171,17 @@ describe('sendRequestForPayment', () => {
     expect(deps.sendEmail).not.toHaveBeenCalled();
   });
 
+  it.each([
+    {amount:100,paid:null}, {amount:'',paid:0}, {amount:'100',paid:'invalid'},
+    {amount:100,paid:-1}, {amount:-1,paid:0},
+  ])('never previews or sends unreadable invoice amounts %#', async ({amount,paid}) => {
+    Object.assign(db.tables.invoices[0],{amount,amount_paid:paid});
+    const deps = makeDeps(db);
+    expect((await previewRequestForPayment(deps,{invoiceId:'invoice-1'})).ok).toBe(false);
+    const result = await sendRequestForPayment(deps,{invoiceId:'invoice-1',idempotencyKey:'key-invalid-amount',sentBy:'founder-1'});
+    expect(result.ok).toBe(false); expect(deps.sendEmail).not.toHaveBeenCalled(); expect(db.tables.email_logs).toHaveLength(0);
+  });
+
   it('loads authoritative recipient and financial data server-side and logs accepted', async () => {
     const deps = makeDeps(db);
     const result = await sendRequestForPayment(deps, {

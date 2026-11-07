@@ -8,6 +8,12 @@ import { enforceRateLimit } from '@/lib/api/rateLimitGuard';
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
 
+function invoiceAmount(value: unknown): number {
+  if (typeof value === 'number') return value;
+  if (typeof value !== 'string' || !/^[+-]?(?:\d+(?:\.\d*)?|\.\d+)$/.test(value.trim())) return NaN;
+  return Number(value);
+}
+
 /**
  * Founder-only SMS dispatch through the PhilSMS gateway.
  *
@@ -62,10 +68,10 @@ export async function POST(req: NextRequest) {
       if (!invoice) {
         return NextResponse.json({ error: 'Invoice not found' }, { status: 404 });
       }
-      const amount = Number(invoice.amount);
-      const paid = Number(invoice.amount_paid);
-      if (['cancelled', 'paid', 'draft'].includes(invoice.status) ||
-          !Number.isFinite(amount) || !Number.isFinite(paid) || amount - paid <= 0) {
+      const amount = invoiceAmount(invoice.amount);
+      const paid = invoiceAmount(invoice.amount_paid);
+      if (!['pending', 'partially_paid', 'overdue'].includes(invoice.status) ||
+          !Number.isFinite(amount) || !Number.isFinite(paid) || amount < 0 || paid < 0 || amount - paid <= 0) {
         return NextResponse.json({ error: 'This invoice is not eligible for a payment reminder. Refresh its status and balance.' }, { status: 422 });
       }
       resolvedClientId = invoice.client_id;
@@ -113,6 +119,6 @@ export async function POST(req: NextRequest) {
       log: outcome.log,
     });
   } catch {
-    return NextResponse.json({ error: 'Failed to dispatch SMS' }, { status: 500 });
+    return NextResponse.json({ error: 'SMS outcome not confirmed. Check the dispatch log and provider before retrying; it may have been sent.' }, { status: 500 });
   }
 }

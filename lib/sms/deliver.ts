@@ -81,15 +81,18 @@ export async function deliverAndLogSMS(
     };
   }
 
-  const result = await send({
-    recipient: params.recipient,
-    phone: params.phone,
-    message: params.message,
-  });
+  let result: SendSMSResult;
+  try {
+    result = await send({ recipient: params.recipient, phone: params.phone, message: params.message });
+  } catch {
+    // A thrown transport error can occur after the provider accepted the SMS.
+    result = { success: false, uncertain: true, error: 'The gateway did not confirm the SMS outcome.' };
+  }
 
-  const simulated = Boolean(result.simulated);
-  const success = Boolean(result.success) && !simulated;
-  const uncertain = !success && !simulated && Boolean(result.uncertain);
+  if (!result || typeof result !== 'object') result = { success: false, uncertain: true, error: 'The gateway did not confirm the SMS outcome.' };
+  const simulated = result?.simulated === true;
+  const success = result?.success === true && !simulated;
+  const uncertain = !success && !simulated && result?.uncertain !== false;
 
   const update = success
     ? {
@@ -107,12 +110,13 @@ export async function deliverAndLogSMS(
         updated_at: new Date().toISOString(),
       };
 
-  const { data: finalLog, error: updateError } = await params.db
-    .from('sms_logs')
-    .update(update)
-    .eq('id', pendingLog.id)
-    .select('*')
-    .single();
+  let finalLog: Row | null = null;
+  let logUpdateFailed = false;
+  try {
+    const response = await params.db.from('sms_logs').update(update).eq('id', pendingLog.id).select('*').single();
+    finalLog = response.data;
+    logUpdateFailed = Boolean(response.error || !finalLog);
+  } catch { logUpdateFailed = true; }
 
   const error = success ? null : result.error || 'SMS dispatch failed';
 
@@ -120,7 +124,7 @@ export async function deliverAndLogSMS(
     success,
     simulated,
     uncertain,
-    logUpdateFailed: Boolean(updateError || !finalLog),
+    logUpdateFailed,
     statusLabel: success ? 'Sent' : simulated ? 'Not sent (simulation mode)' : uncertain ? 'Unconfirmed' : 'Failed',
     error,
     providerStatus: update.provider_status ?? null,
