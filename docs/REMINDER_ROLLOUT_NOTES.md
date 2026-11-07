@@ -21,6 +21,7 @@ Editing or previewing the reminder email template does not send a message.
 - Wire up SMTP reminder delivery with authoritative invoice data, the saved
   reminder email, provider readiness checks, attempt logs and unique per-channel
   dispatch records. Do not call SMTP or PhilSMS in tests except through mocks.
+- The channel-epoch migration adds server-controlled effective-enable timestamps for future catch-up decisions. Selecting a channel while the master is off does not start its epoch. Both epochs reset when the master is turned off, and each channel resets independently when disabled. The scheduler does not read these yet; the master remains locked off. Decide how to treat a scheduled slot on the same Manila day as activation before connecting them.
 - Use Manila business hours and the approved schedule: three days before,
   the due date, three days after, and weekly. `latestReminderSlot` is a tested
   *planning helper only*: it selects the most recent slot on a catch-up day,
