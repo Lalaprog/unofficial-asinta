@@ -61,6 +61,78 @@ describe('scheduled SMS duplicate safety', () => {
     expect(send).not.toHaveBeenCalled();
   });
 
+  it.each([
+    ['payment recorded', { amount_paid: 100 }],
+    ['invoice paused', { reminders_paused_until: '2026-11-03T02:00:00Z' }],
+    ['reminders disabled', { automatic_reminders_enabled: false }],
+    ['due date changed', { due_date: '2026-11-09' }],
+    ['client changed', { client_id: 'another-client' }],
+    ['invoice number changed', { invoice_number: 'I-2' }],
+  ])('skips when %s after preparing the message', async (_description, patch) => {
+    const originalFrom = db.from; let reads = 0;
+    db.from = (table: string) => {
+      if (table === 'invoices' && ++reads === 2) db.tables.invoices[0] = { ...db.tables.invoices[0], ...patch };
+      return originalFrom(table);
+    };
+    const send = vi.fn(); vi.stubGlobal('fetch', send);
+    const result = await (await GET(request())).json();
+    expect(result.results[0]).toMatchObject({ outcome: 'skipped', reason: 'details_changed_or_unavailable' });
+    expect(db.tables.reminder_dispatches[0].status).toBe('skipped');
+    expect(send).not.toHaveBeenCalled();
+  });
+
+  it('fails closed if the fresh invoice read fails', async () => {
+    const originalFrom = db.from; let reads = 0;
+    db.from = (table: string) => {
+      if (table === 'invoices' && ++reads === 2) return { select: () => ({ eq: () => ({ maybeSingle: async () => ({ data: null, error: { message: 'unavailable' } }) }) }) };
+      return originalFrom(table);
+    };
+    const send = vi.fn(); vi.stubGlobal('fetch', send);
+    const result = await (await GET(request())).json();
+    expect(result.results[0].reason).toBe('details_changed_or_unavailable');
+    expect(send).not.toHaveBeenCalled();
+  });
+
+  it.each(['clients', 'projects', 'sms_template_settings'])('skips if %s changed after preparing the message', async (tableName) => {
+    const originalFrom = db.from; let reads = 0;
+    db.from = (table: string) => {
+      if (table === tableName && ++reads === 2) {
+        if (table === 'clients') db.tables.clients[0] = { ...db.tables.clients[0], phone: '09170000000' };
+        if (table === 'projects') db.tables.projects[0] = { ...db.tables.projects[0], name: 'Changed' };
+        if (table === 'sms_template_settings') db.tables.sms_template_settings.push({ singleton: true, message_template: 'Changed {{invoice_number}}' });
+      }
+      return originalFrom(table);
+    };
+    const send = vi.fn(); vi.stubGlobal('fetch', send);
+    const result = await (await GET(request())).json();
+    expect(result.results[0].reason).toBe('details_changed_or_unavailable');
+    expect(send).not.toHaveBeenCalled();
+  });
+
+  it('skips if a new initial-request email is logged during the run', async () => {
+    const originalFrom = db.from; let reads = 0;
+    db.from = (table: string) => {
+      if (table === 'email_logs' && ++reads === 2) db.tables.email_logs.push({ invoice_id: 'i1', template_type: 'initial_request', status: 'accepted', sent_at: '2026-11-02T01:59:00Z' });
+      return originalFrom(table);
+    };
+    const send = vi.fn(); vi.stubGlobal('fetch', send);
+    const result = await (await GET(request())).json();
+    expect(result.results[0].reason).toBe('details_changed_or_unavailable');
+    expect(send).not.toHaveBeenCalled();
+  });
+
+  it('skips if the sending window closes during the run', async () => {
+    const originalFrom = db.from; let reads = 0;
+    db.from = (table: string) => {
+      if (table === 'invoices' && ++reads === 2) vi.setSystemTime(new Date('2026-11-02T10:00:00Z'));
+      return originalFrom(table);
+    };
+    const send = vi.fn(); vi.stubGlobal('fetch', send);
+    const result = await (await GET(request())).json();
+    expect(result.results[0].reason).toBe('sending_window_or_service_unavailable');
+    expect(send).not.toHaveBeenCalled();
+  });
+
   it('rechecks the switch before dispatch, after a slot was claimed', async () => {
     const originalFrom = db.from; let reads = 0;
     db.from = (table: string) => {
