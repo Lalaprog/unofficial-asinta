@@ -53,21 +53,6 @@ describe('staged delivery coordination', () => {
       expect(row.state).toBe('unconfirmed');
     } finally { await db.close(); }
   });
-  it('prevents invoice deletion while an attempt is active and retains settled history afterward', async () => {
-    const db = await setup();
-    try {
-      expect(await reserve(db,invoice,'sms','automatic',a)).toBe('reserved');
-      await expect(db.query('delete from public.invoices where id=$1',[invoice])).rejects.toThrow(/foreign key/i);
-      expect(await finish(db,invoice,'sms',a,'accepted')).toBe(true);
-      await db.query('delete from public.invoices where id=$1',[invoice]);
-      expect((await db.query('select invoice_id,state from public.reminder_delivery_attempts where attempt_id=$1',[a])).rows).toEqual([{invoice_id:invoice,state:'accepted'}]);
-      await db.query('insert into public.invoices(id) values ($1)',[invoice]);
-      expect(await reserve(db,invoice,'sms','automatic',a)).toBe('duplicate');
-      // A duplicate attempt must not leave an empty lock that prevents deletion.
-      await db.query('delete from public.invoices where id=$1',[invoice]);
-      expect((await db.query('select * from public.reminder_delivery_locks')).rows).toHaveLength(0);
-    } finally { await db.close(); }
-  });
   it('restricts direct access and RPC execution, rejects invalid requests and does not change invoices', async () => {
     const db = await setup();
     try {

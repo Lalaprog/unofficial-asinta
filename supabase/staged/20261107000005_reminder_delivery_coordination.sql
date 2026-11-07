@@ -7,8 +7,7 @@
 -- ambiguous provider result leaves the channel blocked, not silently replayed.
 CREATE TABLE public.reminder_delivery_attempts (
   attempt_id uuid PRIMARY KEY,
-  -- Keep the invoice ID as immutable history even after an invoice deletion.
-  invoice_id uuid NOT NULL,
+  invoice_id uuid NOT NULL REFERENCES public.invoices(id) ON DELETE CASCADE,
   channel text NOT NULL CHECK (channel IN ('email', 'sms')),
   source text NOT NULL CHECK (source IN ('manual', 'automatic')),
   state text NOT NULL CHECK (state IN ('reserved', 'unconfirmed', 'accepted', 'rejected', 'cancelled')),
@@ -19,8 +18,7 @@ CREATE INDEX reminder_delivery_attempts_invoice_channel_time
   ON public.reminder_delivery_attempts (invoice_id, channel, created_at DESC);
 
 CREATE TABLE public.reminder_delivery_locks (
-  -- An active/unconfirmed attempt blocks invoice deletion until review.
-  invoice_id uuid NOT NULL REFERENCES public.invoices(id) ON DELETE RESTRICT,
+  invoice_id uuid NOT NULL REFERENCES public.invoices(id) ON DELETE CASCADE,
   channel text NOT NULL CHECK (channel IN ('email', 'sms')),
   active_attempt_id uuid REFERENCES public.reminder_delivery_attempts(attempt_id) ON DELETE SET NULL,
   PRIMARY KEY (invoice_id, channel)
@@ -50,13 +48,7 @@ BEGIN
   INSERT INTO public.reminder_delivery_attempts (attempt_id, invoice_id, channel, source, state)
     VALUES (p_attempt_id, p_invoice_id, p_channel, p_source, 'reserved')
     ON CONFLICT (attempt_id) DO NOTHING RETURNING attempt_id INTO v_created;
-  IF v_created IS NULL THEN
-    -- No attempt owns this newly-created empty lock. Leaving it behind would
-    -- incorrectly prevent invoice deletion even though nothing is in flight.
-    DELETE FROM public.reminder_delivery_locks
-      WHERE invoice_id = p_invoice_id AND channel = p_channel AND active_attempt_id IS NULL;
-    RETURN 'duplicate';
-  END IF;
+  IF v_created IS NULL THEN RETURN 'duplicate'; END IF;
   UPDATE public.reminder_delivery_locks SET active_attempt_id = p_attempt_id
     WHERE invoice_id = p_invoice_id AND channel = p_channel;
   RETURN 'reserved';
@@ -84,7 +76,7 @@ BEGIN
     RETURNING attempt_id INTO v_updated;
   IF v_updated IS NULL THEN RETURN false; END IF;
   IF p_outcome <> 'unconfirmed' THEN
-    DELETE FROM public.reminder_delivery_locks
+    UPDATE public.reminder_delivery_locks SET active_attempt_id = NULL
       WHERE invoice_id = p_invoice_id AND channel = p_channel;
   END IF;
   RETURN true;

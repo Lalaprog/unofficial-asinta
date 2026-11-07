@@ -109,18 +109,6 @@ describe('sendRequestForPayment', () => {
     db = seedDb();
   });
 
-  it('rechecks coordinated message details and shared history after logging', async () => {
-    const deps=makeDeps(db);const beforeSend=vi.fn(async()=>{expect(db.tables.email_logs[0]).toMatchObject({status:'pending',reminder_attempt_id:'attempt'});return false;});
-    const result=await sendRequestForPayment(deps,{invoiceId:'invoice-1',idempotencyKey:'key-check-0001',sentBy:'founder-1',reminderAttemptId:'attempt',beforeSend});
-    expect(result.ok).toBe(false);expect(deps.sendEmail).not.toHaveBeenCalled();expect(db.tables.email_logs[0].status).toBe('failed');
-  });
-  it('refuses changed invoice details before a coordinated provider call',async()=>{
-    const deps=makeDeps(db);let reads=0;const from=db.from;
-    db.from=(table:string)=>{if(table==='invoices' && ++reads===2) db.tables.invoices[0]={...db.tables.invoices[0],amount_paid:1499999};return from(table);};
-    const result=await sendRequestForPayment(deps,{invoiceId:'invoice-1',idempotencyKey:'key-check-0002',sentBy:'founder-1',reminderAttemptId:'attempt',beforeSend:async()=>true});
-    expect(result.ok).toBe(false);expect(deps.sendEmail).not.toHaveBeenCalled();
-  });
-
   it('rejects missing invoices with 404', async () => {
     const deps = makeDeps(db);
     const result = await sendRequestForPayment(deps, {

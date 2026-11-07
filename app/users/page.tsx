@@ -29,7 +29,6 @@ import { useToast } from '@/components/ui/Toast';
 import { generateTemporaryPassword, validatePasswordStrength } from '@/lib/users/admin';
 import { WorkspaceHeader } from '@/components/ui/WorkspaceHeader';
 import { WorkspaceFilters } from '@/components/ui/WorkspaceFilters';
-import { DeactivateSupervisor } from '@/components/users/DeactivateSupervisor';
 
 export default function UsersPage() {
   const { user: currentUser } = useAuth();
@@ -78,7 +77,6 @@ export default function UsersPage() {
   const [isUpdating, setIsUpdating] = useState(false);
   const [confirmingDeleteInModal, setConfirmingDeleteInModal] = useState(false);
   const [isDeleting, setIsDeleting] = useState(false);
-  const [isDeactivating, setIsDeactivating] = useState(false);
 
   const filteredUsers = users.filter((u) => {
     const matchesSearch =
@@ -191,7 +189,7 @@ export default function UsersPage() {
 
   const handleEditSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!editingUser || mutationLock.current || isDeactivating) return;
+    if (!editingUser || mutationLock.current) return;
     if (editName.trim().length < 2) { showToast('error', 'Full name must be at least 2 characters.'); return; }
     if (editResetPassword.trim()) {
       const check = validatePasswordStrength(editResetPassword.trim());
@@ -246,7 +244,7 @@ export default function UsersPage() {
   };
 
   const handleDeleteConfirm = async () => {
-    if (!editingUser || mutationLock.current || isDeactivating) return;
+    if (!editingUser || mutationLock.current) return;
     mutationLock.current = true;
     setIsDeleting(true);
     try {
@@ -694,9 +692,9 @@ export default function UsersPage() {
           setEditingUser(null);
           setConfirmingDeleteInModal(false);
         }}
-        dismissOnBackdrop={!isUpdating && !isDeleting && !isDeactivating}
-        dismissOnEscape={!isUpdating && !isDeleting && !isDeactivating}
-        showCloseButton={!isUpdating && !isDeleting && !isDeactivating}
+        dismissOnBackdrop={!isUpdating && !isDeleting}
+        dismissOnEscape={!isUpdating && !isDeleting}
+        showCloseButton={!isUpdating && !isDeleting}
         title="Manage Team Account"
         description="Update role permissions, assigned project sites, payroll inclusion, or account access."
         maxWidth="lg"
@@ -837,15 +835,13 @@ export default function UsersPage() {
                 </p>
               </div>
 
-              {!isSelf && editingUser.role === 'supervisor' && <DeactivateSupervisor key={editingUser.id} userId={editingUser.id} name={editingUser.name} onBusy={setIsDeactivating} disabled={isUpdating || isDeleting} />}
-
               {/* Clean inline account removal section (only for non-self accounts) */}
               {!isSelf && !isLastFounder && (
                 <div className="pt-3 border-t border-surface-border">
                   {!confirmingDeleteInModal ? (
                     <button
                       type="button"
-                      disabled={isUpdating || isDeleting || isDeactivating}
+                      disabled={isUpdating || isDeleting}
                       onClick={() => setConfirmingDeleteInModal(true)}
                       className="text-xs font-semibold text-status-danger hover:underline flex items-center gap-1.5"
                     >
@@ -865,7 +861,7 @@ export default function UsersPage() {
                           type="button"
                           variant="danger"
                           size="sm"
-                          disabled={isUpdating || isDeactivating}
+                          disabled={isUpdating}
                           isLoading={isDeleting}
                           onClick={handleDeleteConfirm}
                         >
@@ -890,7 +886,7 @@ export default function UsersPage() {
                 <Button
                   type="button"
                   variant="secondary"
-                  disabled={isUpdating || isDeleting || isDeactivating}
+                  disabled={isUpdating || isDeleting}
                   onClick={() => {
                     setEditingUser(null);
                     setConfirmingDeleteInModal(false);
@@ -898,7 +894,7 @@ export default function UsersPage() {
                 >
                   Cancel
                 </Button>
-                <Button type="submit" variant="primary" isLoading={isUpdating} disabled={isDeleting || isDeactivating}>
+                <Button type="submit" variant="primary" isLoading={isUpdating} disabled={isDeleting}>
                   Save Changes
                 </Button>
               </div>

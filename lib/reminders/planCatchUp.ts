@@ -9,7 +9,7 @@ import { addDaysIso, getManilaClock, isWithinSendingHours } from './scheduler';
 export type CatchUpPlan = { ok: true; slot: ReminderSlot } | { ok: false; reason: string };
 
 // Only unambiguous, valid ISO instants with an explicit timezone are accepted.
-export function parseReminderInstant(value: unknown): Date | null {
+function instant(value: unknown): Date | null {
   if (typeof value !== 'string') return null;
   const match = /^(\d{4}-\d{2}-\d{2})T(\d{2}):(\d{2}):(\d{2})(?:\.\d{1,9})?(Z|[+-]\d{2}:\d{2})$/.exec(value);
   if (!match) return null;
@@ -25,12 +25,11 @@ export function parseReminderInstant(value: unknown): Date | null {
 }
 
 /**
- * Approved conservative policy, not active in production:
+ * Proposed conservative policy, not active in production:
  * - Eligibility or schedule changes at/after 8 AM exclude that whole Manila
  *   day's slot. This avoids backfilling when a channel/invoice is re-enabled.
- * - A previous contact on this channel on/after the slot date covers that slot;
- *   and no new automatic contact is planned within 24 hours of a previous
- *   contact on this same channel. Email and SMS are independent.
+ * - A previous contact on/after the slot date covers that slot; and no new
+ *   automatic contact is planned within 24 hours of a previous contact.
  * - An unresolved prior attempt blocks planning until reviewed.
  * Required timestamps must come from authoritative server-controlled sources;
  * null `lastContactAt` means an authoritative successful read found none.
@@ -50,10 +49,10 @@ export function planCatchUp(params: {
   if (typeof params.unresolvedAttempt !== 'boolean') return {ok:false,reason:'contact_history_unavailable'};
   if (!isWithinSendingHours(params.now)) return {ok:false,reason:'outside_sending_hours'};
   const nowMs = params.now.getTime();
-  const epochs = [params.channelEffectiveSince, params.invoiceEffectiveSince, params.scheduleEffectiveSince].map(parseReminderInstant);
+  const epochs = [params.channelEffectiveSince, params.invoiceEffectiveSince, params.scheduleEffectiveSince].map(instant);
   if (epochs.some(value => !value || value.getTime() > nowMs)) return {ok:false,reason:'eligibility_history_unavailable'};
   if (params.pausedUntil !== null) {
-    const pause = parseReminderInstant(params.pausedUntil);
+    const pause = instant(params.pausedUntil);
     if (!pause) return {ok:false,reason:'invalid_pause'};
     if (pause.getTime() > nowMs) return {ok:false,reason:'invoice_paused'};
     epochs.push(pause);
@@ -61,7 +60,7 @@ export function planCatchUp(params: {
   if (params.unresolvedAttempt) return {ok:false,reason:'unresolved_attempt'};
   let lastContact: Date | null = null;
   if (params.lastContactAt !== null) {
-    lastContact = parseReminderInstant(params.lastContactAt);
+    lastContact = instant(params.lastContactAt);
     if (!lastContact || lastContact.getTime() > nowMs) return {ok:false,reason:'contact_history_unavailable'};
   }
   // For eligibility at or after 8:00, exclude the date itself. This also

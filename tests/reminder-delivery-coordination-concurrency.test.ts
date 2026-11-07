@@ -33,33 +33,15 @@ suite('delivery coordination in PostgreSQL', () => {
     expect((await pending).rows[0].result).toBe('busy'); await second.query('COMMIT');
     expect((await admin.query('SELECT count(*)::integer AS count FROM public.reminder_delivery_attempts')).rows[0].count).toBe(1);
   }, 15000);
-  it('serializes invoice deletion against a concurrently created reservation', async () => {
-    const other='00000000-0000-4000-8000-000000000003';
-    const token='10000000-0000-4000-8000-000000000003';
-    await admin.query('INSERT INTO public.invoices VALUES ($1)',[other]);
-    await first.query('BEGIN'); await second.query('BEGIN');
-    expect((await first.query('SELECT public.reserve_reminder_delivery($1,$2,$3,$4) AS result',[other,'sms','manual',token])).rows[0].result).toBe('reserved');
-    let done=false;
-    const deletion=second.query('DELETE FROM public.invoices WHERE id=$1',[other]).then(()=>null,error=>error as Error).finally(()=>{done=true;});
-    await new Promise(resolve=>setTimeout(resolve,200)); expect(done).toBe(false);
-    await first.query('COMMIT');expect((await deletion)?.message).toMatch(/foreign key/i);await second.query('ROLLBACK');
-    expect((await admin.query('SELECT public.finish_reminder_delivery($1,$2,$3,$4) AS result',[other,'sms',token,'accepted'])).rows[0].result).toBe(true);
-    await admin.query('DELETE FROM public.invoices WHERE id=$1',[other]);
-    expect((await admin.query('SELECT state FROM public.reminder_delivery_attempts WHERE attempt_id=$1',[token])).rows[0].state).toBe('accepted');
-  }, 15000);
   it('does not allow the reservation to expire or a different owner to clear it', async () => {
     expect((await admin.query('SELECT public.finish_reminder_delivery($1,$2,$3,$4) AS result',[invoice,'email',b,'cancelled'])).rows[0].result).toBe(false);
     expect((await admin.query('SELECT public.finish_reminder_delivery($1,$2,$3,$4) AS result',[invoice,'email',a,'unconfirmed'])).rows[0].result).toBe(true);
     expect((await admin.query('SELECT public.reserve_reminder_delivery($1,$2,$3,$4) AS result',[invoice,'email','manual',b])).rows[0].result).toBe('busy');
     expect((await admin.query('SELECT public.finish_reminder_delivery($1,$2,$3,$4) AS result',[invoice,'email',a,'accepted'])).rows[0].result).toBe(false);
   });
-  it('blocks invoice deletion while an attempt is unconfirmed and retains completed attempt history', async () => {
-    await expect(admin.query('DELETE FROM public.invoices WHERE id=$1',[invoice])).rejects.toThrow(/foreign key/i);
-    const other='00000000-0000-4000-8000-000000000002';
-    await admin.query('INSERT INTO public.invoices VALUES ($1)',[other]);
-    expect((await admin.query('SELECT public.reserve_reminder_delivery($1,$2,$3,$4) AS result',[other,'email','manual',b])).rows[0].result).toBe('reserved');
-    expect((await admin.query('SELECT public.finish_reminder_delivery($1,$2,$3,$4) AS result',[other,'email',b,'accepted'])).rows[0].result).toBe(true);
-    await admin.query('DELETE FROM public.invoices WHERE id=$1',[other]);
-    expect((await admin.query('SELECT state FROM public.reminder_delivery_attempts WHERE attempt_id=$1',[b])).rows[0].state).toBe('accepted');
+  it('preserves the existing ability to delete an invoice and cascades its coordination rows', async () => {
+    await admin.query('DELETE FROM public.invoices WHERE id=$1',[invoice]);
+    expect((await admin.query('SELECT count(*)::integer AS count FROM public.reminder_delivery_attempts')).rows[0].count).toBe(0);
+    expect((await admin.query('SELECT count(*)::integer AS count FROM public.reminder_delivery_locks')).rows[0].count).toBe(0);
   });
 });

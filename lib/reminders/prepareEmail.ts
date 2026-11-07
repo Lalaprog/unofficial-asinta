@@ -6,7 +6,6 @@
  * dispatch. A fingerprint is a best-effort change detector, not a lock.
  */
 import { createHash } from 'node:crypto';
-import { parseReminderInstant } from './planCatchUp';
 import { isValidEmail } from '@/lib/email/format';
 import {
   DEFAULT_REMINDER_BODY, DEFAULT_REMINDER_SUBJECT, REMINDER_EMAIL_TEMPLATE_TYPE,
@@ -51,8 +50,8 @@ export async function prepareReminderEmail(params: {
     const amount = money(invoice.amount); const paid = money(invoice.amount_paid);
     if (!['pending','partially_paid','overdue'].includes(invoice.status) || !Number.isFinite(amount) || !Number.isFinite(paid) || amount < 0 || paid < 0 || amount - paid <= 0 || invoice.automatic_reminders_enabled !== true) return {ok:false,reason:'invoice_ineligible'};
     if (invoice.reminders_paused_until != null) {
-      const pause = parseReminderInstant(invoice.reminders_paused_until);
-      if (!pause || pause.getTime() > params.now.getTime()) return {ok:false,reason:'invoice_paused_or_invalid'};
+      const pause = new Date(invoice.reminders_paused_until).getTime();
+      if (!Number.isFinite(pause) || pause > params.now.getTime()) return {ok:false,reason:'invoice_paused_or_invalid'};
     }
     if (!calendarDate(invoice.issue_date) || !calendarDate(invoice.due_date) || !nonempty(invoice.invoice_number) || !nonempty(invoice.client_id) || !nonempty(invoice.project_id)) return {ok:false,reason:'invoice_details_invalid'};
     const [clientResult, projectResult, templateResult] = await Promise.all([
@@ -63,7 +62,7 @@ export async function prepareReminderEmail(params: {
     const client = clientResult.data, project = projectResult.data, row = templateResult.data;
     if (clientResult.error || !client || !nonempty(client.email) || !isValidEmail(client.email)) return {ok:false,reason:'recipient_unavailable'};
     if (projectResult.error || !project || !nonempty(project.name)) return {ok:false,reason:'project_unavailable'};
-    if (templateResult.error || row === undefined || (row !== null && (typeof row !== 'object' || Array.isArray(row)))) return {ok:false,reason:'template_unavailable'};
+    if (templateResult.error) return {ok:false,reason:'template_unavailable'};
     if (row && (row.active !== true || !Number.isSafeInteger(row.version) || row.version < 1 || typeof row.subject_template !== 'string' || typeof row.body_template !== 'string')) return {ok:false,reason:'template_invalid'};
     const subject = row ? row.subject_template : DEFAULT_REMINDER_SUBJECT;
     const body = row ? row.body_template : DEFAULT_REMINDER_BODY;
