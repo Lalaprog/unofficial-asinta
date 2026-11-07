@@ -338,7 +338,7 @@ export default function SMSPage() {
 
               {isPreparing && (
                 <div className="p-3 rounded-xl bg-surface-inset/60 border border-surface-border text-ink-secondary">
-                  Preparing reminder — checking the latest successful Request for Payment email…
+                  Preparing reminder — checking the latest accepted Request for Payment email…
                 </div>
               )}
 
@@ -380,7 +380,7 @@ export default function SMSPage() {
                     </div>
                   </div>
                   <div>
-                    <div className="text-ink-secondary">Latest Successful Email</div>
+                    <div className="text-ink-secondary">Latest Email Accepted by Server</div>
                     <div className="font-semibold text-navy mt-0.5">
                       {emailLookupFailed ? 'Could not verify' : latestEmailDate ? formatDatePH(latestEmailDate) : 'None on record'}
                     </div>

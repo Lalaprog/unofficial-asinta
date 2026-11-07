@@ -4,7 +4,7 @@ import React from 'react';
 import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 
-const mock = vi.hoisted(() => ({ sendSMS: vi.fn(), createInvoice: vi.fn(), recordInvoicePayment: vi.fn() }));
+const mock = vi.hoisted(() => ({ sendSMS: vi.fn(), createInvoice: vi.fn(), recordInvoicePayment: vi.fn(), emailLookup: vi.fn() }));
 vi.mock('@/components/layout/AppShell', () => ({ AppShell: ({ children }: { children: React.ReactNode }) => React.createElement('main', null, children) }));
 vi.mock('@/components/ui/Toast', () => ({ useToast: () => ({ showToast: vi.fn() }) }));
 vi.mock('@/lib/data/store', () => ({ useDataStore: () => ({
@@ -18,7 +18,7 @@ vi.mock('@/lib/data/store', () => ({ useDataStore: () => ({
   createInvoice: mock.createInvoice, recordInvoicePayment: mock.recordInvoicePayment, sendSMS: mock.sendSMS,
 }) }));
 vi.mock('@/lib/supabase/client', () => ({ createClient: () => ({
-  from: () => ({ select() { return this; }, eq() { return this; }, in() { return this; }, order() { return this; }, limit() { return this; }, maybeSingle: async () => ({ data: null }) }),
+  from: () => ({ select() { return this; }, eq() { return this; }, in() { return this; }, order() { return this; }, limit() { return this; }, maybeSingle: () => mock.emailLookup() }),
 }) }));
 vi.mock('@/components/email/RequestPaymentModal', () => ({ RequestPaymentModal: ({ isOpen, invoiceId }: { isOpen: boolean; invoiceId: string | null }) => isOpen ? React.createElement('div', { role: 'dialog', 'aria-label': 'Payment request' }, invoiceId) : null }));
 vi.mock('@/components/email/EmailHistoryModal', () => ({ EmailHistoryModal: ({ isOpen, invoiceId }: { isOpen: boolean; invoiceId: string | null }) => isOpen ? React.createElement('div', { role: 'dialog', 'aria-label': 'Email history' }, invoiceId) : null }));
@@ -33,7 +33,7 @@ beforeAll(() => {
   HTMLElement.prototype.scrollIntoView = () => {};
   globalThis.ResizeObserver = class { observe() {} unobserve() {} disconnect() {} };
 });
-beforeEach(() => vi.clearAllMocks());
+beforeEach(() => { vi.clearAllMocks(); mock.emailLookup.mockReset().mockResolvedValue({data:null,error:null}); });
 afterEach(() => cleanup());
 
 const trigger = (number: string) => screen.getByRole('button', { name: `More actions for ${number}` });
@@ -92,6 +92,15 @@ describe('invoice action menu', () => {
     open('ASINTA-2026-002');
     fireEvent.click(await screen.findByRole('menuitem', { name: 'Email history' }));
     expect((await screen.findByRole('dialog', { name: 'Email history' })).textContent).toBe('paid');
+  });
+
+  it('warns when email history cannot be checked while preparing an SMS', async () => {
+    mock.emailLookup.mockResolvedValue({data:null,error:{message:'offline'}});
+    render(React.createElement(InvoicesPage));open('ASINTA-2026-001');
+    fireEvent.click(await screen.findByRole('menuitem',{name:'Send SMS reminder'}));
+    const dialog = await screen.findByRole('dialog',{name:'Send PhilSMS Payment Notification'});
+    expect(within(dialog).getByText(/Could not verify the payment-request email history/)).toBeTruthy();
+    expect(mock.sendSMS).not.toHaveBeenCalled();
   });
 
   it('prepares an SMS for review without sending it', async () => {

@@ -171,6 +171,22 @@ describe('sendRequestForPayment', () => {
     expect(deps.sendEmail).not.toHaveBeenCalled();
   });
 
+  it('does not use a default when a saved-template read fails or returns an inactive row', async () => {
+    const from = db.from;
+    db.from = (table: string) => {
+      const query = from(table);
+      if (table === 'email_templates') query.maybeSingle = async () => ({data:null,error:{message:'offline'}});
+      return query;
+    };
+    const deps = makeDeps(db);
+    expect(await previewRequestForPayment(deps,{invoiceId:'invoice-1'})).toMatchObject({ok:false,error:{status:503}});
+    expect(await sendRequestForPayment(deps,{invoiceId:'invoice-1',idempotencyKey:'key-template-error',sentBy:'founder-1'})).toMatchObject({ok:false,error:{status:503}});
+    expect(deps.sendEmail).not.toHaveBeenCalled(); expect(db.tables.email_logs).toHaveLength(0);
+    db.from = from;
+    db.tables.email_templates.push({template_type:'initial_request',subject_template:'Subject',body_template:'Body',version:1,active:false});
+    expect(await previewRequestForPayment(deps,{invoiceId:'invoice-1'})).toMatchObject({ok:false,error:{status:503}});
+  });
+
   it.each([
     {amount:100,paid:null}, {amount:'',paid:0}, {amount:'100',paid:'invalid'},
     {amount:100,paid:-1}, {amount:-1,paid:0},

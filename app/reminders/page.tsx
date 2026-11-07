@@ -17,6 +17,7 @@ import { Textarea } from '@/components/ui/Input';
 import { Modal } from '@/components/ui/Modal';
 import { WorkspaceHeader } from '@/components/ui/WorkspaceHeader';
 import { EmptyState } from '@/components/ui/EmptyState';
+import { ReminderQueueStatus } from '@/components/reminders/ReminderQueueStatus';
 import { useToast } from '@/components/ui/Toast';
 import { createClient } from '@/lib/supabase/client';
 import { buildReminderSMS, estimateSMSSegments } from '@/lib/sms/templates';
@@ -31,11 +32,6 @@ import {
   type ScheduledReminderType,
 } from '@/lib/reminders/scheduler';
 import type { Invoice } from '@/types';
-
-interface IntegrationStatus {
-  philsmsConfigured: boolean;
-  automaticRemindersEnabled: boolean;
-}
 
 const TYPE_LABELS: Record<ScheduledReminderType, string> = {
   upcoming: 'Upcoming',
@@ -55,17 +51,16 @@ const TYPE_VARIANTS: Record<ScheduledReminderType, 'info' | 'warning' | 'danger'
 // disagree with the reminder cadence that actually fires.
 
 export default function RemindersPage() {
-  const { invoices, clients, projects, smsLogs, sendSMS, updateInvoice } = useDataStore();
+  const { invoices, clients, projects, smsLogs, sendSMS, updateInvoice, loadError, refresh } = useDataStore();
   const supabase = useMemo(() => createClient(), []);
   const { showToast } = useToast();
   const sendLock = useRef(false);
   const toggleLock = useRef(false);
 
   const todayIso = getManilaClock().dateIso;
-  const [emailDates, setEmailDates] = useState<Record<string, string>>({});
-  const [emailLookupFailed, setEmailLookupFailed] = useState(false);
+  const [emailLookup, setEmailLookup] = useState<{ key: string; state: 'loading' | 'ready' | 'error'; dates: Record<string, string> }>({ key: '', state: 'ready', dates: {} });
+  const [emailLookupRevision, setEmailLookupRevision] = useState(0);
   const [dismissed, setDismissed] = useState<Set<string>>(new Set());
-  const [status, setStatus] = useState<IntegrationStatus | null>(null);
   const [sendingId, setSendingId] = useState<string | null>(null);
   const [togglingId, setTogglingId] = useState<string | null>(null);
   const [smsTemplate, setSmsTemplate] = useState<string | null>(null);
@@ -78,19 +73,6 @@ export default function RemindersPage() {
   const [editMessage, setEditMessage] = useState('');
   const [confirmed, setConfirmed] = useState(false);
   const [sentNotice, setSentNotice] = useState(false);
-
-  useEffect(() => {
-    let active = true;
-    fetch('/api/integrations/status', { cache: 'no-store' })
-      .then((response) => (response.ok ? response.json() : null))
-      .then((data) => {
-        if (active && data) setStatus(data);
-      })
-      .catch(() => undefined);
-    return () => {
-      active = false;
-    };
-  }, []);
 
   useEffect(() => {
     let active = true;
@@ -121,15 +103,25 @@ export default function RemindersPage() {
       isPaused(inv) &&
       inv.status !== 'paid' &&
       inv.status !== 'cancelled' &&
+      inv.status !== 'draft' &&
       inv.amount - inv.amount_paid > 0
   );
 
   // Track the actual queue membership, not merely the invoice count.
   const queueIds = queue.map((inv) => inv.id).sort().join(',');
+  const emailLookupKey = `${emailLookupRevision}:${queueIds}`;
+  const emailLookupCurrent = emailLookup.key === emailLookupKey;
+  const emailDates = emailLookupCurrent && emailLookup.state === 'ready' ? emailLookup.dates : {};
+  useEffect(() => {
+    const onFocus = () => setEmailLookupRevision(revision => revision + 1);
+    window.addEventListener('focus', onFocus);
+    return () => window.removeEventListener('focus', onFocus);
+  }, []);
   useEffect(() => {
     const ids = queueIds ? queueIds.split(',') : [];
-    if (ids.length === 0) { setEmailDates({}); setEmailLookupFailed(false); return; }
+    if (ids.length === 0) { setEmailLookup({key: emailLookupKey, state:'ready', dates:{}}); return; }
     let active = true;
+    setEmailLookup({key: emailLookupKey, state:'loading', dates:{}});
 
     supabase
       .from('email_logs')
@@ -140,19 +132,18 @@ export default function RemindersPage() {
       .order('sent_at', { ascending: false })
       .then(({ data, error }: { data: Array<{ invoice_id: string; sent_at: string | null }> | null; error: unknown }) => {
         if (!active) return;
-        if (error || !data) { setEmailDates({}); setEmailLookupFailed(true); return; }
-        setEmailLookupFailed(false);
+        if (error || !Array.isArray(data)) { setEmailLookup({key:emailLookupKey,state:'error',dates:{}}); return; }
         const latest: Record<string, string> = {};
         for (const row of data) {
           if (row.sent_at && !latest[row.invoice_id]) latest[row.invoice_id] = row.sent_at;
         }
-        setEmailDates(latest);
-      }, () => { if (active) { setEmailDates({}); setEmailLookupFailed(true); } });
+        setEmailLookup({key:emailLookupKey,state:'ready',dates:latest});
+      }, () => { if (active) setEmailLookup({key:emailLookupKey,state:'error',dates:{}}); });
 
     return () => {
       active = false;
     };
-  }, [queueIds, supabase]);
+  }, [queueIds, emailLookupKey, supabase]);
 
   const latestSmsDate = (invoiceId: string): string | null => {
     const log = smsLogs.find(
@@ -216,22 +207,23 @@ export default function RemindersPage() {
   const handleResume = (inv: Invoice) => changeReminderSetting(inv, { reminders_paused_until: null }, 'Reminder pause removed.');
   const handleToggleAutomatic = (inv: Invoice) => changeReminderSetting(inv, {
     automatic_reminders_enabled: !inv.automatic_reminders_enabled,
-  }, inv.automatic_reminders_enabled ? 'Automatic reminders disabled for this invoice.' : 'Automatic reminders enabled for this invoice.');
+  }, inv.automatic_reminders_enabled ? 'Automatic reminder preference turned off for this invoice. A message already in progress may still be sent.' : 'Invoice preference saved. Check Settings for the overall automatic reminder status.');
 
   return (
     <AppShell requireFounder={true}>
       <div className="space-y-6">
         <WorkspaceHeader eyebrow="Client communications" title="Reminder Queue"
           description="Review upcoming, due and overdue invoices before contacting clients."
-          action={<Badge variant={status?.automaticRemindersEnabled ? 'success' : 'neutral'} size="sm">
-            {status === null ? 'Automatic reminder status unavailable' : status.automaticRemindersEnabled ? 'Auto reminders: ON' : 'Automatic reminders: OFF'}
-          </Badge>}
+          action={<ReminderQueueStatus />}
         />
+        <p className="text-xs text-ink-secondary">Invoice preferences do not turn on automatic reminders. Status is checked when this page opens or returns to focus. Manual sends remain separate.</p>
+        {loadError && <div role="alert" className="rounded-xl border border-status-warning/30 bg-status-warning-bg p-4 text-xs text-navy flex flex-wrap items-center justify-between gap-3"><span>Some records could not be loaded. The reminder queue may be incomplete.</span><Button type="button" variant="secondary" size="sm" onClick={() => void refresh()}>Retry loading</Button></div>}
+        {emailLookupCurrent && emailLookup.state === 'error' && <div role="alert" className="rounded-xl border border-status-warning/30 bg-status-warning-bg p-4 text-xs text-navy flex flex-wrap items-center justify-between gap-3"><span>Could not check the latest payment-request emails.</span><Button type="button" variant="secondary" size="sm" onClick={() => setEmailLookupRevision(revision => revision + 1)}>Retry email history</Button></div>}
         {dismissed.size > 0 && <div className="text-xs text-ink-secondary">{dismissed.size} reminder(s) hidden in this session. <button type="button" className="font-semibold text-navy underline" onClick={() => setDismissed(new Set())}>Restore hidden reminders</button></div>}
 
         {/* Queue */}
         <div className="space-y-4">
-          {queue.length === 0 && (
+          {queue.length === 0 && !loadError && (
             <div className="bg-white rounded-xl border border-surface-border">
               <EmptyState title="No reminders to show" description="No reminders in this view. Eligible invoices appear here unless paused or hidden in this session." icon={<BellRing className="relative h-7 w-7" />} />
             </div>
@@ -260,7 +252,7 @@ export default function RemindersPage() {
                         {TYPE_LABELS[type]}
                       </Badge>
                       {inv.automatic_reminders_enabled && (
-                        <Badge variant="info" size="sm">Auto enabled for invoice</Badge>
+                        <Badge variant="info" size="sm">Automatic reminder preference on</Badge>
                       )}
                     </div>
                     <div className="text-xs text-ink-secondary">
@@ -274,10 +266,10 @@ export default function RemindersPage() {
                       Due <span className="font-semibold text-navy">{formatDatePH(inv.due_date)}</span>
                     </div>
                     <div className="text-[11px] text-ink-muted">
-                      Latest successful email:{' '}
-                      {emailLookupFailed ? 'could not verify' : emailDates[inv.id] ? formatDatePH(emailDates[inv.id]) : 'none on record'} ·
-                      Latest accepted SMS: {lastSms ? formatDatePH(lastSms) : 'none on record'} · Next eligible
-                      date (if enabled): {formatDatePH(next.dateIso)} ({TYPE_LABELS[next.type]})
+                      Latest accepted payment-request email:{' '}
+                      {!emailLookupCurrent || emailLookup.state === 'loading' ? 'checking…' : emailLookup.state === 'error' ? 'could not verify' : emailDates[inv.id] ? formatDatePH(emailDates[inv.id]) : 'none in loaded history'} ·
+                      Latest accepted SMS: {lastSms ? formatDatePH(lastSms) : 'none in loaded history'} · Planned schedule
+                      date (when available): {formatDatePH(next.dateIso)} ({TYPE_LABELS[next.type]})
                     </div>
                   </div>
 
@@ -336,13 +328,15 @@ export default function RemindersPage() {
                   >
                     {inv.automatic_reminders_enabled
                       ? 'Disable automatic reminders for this invoice'
-                      : 'Enable automatic reminders for this invoice'}
+                      : 'Allow automatic reminders for this invoice'}
                   </button>
                 </div>
               </div>
             );
           })}
         </div>
+
+        <p className="text-[11px] text-ink-muted">Planned dates are not guaranteed send times; pauses, business hours, missed dates and other safety checks can change them. Message history may not include older records.</p>
 
         {/* Paused invoices */}
         {pausedInvoices.length > 0 && (

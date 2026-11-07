@@ -22,7 +22,7 @@ const DEFAULTS: Record<string, { subject: string; body: string }> = {
 };
 
 /** Founder-only: fetch the active template for a type (default: initial_request). */
-export async function GET(req: NextRequest) {
+async function getTemplate(req: NextRequest) {
   const supabase = createServerSupabaseClient();
   const founder = await requireFounder(supabase);
   if (!founder.ok) {
@@ -34,15 +34,22 @@ export async function GET(req: NextRequest) {
     return NextResponse.json({ error: 'This template type is not editable yet' }, { status: 400 });
   }
 
-  const { data: row } = await supabase
+  const { data: row, error } = await supabase
     .from('email_templates')
     .select('id, template_type, subject_template, body_template, version, active, updated_at')
     .eq('template_type', templateType)
     .maybeSingle();
+  if (error || (row !== null && (!row || typeof row !== 'object' || Array.isArray(row)))) {
+    return NextResponse.json({ error: 'Could not load the saved email template.' }, { status: 503, headers: { 'Cache-Control': 'private, no-store' } });
+  }
+  if (row && (typeof row.id !== 'string' || typeof row.subject_template !== 'string' || typeof row.body_template !== 'string' || typeof row.active !== 'boolean' || !Number.isSafeInteger(row.version) || row.version < 1)) {
+    return NextResponse.json({ error: 'The saved email template needs attention.' }, { status: 503, headers: { 'Cache-Control': 'private, no-store' } });
+  }
 
   const defaults = DEFAULTS[templateType];
   return NextResponse.json({
     template: row || {
+      id: null,
       template_type: templateType,
       subject_template: defaults.subject,
       body_template: defaults.body,
@@ -55,7 +62,12 @@ export async function GET(req: NextRequest) {
     isSystemDefault:
       !row ||
       (row.subject_template === defaults.subject && row.body_template === defaults.body),
-  });
+  }, {headers: { 'Cache-Control': 'private, no-store' }});
+}
+
+export async function GET(req: NextRequest) {
+  try { return await getTemplate(req); }
+  catch { return NextResponse.json({ error: 'Could not load the saved email template.' }, { status: 503, headers: { 'Cache-Control': 'private, no-store' } }); }
 }
 
 /**
@@ -112,12 +124,31 @@ export async function PUT(req: NextRequest) {
       );
     }
 
-    const { data: existing } = await supabase
+    const { data: existing, error: readError } = await supabase
       .from('email_templates')
       .select('id, version')
       .eq('template_type', templateType)
       .maybeSingle();
+    if (readError || (existing !== null && (!existing || typeof existing !== 'object' || Array.isArray(existing)))) {
+      return NextResponse.json({ error: 'Could not check the saved email template. Refresh before trying again.' }, { status: 503 });
+    }
 
+    if (existing && (typeof existing.id !== 'string' || !Number.isSafeInteger(existing.version) || existing.version < 1)) {
+      return NextResponse.json({ error: 'The saved email template needs attention.' }, { status: 503 });
+    }
+    // Newer editors submit the exact saved row they loaded. Keep older open
+    // clients compatible; they still get the read-to-write race guard below.
+    if ('expectedVersion' in body || 'expectedTemplateId' in body) {
+      if (!Number.isSafeInteger(body.expectedVersion) || body.expectedVersion < 1 ||
+          !(body.expectedTemplateId === null || (typeof body.expectedTemplateId === 'string' && body.expectedTemplateId.length > 0))) {
+        return NextResponse.json({ error: 'Refresh the template before saving.' }, { status: 422 });
+      }
+      if (existing ? (existing.id !== body.expectedTemplateId || existing.version !== body.expectedVersion) : (body.expectedTemplateId !== null || body.expectedVersion !== 1)) {
+        return NextResponse.json({ error: 'The template changed elsewhere. Refresh before saving again.' }, { status: 409 });
+      }
+    }
+    const previousVersion = existing?.version;
+    const expectedSavedVersion = existing ? previousVersion + 1 : 1;
     const nowIso = new Date().toISOString();
     let saved: { version: number } | null = null;
 
@@ -127,17 +158,19 @@ export async function PUT(req: NextRequest) {
         .update({
           subject_template: subjectTemplate,
           body_template: bodyTemplate,
-          version: (Number(existing.version) || 1) + 1,
+          version: expectedSavedVersion,
           active: true,
           updated_by: founder.userId,
           updated_at: nowIso,
         })
         .eq('id', existing.id)
+        .eq('version', previousVersion)
         .select('version')
-        .single();
+        .maybeSingle();
       if (updateError) {
-        return NextResponse.json({ error: 'Failed to save the template' }, { status: 500 });
+        return NextResponse.json({ error: 'Save was not confirmed. Refresh the template before trying again.' }, { status: 503 });
       }
+      if (!updated) return NextResponse.json({ error: 'The template changed elsewhere. Refresh before saving again.' }, { status: 409 });
       saved = updated;
     } else {
       const { data: inserted, error: insertError } = await supabase
@@ -152,19 +185,22 @@ export async function PUT(req: NextRequest) {
         })
         .select('version')
         .single();
-      if (insertError) {
-        return NextResponse.json({ error: 'Failed to save the template' }, { status: 500 });
+      if (insertError || !inserted) {
+        return NextResponse.json({ error: 'Save was not confirmed. Refresh the template before trying again.' }, { status: 503 });
       }
       saved = inserted;
     }
 
+    if (!saved || saved.version !== expectedSavedVersion) {
+      return NextResponse.json({ error: 'Save was not confirmed. Refresh the template before trying again.' }, { status: 503 });
+    }
     return NextResponse.json({
       saved: true,
       restored: restoreDefault,
-      version: saved?.version ?? 1,
+      version: saved.version,
       warnings: validation.missingImportantPlaceholders,
     });
   } catch {
-    return NextResponse.json({ error: 'Failed to save the template' }, { status: 500 });
+    return NextResponse.json({ error: 'Save was not confirmed. Refresh the template before trying again.' }, { status: 503 });
   }
 }
