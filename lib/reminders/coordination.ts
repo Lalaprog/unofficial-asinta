@@ -57,3 +57,8 @@ export async function readClientSmsHistory(db:Db,input:{clientId:string;ownAttem
     return {lastContactAt:row.lastContactAt as string|null,unresolvedAttempt:row.unresolvedAttempt};
   } catch {return null;}
 }
+
+/** Confirm the reserved destination is exactly the one the provider will see. */
+export async function recipientMatches(db:Db,input:{attemptId:string;channel:Channel;recipient:string}):Promise<boolean> {
+  try {const {data,error}=await db.rpc('reminder_recipient_matches',{p_attempt_id:input.attemptId,p_channel:input.channel,p_recipient:input.recipient});return !error && data===true;} catch {return false;}
+}

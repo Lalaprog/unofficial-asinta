@@ -5,7 +5,7 @@
 import {isReminderSettings} from './settings';
 import {planReminderChannels} from './planChannels';
 import {dispatchOne,type DispatchSnapshot,type DispatchOneResult} from './dispatchOne';
-import {reserveDelivery,claimAutomaticSlot,finishDelivery,readContactHistory} from './coordination';
+import {reserveDelivery,claimAutomaticSlot,finishDelivery,readContactHistory,recipientMatches} from './coordination';
 import {prepareReminderEmail,type PreparedReminder} from './prepareEmail';
 import {prepareReminderSms,type PreparedSms} from './prepareSms';
 import {deliverPreparedReminderEmail} from './deliverEmail';
@@ -63,6 +63,8 @@ export async function runOneReminder(input:{db:Db;invoiceId:string;channel:Chann
       const plan=planReminderChannels(snapshot)[channel];
       if(!plan.ok || snapshot.prepared.channel!==channel) return 'cancelled';
       const beforeSend=async()=>{
+        const recipient=snapshot.prepared.channel==='email'?snapshot.prepared.value.recipient:snapshot.prepared.value.phone;
+        if(!await recipientMatches(db,{attemptId,channel,recipient}))return false;
         const fresh=await read();if(!fresh || fresh.fingerprint!==snapshot.fingerprint)return false;
         const freshPlan=planReminderChannels(fresh)[channel];
         return freshPlan.ok && freshPlan.slot.type===plan.slot.type && freshPlan.slot.scheduledDate===plan.slot.scheduledDate;

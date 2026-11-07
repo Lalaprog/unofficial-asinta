@@ -112,7 +112,7 @@ export async function POST(req: NextRequest) {
       const coordinated=await coordinateManualDelivery({db:admin as any,invoiceId,clientId:resolvedClientId,channel:'sms',attemptId:randomUUID(),
         deliver:(attemptId,checkHistory)=>deliverAndLogSMS({db:supabase,invoiceId,clientId:resolvedClientId!,reminderAttemptId:attemptId,recipient:recipientName,phone:normalizedPhone,message,
           beforeSend:async()=>{
-            if(!await checkHistory())return false;
+            if(!await checkHistory(normalizedPhone))return false;
             const [latestClient,latestInvoice]=await Promise.all([
               supabase.from('clients').select('id, name, contact_person, phone').eq('id',resolvedClientId).maybeSingle(),
               invoiceId?supabase.from('invoices').select('id, client_id, status, amount, amount_paid').eq('id',invoiceId).maybeSingle():Promise.resolve({data:null,error:null}),

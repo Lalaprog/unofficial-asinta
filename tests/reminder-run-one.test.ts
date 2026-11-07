@@ -9,6 +9,7 @@ function setup(){
     const channel=String(args.p_channel),id=String(args.p_attempt_id);
     if(name==='read_reminder_contact_history')return {data:{lastContactAt:null,unresolvedAttempt:Object.entries(locks).some(([ch,value])=>ch===channel && (value!==args.p_own_attempt || attempts[value]==='unconfirmed'))},error:null};
     if(name==='reserve_reminder_delivery'){if(locks[channel])return {data:'busy',error:null};if(attempts[id])return {data:'duplicate',error:null};locks[channel]=id;attempts[id]='reserved';return {data:'reserved',error:null};}
+    if(name==='reminder_recipient_matches')return {data:locks[channel]===id,error:null};
     if(name==='claim_automatic_reminder_slot'){const key=`${channel}:${args.p_scheduled_date}`;if(locks[channel]!==id)return {data:'not_owner',error:null};if(slots.has(key))return {data:'duplicate',error:null};slots.add(key);return {data:'claimed',error:null};}
     if(name==='finish_reminder_delivery'){if(locks[channel]!==id)return {data:false,error:null};attempts[id]=String(args.p_outcome);if(args.p_outcome!=='unconfirmed')delete locks[channel];return {data:true,error:null};}
     throw Error(`unexpected ${name}`);
@@ -28,5 +29,6 @@ describe('staged one-invoice integrated dispatcher',()=>{
     const {db,run,sendEmail}=setup();const original=db.from;db.from=(table:string)=>{const query=original(table);if(table==='email_logs'){const insert=query.insert;query.insert=(row:any)=>{const result=insert(row);db.tables.reminder_settings[0].master_enabled=false;return result;};}return query;};
     expect((await run('email','e1')).outcome).toBe('cancelled');expect(sendEmail).not.toHaveBeenCalled();expect(db.tables.email_logs[0].status).toBe('failed');
   });
+  it('cancels before provider I/O when the reserved destination cannot be confirmed',async()=>{const {run,rpc,sendEmail}=setup();const original=rpc.getMockImplementation()!;rpc.mockImplementation(async(name,args)=>name==='reminder_recipient_matches'?{data:false,error:null}:original(name,args));expect((await run('email','e1')).outcome).toBe('cancelled');expect(sendEmail).not.toHaveBeenCalled();});
   it('leaves an ambiguous provider result blocked',async()=>{const {run,sendEmail,locks}=setup();sendEmail.mockRejectedValue(Error('lost'));expect((await run('email','e1')).outcome).toBe('unconfirmed');expect(locks.email).toBe('e1');expect((await run('email','e2')).outcome).toBe('ineligible_or_unavailable');expect(sendEmail).toHaveBeenCalledOnce();});
 });

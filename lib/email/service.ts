@@ -179,7 +179,7 @@ export interface SendRequestForPaymentInput {
   /** Used only by the coordinated, default-off rollout. */
   reminderAttemptId?: string;
   /** Last shared-history and authorization check, after logging. */
-  beforeSend?: () => Promise<boolean>;
+  beforeSend?: (recipient:string) => Promise<boolean>;
 }
 
 export type SendRequestForPaymentResult =
@@ -354,7 +354,7 @@ export async function sendRequestForPayment(
       const fresh=await loadInvoiceEmailContext(deps,input.invoiceId);
       if(fresh.ok && deps.isSmtpConfigured()) {
         const reRendered=renderWithTemplates(fresh.context,input.subjectTemplate ?? fresh.context.template.subject_template,input.bodyTemplate ?? fresh.context.template.body_template);
-        ready='rendered' in reRendered && emailPreviewFingerprint(fresh.context,reRendered.rendered)===emailPreviewFingerprint(context,rendered) && await input.beforeSend()===true;
+        ready='rendered' in reRendered && emailPreviewFingerprint(fresh.context,reRendered.rendered)===emailPreviewFingerprint(context,rendered) && await input.beforeSend(context.recipient)===true;
       }
     } catch { /* fail closed */ }
     if(!ready) {
