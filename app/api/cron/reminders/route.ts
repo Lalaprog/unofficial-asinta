@@ -25,6 +25,12 @@ function invoiceNumber(value: unknown): number {
   return Number(value);
 }
 
+// Fail closed if a value used for eligibility, addressing or the message has
+// changed since the message was prepared. This is not a transactional lock.
+function sameFields(before: Record<string, unknown> | null, after: Record<string, unknown> | null, fields: string[]): boolean {
+  return Boolean(before && after && fields.every((field) => Object.is(before[field], after[field])));
+}
+
 /**
  * Secure scheduled-reminder endpoint.
  *
@@ -196,7 +202,7 @@ async function runReminderCron(req: NextRequest) {
       const dispatchId = inserted.id;
 
       // Latest SUCCESSFUL initial-request email (accepted or truly delivered).
-      const { data: emailLog } = await db
+      const { data: emailLog, error: emailLogError } = await db
         .from('email_logs')
         .select('sent_at')
         .eq('invoice_id', invoice.id)
@@ -222,15 +228,37 @@ async function runReminderCron(req: NextRequest) {
 
       const recipientName = (client?.contact_person || '').trim() || client?.name || 'Client';
 
-      // Shared delivery + honest logging (see lib/sms/deliver.ts). The
-      // reminder_dispatches transition stays here because it is specific to
-      // the scheduled-reminder pipeline.
-      // Check the saved switch again immediately before starting a new send.
-      // A provider request already in flight cannot be recalled.
+      // Check the prepared data again after claiming the slot. A change, read
+      // error or deletion means the prepared message may no longer be safe.
+      // This reduces stale sends but does not lock records through provider I/O.
+      const [latestInvoice, latestClient, latestProject, latestTemplate, latestEmailLog] = await Promise.all([
+        db.from('invoices').select('id, invoice_number, client_id, project_id, amount, amount_paid, due_date, status, automatic_reminders_enabled, reminders_paused_until').eq('id', invoice.id).maybeSingle(),
+        db.from('clients').select('id, name, contact_person, phone').eq('id', invoice.client_id).maybeSingle(),
+        db.from('projects').select('id, name').eq('id', invoice.project_id).maybeSingle(),
+        db.from('sms_template_settings').select('message_template').eq('singleton', true).maybeSingle(),
+        db.from('email_logs').select('sent_at').eq('invoice_id', invoice.id).eq('template_type', 'initial_request').in('status', ['accepted', 'delivered']).order('sent_at', { ascending: false }).limit(1).maybeSingle(),
+      ]);
+      const detailsChanged = Boolean(
+        latestInvoice.error || latestClient.error || latestProject.error || latestTemplate.error || emailLogError || latestEmailLog.error ||
+        !sameFields(invoice, latestInvoice.data, ['id', 'invoice_number', 'client_id', 'project_id', 'amount', 'amount_paid', 'due_date', 'status', 'automatic_reminders_enabled', 'reminders_paused_until']) ||
+        !sameFields(client, latestClient.data, ['id', 'name', 'contact_person', 'phone']) ||
+        !sameFields(project, latestProject.data, ['id', 'name']) ||
+        (latestTemplate.data?.message_template ?? DEFAULT_SMS_TEMPLATE) !== smsTemplate ||
+        (latestEmailLog.data?.sent_at ?? null) !== (emailLog?.sent_at ?? null)
+      );
+      // The saved switch is checked last; in-flight provider requests cannot
+      // be recalled and data can still change after these best-effort checks.
       const currentSettings = await readReminderSettings(db);
       if (!currentSettings || !currentSettings.master_enabled || !currentSettings.sms_enabled) {
         await db.from('reminder_dispatches').update({ status: 'skipped', error_message: 'Automatic reminder settings unavailable or disabled.' }).eq('id', dispatchId);
         record.outcome = 'skipped'; record.reason = 'reminders_disabled_or_unavailable';
+        skipped += 1; results.push(record); continue;
+      }
+      const sendTime = new Date();
+      if (detailsChanged || !isWithinSendingHours(sendTime) || getManilaClock(sendTime).dateIso !== todayIso || !isGlobalAutomaticRemindersEnabled() || !process.env.PHILSMS_API_KEY) {
+        const reason = detailsChanged ? 'details_changed_or_unavailable' : 'sending_window_or_service_unavailable';
+        await db.from('reminder_dispatches').update({ status: 'skipped', error_message: reason }).eq('id', dispatchId);
+        record.outcome = 'skipped'; record.reason = reason;
         skipped += 1; results.push(record); continue;
       }
 

@@ -14,7 +14,7 @@ Editing or previewing the reminder email template does not send a message.
   activation is deliberately blocked at both API and database level. Build the
   settings UI and unlock it only alongside complete delivery safeguards. Preserve
   manual sends and invoice-level pauses; show both-channel and SMS cost warnings.
-- SMS eligibility rejects unreadable amounts, unrecognized statuses and invalid pause dates instead of assuming an unpaid, unpaused invoice. Correcting a skipped slot may not make it retry that same day. This is a safety layer, not completion of the delivery pipeline.
+- SMS eligibility rejects unreadable amounts, unrecognized statuses and invalid pause dates instead of assuming an unpaid, unpaused invoice. After claiming a slot, it also rechecks prepared invoice, client, project, template and initial-email details, the sending window and saved settings. If details have changed or cannot be read, it skips instead of using the old message. Correcting a skipped slot may not make it retry that same day. These are best-effort checks, not locks: data or switches can still change after the last check (including during attempt logging), and a provider request already in flight cannot be recalled. They do not coordinate concurrent manual sends and do not complete the delivery pipeline.
 - Connect the switch to **both** dispatch paths. Recheck the master and channel
   before each new send; work already in flight may finish. Treat unreadable
   settings as off, not as permission to send.
