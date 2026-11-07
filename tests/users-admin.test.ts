@@ -429,6 +429,15 @@ describe('team administration partial outcomes', () => {
     expect(deleteUserSpy).not.toHaveBeenCalled();
   });
 
+  it('explains linked-record protection without removing the Auth account', async () => {
+    const { client, deleteUserSpy, rpcSpy } = makeMockAdminClient();
+    rpcSpy.mockImplementationOnce(async () => ({ data: null, error: { code: 'P1001', message: 'TEAM_ACCOUNT_HAS_LINKED_RECORDS' } }) as never);
+    const res = await deleteTeamAccount({ callerId: 'founder-1', targetUserId: 'sup-1', adminClient: client });
+    expect(res.status).toBe(409);
+    expect(res.body.error).toMatch(/linked to existing records.*account remains active/i);
+    expect(deleteUserSpy).not.toHaveBeenCalled();
+  });
+
   it('explains an unavailable deletion guard without removing the Auth account', async () => {
     const { client, deleteUserSpy, rpcSpy } = makeMockAdminClient();
     rpcSpy.mockImplementationOnce(async () => ({ data: null, error: { code: 'PGRST202', message: 'Could not find the function in the schema cache' } }) as never);
