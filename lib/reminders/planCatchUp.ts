@@ -25,11 +25,12 @@ function instant(value: unknown): Date | null {
 }
 
 /**
- * Proposed conservative policy, not active in production:
+ * Approved conservative policy, not active in production:
  * - Eligibility or schedule changes at/after 8 AM exclude that whole Manila
  *   day's slot. This avoids backfilling when a channel/invoice is re-enabled.
- * - A previous contact on/after the slot date covers that slot; and no new
- *   automatic contact is planned within 24 hours of a previous contact.
+ * - A previous contact on this channel on/after the slot date covers that slot;
+ *   and no new automatic contact is planned within 24 hours of a previous
+ *   contact on this same channel. Email and SMS are independent.
  * - An unresolved prior attempt blocks planning until reviewed.
  * Required timestamps must come from authoritative server-controlled sources;
  * null `lastContactAt` means an authoritative successful read found none.

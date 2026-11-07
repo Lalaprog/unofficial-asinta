@@ -1,0 +1,50 @@
+import { PGlite } from '@electric-sql/pglite';
+import { readFileSync } from 'node:fs';
+import { describe,expect,it } from 'vitest';
+const migration=readFileSync('supabase/staged/20261107000007_staged_team_access_revocation.sql','utf8');
+const founder='00000000-0000-4000-8000-000000000001', supervisor='00000000-0000-4000-8000-000000000002';
+describe('staged team access revocation',()=>{
+  it('preserves linked records, blocks current sessions through the assurance gate and audits atomically',async()=>{
+    const db=new PGlite();
+    try {
+      await db.exec(`create role anon; create role authenticated; create role service_role;
+        create schema auth; create schema app_private;
+        create table public.users(id uuid primary key, email text, role text);
+        create table public.audit_log(actor_id uuid, actor_email text, action text, table_name text,record_id uuid,before_row jsonb,after_row jsonb);
+        create table public.attendance(id int,recorded_by uuid references public.users(id));
+        create table public.restricted_example(id int);
+        insert into restricted_example values (1);
+        alter table restricted_example enable row level security;
+        grant usage on schema public to authenticated;
+        grant select on restricted_example to authenticated;
+        create table auth.mfa_factors(user_id uuid,status text);
+        create function auth.uid() returns uuid language sql stable as $$ select nullif(current_setting('test.uid',true),'')::uuid $$;
+        create function auth.jwt() returns jsonb language sql stable as $$ select jsonb_build_object('aal',current_setting('test.aal',true)) $$;
+        create function app_private.lock_founder_guard() returns void language sql as $$ select $$;
+        insert into public.users values ('${founder}','founder@example.test','founder'),('${supervisor}','s@example.test','supervisor');
+        insert into attendance values (1,'${supervisor}');`);
+      await db.exec(migration);
+      await db.exec(`create policy readable on public.restricted_example for select to authenticated using (true);
+        create policy assurance on public.restricted_example as restrictive for select to authenticated using (public.session_assurance_satisfied());`);
+      const allowed=async()=>(await db.query<{ok:boolean}>('select public.session_assurance_satisfied() ok')).rows[0].ok;
+      await db.exec(`set test.uid='${supervisor}';set test.aal='aal1'`);expect(await allowed()).toBe(true);
+      await db.exec(`insert into auth.mfa_factors values ('${supervisor}','verified')`);expect(await allowed()).toBe(false);
+      await db.exec(`set test.aal='aal2'`);expect(await allowed()).toBe(true);
+      await db.exec('set role authenticated');
+      expect((await db.query('select * from public.restricted_example')).rows).toHaveLength(1);
+      await expect(db.query('select * from public.team_access_revocations')).rejects.toThrow(/permission denied/i);
+      await expect(db.query('select public.revoke_supervisor_access_guarded($1,$2)',[founder,supervisor])).rejects.toThrow(/permission denied/i);
+      await db.exec('reset role; set role service_role');
+      const revoke=async(actor:string,target:string)=>(await db.query<{ok:boolean}>('select public.revoke_supervisor_access_guarded($1,$2) ok',[actor,target])).rows[0].ok;
+      await expect(revoke(supervisor,founder)).rejects.toThrow(/Founder/);
+      await expect(revoke(founder,founder)).rejects.toThrow(/own access/);
+      expect(await revoke(founder,supervisor)).toBe(true);expect(await revoke(founder,supervisor)).toBe(false);
+      await db.exec('reset role'); expect(await allowed()).toBe(false);
+      await db.exec('set role authenticated');expect((await db.query('select * from public.restricted_example')).rows).toHaveLength(0);await db.exec('reset role');
+      expect((await db.query('select * from public.users')).rows).toHaveLength(2);
+      expect((await db.query('select * from public.attendance')).rows).toHaveLength(1);
+      expect((await db.query('select * from public.audit_log')).rows).toHaveLength(1);
+      await expect(db.query('delete from public.users where id=$1',[supervisor])).rejects.toThrow(/foreign key/i);
+    } finally {await db.close();}
+  });
+});

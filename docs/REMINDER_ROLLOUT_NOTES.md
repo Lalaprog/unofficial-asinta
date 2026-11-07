@@ -18,17 +18,13 @@ or unreadable settings. Settings now lets a Founder save independent channel pre
   before each new send; work already in flight may finish. Treat unreadable
   settings as off, not as permission to send.
 - Wire up SMTP reminder delivery with the new no-send preparation helper, provider readiness checks, attempt logs and unique per-channel dispatch records. Preparation uses authoritative invoice, client, project and saved-template data and a best-effort change fingerprint; it does not lock data or authorize sending. Manual payment-email timeouts are shown as unconfirmed and are not retried with the same key. Unknown historical failed rows may still include ambiguous outcomes. Do not call SMTP or PhilSMS in tests except through mocks.
-- The channel-epoch migration adds server-controlled effective-enable timestamps for future catch-up decisions. Selecting a channel while the master is off does not start its epoch. Both epochs reset when the master is turned off, and each channel resets independently when disabled. The scheduler does not read these yet; the master remains locked off. Decide how to treat a scheduled slot on the same Manila day as activation before connecting them.
+- The hosted channel-epoch migration adds server-controlled effective-enable timestamps for future catch-up decisions. Selecting a channel while the master is off does not start its epoch. Both epochs reset when the master is turned off, and each channel resets independently when disabled. A separate staged invoice-epoch migration captures eligibility and due-date changes and conservatively seeds existing rows at migration time; it is not hosted. The scheduler reads neither yet; the master remains locked off.
 - Use Manila business hours and the approved schedule: three days before,
-  the due date, three days after, and weekly. The no-send `planCatchUp` proposes
-  a conservative policy: select the latest missed slot; skip a slot if a channel,
+  the due date, three days after, and weekly. The user approved a conservative catch-up policy: select the latest missed slot; skip a slot if a channel,
   invoice or due-date schedule became eligible at or after 8 a.m. that Manila
   day; respect pauses; do not send a slot already covered by a contact; wait at
-  least 24 hours since another contact; and block on unresolved attempts. This
-  policy is NOT connected to cron and needs review before use. It requires
-  reliable server-controlled invoice eligibility and schedule-change timestamps,
-  plus authoritative contact history; those sources do not exist yet. Historical
-  failed records can include ambiguous attempts and need conservative treatment.
+  least 24 hours since another contact on the same channel; and block on unresolved attempts. Email and SMS are independent and may both send for the same slot. This
+  policy is NOT connected to cron. The staged invoice timestamps and contact-history aggregate require a coordinated deployment and a complete history/recovery review; client-only SMS and historical ambiguous rows remain gaps.
 - A staged, **not hosted or wired** `reminder_delivery_coordination` migration
   and RPC wrapper provide one reservation per invoice and channel shared by
   manual and automatic requests. It deliberately does not expire reservations:
@@ -56,3 +52,10 @@ or unreadable settings. Settings now lets a Founder save independent channel pre
   workflow are reviewed together.
 
 - Vercel project metadata on 2026-11-06 listed no configured cron definitions. This does not rule out an external scheduler; check separately before activation.
+
+## Additional staged work (not deployed or connected)
+
+- A per-channel planner and dependency-injected single-attempt coordinator implement the approved policy and fail closed on ambiguous outcomes. Their tests use mocks; there is no live dispatcher adapter, provider I/O, batching, scheduler or send authorization here.
+- Staged slot-claim and manual-review SQL add durable unique invoice/channel/date claims and an explicit, audited reconciliation decision. A reviewer must verify the provider outcome and that no sender is still running; the database cannot prove either, and incorrect review can cause duplicates. The UI/API and review of historical attempts do not exist. Attempts, claims and reviews still cascade on invoice deletion, so their retention must be redesigned before deployment.
+- The staged aggregate scans channel-specific recorded contacts and flags ambiguous historical attempts, but cannot see client-only messages with no invoice ID, old unsaved attempts or provider activity outside the app. Existing manual senders do not use reservations. It cannot yet be treated as complete or race-free history.
+- No staged migrations in this section have been applied to the hosted database. Never run the full migration queue automatically.
