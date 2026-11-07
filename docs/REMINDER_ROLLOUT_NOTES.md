@@ -5,22 +5,18 @@ The existing scheduler remains SMS-only. A staged settings foundation adds a
 Founder-only saved master and channel preferences, with a database constraint
 that forces the master OFF until a separately reviewed rollout. The cron checks
 both the server switch and saved master/SMS settings, failing closed on missing
-or unreadable settings. No settings UI or automatic email delivery is present.
-Editing or previewing the reminder email template does not send a message.
+or unreadable settings. Settings now lets a Founder save independent channel preferences, but the master switch stays unavailable and off. Email preparation loads and validates authoritative data without sending; it is not connected to the cron. Automatic email delivery is not present. Editing or previewing the reminder email template does not send a message.
 
 ## Remaining work before the Founder switch is usable
 
 - The default-off, Founder-only settings storage and API exist as a foundation;
-  activation is deliberately blocked at both API and database level. Build the
-  settings UI and unlock it only alongside complete delivery safeguards. Preserve
-  manual sends and invoice-level pauses; show both-channel and SMS cost warnings.
+  activation is deliberately blocked at both API and database level. The staged
+  settings UI saves channel preferences only; unlock the master control only alongside complete delivery safeguards. Preserve manual sends and invoice-level pauses; show both-channel and SMS cost warnings.
 - SMS eligibility rejects unreadable amounts, unrecognized statuses and invalid pause dates instead of assuming an unpaid, unpaused invoice. After claiming a slot, it also rechecks prepared invoice, client, project, template and initial-email details, the sending window and saved settings. If details have changed or cannot be read, it skips instead of using the old message. Correcting a skipped slot may not make it retry that same day. These are best-effort checks, not locks: data or switches can still change after the last check (including during attempt logging), and a provider request already in flight cannot be recalled. They do not coordinate concurrent manual sends and do not complete the delivery pipeline.
 - Connect the switch to **both** dispatch paths. Recheck the master and channel
   before each new send; work already in flight may finish. Treat unreadable
   settings as off, not as permission to send.
-- Wire up SMTP reminder delivery with authoritative invoice data, the saved
-  reminder email, provider readiness checks, attempt logs and unique per-channel
-  dispatch records. Do not call SMTP or PhilSMS in tests except through mocks.
+- Wire up SMTP reminder delivery with the new no-send preparation helper, provider readiness checks, attempt logs and unique per-channel dispatch records. Preparation uses authoritative invoice, client, project and saved-template data and a best-effort change fingerprint; it does not lock data or authorize sending. Manual payment-email timeouts are shown as unconfirmed and are not retried with the same key. Unknown historical failed rows may still include ambiguous outcomes. Do not call SMTP or PhilSMS in tests except through mocks.
 - The channel-epoch migration adds server-controlled effective-enable timestamps for future catch-up decisions. Selecting a channel while the master is off does not start its epoch. Both epochs reset when the master is turned off, and each channel resets independently when disabled. The scheduler does not read these yet; the master remains locked off. Decide how to treat a scheduled slot on the same Manila day as activation before connecting them.
 - Use Manila business hours and the approved schedule: three days before,
   the due date, three days after, and weekly. `latestReminderSlot` is a tested

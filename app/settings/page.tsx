@@ -14,6 +14,7 @@ import { SmsTemplateCard } from '@/components/email/SmsTemplateCard';
 import { TestEmailCard } from '@/components/email/TestEmailCard';
 import { MfaCard } from '@/components/auth/MfaCard';
 import { WorkspaceHeader } from '@/components/ui/WorkspaceHeader';
+import { ReminderPreferences } from '@/components/reminders/ReminderPreferences';
 
 interface IntegrationStatus {
   groqModel?: string;
@@ -372,15 +373,7 @@ export default function SettingsPage() {
                   </div>
                 </div>
 
-                <div className="p-4 rounded-2xl bg-surface-inset/50 border border-surface-border space-y-2">
-                  <div className="flex items-center justify-between">
-                    <span className="font-bold text-navy">Automatic reminders</span>
-                    <Badge variant="neutral" size="sm">Not active</Badge>
-                  </div>
-                  <div className="text-ink-secondary">
-                    Automatic email and SMS reminders are still being prepared. Manual messages remain available.
-                  </div>
-                </div>
+                <ReminderPreferences />
               </div>
             </CardContent>
           </Card>

@@ -225,7 +225,7 @@ export async function createTeamAccount(params: {
     name: string;
     role: UserRole;
     temporaryPassword: string;
-  }) => Promise<{ accepted: boolean; error?: string }>;
+  }) => Promise<{ accepted: boolean; uncertain?: boolean; error?: string }>;
 }): Promise<
   AdminActionOutcome<{
     user?: User;
@@ -414,11 +414,13 @@ export async function createTeamAccount(params: {
       name,
       role,
       temporaryPassword: rawTempPassword,
-    }).catch(() => ({ accepted: false, error: 'Welcome email outcome is unconfirmed. Check your email provider before resending or sharing credentials.' }));
+    }).catch(() => ({ accepted: false, uncertain: true, error: 'Welcome email outcome is unconfirmed.' }));
     emailSent = mailOutcome.accepted;
     emailNote = mailOutcome.accepted
       ? `Welcome email with temporary password accepted by SMTP for ${email}.`
-      : mailOutcome.error || 'SMTP is not configured; share the temporary password directly with the team member.';
+      : mailOutcome.uncertain
+        ? 'Welcome email outcome is unconfirmed. Check your email provider before resending or sharing credentials.'
+        : mailOutcome.error || 'SMTP is not configured; share the temporary password directly with the team member.';
   } else {
     emailNote = 'Share the temporary password below with the team member. They will be prompted to set their own password on first sign-in.';
   }

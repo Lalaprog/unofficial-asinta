@@ -207,7 +207,7 @@ describe('sendRequestForPayment', () => {
 
   it('records failed sends with a safe error message', async () => {
     const deps = makeDeps(db, {
-      sendEmail: vi.fn(async () => ({ accepted: false, error: 'SMTP authentication failed. Verify SMTP_USER and SMTP_PASS on the server.' })),
+      sendEmail: vi.fn(async () => ({ accepted: false, uncertain: false, error: 'SMTP authentication failed. Verify SMTP_USER and SMTP_PASS on the server.' })),
     });
     const result = await sendRequestForPayment(deps, {
       invoiceId: 'invoice-1',
@@ -223,6 +223,41 @@ describe('sendRequestForPayment', () => {
     const log = db.tables.email_logs[0];
     expect(log.status).toBe('failed');
     expect(log.error_message).toContain('SMTP authentication failed');
+  });
+
+  it('retains an unconfirmed attempt and never repeats it after a timeout', async () => {
+    const deps = makeDeps(db, { sendEmail: vi.fn(async () => ({ accepted: false, uncertain: true, error: 'Timed out' })) });
+    const input = { invoiceId: 'invoice-1', idempotencyKey: 'key-timeout-01', sentBy: 'founder-1' };
+    const first = await sendRequestForPayment(deps, input);
+    expect(first.ok && first.status).toBe('unconfirmed');
+    expect(db.tables.email_logs[0].status).toBe('pending');
+    const again = await sendRequestForPayment(deps, input);
+    expect(again.ok && again.status).toBe('unconfirmed');
+    expect(again.ok && again.duplicate).toBe(true);
+    expect(deps.sendEmail).toHaveBeenCalledTimes(1);
+  });
+
+  it('treats a thrown provider error as unconfirmed and retains the key', async () => {
+    const deps = makeDeps(db, { sendEmail: vi.fn(async () => { throw Error('lost response'); }) });
+    const input = { invoiceId: 'invoice-1', idempotencyKey: 'key-throw-001', sentBy: 'founder-1' };
+    const first = await sendRequestForPayment(deps, input);
+    expect(first.ok && first.status).toBe('unconfirmed');
+    expect(db.tables.email_logs[0].status).toBe('pending');
+    await sendRequestForPayment(deps, input);
+    expect(deps.sendEmail).toHaveBeenCalledTimes(1);
+  });
+
+  it('reports when a provider result cannot be recorded in email history', async () => {
+    const deps = makeDeps(db); const from = db.from;
+    db.from = (table: string) => {
+      const query = from(table);
+      if (table === 'email_logs') query.update = () => ({ eq: () => ({ select: () => ({ maybeSingle: async () => ({data:null,error:{message:'unavailable'}}) }) }) });
+      return query;
+    };
+    const result = await sendRequestForPayment(deps, {invoiceId:'invoice-1',idempotencyKey:'key-log-0001',sentBy:'founder-1'});
+    expect(result.ok && result.status).toBe('accepted');
+    expect(result.ok && result.logUpdateFailed).toBe(true);
+    expect(db.tables.email_logs[0].status).toBe('pending');
   });
 
   it('never sends twice for the same idempotency key', async () => {

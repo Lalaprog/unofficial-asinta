@@ -87,7 +87,7 @@ export async function POST(req: NextRequest) {
 
     if (!result.accepted) {
       return NextResponse.json(
-        { accepted: false, error: result.error || 'The SMTP server rejected the test message.' },
+        { accepted: false, uncertain: Boolean(result.uncertain), error: result.uncertain ? 'Test email outcome is not confirmed. Check the recipient mailbox before retrying; it may have been sent.' : result.error || 'The mail server rejected the test message.' },
         { status: 502 }
       );
     }
@@ -100,6 +100,6 @@ export async function POST(req: NextRequest) {
       note: 'The SMTP server accepted the message. Acceptance is not proof of inbox delivery — check the recipient mailbox (including spam).',
     });
   } catch {
-    return NextResponse.json({ error: 'Failed to send the test email' }, { status: 500 });
+    return NextResponse.json({ error: 'Test email outcome is not confirmed. Check the recipient mailbox before retrying; it may have been sent.' }, { status: 500 });
   }
 }

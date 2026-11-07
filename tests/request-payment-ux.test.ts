@@ -64,6 +64,18 @@ describe('one-time invoice email editing',()=>{
     await screen.findByText(/invoice, recipient, or message has changed/);expect(confirm.checked).toBe(false);expect(confirm.disabled).toBe(true);
     fireEvent.click(screen.getByRole('button',{name:'Update Preview'}));await waitFor(()=>expect(confirm.disabled).toBe(false));expect(confirm.checked).toBe(false);
   });
+  it('warns about an unconfirmed send and does not offer an immediate new send', async () => {
+    vi.mocked(fetch).mockImplementation(async (url) => url === '/api/email/preview'
+      ? {ok:true,json:async()=>preview()} as Response
+      : {ok:true,json:async()=>({status:'unconfirmed',logUpdateFailed:false})} as Response);
+    render(React.createElement(RequestPaymentModal,{isOpen:true,onClose:vi.fn(),invoiceId:'inv-1'}));
+    await screen.findByText('Final Email Preview');
+    fireEvent.click(screen.getByRole('checkbox')); fireEvent.click(screen.getByRole('button',{name:'Confirm & Send Email'}));
+    await screen.findByText('Email outcome not confirmed');
+    expect(screen.getByText(/mail server may have accepted/)).toBeTruthy();
+    expect(screen.queryByRole('button',{name:'Prepare Another Send'})).toBeNull();
+  });
+
   it('does not allow an old preview response to replace a newer invoice', async () => {
     let resolveOld!: (response: Response) => void;
     vi.mocked(fetch).mockImplementation(async (_url, options) => {

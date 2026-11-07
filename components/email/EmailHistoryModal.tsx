@@ -16,7 +16,7 @@ interface EmailHistoryModalProps {
 }
 
 const STATUS_META: Record<EmailLogStatus, { label: string; variant: 'success' | 'warning' | 'danger' | 'neutral' | 'info' }> = {
-  pending: { label: 'Pending', variant: 'warning' },
+  pending: { label: 'Pending or unconfirmed', variant: 'warning' },
   accepted: { label: 'Accepted by mail server', variant: 'success' },
   failed: { label: 'Failed', variant: 'danger' },
   delivered: { label: 'Delivered (provider-confirmed)', variant: 'success' },
@@ -38,6 +38,7 @@ export const EmailHistoryModal: React.FC<EmailHistoryModalProps> = ({
   const { users } = useDataStore();
   const [logs, setLogs] = useState<EmailLog[]>([]);
   const [isLoading, setIsLoading] = useState(false);
+  const [loadError, setLoadError] = useState(false);
   const [expandedId, setExpandedId] = useState<string | null>(null);
   const [expandedTab, setExpandedTab] = useState<'html' | 'text'>('text');
 
@@ -45,6 +46,8 @@ export const EmailHistoryModal: React.FC<EmailHistoryModalProps> = ({
     if (!isOpen || !invoiceId) return;
     let active = true;
     setIsLoading(true);
+    setLoadError(false);
+    setLogs([]);
     setExpandedId(null);
 
     supabase
@@ -52,12 +55,13 @@ export const EmailHistoryModal: React.FC<EmailHistoryModalProps> = ({
       .select('*')
       .eq('invoice_id', invoiceId)
       .order('created_at', { ascending: false })
-      .then(({ data }: { data: unknown }) => {
+      .then(({ data, error }: { data: unknown; error: unknown }) => {
         if (active) {
-          setLogs(((data as EmailLog[] | null) ?? []) as EmailLog[]);
+          if (error || !Array.isArray(data)) setLoadError(true);
+          else setLogs(data as EmailLog[]);
           setIsLoading(false);
         }
-      });
+      }, () => { if (active) { setLoadError(true); setIsLoading(false); } });
 
     return () => {
       active = false;
@@ -77,6 +81,8 @@ export const EmailHistoryModal: React.FC<EmailHistoryModalProps> = ({
     >
       {isLoading ? (
         <div className="p-8 text-center text-xs text-ink-secondary">Loading email history…</div>
+      ) : loadError ? (
+        <div role="alert" className="p-8 text-center text-xs text-ink-secondary">Could not load email history. Close and reopen it to try again; do not assume no email was sent.</div>
       ) : logs.length === 0 ? (
         <div className="p-8 text-center text-xs text-ink-secondary">
           No billing emails have been sent for this invoice yet.
@@ -111,6 +117,7 @@ export const EmailHistoryModal: React.FC<EmailHistoryModalProps> = ({
                           SMTP Message ID: {log.provider_message_id}
                         </div>
                       )}
+                      {log.status === 'pending' && <div className="text-status-danger text-[11px]">The outcome may be unconfirmed. Check the mail server before sending again.</div>}
                       {log.error_message && (
                         <div className="text-status-danger text-[11px]">Error: {log.error_message}</div>
                       )}
