@@ -1,5 +1,4 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { runCoordinatedReminderScan } from '@/lib/reminders/runCoordinatedScan';
 import { createServiceRoleClient, isServiceRoleConfigured } from '@/lib/supabase/admin';
 import { deliverAndLogSMS } from '@/lib/sms/deliver';
 import { readReminderSettings } from '@/lib/reminders/settings';
@@ -52,13 +51,6 @@ function sameFields(before: Record<string, unknown> | null, after: Record<string
 async function runReminderCron(req: NextRequest) {
   if (!isAuthorizedCronRequest(req.headers.get('authorization'))) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
-  }
-
-  // Coordinated mode never falls back to the old SMS-only scheduler. The
-  // database still locks the Founder master OFF until a separate rollout.
-  if (process.env.REMINDER_COORDINATION_ENABLED === 'true') {
-    const {body,status}=await runCoordinatedReminderScan();
-    return NextResponse.json(body,{status});
   }
 
   if (!isGlobalAutomaticRemindersEnabled()) {

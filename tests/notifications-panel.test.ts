@@ -101,6 +101,21 @@ afterEach(() => {
 });
 
 describe('notification timestamp provenance', () => {
+  it('keeps the Founder overdue invoice notice and manual reminder action', async () => {
+    mocks.store.invoices = [
+      {id:'overdue', invoice_number:'INV-001', due_date:'2026-10-30', status:'pending', amount:1000, amount_paid:200},
+      {id:'paid', invoice_number:'INV-PAID', due_date:'2026-10-30', status:'paid', amount:1000, amount_paid:1000},
+    ];
+    const fetchSpy=vi.fn();vi.stubGlobal('fetch',fetchSpy);
+    render(React.createElement(Navbar));
+    const panel=await openPanel();
+    const notice=itemByTitle(panel,'Overdue Billing: INV-001');
+    expect(within(notice).getByText(/balance past due/)).toBeTruthy();
+    expect(within(notice).getByText('Collect or Send Reminder')).toBeTruthy();
+    expect(within(panel).queryByText(/INV-PAID/)).toBeNull();
+    expect(fetchSpy).not.toHaveBeenCalled();
+  });
+
   it('labels a site group with its newest stored event, not its first row or render time', async () => {
     setStore([storedEvent('old', age(7_200_000)), storedEvent('new', age(30_000))]);
     render(React.createElement(Navbar));

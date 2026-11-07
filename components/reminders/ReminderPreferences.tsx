@@ -66,7 +66,7 @@ export function ReminderPreferences() {
             <label className="flex items-center gap-2 text-navy"><input type="checkbox" checked={email} disabled={saving} onChange={(e) => setEmail(e.target.checked)} /> Email</label>
             <label className="flex items-center gap-2 text-navy"><input type="checkbox" checked={sms} disabled={saving} onChange={(e) => setSms(e.target.checked)} /> SMS</label>
           </div>
-          <p className="text-ink-muted">When available, reminders are planned for three days before, on the due date, three days after, and weekly thereafter, Monday–Saturday during Manila business hours. The planned automatic check runs only while a Founder has the app open and visible; reminders can be delayed when it is closed or asleep. SMS charges may apply.</p>
+          <p className="text-ink-muted">When available, reminders are planned for three days before, on the due date, three days after, and weekly thereafter, Monday–Saturday during Manila business hours. SMS charges may apply.</p>
           <Button type="button" size="sm" onClick={save} isLoading={saving} disabled={saving || (email === saved.email_enabled && sms === saved.sms_enabled)}>Save preferences</Button>
         </div>
       ) : <Button type="button" variant="secondary" size="sm" onClick={load}>Refresh preferences</Button>}

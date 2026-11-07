@@ -1,7 +1,4 @@
 import { NextRequest, NextResponse } from 'next/server';
-import {randomUUID} from 'node:crypto';
-import {createServiceRoleClient,isServiceRoleConfigured} from '@/lib/supabase/admin';
-import {coordinateManualDelivery} from '@/lib/reminders/manualDelivery';
 import { createServerSupabaseClient } from '@/lib/supabase/server';
 import { requireFounder } from '@/lib/auth/serverRole';
 import { deliverAndLogSMS } from '@/lib/sms/deliver';
@@ -62,7 +59,6 @@ export async function POST(req: NextRequest) {
 
     // Resolve the authoritative recipient server-side.
     let resolvedClientId = clientId;
-    let originalInvoice:Record<string,unknown>|null=null;
     if (invoiceId) {
       const { data: invoice } = await supabase
         .from('invoices')
@@ -79,7 +75,6 @@ export async function POST(req: NextRequest) {
         return NextResponse.json({ error: 'This invoice is not eligible for a payment reminder. Refresh its status and balance.' }, { status: 422 });
       }
       resolvedClientId = invoice.client_id;
-      originalInvoice = {...invoice};
     }
 
     const { data: client } = await supabase
@@ -101,32 +96,14 @@ export async function POST(req: NextRequest) {
 
     const recipientName = (client.contact_person || '').trim() || client.name;
 
-    // This default-off rollout flag must be switched only after the staged
-    // SQL, recovery UI and ALL senders are ready. Legacy cron fails closed
-    // while coordinated manual sends are enabled.
-    let outcome;
-    if (process.env.REMINDER_COORDINATION_ENABLED === 'true') {
-      if(!isServiceRoleConfigured() || !resolvedClientId) return NextResponse.json({error:'Message coordination is unavailable. No SMS was sent.'},{status:503});
-      const admin=createServiceRoleClient();
-      const originalClient={...client};
-      const coordinated=await coordinateManualDelivery({db:admin as any,invoiceId,clientId:resolvedClientId,channel:'sms',attemptId:randomUUID(),
-        deliver:(attemptId,checkHistory)=>deliverAndLogSMS({db:supabase,invoiceId,clientId:resolvedClientId!,reminderAttemptId:attemptId,recipient:recipientName,phone:normalizedPhone,message,
-          beforeSend:async()=>{
-            if(!await checkHistory(normalizedPhone))return false;
-            const [latestClient,latestInvoice]=await Promise.all([
-              supabase.from('clients').select('id, name, contact_person, phone').eq('id',resolvedClientId).maybeSingle(),
-              invoiceId?supabase.from('invoices').select('id, client_id, status, amount, amount_paid').eq('id',invoiceId).maybeSingle():Promise.resolve({data:null,error:null}),
-            ]);
-            return !latestClient.error && !latestInvoice.error && JSON.stringify(latestClient.data)===JSON.stringify(originalClient) &&
-              (!invoiceId || JSON.stringify(latestInvoice.data)===JSON.stringify(originalInvoice));
-          }}),
-        outcome:(result)=>result.cancelled || result.logWriteFailed || result.simulated?'cancelled':result.uncertain || result.logUpdateFailed?'unconfirmed':result.success?'accepted':'rejected',
-      });
-      if(coordinated.status!=='completed') return NextResponse.json({error:coordinated.status==='busy'?'Another message is in progress or needs review. Check message history before trying again.':coordinated.status==='unconfirmed'?'SMS outcome not confirmed. Check the dispatch log and provider before retrying; it may have been sent.':'Message coordination is unavailable. Check message history before trying again.'},{status:coordinated.status==='busy'?409:503});
-      outcome=coordinated.result;
-    } else {
-      outcome=await deliverAndLogSMS({db:supabase,invoiceId,recipient:recipientName,phone:normalizedPhone,message});
-    }
+    // Shared delivery + honest logging (see lib/sms/deliver.ts).
+    const outcome = await deliverAndLogSMS({
+      db: supabase,
+      invoiceId,
+      recipient: recipientName,
+      phone: normalizedPhone,
+      message,
+    });
 
     if (outcome.logWriteFailed) {
       return NextResponse.json({ error: outcome.error }, { status: 500 });

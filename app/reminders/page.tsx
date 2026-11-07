@@ -18,7 +18,6 @@ import { Modal } from '@/components/ui/Modal';
 import { WorkspaceHeader } from '@/components/ui/WorkspaceHeader';
 import { EmptyState } from '@/components/ui/EmptyState';
 import { ReminderQueueStatus } from '@/components/reminders/ReminderQueueStatus';
-import { ReminderDeliveryReview } from '@/components/reminders/ReminderDeliveryReview';
 import { useToast } from '@/components/ui/Toast';
 import { createClient } from '@/lib/supabase/client';
 import { buildReminderSMS, estimateSMSSegments } from '@/lib/sms/templates';
@@ -221,8 +220,6 @@ export default function RemindersPage() {
         {loadError && <div role="alert" className="rounded-xl border border-status-warning/30 bg-status-warning-bg p-4 text-xs text-navy flex flex-wrap items-center justify-between gap-3"><span>Some records could not be loaded. The reminder queue may be incomplete.</span><Button type="button" variant="secondary" size="sm" onClick={() => void refresh()}>Retry loading</Button></div>}
         {emailLookupCurrent && emailLookup.state === 'error' && <div role="alert" className="rounded-xl border border-status-warning/30 bg-status-warning-bg p-4 text-xs text-navy flex flex-wrap items-center justify-between gap-3"><span>Could not check the latest payment-request emails.</span><Button type="button" variant="secondary" size="sm" onClick={() => setEmailLookupRevision(revision => revision + 1)}>Retry email history</Button></div>}
         {dismissed.size > 0 && <div className="text-xs text-ink-secondary">{dismissed.size} reminder(s) hidden in this session. <button type="button" className="font-semibold text-navy underline" onClick={() => setDismissed(new Set())}>Restore hidden reminders</button></div>}
-
-        <ReminderDeliveryReview />
 
         {/* Queue */}
         <div className="space-y-4">
