@@ -32,7 +32,8 @@ interface PreviewResponse {
 }
 
 interface SendResponse {
-  status: 'accepted' | 'failed';
+  status: 'accepted' | 'failed' | 'unconfirmed';
+  logUpdateFailed?: boolean;
   statusLabel: string;
   duplicate: boolean;
   providerMessageId: string | null;
@@ -201,7 +202,7 @@ export const RequestPaymentModal: React.FC<RequestPaymentModalProps> = ({
       }
       setSendResult(data as SendResponse);
     } catch {
-      setError('Network error while sending the email');
+      setError('Email outcome not confirmed. Check email history and your mail server before retrying; the message may have been sent.');
     } finally {
       setIsSending(false);
     }
@@ -258,21 +259,19 @@ export const RequestPaymentModal: React.FC<RequestPaymentModalProps> = ({
                 </p>
               )}
               <p className="text-[11px] text-status-success">
-                Acceptance by the mail server is not proof of inbox delivery. The exact email
-                content has been stored in the invoice email history.
+                Acceptance by the mail server is not proof of inbox delivery. {sendResult.logUpdateFailed ? 'The email history status could not be updated; check it before sending again.' : 'The exact email content is stored in the invoice email history.'}
               </p>
             </div>
           ) : (
             <div className="p-5 rounded-2xl bg-status-danger-bg border border-status-danger/20 text-status-danger space-y-2">
               <div className="flex items-center space-x-2 font-bold text-sm">
                 <AlertCircle className="w-5 h-5" />
-                <span>Sending failed</span>
+                <span>{sendResult.status === 'unconfirmed' ? 'Email outcome not confirmed' : 'Sending failed'}</span>
               </div>
-              <p>{sendResult.error || 'The SMTP server rejected the message.'}</p>
-              <p className="text-[11px]">
-                The failed attempt was recorded in the email history. Fix the SMTP configuration or
-                recipient and try again.
-              </p>
+              {sendResult.status === 'unconfirmed' ? (
+                <p>The mail server may have accepted this email. Check email history and your sent mail before sending again.</p>
+              ) : <p>{sendResult.error || 'The mail server rejected the message.'}</p>}
+              {sendResult.logUpdateFailed && <p>The email history status could not be updated. Check it before trying again.</p>}
             </div>
           )}
 
@@ -280,9 +279,9 @@ export const RequestPaymentModal: React.FC<RequestPaymentModalProps> = ({
             <Button variant="secondary" size="sm" onClick={onClose}>
               Close
             </Button>
-            <Button variant="primary" size="sm" onClick={handlePrepareResend}>
+            {sendResult.status !== 'unconfirmed' && !sendResult.logUpdateFailed && <Button variant="primary" size="sm" onClick={handlePrepareResend}>
               Prepare Another Send
-            </Button>
+            </Button>}
           </div>
         </div>
       )}

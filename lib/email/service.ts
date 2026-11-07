@@ -166,8 +166,9 @@ export interface SendRequestForPaymentInput {
 export type SendRequestForPaymentResult =
   | {
       ok: true;
-      status: 'accepted' | 'failed';
+      status: 'accepted' | 'failed' | 'unconfirmed';
       logId: string;
+      logUpdateFailed?: boolean;
       providerMessageId?: string;
       /** Present when this key was already processed — nothing was re-sent. */
       duplicate?: boolean;
@@ -277,7 +278,7 @@ export async function sendRequestForPayment(
   if (existing) {
     return {
       ok: true,
-      status: existing.status === 'accepted' || existing.status === 'delivered' ? 'accepted' : 'failed',
+      status: existing.status === 'accepted' || existing.status === 'delivered' ? 'accepted' : existing.status === 'pending' ? 'unconfirmed' : 'failed',
       logId: existing.id,
       providerMessageId: existing.provider_message_id || undefined,
       duplicate: true,
@@ -317,7 +318,7 @@ export async function sendRequestForPayment(
     if (raced) {
       return {
         ok: true,
-        status: raced.status === 'accepted' || raced.status === 'delivered' ? 'accepted' : 'failed',
+        status: raced.status === 'accepted' || raced.status === 'delivered' ? 'accepted' : raced.status === 'pending' ? 'unconfirmed' : 'failed',
         logId: raced.id,
         providerMessageId: raced.provider_message_id || undefined,
         duplicate: true,
@@ -327,30 +328,40 @@ export async function sendRequestForPayment(
     return { ok: false, error: { status: 500, error: 'Failed to record the email log before sending' } };
   }
 
-  // 2. Send via SMTP.
-  const sendResult = await deps.sendEmail({
-    to: context.recipient,
-    subject: rendered.subject,
-    text: rendered.bodyText,
-    html: rendered.bodyHtml,
-  });
-
-  // 3. Update the log to accepted / failed.
+  // 2. A timeout or thrown transport error may follow provider acceptance.
+  // Keep the idempotency record pending and never automatically resend it.
+  let sendResult: SendEmailResult;
+  try {
+    sendResult = await deps.sendEmail({
+      to: context.recipient,
+      subject: rendered.subject,
+      text: rendered.bodyText,
+      html: rendered.bodyHtml,
+    });
+  } catch {
+    sendResult = { accepted: false, uncertain: true, error: 'Mail server acceptance was not confirmed.' };
+  }
+  const confirmedAccepted = sendResult?.accepted === true;
+  const uncertain = !confirmedAccepted && sendResult?.uncertain !== false;
   const nowIso = new Date().toISOString();
-  await deps.db
-    .from('email_logs')
-    .update(
-      sendResult.accepted
+  let logUpdateFailed = false;
+  try {
+    const { data: updatedLog, error } = await deps.db.from('email_logs').update(
+      confirmedAccepted
         ? { status: 'accepted', provider_message_id: sendResult.providerMessageId || null, sent_at: nowIso }
-        : { status: 'failed', error_message: sendResult.error || 'Unknown SMTP failure' }
-    )
-    .eq('id', pendingLog.id);
+        : uncertain
+          ? { status: 'pending', error_message: sendResult?.error || 'Mail server acceptance was not confirmed.' }
+          : { status: 'failed', error_message: sendResult?.error || 'Mail server rejected the message.' }
+    ).eq('id', pendingLog.id).select('id').maybeSingle();
+    logUpdateFailed = Boolean(error || !updatedLog);
+  } catch { logUpdateFailed = true; }
 
   return {
     ok: true,
-    status: sendResult.accepted ? 'accepted' : 'failed',
+    status: confirmedAccepted ? 'accepted' : uncertain ? 'unconfirmed' : 'failed',
     logId: pendingLog.id,
-    providerMessageId: sendResult.providerMessageId,
-    error: sendResult.accepted ? undefined : sendResult.error,
+    logUpdateFailed,
+    providerMessageId: confirmedAccepted ? sendResult.providerMessageId : undefined,
+    error: confirmedAccepted ? undefined : sendResult?.error,
   };
 }

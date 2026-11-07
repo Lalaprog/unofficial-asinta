@@ -44,6 +44,8 @@ export interface SendEmailParams {
 export interface SendEmailResult {
   /** true when the SMTP server ACCEPTED the message (not proof of delivery). */
   accepted: boolean;
+  /** The provider may have accepted the message despite a lost response. */
+  uncertain?: boolean;
   providerMessageId?: string;
   /** Safe, human-readable error. Never contains credentials. */
   error?: string;
@@ -130,9 +132,17 @@ export async function sendEmail(params: SendEmailParams): Promise<SendEmailResul
       html: params.html,
     });
 
+    if (!Array.isArray(info.accepted) || info.accepted.length === 0) {
+      return { accepted: false, uncertain: true, error: 'Mail server acceptance was not confirmed.' };
+    }
     return { accepted: true, providerMessageId: info.messageId || undefined };
   } catch (error) {
-    return { accepted: false, error: toSafeSmtpError(error) };
+    const err = error as { code?: string; responseCode?: number };
+    // Timeouts, disconnected sockets and unclassified errors can occur after
+    // acceptance. Only explicit SMTP/auth/envelope rejections are definite.
+    const transportLost = ['ETIMEDOUT', 'ESOCKET', 'ECONNECTION'].includes(err?.code || '');
+    const explicitRejection = !transportLost && (err?.code === 'EAUTH' || err?.code === 'EENVELOPE' || (typeof err?.responseCode === 'number' && err.responseCode >= 500 && err.responseCode < 600));
+    return { accepted: false, uncertain: !explicitRejection, error: toSafeSmtpError(error) };
   } finally {
     transporter.close();
   }

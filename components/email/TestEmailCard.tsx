@@ -65,7 +65,7 @@ export const TestEmailCard: React.FC = () => {
         message: `Accepted by mail server — the SMTP server accepted the test message for ${data.to}. Check the inbox (including spam) to confirm real delivery.`,
       });
     } catch {
-      setResult({ ok: false, message: 'Network error while sending the test email.' });
+      setResult({ ok: false, message: 'Test email outcome not confirmed. Check the recipient mailbox before retrying; it may have been sent.' });
     } finally {
       setIsSending(false);
     }

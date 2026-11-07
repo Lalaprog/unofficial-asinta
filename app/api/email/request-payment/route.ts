@@ -55,13 +55,14 @@ export async function POST(req: NextRequest) {
 
     return NextResponse.json({
       status: result.status,
-      statusLabel: result.status === 'accepted' ? 'Accepted by mail server' : 'Failed',
+      statusLabel: result.status === 'accepted' ? 'Accepted by mail server' : result.status === 'unconfirmed' ? 'Not confirmed' : 'Failed',
+      logUpdateFailed: Boolean(result.logUpdateFailed),
       logId: result.logId,
       providerMessageId: result.providerMessageId || null,
       duplicate: Boolean(result.duplicate),
       error: result.error || null,
     });
   } catch {
-    return NextResponse.json({ error: 'Failed to process the email request' }, { status: 500 });
+    return NextResponse.json({ error: 'Email outcome not confirmed. Check email history and the mail server before trying again; the message may have been sent.' }, { status: 500 });
   }
 }
