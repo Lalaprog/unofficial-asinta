@@ -59,7 +59,7 @@ describe('deliverAndLogSMS', () => {
     const outcome = await deliverAndLogSMS({
       db,
       ...base,
-      send: async () => ({ success: false, providerStatus: 'error', error: 'Invalid sender id' }),
+      send: async () => ({ success: false, uncertain: false, providerStatus: 'error', error: 'Invalid sender id' }),
     });
 
     expect(outcome.success).toBe(false);
@@ -94,6 +94,24 @@ describe('uncertain delivery', () => {
     expect(outcome.uncertain).toBe(true);
     expect(outcome.success).toBe(false);
     expect(db.tables.sms_logs[0]).toMatchObject({ status: 'pending', provider_status: 'unconfirmed', error_message: 'timeout' });
+  });
+
+  it('keeps a thrown or unclassified provider outcome pending', async () => {
+    for (const send of [async () => { throw Error('connection lost'); }, async () => ({success:false,error:'unknown'})]) {
+      const db = createFakeDb();
+      const outcome = await deliverAndLogSMS({db,...base,send});
+      expect(outcome.uncertain).toBe(true);
+      expect(db.tables.sms_logs[0]).toMatchObject({status:'pending',provider_status:'unconfirmed'});
+    }
+  });
+
+  it('warns when updating the log throws after provider acceptance', async () => {
+    const db = {from: () => ({
+      insert: () => ({select: () => ({single: async () => ({data:{id:'pending-1',status:'pending'},error:null})})}),
+      update: () => ({eq: () => ({select: () => ({single: async () => { throw Error('lost response'); }})})}),
+    })};
+    const outcome = await deliverAndLogSMS({db,...base,send:async()=>({success:true})});
+    expect(outcome.success).toBe(true); expect(outcome.logUpdateFailed).toBe(true); expect(outcome.log?.status).toBe('pending');
   });
 
   it('reports a failed final log write even when the provider accepted', async () => {

@@ -63,6 +63,11 @@ const num = (value: unknown): number => {
   const n = Number(value);
   return Number.isFinite(n) ? n : 0;
 };
+const invoiceAmount = (value: unknown): number => {
+  if (typeof value === 'number') return value;
+  if (typeof value !== 'string' || !/^[+-]?(?:\d+(?:\.\d*)?|\.\d+)$/.test(value.trim())) return NaN;
+  return Number(value);
+};
 
 /** Loads the authoritative invoice/client/project/template context. */
 export async function loadInvoiceEmailContext(
@@ -84,6 +89,10 @@ export async function loadInvoiceEmailContext(
   }
   if (invoice.status === 'cancelled') {
     return { ok: false, error: { status: 422, error: 'This invoice is cancelled — billing emails cannot be sent for it' } };
+  }
+  const amount = invoiceAmount(invoice.amount), amountPaid = invoiceAmount(invoice.amount_paid);
+  if (!Number.isFinite(amount) || !Number.isFinite(amountPaid) || amount < 0 || amountPaid < 0) {
+    return { ok: false, error: { status: 422, error: 'Invoice amounts could not be verified. Refresh the invoice before sending.' } };
   }
 
   const [{ data: client }, { data: project }] = await Promise.all([
@@ -125,8 +134,8 @@ export async function loadInvoiceEmailContext(
     projectName: project.name,
     invoiceNumber: invoice.invoice_number,
     issueDate: invoice.issue_date,
-    invoiceAmount: num(invoice.amount),
-    amountPaid: num(invoice.amount_paid),
+    invoiceAmount: amount,
+    amountPaid,
     dueDate: invoice.due_date,
     invoiceNotes: invoice.notes,
     firmEmail: deps.firmIdentity.replyTo || deps.firmIdentity.fromAddress,
@@ -136,7 +145,7 @@ export async function loadInvoiceEmailContext(
   return {
     ok: true,
     context: {
-      invoice: { ...invoice, amount: num(invoice.amount), amount_paid: num(invoice.amount_paid) },
+      invoice: { ...invoice, amount, amount_paid: amountPaid },
       client,
       project,
       template: {

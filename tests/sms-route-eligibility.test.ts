@@ -32,6 +32,15 @@ describe('manual invoice SMS eligibility', () => {
     expect(mock.deliver).not.toHaveBeenCalled();
   });
 
+  it.each([
+    {status:'unknown',amount:100,paid:0}, {status:'pending',amount:100,paid:null},
+    {status:'pending',amount:'',paid:0}, {status:'pending',amount:'100',paid:'bad'},
+    {status:'pending',amount:100,paid:-1}, {status:'pending',amount:-1,paid:0},
+  ])('fails closed on malformed invoice details %#', async ({status,amount,paid}) => {
+    Object.assign(db.tables.invoices[0],{status,amount,amount_paid:paid});
+    expect((await POST(request())).status).toBe(422); expect(mock.deliver).not.toHaveBeenCalled();
+  });
+
   it('allows a current unpaid invoice and resolves its registered recipient', async () => {
     expect((await POST(request())).status).toBe(200);
     expect(mock.deliver).toHaveBeenCalledWith(expect.objectContaining({ invoiceId: 'invoice', phone: '+639178421190' }));
