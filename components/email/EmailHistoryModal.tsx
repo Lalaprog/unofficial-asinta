@@ -85,7 +85,7 @@ export const EmailHistoryModal: React.FC<EmailHistoryModalProps> = ({
         <div role="alert" className="p-8 text-center text-xs text-ink-secondary">Could not load email history. Close and reopen it to try again; do not assume no email was sent.</div>
       ) : logs.length === 0 ? (
         <div className="p-8 text-center text-xs text-ink-secondary">
-          No billing emails have been sent for this invoice yet.
+          No billing email attempts are recorded here for this invoice.
         </div>
       ) : (
         <div className="space-y-3 text-xs">
@@ -109,7 +109,7 @@ export const EmailHistoryModal: React.FC<EmailHistoryModalProps> = ({
                       </div>
                       <div className="font-bold text-navy truncate">{log.subject}</div>
                       <div className="text-ink-secondary">
-                        To <span className="font-mono text-navy">{log.recipient}</span> · Sent by{' '}
+                        To <span className="font-mono text-navy">{log.recipient}</span> · Requested by{' '}
                         <span className="font-semibold text-navy">{senderName(log.sent_by)}</span>
                       </div>
                       {log.status === 'accepted' && log.provider_message_id && (

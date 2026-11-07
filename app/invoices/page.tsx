@@ -162,6 +162,7 @@ export default function InvoicesPage() {
   const smsSendLock = React.useRef(false);
   const smsPrepareVersion = React.useRef(0);
   const [smsSuccess, setSmsSuccess] = useState<string | null>(null);
+  const [smsEmailLookupFailed, setSmsEmailLookupFailed] = useState(false);
   const [smsMessage, setSmsMessage] = useState('');
   const [smsEditing, setSmsEditing] = useState(false);
   const supabaseBrowser = useMemo(() => createSupabaseBrowserClient(), []);
@@ -183,8 +184,9 @@ export default function InvoicesPage() {
     try { template = await loadSMSTemplate(); }
     catch { if (version === smsPrepareVersion.current) showToast('error', 'Could not load the saved SMS template. Try again.'); return; }
     let emailedOn: string | null = null;
+    let emailLookupFailed = false;
     try {
-      const { data } = await supabaseBrowser
+      const { data, error } = await supabaseBrowser
         .from('email_logs')
         .select('sent_at')
         .eq('invoice_id', inv.id)
@@ -193,12 +195,14 @@ export default function InvoicesPage() {
         .order('sent_at', { ascending: false })
         .limit(1)
         .maybeSingle();
+      if (error) throw error;
       emailedOn = (data as { sent_at: string | null } | null)?.sent_at ?? null;
     } catch {
-      emailedOn = null;
+      emailLookupFailed = true;
     }
 
     if (version !== smsPrepareVersion.current) return;
+    setSmsEmailLookupFailed(emailLookupFailed);
     setSelectedInvoice(inv);
     setSmsMessage(
       buildReminderSMS({
@@ -845,6 +849,7 @@ export default function InvoicesPage() {
                   </div>
                 </div>
 
+                {smsEmailLookupFailed && <p role="alert" className="text-status-warning">Could not verify the payment-request email history. The preview does not include an email date; check the history before sending if needed.</p>}
                 <div className="space-y-2">
                   <div className="text-xs font-semibold text-ink-secondary">Message preview</div>
                   <div className="max-h-40 overflow-y-auto whitespace-pre-wrap rounded-xl border border-surface-border bg-surface-inset p-3 text-ink-primary">{smsMessage || 'No message yet.'}</div>

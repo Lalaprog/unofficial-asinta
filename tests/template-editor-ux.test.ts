@@ -7,7 +7,7 @@ const toast = vi.hoisted(() => vi.fn());
 vi.mock('@/lib/data/store', () => ({ useDataStore: () => ({ invoices: [], clients: [] }) }));
 vi.mock('@/components/ui/Toast', () => ({ useToast: () => ({ showToast: toast }) }));
 import { TemplateEditorCard } from '@/components/email/TemplateEditorCard';
-const template = { template:{template_type:'initial_request',subject_template:'Subject',body_template:'Dear client,',version:2}, defaults:{subject_template:'Subject',body_template:'Dear client,'}, supportedPlaceholders:['client_contact_name','invoice_number','project_name','outstanding_balance','due_date'], importantPlaceholders:['invoice_number','project_name','outstanding_balance','due_date'], isSystemDefault:false };
+const template = { template:{id:'template-1',template_type:'initial_request',subject_template:'Subject',body_template:'Dear client,',version:2}, defaults:{subject_template:'Subject',body_template:'Dear client,'}, supportedPlaceholders:['client_contact_name','invoice_number','project_name','outstanding_balance','due_date'], importantPlaceholders:['invoice_number','project_name','outstanding_balance','due_date'], isSystemDefault:false };
 beforeEach(() => { toast.mockReset(); vi.stubGlobal('fetch', vi.fn(async (url: string, options?: RequestInit) => {
   if (url.startsWith('/api/email/templates') && !options?.method) return {ok:true,json:async()=>template};
   if (url === '/api/email/preview') { const input=JSON.parse(String(options?.body)); const rendered=renderEmail(input.subjectTemplate,input.bodyTemplate,SAMPLE_TEMPLATE_DATA); return {ok:true,json:async()=>({sample:true,...rendered,warnings:rendered.validation.missingImportantPlaceholders})}; }
@@ -66,13 +66,45 @@ describe('friendly email template editor', () => {
     expect(body.value).toBe('Dear ‹Client Name›, ‹Invoice Number›');
     fireEvent.click(screen.getByRole('button',{name:'Save New Version'}));
     await waitFor(()=>expect(vi.mocked(fetch).mock.calls.some(([,options])=>options?.method==='PUT')).toBe(true));
-    const put=vi.mocked(fetch).mock.calls.find(([,options])=>options?.method==='PUT')!;expect(JSON.parse(String(put[1]?.body)).body_template).toBe(existing.template.body_template);
+    const put=vi.mocked(fetch).mock.calls.find(([,options])=>options?.method==='PUT')!;
+    expect(JSON.parse(String(put[1]?.body))).toMatchObject({body_template:existing.template.body_template,expectedVersion:2,expectedTemplateId:'template-1'});
   });
   it('blocks preview and save if a field has been partly edited',async()=>{
     render(React.createElement(TemplateEditorCard));
     fireEvent.click(screen.getByRole('button',{name:'Edit & preview'}));const body=await screen.findByLabelText('Email message');fireEvent.change(body,{target:{value:'Hello ‹Client Nam›'}});
     fireEvent.click(screen.getByRole('button',{name:'Preview'}));expect(screen.getByText(/A field was changed/)).toBeTruthy();
     fireEvent.click(screen.getByRole('button',{name:'Save New Version'}));expect(vi.mocked(fetch).mock.calls.every(([url])=>String(url).startsWith('/api/email/templates'))).toBe(true);
+  });
+
+  it('requires a fresh read after an unconfirmed save before another save or restore', async () => {
+    let reads=0;
+    vi.mocked(fetch).mockImplementation(async (url,options)=>{
+      if (String(url).startsWith('/api/email/templates') && !options?.method) { reads++;return {ok:true,json:async()=>reads===1?template:{...template,template:{...template.template,body_template:'Saved elsewhere',version:3}}} as Response; }
+      if (options?.method === 'PUT') throw Error('response lost');
+      throw Error('unexpected request');
+    });
+    render(React.createElement(TemplateEditorCard));fireEvent.click(screen.getByRole('button',{name:'Edit & preview'}));
+    const body=await screen.findByLabelText('Email message');fireEvent.change(body,{target:{value:'My edits'}});
+    fireEvent.click(screen.getByRole('button',{name:'Save New Version'}));
+    await screen.findByText(/Save was not confirmed/);
+    expect((screen.getByRole('button',{name:'Save New Version'}) as HTMLButtonElement).disabled).toBe(true);
+    expect((screen.getByRole('button',{name:'Restore Default'}) as HTMLButtonElement).disabled).toBe(true);
+    expect((body as HTMLTextAreaElement).value).toBe('My edits');
+    fireEvent.click(screen.getByRole('button',{name:'Refresh template'}));
+    await waitFor(()=>expect((body as HTMLTextAreaElement).value).toBe('Saved elsewhere'));
+    expect((screen.getByRole('button',{name:'Save New Version'}) as HTMLButtonElement).disabled).toBe(false);
+  });
+  it('blocks retry after a conflicting reminder-template save until refreshed', async () => {
+    const saved={...template,template:{...template.template,template_type:'upcoming_reminder',version:4}};
+    vi.mocked(fetch).mockImplementation(async (_url,options)=>options?.method==='PUT'
+      ? {ok:false,status:409,json:async()=>({error:'Template changed elsewhere.'})} as Response
+      : {ok:true,json:async()=>saved} as Response);
+    render(React.createElement(TemplateEditorCard,{kind:'reminder'}));fireEvent.click(screen.getByRole('button',{name:'Edit & preview'}));
+    await screen.findByLabelText('Email message');fireEvent.click(screen.getByRole('button',{name:'Save New Version'}));
+    await screen.findByText('Template changed elsewhere.');
+    expect((screen.getByRole('button',{name:'Save New Version'}) as HTMLButtonElement).disabled).toBe(true);
+    fireEvent.click(screen.getByRole('button',{name:'Refresh template'}));
+    await waitFor(()=>expect((screen.getByRole('button',{name:'Save New Version'}) as HTMLButtonElement).disabled).toBe(false));
   });
 
   it('collapses without losing unsaved changes', async () => {

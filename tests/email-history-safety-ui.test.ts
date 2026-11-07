@@ -16,6 +16,6 @@ describe('email history safety',()=>{
  it('does not show an empty-history message when loading fails',async()=>{
   mock.response={data:null,error:{message:'offline'}};
   render(React.createElement(EmailHistoryModal,{isOpen:true,onClose:vi.fn(),invoiceId:'inv'}));
-  await screen.findByText(/Could not load email history/);expect(screen.queryByText(/No billing emails have been sent/)).toBeNull();
+  await screen.findByText(/Could not load email history/);expect(screen.queryByText(/No billing email attempts are recorded/)).toBeNull();
  });
 });

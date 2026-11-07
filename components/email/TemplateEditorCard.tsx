@@ -16,6 +16,7 @@ type EditorField = 'subject' | 'body';
 
 interface TemplateResponse {
   template: {
+    id?: string | null;
     template_type: string;
     subject_template: string;
     body_template: string;
@@ -25,6 +26,18 @@ interface TemplateResponse {
   supportedPlaceholders: string[];
   importantPlaceholders: string[];
   isSystemDefault: boolean;
+}
+
+function isTemplateResponse(value: unknown): value is TemplateResponse {
+  if (!value || typeof value !== 'object') return false;
+  const row = value as Record<string, any>;
+  return Boolean(row.template && typeof row.template.template_type === 'string' &&
+    (row.template.id === undefined || row.template.id === null || typeof row.template.id === 'string') &&
+    typeof row.template.subject_template === 'string' && typeof row.template.body_template === 'string' &&
+    Number.isSafeInteger(row.template.version) && row.template.version >= 0 &&
+    row.defaults && typeof row.defaults.subject_template === 'string' && typeof row.defaults.body_template === 'string' &&
+    Array.isArray(row.supportedPlaceholders) && row.supportedPlaceholders.every((field: unknown) => typeof field === 'string') &&
+    Array.isArray(row.importantPlaceholders) && row.importantPlaceholders.every((field: unknown) => typeof field === 'string') && typeof row.isSystemDefault === 'boolean');
 }
 
 interface PreviewState {
@@ -52,6 +65,8 @@ export const TemplateEditorCard: React.FC<{kind?: 'initial' | 'reminder'}> = ({k
   const [body, setBody] = useState('');
   const [warnings, setWarnings] = useState<string[]>([]);
   const [error, setError] = useState<string | null>(null);
+  const [needsRefresh, setNeedsRefresh] = useState(false);
+  const [isRefreshing, setIsRefreshing] = useState(false);
   const [isSaving, setIsSaving] = useState(false);
   const [isPreviewing, setIsPreviewing] = useState(false);
   const [preview, setPreview] = useState<PreviewState | null>(null);
@@ -93,6 +108,7 @@ export const TemplateEditorCard: React.FC<{kind?: 'initial' | 'reminder'}> = ({k
   };
 
   const loadTemplate = useCallback(async () => {
+    setIsRefreshing(true);
     try {
       const res = await fetch(endpoint, { cache: 'no-store' });
       const payload = await res.json().catch(() => null);
@@ -100,15 +116,17 @@ export const TemplateEditorCard: React.FC<{kind?: 'initial' | 'reminder'}> = ({k
         setError(payload?.error || 'Failed to load the email template');
         return;
       }
+      if (!isTemplateResponse(payload) || payload.template.template_type !== (reminder ? 'upcoming_reminder' : 'initial_request')) throw Error('invalid template');
       previewRevision.current += 1; setPreview(null);
       selections.current = { subject: null, body: null };
       setData(payload as TemplateResponse);
       setSubject(toFriendlyTemplate(payload.template.subject_template, payload.supportedPlaceholders));
       setBody(toFriendlyTemplate(payload.template.body_template, payload.supportedPlaceholders));
+      setError(null); setNeedsRefresh(false);
     } catch {
-      setError('Network error while loading the template');
-    }
-  }, [endpoint]);
+      setError('Could not load the template. Try refreshing it.');
+    } finally { setIsRefreshing(false); }
+  }, [endpoint, reminder]);
 
   useEffect(() => {
     loadTemplate();
@@ -163,7 +181,7 @@ export const TemplateEditorCard: React.FC<{kind?: 'initial' | 'reminder'}> = ({k
   };
 
   const handleSave = async () => {
-    if (saveLock.current) return;
+    if (saveLock.current || needsRefresh || isRefreshing) return;
     const parsed = parseEditor();
     if (!parsed) return;
     saveLock.current = true;
@@ -175,21 +193,25 @@ export const TemplateEditorCard: React.FC<{kind?: 'initial' | 'reminder'}> = ({k
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           template_type: reminder ? 'upcoming_reminder' : 'initial_request',
-          ...(reminder ? {version:data?.template.version} : {}),
+          ...(reminder ? {version:data?.template.version} : {expectedVersion:data?.template.version, expectedTemplateId:data?.template.id ?? null}),
           subject_template: parsed.subject,
           body_template: parsed.body,
         }),
       });
       const payload = await res.json().catch(() => null);
       if (!res.ok) {
-        setError(payload?.error || 'Failed to save the template');
+        if (res.status === 409 || !Number.isInteger(res.status) || res.status >= 500) setNeedsRefresh(true);
+        setError(payload?.error || 'Save was not confirmed. Refresh the template before trying again.');
         return;
       }
+      if (!Number.isSafeInteger(payload?.version) || payload.version < 1) throw Error('unconfirmed');
       setWarnings(payload.warnings || []);
       showToast('success', `Template saved as version ${payload.version}. Historical emails are unchanged.`);
+      setNeedsRefresh(true);
       await loadTemplate();
     } catch {
-      setError('Network error while saving the template');
+      setNeedsRefresh(true);
+      setError('Save was not confirmed. Refresh the template before trying again.');
     } finally {
       saveLock.current = false;
       setIsSaving(false);
@@ -197,7 +219,7 @@ export const TemplateEditorCard: React.FC<{kind?: 'initial' | 'reminder'}> = ({k
   };
 
   const handleRestoreDefault = async () => {
-    if (saveLock.current || !data) return;
+    if (saveLock.current || needsRefresh || isRefreshing || !data) return;
     saveLock.current = true;
     setIsRestoring(true);
     setError(null);
@@ -205,18 +227,21 @@ export const TemplateEditorCard: React.FC<{kind?: 'initial' | 'reminder'}> = ({k
       const res = await fetch(saveEndpoint, {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ template_type: reminder ? 'upcoming_reminder' : 'initial_request', restore_default: true, ...(reminder ? {version:data.template.version} : {}) }),
+        body: JSON.stringify({ template_type: reminder ? 'upcoming_reminder' : 'initial_request', restore_default: true, ...(reminder ? {version:data.template.version} : {expectedVersion:data.template.version, expectedTemplateId:data.template.id ?? null}) }),
       });
       const payload = await res.json().catch(() => null);
       if (!res.ok) {
-        setError(payload?.error || 'Failed to restore the default template');
+        if (res.status === 409 || !Number.isInteger(res.status) || res.status >= 500) { setNeedsRefresh(true); setShowRestoreConfirm(false); }
+        setError(payload?.error || 'Restore was not confirmed. Refresh the template before trying again.');
         return;
       }
+      if (!Number.isSafeInteger(payload?.version) || payload.version < 1) throw Error('unconfirmed');
       showToast('success', `System default restored as version ${payload.version}.`);
-      setShowRestoreConfirm(false);
+      setShowRestoreConfirm(false); setNeedsRefresh(true);
       await loadTemplate();
     } catch {
-      setError('Network error while restoring the default');
+      setNeedsRefresh(true); setShowRestoreConfirm(false);
+      setError('Restore was not confirmed. Refresh the template before trying again.');
     } finally {
       saveLock.current = false;
       setIsRestoring(false);
@@ -250,19 +275,24 @@ export const TemplateEditorCard: React.FC<{kind?: 'initial' | 'reminder'}> = ({k
           </div>
         )}
 
+        {(needsRefresh || (!data && error)) && <div className="rounded-xl border border-status-warning/30 bg-status-warning-bg p-3 space-y-2 text-ink-primary">
+          <p>{needsRefresh ? 'Refresh before saving again. This replaces the text here with the saved version; copy any edits you want to keep first.' : 'Try loading the template again.'}</p>
+          <Button type="button" variant="secondary" size="sm" onClick={() => void loadTemplate()} isLoading={isRefreshing} disabled={isRefreshing || isSaving || isRestoring}>Refresh template</Button>
+        </div>}
+
         {data && (
           <>
             <div className="rounded-xl border border-surface-border bg-surface-inset/60 p-4 space-y-3">
               <div><p className="text-sm font-bold text-navy">Insert a field</p><p className="mt-1 text-xs text-ink-secondary">Choose where to insert, place your cursor in the text, then select a field. Its value is filled in when the email is prepared.</p></div>
               <div className="flex flex-wrap items-center gap-2" aria-label="Field destination">
                 <span className="text-xs font-semibold text-ink-secondary">Insert into:</span>
-                {(['body', 'subject'] as const).map(field => <button key={field} type="button" aria-pressed={insertTarget === field} disabled={isSaving || isRestoring} onClick={() => setInsertTarget(field)} className={`min-h-11 sm:min-h-9 rounded-lg border px-3 text-xs font-semibold focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand ${insertTarget === field ? 'border-navy bg-navy text-white' : 'border-surface-border bg-white text-navy'}`}>{field === 'body' ? 'Message' : 'Subject'}</button>)}
+                {(['body', 'subject'] as const).map(field => <button key={field} type="button" aria-pressed={insertTarget === field} disabled={isSaving || isRestoring || isRefreshing} onClick={() => setInsertTarget(field)} className={`min-h-11 sm:min-h-9 rounded-lg border px-3 text-xs font-semibold focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand ${insertTarget === field ? 'border-navy bg-navy text-white' : 'border-surface-border bg-white text-navy'}`}>{field === 'body' ? 'Message' : 'Subject'}</button>)}
               </div>
               <div className="flex flex-wrap items-end gap-2">
-                <div className="min-w-0 flex-1 sm:max-w-xs"><Select label="Choose field" value={chosenField} onChange={event => setChosenField(event.target.value)} disabled={isSaving || isRestoring}>
+                <div className="min-w-0 flex-1 sm:max-w-xs"><Select label="Choose field" value={chosenField} onChange={event => setChosenField(event.target.value)} disabled={isSaving || isRestoring || isRefreshing}>
                   {data.supportedPlaceholders.map(placeholder => <option key={placeholder} value={placeholder}>{fieldLabel(placeholder)}</option>)}
                 </Select></div>
-                <Button type="button" variant="secondary" size="sm" disabled={isSaving || isRestoring} onClick={() => insertField(chosenField)}>Insert field</Button>
+                <Button type="button" variant="secondary" size="sm" disabled={isSaving || isRestoring || isRefreshing} onClick={() => insertField(chosenField)}>Insert field</Button>
               </div>
               <p className="text-xs text-ink-secondary">Fields appear as names in brackets, such as ‹Client Name›. Preview to see them filled in. To remove a field, delete its whole name and brackets. Project, invoice number, balance and due date are important billing details.</p>
             </div>
@@ -278,7 +308,7 @@ export const TemplateEditorCard: React.FC<{kind?: 'initial' | 'reminder'}> = ({k
               label="Email subject"
               ref={subjectRef}
               value={subject}
-              disabled={isSaving || isRestoring}
+              disabled={isSaving || isRestoring || isRefreshing}
               onFocus={e => { setInsertTarget('subject'); rememberSelection('subject', e.currentTarget); }}
               onSelect={e => rememberSelection('subject', e.currentTarget)}
               onChange={e => { setSubject(e.target.value); rememberSelection('subject', e.currentTarget); invalidatePreview(); }}
@@ -288,7 +318,7 @@ export const TemplateEditorCard: React.FC<{kind?: 'initial' | 'reminder'}> = ({k
               ref={bodyRef}
               rows={8}
               value={body}
-              disabled={isSaving || isRestoring}
+              disabled={isSaving || isRestoring || isRefreshing}
               onFocus={e => { setInsertTarget('body'); rememberSelection('body', e.currentTarget); }}
               onSelect={e => rememberSelection('body', e.currentTarget)}
               onChange={e => { setBody(e.target.value); rememberSelection('body', e.currentTarget); invalidatePreview(); }}
@@ -321,7 +351,7 @@ export const TemplateEditorCard: React.FC<{kind?: 'initial' | 'reminder'}> = ({k
                   size="sm"
                   onClick={handlePreview}
                   isLoading={isPreviewing}
-                  disabled={isSaving || isRestoring}
+                  disabled={isSaving || isRestoring || isRefreshing}
                   leftIcon={<Eye className="w-3.5 h-3.5" />}
                 >
                   Preview
@@ -331,7 +361,7 @@ export const TemplateEditorCard: React.FC<{kind?: 'initial' | 'reminder'}> = ({k
                   size="sm"
                   onClick={handleSave}
                   isLoading={isSaving}
-                  disabled={isRestoring}
+                  disabled={isRestoring || isRefreshing || needsRefresh}
                   leftIcon={<Save className="w-3.5 h-3.5" />}
                 >
                   Save New Version
@@ -340,7 +370,7 @@ export const TemplateEditorCard: React.FC<{kind?: 'initial' | 'reminder'}> = ({k
                   variant="ghost"
                   size="sm"
                   onClick={() => setShowRestoreConfirm(true)}
-                  disabled={isSaving || isRestoring}
+                  disabled={isSaving || isRestoring || isRefreshing || needsRefresh}
                   leftIcon={<RotateCcw className="w-3.5 h-3.5" />}
                 >
                   Restore Default

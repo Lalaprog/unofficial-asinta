@@ -59,10 +59,6 @@ export type ContextResult =
   | { ok: true; context: InvoiceEmailContext }
   | { ok: false; error: ServiceError };
 
-const num = (value: unknown): number => {
-  const n = Number(value);
-  return Number.isFinite(n) ? n : 0;
-};
 const invoiceAmount = (value: unknown): number => {
   if (typeof value === 'number') return value;
   if (typeof value !== 'string' || !/^[+-]?(?:\d+(?:\.\d*)?|\.\d+)$/.test(value.trim())) return NaN;
@@ -95,19 +91,21 @@ export async function loadInvoiceEmailContext(
     return { ok: false, error: { status: 422, error: 'Invoice amounts could not be verified. Refresh the invoice before sending.' } };
   }
 
-  const [{ data: client }, { data: project }] = await Promise.all([
+  const [clientResult, projectResult] = await Promise.all([
     deps.db.from('clients').select('*').eq('id', invoice.client_id).maybeSingle(),
     deps.db.from('projects').select('id, name').eq('id', invoice.project_id).maybeSingle(),
   ]);
+  const { data: client, error: clientError } = clientResult;
+  const { data: project, error: projectError } = projectResult;
 
-  if (!client) {
+  if (clientError || !client) {
     return { ok: false, error: { status: 422, error: 'The client linked to this invoice could not be loaded' } };
   }
-  if (!project) {
+  if (projectError || !project) {
     return { ok: false, error: { status: 422, error: 'The project linked to this invoice could not be loaded' } };
   }
 
-  const recipient = (client.email || '').trim();
+  const recipient = typeof client.email === 'string' ? client.email.trim() : '';
   if (!isValidEmail(recipient)) {
     return {
       ok: false,
@@ -115,13 +113,21 @@ export async function loadInvoiceEmailContext(
     };
   }
 
-  const { data: templateRow } = await deps.db
-    .from('email_templates')
-    .select('subject_template, body_template, version')
-    .eq('template_type', 'initial_request')
-    .eq('active', true)
-    .maybeSingle();
-
+  let templateRow: {subject_template: string; body_template: string; version: number; active: boolean} | null;
+  try {
+    const result = await deps.db.from('email_templates')
+      .select('subject_template, body_template, version, active')
+      .eq('template_type', 'initial_request').maybeSingle();
+    if (result.error || (result.data !== null && (!result.data || typeof result.data !== 'object' || Array.isArray(result.data)))) {
+      return {ok:false,error:{status:503,error:'The saved email template could not be checked. Refresh and try again.'}};
+    }
+    templateRow = result.data;
+  } catch {
+    return {ok:false,error:{status:503,error:'The saved email template could not be checked. Refresh and try again.'}};
+  }
+  if (templateRow && (templateRow.active !== true || typeof templateRow.subject_template !== 'string' || typeof templateRow.body_template !== 'string' || !Number.isSafeInteger(templateRow.version) || templateRow.version < 1)) {
+    return {ok:false,error:{status:503,error:'The saved email template needs attention in Settings.'}};
+  }
   const template = templateRow || {
     subject_template: DEFAULT_INITIAL_REQUEST_SUBJECT,
     body_template: DEFAULT_INITIAL_REQUEST_BODY,
@@ -151,7 +157,7 @@ export async function loadInvoiceEmailContext(
       template: {
         subject_template: template.subject_template,
         body_template: template.body_template,
-        version: num(template.version) || 1,
+        version: template.version,
       },
       templateData,
       recipient,
