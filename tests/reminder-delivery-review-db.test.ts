@@ -1,7 +1,7 @@
 import { PGlite } from '@electric-sql/pglite';
 import { readFileSync } from 'node:fs';
 import {describe,expect,it} from 'vitest';
-const coordination=readFileSync('supabase/migrations/20261107000005_reminder_delivery_coordination.sql','utf8');
+const coordination=readFileSync('supabase/staged/20261107000005_reminder_delivery_coordination.sql','utf8');
 const review=readFileSync('supabase/staged/20261107000009_staged_reminder_review.sql','utf8');
 const invoice='00000000-0000-4000-8000-000000000001',founder='00000000-0000-4000-8000-000000000002',supervisor='00000000-0000-4000-8000-000000000003',attempt='00000000-0000-4000-8000-000000000004',next='00000000-0000-4000-8000-000000000005';
 describe('staged manual delivery review',()=>{

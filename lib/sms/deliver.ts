@@ -29,6 +29,10 @@ export interface DeliverAndLogSMSParams {
   phone: string;
   message: string;
   invoiceId?: string | null;
+  /** Staged coordination ledger link; omitted for existing manual sends. */
+  reminderAttemptId?: string;
+  /** Optional last authorization check after logging, before provider I/O. */
+  beforeSend?: () => Promise<boolean>;
   /** Injection point for tests. Defaults to the real PhilSMS gateway. */
   send?: (params: { recipient: string; phone: string; message: string }) => Promise<SendSMSResult>;
 }
@@ -46,6 +50,8 @@ export interface DeliverAndLogSMSResult {
   log: Row | null;
   /** Set when the attempt could not even be recorded, so nothing was sent. */
   logWriteFailed?: boolean;
+  /** The final check refused the send; no provider call occurred. */
+  cancelled?: boolean;
 }
 
 export async function deliverAndLogSMS(
@@ -57,6 +63,7 @@ export async function deliverAndLogSMS(
     .from('sms_logs')
     .insert({
       invoice_id: params.invoiceId ?? null,
+      ...(params.reminderAttemptId ? {reminder_attempt_id:params.reminderAttemptId} : {}),
       recipient: params.recipient,
       phone: params.phone,
       message: params.message,
@@ -79,6 +86,19 @@ export async function deliverAndLogSMS(
       log: null,
       logWriteFailed: true,
     };
+  }
+
+  if (params.beforeSend) {
+    let ready = false;
+    try { ready = await params.beforeSend() === true; } catch { /* fail closed */ }
+    if (!ready) {
+      let logUpdateFailed = false;
+      try {
+        const { data, error } = await params.db.from('sms_logs').update({status:'failed',error_message:'Not sent: reminder details or settings could not be verified.',updated_at:new Date().toISOString()}).eq('id',pendingLog.id).select('*').maybeSingle();
+        logUpdateFailed = Boolean(error || !data);
+      } catch { logUpdateFailed = true; }
+      return {success:false,simulated:false,uncertain:false,cancelled:true,logUpdateFailed,statusLabel:'Not sent',error:'Reminder details or settings could not be verified.',providerStatus:null,providerMessageId:null,logId:pendingLog.id,log:pendingLog};
+    }
   }
 
   let result: SendSMSResult;

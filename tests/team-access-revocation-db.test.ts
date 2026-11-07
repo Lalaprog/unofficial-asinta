@@ -12,6 +12,10 @@ describe('staged team access revocation',()=>{
         create table public.users(id uuid primary key, email text, role text);
         create table public.audit_log(actor_id uuid, actor_email text, action text, table_name text,record_id uuid,before_row jsonb,after_row jsonb);
         create table public.attendance(id int,recorded_by uuid references public.users(id));
+        create table public.projects(id uuid primary key);
+        create table public.project_supervisors(project_id uuid, supervisor_id uuid);
+        insert into public.projects values ('00000000-0000-4000-8000-000000000003');
+        insert into public.project_supervisors values ('00000000-0000-4000-8000-000000000003','${supervisor}');
         create table public.restricted_example(id int);
         insert into restricted_example values (1);
         alter table restricted_example enable row level security;
@@ -24,12 +28,14 @@ describe('staged team access revocation',()=>{
         insert into public.users values ('${founder}','founder@example.test','founder'),('${supervisor}','s@example.test','supervisor');
         insert into attendance values (1,'${supervisor}');`);
       await db.exec(migration);
+      await db.exec('create trigger check_founder_after_update after update on public.users referencing old table as old_user_rows for each statement execute function app_private.check_founder_after_update()');
       await db.exec(`create policy readable on public.restricted_example for select to authenticated using (true);
         create policy assurance on public.restricted_example as restrictive for select to authenticated using (public.session_assurance_satisfied());`);
       const allowed=async()=>(await db.query<{ok:boolean}>('select public.session_assurance_satisfied() ok')).rows[0].ok;
       await db.exec(`set test.uid='${supervisor}';set test.aal='aal1'`);expect(await allowed()).toBe(true);
       await db.exec(`insert into auth.mfa_factors values ('${supervisor}','verified')`);expect(await allowed()).toBe(false);
       await db.exec(`set test.aal='aal2'`);expect(await allowed()).toBe(true);
+      await db.query('select app_private.lock_project_worker_access($1,$2)',[supervisor,'00000000-0000-4000-8000-000000000003']);
       await db.exec('set role authenticated');
       expect((await db.query('select * from public.restricted_example')).rows).toHaveLength(1);
       await expect(db.query('select * from public.team_access_revocations')).rejects.toThrow(/permission denied/i);
@@ -40,10 +46,13 @@ describe('staged team access revocation',()=>{
       await expect(revoke(founder,founder)).rejects.toThrow(/own access/);
       expect(await revoke(founder,supervisor)).toBe(true);expect(await revoke(founder,supervisor)).toBe(false);
       await db.exec('reset role'); expect(await allowed()).toBe(false);
+      await expect(db.query('select app_private.lock_project_worker_access($1,$2)',[supervisor,'00000000-0000-4000-8000-000000000003'])).rejects.toThrow(/Project access required/);
       await db.exec('set role authenticated');expect((await db.query('select * from public.restricted_example')).rows).toHaveLength(0);await db.exec('reset role');
       expect((await db.query('select * from public.users')).rows).toHaveLength(2);
       expect((await db.query('select * from public.attendance')).rows).toHaveLength(1);
       expect((await db.query('select * from public.audit_log')).rows).toHaveLength(1);
+      await expect(db.query("update public.users set role='founder' where id=$1",[supervisor])).rejects.toThrow(/blocked account/i);
+      await expect(db.query("update public.users set role='supervisor' where id=$1",[founder])).rejects.toThrow(/last Founder/i);
       await expect(db.query('delete from public.users where id=$1',[supervisor])).rejects.toThrow(/foreign key/i);
     } finally {await db.close();}
   });

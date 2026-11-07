@@ -9,7 +9,7 @@ import { addDaysIso, getManilaClock, isWithinSendingHours } from './scheduler';
 export type CatchUpPlan = { ok: true; slot: ReminderSlot } | { ok: false; reason: string };
 
 // Only unambiguous, valid ISO instants with an explicit timezone are accepted.
-function instant(value: unknown): Date | null {
+export function parseReminderInstant(value: unknown): Date | null {
   if (typeof value !== 'string') return null;
   const match = /^(\d{4}-\d{2}-\d{2})T(\d{2}):(\d{2}):(\d{2})(?:\.\d{1,9})?(Z|[+-]\d{2}:\d{2})$/.exec(value);
   if (!match) return null;
@@ -50,10 +50,10 @@ export function planCatchUp(params: {
   if (typeof params.unresolvedAttempt !== 'boolean') return {ok:false,reason:'contact_history_unavailable'};
   if (!isWithinSendingHours(params.now)) return {ok:false,reason:'outside_sending_hours'};
   const nowMs = params.now.getTime();
-  const epochs = [params.channelEffectiveSince, params.invoiceEffectiveSince, params.scheduleEffectiveSince].map(instant);
+  const epochs = [params.channelEffectiveSince, params.invoiceEffectiveSince, params.scheduleEffectiveSince].map(parseReminderInstant);
   if (epochs.some(value => !value || value.getTime() > nowMs)) return {ok:false,reason:'eligibility_history_unavailable'};
   if (params.pausedUntil !== null) {
-    const pause = instant(params.pausedUntil);
+    const pause = parseReminderInstant(params.pausedUntil);
     if (!pause) return {ok:false,reason:'invalid_pause'};
     if (pause.getTime() > nowMs) return {ok:false,reason:'invoice_paused'};
     epochs.push(pause);
@@ -61,7 +61,7 @@ export function planCatchUp(params: {
   if (params.unresolvedAttempt) return {ok:false,reason:'unresolved_attempt'};
   let lastContact: Date | null = null;
   if (params.lastContactAt !== null) {
-    lastContact = instant(params.lastContactAt);
+    lastContact = parseReminderInstant(params.lastContactAt);
     if (!lastContact || lastContact.getTime() > nowMs) return {ok:false,reason:'contact_history_unavailable'};
   }
   // For eligibility at or after 8:00, exclude the date itself. This also

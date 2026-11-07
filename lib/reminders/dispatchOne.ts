@@ -10,7 +10,7 @@ import type { CatchUpPlan } from './planCatchUp';
 
 type Channel = 'email'|'sms';
 type Slot = Extract<CatchUpPlan,{ok:true}>['slot'];
-type Snapshot = Parameters<typeof planReminderChannels>[0] & {
+export type DispatchSnapshot = Parameters<typeof planReminderChannels>[0] & {
   /** Fingerprint of recipient, message, invoice, template and provider-relevant data. */
   fingerprint: string;
   /** True only when a fresh check confirms this specific provider is configured. */
@@ -19,23 +19,24 @@ type Snapshot = Parameters<typeof planReminderChannels>[0] & {
 type Outcome = 'accepted'|'rejected'|'cancelled'|'unconfirmed';
 type Dependencies = {
   // Returns null on ANY unreadable/incomplete data, including history.
-  read: () => Promise<Snapshot | null>;
+  read: () => Promise<DispatchSnapshot | null>;
   reserve: (attemptId:string) => Promise<'reserved'|'busy'|'duplicate'|'unavailable'>;
   // Atomically insert a unique invoice/channel/scheduled-slot dispatch record.
   // A lost response is unavailable, not success. No provider call without claimed.
   claim: (slot:Slot,attemptId:string) => Promise<'claimed'|'duplicate'|'unavailable'>;
-  // Only return rejected for a definite rejection; ambiguous results are unconfirmed.
-  send: (snapshot:Snapshot) => Promise<'accepted'|'rejected'|'unconfirmed'>;
+  // Only return rejected for a definite provider rejection; cancelled is
+  // allowed only when no provider call was made. Ambiguity is unconfirmed.
+  send: (snapshot:DispatchSnapshot) => Promise<'accepted'|'rejected'|'cancelled'|'unconfirmed'>;
   finish: (attemptId:string,outcome:Outcome) => Promise<boolean>;
 };
 export type DispatchOneResult = {outcome:string; slot?:Slot; lockUnconfirmed?:boolean};
 
-function candidate(snapshot:Snapshot | null,channel:Channel): {snapshot:Snapshot;slot:Slot}|null {
+function candidate(snapshot:DispatchSnapshot | null,channel:Channel): {snapshot:DispatchSnapshot;slot:Slot}|null {
   if (!snapshot || snapshot.providerReady !== true || typeof snapshot.fingerprint !== 'string' || !snapshot.fingerprint) return null;
   const result=planReminderChannels(snapshot)[channel];
   return result.ok ? {snapshot,slot:result.slot}:null;
 }
-function same(a:{snapshot:Snapshot;slot:Slot},b:{snapshot:Snapshot;slot:Slot}|null):boolean {
+function same(a:{snapshot:DispatchSnapshot;slot:Slot},b:{snapshot:DispatchSnapshot;slot:Slot}|null):boolean {
   return Boolean(b && a.slot.type===b.slot.type && a.slot.scheduledDate===b.slot.scheduledDate && a.snapshot.fingerprint===b.snapshot.fingerprint);
 }
 
@@ -63,7 +64,7 @@ export async function dispatchOne(params:{channel:Channel;attemptId:string;deps:
     if (!same(initial,final) || !final) return await cancel('changed_or_unavailable');
     started=true;
     const result=await deps.send(final.snapshot);
-    const outcome:Outcome=result==='accepted'||result==='rejected'?result:'unconfirmed';
+    const outcome:Outcome=result==='accepted'||result==='rejected'||result==='cancelled'?result:'unconfirmed';
     const settled=await finish(outcome);
     return {outcome,slot:initial.slot,...(!settled?{lockUnconfirmed:true}:{})};
   } catch {

@@ -30,9 +30,7 @@ or unreadable settings. Settings now lets a Founder save independent channel pre
   manual and automatic requests. It deliberately does not expire reservations:
   crashes or unconfirmed provider results block that channel indefinitely.
   A safe, usable human review/recovery workflow is needed before integration;
-  simply releasing an old claim can duplicate an in-flight send. Its attempt rows
-  cascade if an invoice is deleted; review that retention/deletion choice before
-  deployment. Callers must reserve before any provider I/O, settle only known
+  simply releasing an old claim can duplicate an in-flight send. The staged version now retains attempts after invoice deletion and blocks deletion while a channel has an active or unconfirmed attempt. This deliberately changes invoice deletion behavior and needs product/rollout review before deployment. Callers must reserve before any provider I/O, settle only known
   outcomes, handle lost RPC responses as unconfirmed, and use durable per-attempt
   IDs. Client-only SMS without an invoice, other sending paths, cross-channel
   timing, already-open deployments, and provider-side retries do not magically
@@ -55,7 +53,13 @@ or unreadable settings. Settings now lets a Founder save independent channel pre
 
 ## Additional staged work (not deployed or connected)
 
-- A per-channel planner and dependency-injected single-attempt coordinator implement the approved policy and fail closed on ambiguous outcomes. Their tests use mocks; there is no live dispatcher adapter, provider I/O, batching, scheduler or send authorization here.
-- Staged slot-claim and manual-review SQL add durable unique invoice/channel/date claims and an explicit, audited reconciliation decision. A reviewer must verify the provider outcome and that no sender is still running; the database cannot prove either, and incorrect review can cause duplicates. The UI/API and review of historical attempts do not exist. Attempts, claims and reviews still cascade on invoice deletion, so their retention must be redesigned before deployment.
+- A per-channel planner, a single-invoice integrated dispatcher and injected email/SMS delivery adapters implement the approved policy, log before provider I/O and recheck after logging. Tests use mocked providers and a disposable database; no route calls these adapters, and batching, scheduler and rollout authorization remain unfinished.
+- Staged slot-claim and manual-review SQL add durable unique invoice/channel/date claims and an explicit, audited reconciliation decision. A reviewer must verify the provider outcome and that no sender is still running; the database cannot prove either, and incorrect review can cause duplicates. The UI/API and review of historical attempts do not exist. The staged retention design retains attempts, claims and reviews after a completed invoice deletion, but blocks deletion while an attempt is active or unconfirmed. Review the user-facing deletion behavior before deployment.
 - The staged aggregate scans channel-specific recorded contacts and flags ambiguous historical attempts, but cannot see client-only messages with no invoice ID, old unsaved attempts or provider activity outside the app. Existing manual senders do not use reservations. It cannot yet be treated as complete or race-free history.
 - No staged migrations in this section have been applied to the hosted database. Never run the full migration queue automatically.
+
+- All new SQL, including the earlier unhosted coordination file, is in `supabase/staged/` rather than the migration queue. No hosted migration was applied. The integrated test uses PGlite plus mocked providers; real PostgreSQL concurrency tests cover reservation/deletion, but do not prove hosted Auth, PostgREST, provider or scheduler behavior.
+
+## Team-access review snapshot (2026-11-07)
+
+Read-only hosted metadata showed 23 authenticated-accessible public relations with RLS and assurance-based restrictive policies. Project worker assignments are SELECT-only to authenticated users; the users profile has an intentional own-profile bootstrap exception. Reviewed hosted financial definer functions checked `is_founder()`, and `visible_projects()` used the guarded role/scope helpers. Four receipt Storage policies used `is_founder()`. These observations are not a permanent guarantee: future grants, policies, definer bodies, exposed schemas, buckets and service-role routes require another review at deployment. Current worker-registration service calls can already be in flight when access changes; existing signed URLs and already-copied data cannot be recalled. The staged DB design and Auth-ban wrapper are not exposed or deployed, and real Auth ban/recovery is unverified.

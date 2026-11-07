@@ -18,6 +18,9 @@ CREATE FUNCTION public.revoke_supervisor_access_guarded(p_actor uuid, p_target u
 RETURNS boolean LANGUAGE plpgsql SECURITY DEFINER SET search_path = '' AS $$
 DECLARE v_actor_email text; v_target public.users%ROWTYPE;
 BEGIN
+  IF current_setting('transaction_isolation') <> 'read committed' THEN
+    RAISE EXCEPTION 'TEAM_ACCESS_REQUIRES_READ_COMMITTED' USING ERRCODE='P1002';
+  END IF;
   PERFORM app_private.lock_founder_guard();
   SELECT email INTO v_actor_email FROM public.users
     WHERE id=p_actor AND role='founder'
@@ -57,3 +60,47 @@ RETURNS boolean LANGUAGE sql STABLE SECURITY DEFINER SET search_path = '' AS $$
 $$;
 REVOKE ALL ON FUNCTION public.session_assurance_satisfied() FROM PUBLIC, anon;
 GRANT EXECUTE ON FUNCTION public.session_assurance_satisfied() TO authenticated;
+
+-- The service-role worker assignment RPCs bypass RLS. Serialize their access
+-- check with revocation using the same user-row lock. A call already holding
+-- the share lock finishes before revocation commits; a later call must see the
+-- revocation. Other service-role operations still need independent review.
+CREATE OR REPLACE FUNCTION app_private.lock_project_worker_access(p_actor uuid, p_project uuid)
+RETURNS void LANGUAGE plpgsql SECURITY DEFINER SET search_path = pg_catalog, pg_temp AS $$
+DECLARE v_role text;
+BEGIN
+  IF current_setting('transaction_isolation') <> 'read committed' THEN
+    RAISE EXCEPTION 'TEAM_ACCESS_REQUIRES_READ_COMMITTED' USING ERRCODE='P1002';
+  END IF;
+  SELECT role INTO v_role FROM public.users WHERE id=p_actor FOR SHARE;
+  IF v_role IS NULL OR v_role NOT IN ('founder','supervisor') OR
+     EXISTS (SELECT 1 FROM public.team_access_revocations WHERE user_id=p_actor) THEN
+    RAISE EXCEPTION 'Project access required' USING ERRCODE='42501';
+  END IF;
+  PERFORM id FROM public.projects WHERE id=p_project FOR KEY SHARE;
+  IF NOT FOUND THEN RAISE EXCEPTION 'Project not found' USING ERRCODE='22023'; END IF;
+  IF v_role='supervisor' THEN
+    PERFORM 1 FROM public.project_supervisors WHERE supervisor_id=p_actor AND project_id=p_project FOR KEY SHARE;
+    IF NOT FOUND THEN RAISE EXCEPTION 'Project access required' USING ERRCODE='42501'; END IF;
+  END IF;
+END;
+$$;
+REVOKE ALL ON FUNCTION app_private.lock_project_worker_access(uuid,uuid) FROM PUBLIC,anon,authenticated,service_role;
+
+-- Keep a blocked Supervisor from being promoted to Founder through either the
+-- guarded API or a direct allowed users UPDATE. This replaces the existing
+-- statement-trigger function, preserving the original last-Founder guard.
+-- The existing check_founder_after_update trigger MUST be verified at rollout.
+CREATE OR REPLACE FUNCTION app_private.check_founder_after_update()
+RETURNS trigger LANGUAGE plpgsql SECURITY DEFINER SET search_path = pg_catalog, pg_temp AS $$
+BEGIN
+  IF EXISTS (SELECT 1 FROM old_user_rows WHERE role = 'founder') AND
+     NOT EXISTS (SELECT 1 FROM public.users WHERE role = 'founder') THEN
+    RAISE EXCEPTION 'Cannot remove the last Founder account.' USING ERRCODE = '23514';
+  END IF;
+  IF EXISTS (SELECT 1 FROM public.users u JOIN public.team_access_revocations r ON r.user_id=u.id WHERE u.role='founder') THEN
+    RAISE EXCEPTION 'A blocked account cannot become a Founder.' USING ERRCODE = '23514';
+  END IF;
+  RETURN NULL;
+END;
+$$;

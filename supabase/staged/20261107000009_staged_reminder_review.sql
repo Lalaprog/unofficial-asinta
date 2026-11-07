@@ -3,7 +3,7 @@
 -- no sender can still be running AND the provider outcome; a mistaken review
 -- can cause a duplicate message. This does not prove final delivery.
 CREATE TABLE public.reminder_delivery_reviews (
-  attempt_id uuid PRIMARY KEY REFERENCES public.reminder_delivery_attempts(attempt_id) ON DELETE CASCADE,
+  attempt_id uuid PRIMARY KEY REFERENCES public.reminder_delivery_attempts(attempt_id) ON DELETE RESTRICT,
   reviewer_id uuid NOT NULL REFERENCES public.users(id) ON DELETE RESTRICT,
   reviewed_at timestamptz NOT NULL DEFAULT clock_timestamp(),
   previous_state text NOT NULL CHECK (previous_state IN ('reserved','unconfirmed')),
@@ -37,7 +37,7 @@ BEGIN
     VALUES(p_attempt_id,p_actor,v_state,p_outcome,btrim(p_evidence));
   UPDATE public.reminder_delivery_attempts SET state=p_outcome,updated_at=clock_timestamp()
     WHERE attempt_id=p_attempt_id;
-  UPDATE public.reminder_delivery_locks SET active_attempt_id=NULL
+  DELETE FROM public.reminder_delivery_locks
     WHERE invoice_id=p_invoice_id AND channel=p_channel;
   RETURN true;
 END;

@@ -1,7 +1,7 @@
 import {PGlite} from '@electric-sql/pglite';
 import {readFileSync} from 'node:fs';
 import {describe,expect,it} from 'vitest';
-const coordination=readFileSync('supabase/migrations/20261107000005_reminder_delivery_coordination.sql','utf8');
+const coordination=readFileSync('supabase/staged/20261107000005_reminder_delivery_coordination.sql','utf8');
 const claims=readFileSync('supabase/staged/20261107000008_staged_reminder_slot_claims.sql','utf8');
 const invoice='00000000-0000-4000-8000-000000000001',a='10000000-0000-4000-8000-000000000001',b='10000000-0000-4000-8000-000000000002',c='10000000-0000-4000-8000-000000000003';
 describe('staged atomic reminder slot claims',()=>{

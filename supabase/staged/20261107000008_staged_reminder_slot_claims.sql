@@ -3,11 +3,11 @@
 -- The attempt's state records the eventual result; ambiguous outcomes require
 -- human review. Do not apply without the full integration and recovery design.
 CREATE TABLE public.reminder_delivery_slots (
-  invoice_id uuid NOT NULL REFERENCES public.invoices(id) ON DELETE CASCADE,
+  invoice_id uuid NOT NULL, -- Retained after invoice deletion for slot/idempotency history.
   channel text NOT NULL CHECK (channel IN ('email','sms')),
   scheduled_date date NOT NULL,
   reminder_type text NOT NULL CHECK (reminder_type IN ('upcoming','due_today','overdue','follow_up')),
-  attempt_id uuid NOT NULL UNIQUE REFERENCES public.reminder_delivery_attempts(attempt_id) ON DELETE CASCADE,
+  attempt_id uuid NOT NULL UNIQUE REFERENCES public.reminder_delivery_attempts(attempt_id) ON DELETE RESTRICT,
   PRIMARY KEY(invoice_id,channel,scheduled_date)
 );
 ALTER TABLE public.reminder_delivery_slots ENABLE ROW LEVEL SECURITY;
