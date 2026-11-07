@@ -710,7 +710,7 @@ export async function deleteTeamAccount(params: {
       p_actor: callerId, p_target: cleanTargetId,
     });
   } catch {
-    return { status: 500, body: { ok: false, error: 'Profile removal not confirmed. Check the profile and audit before retrying; Auth removal was not attempted.' } };
+    return { status: 500, body: { ok: false, error: `Profile removal not confirmed for account ID ${cleanTargetId}. Check the profile and audit before retrying; Auth removal was not attempted and access may still be active.` } };
   }
   const { data: deletedProfile, error: profileError } = profileResult;
   // PostgREST reports PGRST202 when it cannot find this RPC in its schema
@@ -726,7 +726,7 @@ export async function deleteTeamAccount(params: {
     return { status: 503, body: { ok: false, error: 'Team account removal is temporarily unavailable. The account was not removed; please contact your administrator.' } };
   }
   if (profileError || !deletedProfile || deletedProfile.id !== cleanTargetId) {
-    return { status: 500, body: { ok: false, error: 'Profile removal not confirmed. Check the profile and audit before retrying; Auth removal was not attempted.' } };
+    return { status: 500, body: { ok: false, error: `Profile removal not confirmed for account ID ${cleanTargetId}. Check the profile and audit before retrying; Auth removal was not attempted and access may still be active.` } };
   }
 
   const authDelete = await adminClient.auth.admin.deleteUser(cleanTargetId)
