@@ -645,9 +645,10 @@ export async function updateTeamAccount(params: {
 /**
  * Deletes a team account safely:
  * 1. Blocks self-deletion and deleting the last Founder.
- * 2. Detaches `attendance.recorded_by` and `expenses.created_by` foreign keys
- *    so historical ledger rows remain intact.
- * 3. Deletes `public.users` and `auth.users` rows and writes an `audit_log` entry.
+ * 2. Refuses removal if protected records still reference the profile, keeping
+ *    historical attribution and worker profiles intact.
+ * 3. Removes the profile and audits in one transaction, then requests Auth
+ *    removal separately. A partial or unknown result requires administrator review.
  */
 export async function deleteTeamAccount(params: {
   callerId: string;
@@ -709,23 +710,29 @@ export async function deleteTeamAccount(params: {
       p_actor: callerId, p_target: cleanTargetId,
     });
   } catch {
-    return { status: 500, body: { ok: false, error: 'Profile removal not confirmed. Check the profile and audit before retrying; Auth removal was not attempted.' } };
+    return { status: 500, body: { ok: false, error: `Profile removal not confirmed for account ID ${cleanTargetId}. Check the profile and audit before retrying; Auth removal was not attempted and access may still be active.` } };
   }
   const { data: deletedProfile, error: profileError } = profileResult;
   // PostgREST reports PGRST202 when it cannot find this RPC in its schema
   // cache; no profile operation was executed. Do not expose technical schema
   // errors or imply that removal succeeded on installations missing the guard.
+  if (profileError?.code === 'P1001') {
+    return { status: 409, body: { ok: false, error: 'This account is linked to existing records and cannot be removed without affecting their history. The account remains active; contact your administrator if access needs to be revoked.' } };
+  }
+  if (profileError?.code === 'P1002') {
+    return { status: 503, body: { ok: false, error: 'Account removal requires an administrator review. The account was not removed and access may still be active.' } };
+  }
   if (profileError?.code === 'PGRST202') {
     return { status: 503, body: { ok: false, error: 'Team account removal is temporarily unavailable. The account was not removed; please contact your administrator.' } };
   }
   if (profileError || !deletedProfile || deletedProfile.id !== cleanTargetId) {
-    return { status: 500, body: { ok: false, error: 'Profile removal not confirmed. Check the profile and audit before retrying; Auth removal was not attempted.' } };
+    return { status: 500, body: { ok: false, error: `Profile removal not confirmed for account ID ${cleanTargetId}. Check the profile and audit before retrying; Auth removal was not attempted and access may still be active.` } };
   }
 
   const authDelete = await adminClient.auth.admin.deleteUser(cleanTargetId)
     .catch(() => ({ data: null, error: { message: 'request failed' } }));
   if (authDelete.error) {
-    return { status: 500, body: { ok: false, error: 'The BALE profile was removed but Auth removal was not confirmed. Administrator cleanup in Supabase Auth is required; do not assume login was revoked or blindly retry.' } };
+    return { status: 500, body: { ok: false, error: `The BALE profile was removed but Auth removal was not confirmed. An administrator must check Supabase Auth for account ID ${cleanTargetId}; do not assume login was revoked or blindly retry.` } };
   }
 
   return {
