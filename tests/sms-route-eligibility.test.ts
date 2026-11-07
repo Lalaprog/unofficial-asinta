@@ -41,6 +41,15 @@ describe('manual invoice SMS eligibility', () => {
     expect((await POST(request())).status).toBe(422); expect(mock.deliver).not.toHaveBeenCalled();
   });
 
+  it('keeps the original manual send even if an unrelated coordination flag is set', async () => {
+    vi.stubEnv('REMINDER_COORDINATION_ENABLED','true');
+    try {
+      expect((await POST(request())).status).toBe(200);
+      expect(mock.deliver).toHaveBeenCalledWith(expect.objectContaining({invoiceId:'invoice',phone:'+639178421190'}));
+      expect(mock.deliver.mock.calls[0][0]).not.toHaveProperty('reminderAttemptId');
+    } finally { vi.unstubAllEnvs(); }
+  });
+
   it('allows a current unpaid invoice and resolves its registered recipient', async () => {
     expect((await POST(request())).status).toBe(200);
     expect(mock.deliver).toHaveBeenCalledWith(expect.objectContaining({ invoiceId: 'invoice', phone: '+639178421190' }));

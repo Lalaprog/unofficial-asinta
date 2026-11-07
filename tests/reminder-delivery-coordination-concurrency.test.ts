@@ -20,7 +20,7 @@ suite('delivery coordination in PostgreSQL', () => {
       IF NOT EXISTS (SELECT FROM pg_roles WHERE rolname='authenticated') THEN CREATE ROLE authenticated; END IF;
       IF NOT EXISTS (SELECT FROM pg_roles WHERE rolname='service_role') THEN CREATE ROLE service_role; END IF;
     END $$; CREATE TABLE public.invoices(id uuid primary key); INSERT INTO public.invoices VALUES ('${invoice}');`);
-    await admin.query(readFileSync('supabase/migrations/20261107000005_reminder_delivery_coordination.sql','utf8'));
+    await admin.query(readFileSync('supabase/staged/20261107000005_reminder_delivery_coordination.sql','utf8'));
   }, 30000);
   afterAll(async () => { await Promise.all([admin?.end(), first?.end(), second?.end()]); });
   it('waits for an overlapping manual claim and blocks the scheduled claim after commit', async () => {

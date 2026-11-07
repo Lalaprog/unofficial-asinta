@@ -2,7 +2,7 @@ import { PGlite } from '@electric-sql/pglite';
 import { readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
 
-const sql = readFileSync('supabase/migrations/20261107000005_reminder_delivery_coordination.sql', 'utf8');
+const sql = readFileSync('supabase/staged/20261107000005_reminder_delivery_coordination.sql', 'utf8');
 const invoice = '00000000-0000-4000-8000-000000000001';
 const other = '00000000-0000-4000-8000-000000000002';
 const a = '10000000-0000-4000-8000-000000000001';
