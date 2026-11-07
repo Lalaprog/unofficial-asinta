@@ -1,9 +1,7 @@
-/** STAGED integration of preparation, durable coordination, history and the
- * provider adapters for ONE invoice and channel. It is not called by a route.
- * Callers must separately make every manual sender use the same reservation,
- * reconcile legacy history, establish retention and verify rollout/scheduler.
- * The injected provider callbacks are the only possible provider I/O here.
- */
+/** Coordinated one-invoice/channel dispatcher, reachable only through the
+ * default-off cron rollout path. Hosted SQL, scheduler, legacy history and
+ * provider behavior still require verification before enabling it. Injected
+ * callbacks are the only provider I/O here. Final checks are not data locks. */
 import {isReminderSettings} from './settings';
 import {planReminderChannels} from './planChannels';
 import {dispatchOne,type DispatchSnapshot,type DispatchOneResult} from './dispatchOne';

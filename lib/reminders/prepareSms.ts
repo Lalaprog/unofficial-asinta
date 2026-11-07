@@ -8,7 +8,7 @@ import { normalizePhilippineMobile } from '@/lib/sms/phone';
 import { buildReminderSMS, DEFAULT_SMS_TEMPLATE, validateSMSTemplate } from '@/lib/sms/templates';
 
 type Db = {from:(table:string)=>any};
-export type PreparedSms = {invoiceId:string;recipient:string;phone:string;message:string;fingerprint:string};
+export type PreparedSms = {invoiceId:string;clientId:string;recipient:string;phone:string;message:string;fingerprint:string};
 type Result = {ok:true;prepared:PreparedSms} | {ok:false;reason:string};
 const text=(x:unknown):x is string=>typeof x==='string' && x.trim().length>0;
 function amount(value:unknown):number {
@@ -49,6 +49,6 @@ export async function prepareReminderSms(params:{db:Db;invoiceId:string;now:Date
     const message=buildReminderSMS({contactPerson:client.contact_person,companyName:client.name,invoiceNumber:invoice.invoice_number,projectName:project.name,outstandingBalance:total-paid,dueDate:invoice.due_date,paymentRequestSentDate:email?.sent_at ?? null},template);
     if(!message.trim() || message.length>1000) return {ok:false,reason:'message_too_long'};
     const fingerprint=createHash('sha256').update(JSON.stringify({invoice,recipient,phone,message,template,emailSentAt:email?.sent_at??null})).digest('hex');
-    return {ok:true,prepared:{invoiceId:invoice.id,recipient,phone,message,fingerprint}};
+    return {ok:true,prepared:{invoiceId:invoice.id,clientId:client.id,recipient,phone,message,fingerprint}};
   } catch {return {ok:false,reason:'preparation_unavailable'};}
 }

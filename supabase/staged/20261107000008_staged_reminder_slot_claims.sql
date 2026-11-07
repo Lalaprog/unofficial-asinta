@@ -1,7 +1,7 @@
 -- STAGED ONLY: requires the unhosted coordination migration. No route uses it.
--- A slot remains claimed even if a later recheck cancels or a response is lost.
--- The attempt's state records the eventual result; ambiguous outcomes require
--- human review. Do not apply without the full integration and recovery design.
+-- This initial function retains every claim. The later client-SMS coordination
+-- stage releases a claim only for a confirmed pre-provider cancellation.
+-- Ambiguous outcomes require review; never apply without the full design.
 CREATE TABLE public.reminder_delivery_slots (
   invoice_id uuid NOT NULL, -- Retained after invoice deletion for slot/idempotency history.
   channel text NOT NULL CHECK (channel IN ('email','sms')),

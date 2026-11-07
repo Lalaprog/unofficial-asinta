@@ -98,9 +98,59 @@ BEGIN
      NOT EXISTS (SELECT 1 FROM public.users WHERE role = 'founder') THEN
     RAISE EXCEPTION 'Cannot remove the last Founder account.' USING ERRCODE = '23514';
   END IF;
+  IF EXISTS (SELECT 1 FROM old_user_rows u JOIN public.team_access_revocations r ON r.user_id=u.id) THEN
+    RAISE EXCEPTION 'A blocked account cannot be changed.' USING ERRCODE = '23514';
+  END IF;
   IF EXISTS (SELECT 1 FROM public.users u JOIN public.team_access_revocations r ON r.user_id=u.id WHERE u.role='founder') THEN
     RAISE EXCEPTION 'A blocked account cannot become a Founder.' USING ERRCODE = '23514';
   END IF;
   RETURN NULL;
 END;
 $$;
+
+-- Status is service-role only; the API verifies the session and the function
+-- independently rechecks that the caller is an unblocked Founder. A missing
+-- or unreadable account never implies that it is active or safe to retry.
+CREATE FUNCTION public.supervisor_access_state_guarded(p_actor uuid, p_target uuid)
+RETURNS text LANGUAGE plpgsql STABLE SECURITY DEFINER SET search_path = '' AS $$
+BEGIN
+  IF p_actor IS NULL OR p_target IS NULL OR p_actor=p_target OR NOT EXISTS (
+    SELECT 1 FROM public.users u WHERE u.id=p_actor AND u.role='founder'
+      AND NOT EXISTS (SELECT 1 FROM public.team_access_revocations r WHERE r.user_id=u.id)
+  ) THEN RETURN NULL; END IF;
+  IF NOT EXISTS (SELECT 1 FROM public.users WHERE id=p_target AND role='supervisor') THEN RETURN NULL; END IF;
+  IF EXISTS (SELECT 1 FROM public.team_access_revocations WHERE user_id=p_target) THEN RETURN 'revoked'; END IF;
+  RETURN 'active';
+END;
+$$;
+REVOKE ALL ON FUNCTION public.supervisor_access_state_guarded(uuid,uuid) FROM PUBLIC,anon,authenticated;
+GRANT EXECUTE ON FUNCTION public.supervisor_access_state_guarded(uuid,uuid) TO service_role;
+
+-- The older global worker-registration route has no project to lock. When the
+-- new access gate is enabled it must use this RPC instead of a direct service
+-- role insert: revocation and a new worker insert serialize on the actor row.
+CREATE FUNCTION public.create_global_worker_guarded(
+  p_actor uuid, p_worker uuid, p_name text, p_contact text, p_position text,
+  p_rate numeric, p_rate_type text
+) RETURNS jsonb LANGUAGE plpgsql SECURITY DEFINER SET search_path = '' AS $$
+DECLARE v_role text; v_worker public.workers%ROWTYPE;
+BEGIN
+  IF current_setting('transaction_isolation') <> 'read committed' THEN
+    RAISE EXCEPTION 'TEAM_ACCESS_REQUIRES_READ_COMMITTED' USING ERRCODE='P1002';
+  END IF;
+  SELECT role INTO v_role FROM public.users WHERE id=p_actor FOR SHARE;
+  IF v_role IS NULL OR v_role NOT IN ('founder','supervisor') OR
+     EXISTS (SELECT 1 FROM public.team_access_revocations WHERE user_id=p_actor) THEN
+    RAISE EXCEPTION 'Valid active team account required.' USING ERRCODE='42501';
+  END IF;
+  IF p_worker IS NULL OR p_name IS NULL OR char_length(btrim(p_name))<2 OR p_position IS NULL OR btrim(p_position)='' OR
+     p_contact IS NULL OR p_rate IS NULL OR p_rate < 0 OR p_rate::text IN ('NaN','Infinity','-Infinity') OR p_rate_type NOT IN ('daily','hourly') THEN
+    RAISE EXCEPTION 'Invalid worker details.' USING ERRCODE='22023';
+  END IF;
+  INSERT INTO public.workers(id,name,contact_number,position,pay_rate,pay_rate_type,active)
+    VALUES(p_worker,btrim(p_name),p_contact,btrim(p_position),p_rate,p_rate_type,true) RETURNING * INTO v_worker;
+  RETURN to_jsonb(v_worker);
+END;
+$$;
+REVOKE ALL ON FUNCTION public.create_global_worker_guarded(uuid,uuid,text,text,text,numeric,text) FROM PUBLIC,anon,authenticated;
+GRANT EXECUTE ON FUNCTION public.create_global_worker_guarded(uuid,uuid,text,text,text,numeric,text) TO service_role;

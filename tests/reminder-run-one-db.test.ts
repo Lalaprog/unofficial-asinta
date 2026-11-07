@@ -29,7 +29,7 @@ describe('staged dispatcher against a disposable PostgreSQL database',()=>{
         create table public.sms_template_settings(singleton boolean,message_template text);
         create table public.email_logs(id uuid primary key default gen_random_uuid(),invoice_id uuid,recipient text,subject text,body_text text,body_html text,template_type text,template_version int,status text,sent_by uuid,idempotency_key text unique,provider_message_id text,error_message text,sent_at timestamptz);
         create table public.sms_logs(id uuid primary key default gen_random_uuid(),invoice_id uuid,recipient text,phone text,message text,status text,simulated boolean,provider_status text,provider_message_id text,error_message text,sent_at timestamptz default now(),updated_at timestamptz);
-        create table public.reminder_dispatches(invoice_id uuid,channel text,status text,sent_at timestamptz);
+        create table public.reminder_dispatches(id uuid primary key default gen_random_uuid(),invoice_id uuid,channel text,status text,sent_at timestamptz);
         create table public.reminder_settings(singleton boolean,master_enabled boolean,email_enabled boolean,sms_enabled boolean,revision int,email_effective_since timestamptz,sms_effective_since timestamptz);
         insert into clients values ('${client}','Client Co','Ana','ana@example.test','09171234567');insert into projects values ('${project}','Office');
         insert into invoices values ('${invoice}','I-001','${client}','${project}',1000,250,'2026-10-01','2026-11-02','pending',null,true,null);
@@ -41,6 +41,7 @@ describe('staged dispatcher against a disposable PostgreSQL database',()=>{
       await pg.exec(sql('supabase/staged/reminder_log_correlation.sql'));
       await pg.exec(sql('supabase/staged/20261107000009_staged_reminder_review.sql'));
       await pg.exec(sql('supabase/staged/20261107000010_staged_reminder_history.sql'));
+      await pg.exec(sql('supabase/staged/20261107000011_staged_reminder_client_sms.sql'));
       const db=adapter(pg),sendEmail=vi.fn(async()=>({accepted:true,providerMessageId:'email-provider'})),sendSms=vi.fn(async()=>({success:true,messageId:'sms-provider'}));
       const run=(channel:'email'|'sms',attemptId:string)=>runOneReminder({db,invoiceId:invoice,channel,attemptId,now:()=>new Date('2026-11-02T01:00:00Z'),automationAllowed:()=>true,providerReady:()=>true,firmEmail:'office@example.test',firmContactNumber:'123',sendEmail,sendSms});
       const email=await run('email','10000000-0000-4000-8000-000000000001');expect(email.outcome).toBe('accepted');

@@ -17,36 +17,39 @@ BEGIN
     INTO v_latest,v_unresolved FROM public.reminder_delivery_attempts a
     WHERE a.invoice_id=p_invoice_id AND a.channel=p_channel;
   IF p_channel='email' THEN
-    SELECT max(e.sent_at) FILTER (WHERE e.status IN ('accepted','delivered','bounced')),
+    SELECT greatest(max(e.sent_at) FILTER (WHERE e.status IN ('accepted','delivered','bounced')),max(lr.reviewed_at) FILTER (WHERE lr.outcome='accepted')),
            coalesce(bool_or(
              (e.status='pending' AND (a.state='reserved' AND a.attempt_id=p_own_attempt AND EXISTS
                (SELECT 1 FROM public.reminder_delivery_locks l WHERE l.invoice_id=p_invoice_id AND l.channel=p_channel AND l.active_attempt_id=a.attempt_id)) IS NOT TRUE
-               AND (a.state='cancelled' OR EXISTS (SELECT 1 FROM public.reminder_delivery_reviews r WHERE r.attempt_id=a.attempt_id AND r.outcome=a.state)) IS NOT TRUE)
-             OR (e.status='failed' AND (a.state IN ('rejected','cancelled') OR EXISTS (SELECT 1 FROM public.reminder_delivery_reviews r WHERE r.attempt_id=a.attempt_id AND r.outcome=a.state)) IS NOT TRUE)
-             OR (e.status IN ('accepted','delivered','bounced') AND e.sent_at IS NULL)
+               AND (a.state='cancelled' OR EXISTS (SELECT 1 FROM public.reminder_delivery_reviews r WHERE r.attempt_id=a.attempt_id AND r.outcome=a.state) OR lr.record_id IS NOT NULL) IS NOT TRUE)
+             OR (e.status='failed' AND (a.state IN ('rejected','cancelled') OR EXISTS (SELECT 1 FROM public.reminder_delivery_reviews r WHERE r.attempt_id=a.attempt_id AND r.outcome=a.state) OR lr.record_id IS NOT NULL) IS NOT TRUE)
+             OR (e.status IN ('accepted','delivered','bounced') AND e.sent_at IS NULL AND lr.record_id IS NULL)
            ),false)
       INTO v_legacy_latest,v_legacy_unknown FROM public.email_logs e
       LEFT JOIN public.reminder_delivery_attempts a ON a.attempt_id=e.reminder_attempt_id AND a.invoice_id=e.invoice_id AND a.channel='email'
+      LEFT JOIN public.reminder_legacy_reviews lr ON lr.kind='email_log' AND lr.record_id=e.id AND lr.observed_status=e.status AND e.reminder_attempt_id IS NULL
       WHERE e.invoice_id=p_invoice_id;
   ELSE
-    SELECT max(greatest(s.sent_at,s.updated_at)) FILTER (WHERE s.status IN ('sent','delivered') AND s.simulated IS FALSE),
+    SELECT greatest(max(greatest(s.sent_at,s.updated_at)) FILTER (WHERE s.status IN ('sent','delivered') AND s.simulated IS FALSE),max(lr.reviewed_at) FILTER (WHERE lr.outcome='accepted')),
            coalesce(bool_or(s.simulated IS NOT TRUE AND (
              (s.status='pending' AND (a.state='reserved' AND a.attempt_id=p_own_attempt AND EXISTS
                (SELECT 1 FROM public.reminder_delivery_locks l WHERE l.invoice_id=p_invoice_id AND l.channel=p_channel AND l.active_attempt_id=a.attempt_id)) IS NOT TRUE
-               AND (a.state='cancelled' OR EXISTS (SELECT 1 FROM public.reminder_delivery_reviews r WHERE r.attempt_id=a.attempt_id AND r.outcome=a.state)) IS NOT TRUE)
-             OR (s.status='failed' AND (a.state IN ('rejected','cancelled') OR EXISTS (SELECT 1 FROM public.reminder_delivery_reviews r WHERE r.attempt_id=a.attempt_id AND r.outcome=a.state)) IS NOT TRUE)
-             OR (s.status IN ('sent','delivered') AND s.sent_at IS NULL)
+               AND (a.state='cancelled' OR EXISTS (SELECT 1 FROM public.reminder_delivery_reviews r WHERE r.attempt_id=a.attempt_id AND r.outcome=a.state) OR lr.record_id IS NOT NULL) IS NOT TRUE)
+             OR (s.status='failed' AND (a.state IN ('rejected','cancelled') OR EXISTS (SELECT 1 FROM public.reminder_delivery_reviews r WHERE r.attempt_id=a.attempt_id AND r.outcome=a.state) OR lr.record_id IS NOT NULL) IS NOT TRUE)
+             OR (s.status IN ('sent','delivered') AND s.sent_at IS NULL AND lr.record_id IS NULL)
            )),false)
       INTO v_legacy_latest,v_legacy_unknown FROM public.sms_logs s
       LEFT JOIN public.reminder_delivery_attempts a ON a.attempt_id=s.reminder_attempt_id AND a.invoice_id=s.invoice_id AND a.channel='sms'
+      LEFT JOIN public.reminder_legacy_reviews lr ON lr.kind='sms_log' AND lr.record_id=s.id AND lr.observed_status=s.status AND s.reminder_attempt_id IS NULL
       WHERE s.invoice_id=p_invoice_id;
   END IF;
   v_latest := greatest(v_latest,v_legacy_latest);
   v_unresolved := v_unresolved OR v_legacy_unknown;
-  SELECT max(sent_at) FILTER (WHERE status='sent'),
-         coalesce(bool_or(status IN ('pending','failed') OR (status='sent' AND sent_at IS NULL)),false)
-    INTO v_legacy_latest,v_legacy_unknown FROM public.reminder_dispatches
-    WHERE invoice_id=p_invoice_id AND channel=p_channel;
+  SELECT greatest(max(d.sent_at) FILTER (WHERE d.status='sent'),max(lr.reviewed_at) FILTER (WHERE lr.outcome='accepted')),
+         coalesce(bool_or((d.status IN ('pending','failed') OR (d.status='sent' AND d.sent_at IS NULL)) AND lr.record_id IS NULL),false)
+    INTO v_legacy_latest,v_legacy_unknown FROM public.reminder_dispatches d
+    LEFT JOIN public.reminder_legacy_reviews lr ON lr.kind='dispatch' AND lr.record_id=d.id AND lr.observed_status=d.status
+    WHERE d.invoice_id=p_invoice_id AND d.channel=p_channel;
   RETURN jsonb_build_object('lastContactAt',greatest(v_latest,v_legacy_latest),
     'unresolvedAttempt',v_unresolved OR v_legacy_unknown);
 END;

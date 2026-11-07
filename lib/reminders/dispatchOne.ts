@@ -1,7 +1,7 @@
 /**
- * STAGED: dependency-injected delivery coordinator. Not wired to a route or a
- * provider. All dependencies must be backed by durable database operations and
- * manual sends must share the same reservation before this can be used live.
+ * Dependency-injected delivery coordinator behind the default-off rollout.
+ * Dependencies must be backed by durable database operations, and all manual
+ * sends and deployments must share the same reservation before live use.
  * A successful last check is not a lock on invoices/settings during provider
  * I/O; disabling reminders cannot recall a request already in flight.
  */

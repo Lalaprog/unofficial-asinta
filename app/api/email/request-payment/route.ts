@@ -1,4 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
+import {randomUUID} from 'node:crypto';
+import {createServiceRoleClient,isServiceRoleConfigured} from '@/lib/supabase/admin';
+import {coordinateManualDelivery} from '@/lib/reminders/manualDelivery';
 import { createServerSupabaseClient } from '@/lib/supabase/server';
 import { requireFounder } from '@/lib/auth/serverRole';
 import { getFirmEmailIdentity, isSmtpConfigured, sendEmail } from '@/lib/email/mailer';
@@ -32,22 +35,25 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: 'Invalid request body' }, { status: 400 });
     }
 
-    const result = await sendRequestForPayment(
-      {
-        db: supabase,
-        sendEmail,
-        isSmtpConfigured,
-        firmIdentity: getFirmEmailIdentity(),
-      },
-      {
-        invoiceId: typeof body.invoiceId === 'string' ? body.invoiceId : '',
-        subjectTemplate: typeof body.subjectTemplate === 'string' ? body.subjectTemplate : undefined,
-        bodyTemplate: typeof body.bodyTemplate === 'string' ? body.bodyTemplate : undefined,
-        idempotencyKey: typeof body.idempotencyKey === 'string' ? body.idempotencyKey : '',
-        sentBy: founder.userId as string,
-        previewFingerprint: typeof body.previewFingerprint === 'string' ? body.previewFingerprint : undefined,
-      }
-    );
+    const deps={db:supabase,sendEmail,isSmtpConfigured,firmIdentity:getFirmEmailIdentity()};
+    const input={
+      invoiceId: typeof body.invoiceId === 'string' ? body.invoiceId : '',
+      subjectTemplate: typeof body.subjectTemplate === 'string' ? body.subjectTemplate : undefined,
+      bodyTemplate: typeof body.bodyTemplate === 'string' ? body.bodyTemplate : undefined,
+      idempotencyKey: typeof body.idempotencyKey === 'string' ? body.idempotencyKey : '',
+      sentBy: founder.userId as string,
+      previewFingerprint: typeof body.previewFingerprint === 'string' ? body.previewFingerprint : undefined,
+    };
+    let result;
+    if(process.env.REMINDER_COORDINATION_ENABLED==='true') {
+      if(!isServiceRoleConfigured())return NextResponse.json({error:'Message coordination is unavailable. No email was sent.'},{status:503});
+      const coordinated=await coordinateManualDelivery({db:createServiceRoleClient() as any,invoiceId:input.invoiceId,channel:'email',attemptId:randomUUID(),
+        deliver:(attemptId,beforeSend)=>sendRequestForPayment(deps,{...input,reminderAttemptId:attemptId,beforeSend}),
+        outcome:(value)=>!value.ok || value.duplicate?'cancelled':value.status==='unconfirmed' || value.logUpdateFailed?'unconfirmed':value.status==='accepted'?'accepted':'rejected',
+      });
+      if(coordinated.status!=='completed')return NextResponse.json({error:coordinated.status==='busy'?'Another message is in progress or needs review. Check email history before trying again.':coordinated.status==='unconfirmed'?'Email outcome not confirmed. Check email history and the mail server before retrying; it may have been sent.':'Message coordination is unavailable. Check email history before trying again.'},{status:coordinated.status==='busy'?409:503});
+      result=coordinated.result;
+    } else result=await sendRequestForPayment(deps,input);
 
     if (!result.ok) {
       return NextResponse.json({ error: result.error.error }, { status: result.error.status });

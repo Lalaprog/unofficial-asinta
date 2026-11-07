@@ -176,6 +176,10 @@ export interface SendRequestForPaymentInput {
   sentBy: string;
   /** Optional for compatibility with already-open older clients. */
   previewFingerprint?: string;
+  /** Used only by the coordinated, default-off rollout. */
+  reminderAttemptId?: string;
+  /** Last shared-history and authorization check, after logging. */
+  beforeSend?: () => Promise<boolean>;
 }
 
 export type SendRequestForPaymentResult =
@@ -319,6 +323,7 @@ export async function sendRequestForPayment(
       status: 'pending',
       sent_by: input.sentBy,
       idempotency_key: input.idempotencyKey,
+      ...(input.reminderAttemptId ? {reminder_attempt_id:input.reminderAttemptId} : {}),
     })
     .select('id')
     .single();
@@ -341,6 +346,21 @@ export async function sendRequestForPayment(
       };
     }
     return { ok: false, error: { status: 500, error: 'Failed to record the email log before sending' } };
+  }
+
+  if (input.beforeSend) {
+    let ready=false;
+    try {
+      const fresh=await loadInvoiceEmailContext(deps,input.invoiceId);
+      if(fresh.ok && deps.isSmtpConfigured()) {
+        const reRendered=renderWithTemplates(fresh.context,input.subjectTemplate ?? fresh.context.template.subject_template,input.bodyTemplate ?? fresh.context.template.body_template);
+        ready='rendered' in reRendered && emailPreviewFingerprint(fresh.context,reRendered.rendered)===emailPreviewFingerprint(context,rendered) && await input.beforeSend()===true;
+      }
+    } catch { /* fail closed */ }
+    if(!ready) {
+      try {await deps.db.from('email_logs').update({status:'failed',error_message:'Not sent: message details or history could not be verified.'}).eq('id',pendingLog.id);} catch { /* correlated cancelled attempt remains evidence */ }
+      return {ok:false,error:{status:409,error:'Message details or history could not be verified. Refresh and check before trying again; no email was sent.'}};
+    }
   }
 
   // 2. A timeout or thrown transport error may follow provider acceptance.

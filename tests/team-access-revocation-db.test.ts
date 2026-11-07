@@ -12,6 +12,7 @@ describe('staged team access revocation',()=>{
         create table public.users(id uuid primary key, email text, role text);
         create table public.audit_log(actor_id uuid, actor_email text, action text, table_name text,record_id uuid,before_row jsonb,after_row jsonb);
         create table public.attendance(id int,recorded_by uuid references public.users(id));
+        create table public.workers(id uuid primary key,name text,contact_number text,position text,pay_rate numeric,pay_rate_type text,active boolean);
         create table public.projects(id uuid primary key);
         create table public.project_supervisors(project_id uuid, supervisor_id uuid);
         insert into public.projects values ('00000000-0000-4000-8000-000000000003');
@@ -40,11 +41,14 @@ describe('staged team access revocation',()=>{
       expect((await db.query('select * from public.restricted_example')).rows).toHaveLength(1);
       await expect(db.query('select * from public.team_access_revocations')).rejects.toThrow(/permission denied/i);
       await expect(db.query('select public.revoke_supervisor_access_guarded($1,$2)',[founder,supervisor])).rejects.toThrow(/permission denied/i);
+      await expect(db.query('select public.supervisor_access_state_guarded($1,$2)',[founder,supervisor])).rejects.toThrow(/permission denied/i);
       await db.exec('reset role; set role service_role');
       const revoke=async(actor:string,target:string)=>(await db.query<{ok:boolean}>('select public.revoke_supervisor_access_guarded($1,$2) ok',[actor,target])).rows[0].ok;
+      const state=async(actor:string,target:string)=>(await db.query<{v:string|null}>('select public.supervisor_access_state_guarded($1,$2) v',[actor,target])).rows[0].v;
+      expect(await state(founder,supervisor)).toBe('active');expect(await state(supervisor,founder)).toBeNull();
       await expect(revoke(supervisor,founder)).rejects.toThrow(/Founder/);
       await expect(revoke(founder,founder)).rejects.toThrow(/own access/);
-      expect(await revoke(founder,supervisor)).toBe(true);expect(await revoke(founder,supervisor)).toBe(false);
+      expect(await revoke(founder,supervisor)).toBe(true);expect(await revoke(founder,supervisor)).toBe(false);expect(await state(founder,supervisor)).toBe('revoked');
       await db.exec('reset role'); expect(await allowed()).toBe(false);
       await expect(db.query('select app_private.lock_project_worker_access($1,$2)',[supervisor,'00000000-0000-4000-8000-000000000003'])).rejects.toThrow(/Project access required/);
       await db.exec('set role authenticated');expect((await db.query('select * from public.restricted_example')).rows).toHaveLength(0);await db.exec('reset role');
@@ -52,6 +56,7 @@ describe('staged team access revocation',()=>{
       expect((await db.query('select * from public.attendance')).rows).toHaveLength(1);
       expect((await db.query('select * from public.audit_log')).rows).toHaveLength(1);
       await expect(db.query("update public.users set role='founder' where id=$1",[supervisor])).rejects.toThrow(/blocked account/i);
+      await expect(db.query("update public.users set email='changed@example.test' where id=$1",[supervisor])).rejects.toThrow(/blocked account/i);
       await expect(db.query("update public.users set role='supervisor' where id=$1",[founder])).rejects.toThrow(/last Founder/i);
       await expect(db.query('delete from public.users where id=$1',[supervisor])).rejects.toThrow(/foreign key/i);
     } finally {await db.close();}

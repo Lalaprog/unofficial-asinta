@@ -29,6 +29,8 @@ export interface DeliverAndLogSMSParams {
   phone: string;
   message: string;
   invoiceId?: string | null;
+  /** Only present after the staged client-coordination migration. */
+  clientId?: string;
   /** Staged coordination ledger link; omitted for existing manual sends. */
   reminderAttemptId?: string;
   /** Optional last authorization check after logging, before provider I/O. */
@@ -63,6 +65,7 @@ export async function deliverAndLogSMS(
     .from('sms_logs')
     .insert({
       invoice_id: params.invoiceId ?? null,
+      ...(params.clientId ? {client_id:params.clientId} : {}),
       ...(params.reminderAttemptId ? {reminder_attempt_id:params.reminderAttemptId} : {}),
       recipient: params.recipient,
       phone: params.phone,

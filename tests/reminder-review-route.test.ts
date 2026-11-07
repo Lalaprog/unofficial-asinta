@@ -1,0 +1,15 @@
+import {afterEach,beforeEach,describe,expect,it,vi} from 'vitest';import {NextRequest} from 'next/server';
+const s=vi.hoisted(()=>({founder:{ok:true,status:200,userId:'00000000-0000-4000-8000-000000000001'},rpc:vi.fn(),service:vi.fn()}));
+vi.mock('@/lib/supabase/server',()=>({createServerSupabaseClient:()=>({})}));vi.mock('@/lib/auth/serverRole',()=>({requireFounder:async()=>s.founder}));vi.mock('@/lib/supabase/admin',()=>({isServiceRoleConfigured:()=>true,createServiceRoleClient:()=>{s.service();return {rpc:s.rpc};}}));
+import {GET,POST} from '@/app/api/reminders/review/route';
+const id='00000000-0000-4000-8000-000000000002',attempt='00000000-0000-4000-8000-000000000003';
+const post=(body:unknown)=>new NextRequest('http://localhost/api/reminders/review',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify(body)});
+const valid={attemptId:attempt,invoiceId:id,clientId:null,channel:'email',outcome:'accepted',evidence:'Provider confirmed this exact message.',noSenderRunning:true};
+beforeEach(()=>{delete process.env.REMINDER_COORDINATION_ENABLED;vi.clearAllMocks();s.founder={ok:true,status:200,userId:'00000000-0000-4000-8000-000000000001'};});afterEach(()=>delete process.env.REMINDER_COORDINATION_ENABLED);
+describe('review API',()=>{
+ it('is unavailable by default and denies unauthorized callers before using the service role',async()=>{expect((await GET()).status).toBe(503);process.env.REMINDER_COORDINATION_ENABLED='true';s.founder={ok:false,status:403,userId:''};expect((await POST(post(valid))).status).toBe(403);expect(s.service).not.toHaveBeenCalled();});
+ it('requires a verified outcome, sufficient evidence and explicit no-sender confirmation',async()=>{process.env.REMINDER_COORDINATION_ENABLED='true';for(const body of [{...valid,noSenderRunning:false},{...valid,evidence:'short'},{...valid,outcome:'unknown'}])expect((await POST(post(body))).status).toBe(400);expect(s.rpc).not.toHaveBeenCalled();});
+ it('passes verified actor and invoice attempt to the guarded RPC',async()=>{process.env.REMINDER_COORDINATION_ENABLED='true';s.rpc.mockResolvedValue({data:true,error:null});expect((await POST(post({...valid,actorId:id}))).status).toBe(200);expect(s.rpc).toHaveBeenCalledWith('review_reminder_delivery',expect.objectContaining({p_actor:s.founder.userId,p_attempt_id:attempt,p_invoice_id:id}));});
+ it('uses the separate guarded review RPC for a client-only SMS',async()=>{process.env.REMINDER_COORDINATION_ENABLED='true';s.rpc.mockResolvedValue({data:true,error:null});expect((await POST(post({...valid,invoiceId:null,clientId:id,channel:'sms'}))).status).toBe(200);expect(s.rpc).toHaveBeenCalledWith('review_client_sms_delivery',expect.objectContaining({p_client_id:id}));});
+ it('reports lost or false responses as unconfirmed',async()=>{process.env.REMINDER_COORDINATION_ENABLED='true';s.rpc.mockRejectedValue(Error('lost'));const response=await POST(post(valid));expect(response.status).toBe(503);expect((await response.json()).error).toMatch(/not confirmed/);});
+});
