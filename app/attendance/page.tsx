@@ -31,12 +31,13 @@ import { Input } from '@/components/ui/Input';
 import { Select } from '@/components/ui/Select';
 import { SearchableSelect } from '@/components/ui/SearchableSelect';
 import { Modal } from '@/components/ui/Modal';
+import { ConfirmDialog } from '@/components/ui/ConfirmDialog';
 import { EmptyState } from '@/components/ui/EmptyState';
 import { formatDatePH } from '@/lib/email/format';
 import { manilaDateISO, shiftCalendarDate } from '@/lib/dates/manila';
 import { useManilaToday } from '@/lib/dates/useManilaToday';
 import {
-  parseAttendanceDraft,
+  parseCompleteAttendanceDraft,
   serializeAttendanceDraft,
   type AttendanceDraftEntry,
   type AttendanceDraftMap,
@@ -44,8 +45,13 @@ import {
 import { useToast } from '@/components/ui/Toast';
 import { usePendingApprovals } from '@/lib/attendance/usePendingApprovals';
 import { useAttendanceHistory } from '@/lib/attendance/useAttendanceHistory';
+import { useProjectRollCall } from '@/lib/attendance/useProjectRollCall';
+import { loadProjectRollCall, projectRollCallFingerprint, type ProjectRollCallSnapshot } from '@/lib/attendance/project-roll-call';
+import { RollCallWalkthrough } from '@/components/dashboard/RollCallWalkthrough';
 import type { HistoryRecord, HistorySheet } from '@/lib/attendance/history';
 import { HistorySheetRecords } from '@/components/attendance/HistorySheetRecords';
+
+const EMPTY_ROLL_CALL: ProjectRollCallSnapshot = { workerIds: [], records: [] };
 
 type CraftGroupKey =
   | 'supervision'
@@ -122,6 +128,8 @@ function AttendancePageInner() {
     projectSupervisors,
     attendance,
     isLoaded,
+    loadError,
+    refresh,
     createWorker,
     updateWorker,
     toggleWorkerStatus,
@@ -138,7 +146,7 @@ function AttendancePageInner() {
   const today = useManilaToday();
   const yesterday = shiftCalendarDate(today, -1);
   const [selectedProjectId, setSelectedProjectId] = useState<string>(
-    accessibleProjects[0]?.id || projects[0]?.id || ''
+    accessibleProjects[0]?.id || ''
   );
   const [selectedDate, setSelectedDate] = useState<string>(today);
   const [activeTab, setActiveTab] = useState<'terminal' | 'history' | 'workforce'>('terminal');
@@ -185,6 +193,13 @@ function AttendancePageInner() {
   const [isAddingWorker, setIsAddingWorker] = useState(false);
   const [workforceSearch, setWorkforceSearch] = useState('');
   const [workforceCraftFilter, setWorkforceCraftFilter] = useState<string>('all');
+  const [workforceStatusFilter, setWorkforceStatusFilter] = useState('active');
+  const [selectedWorkers, setSelectedWorkers] = useState<string[]>([]);
+  const [workerRemovalOpen, setWorkerRemovalOpen] = useState(false);
+  const [workerRestoreTarget, setWorkerRestoreTarget] = useState<Worker | null>(null);
+  const [workerRemovalPending, setWorkerRemovalPending] = useState(false);
+  const [workerRemovalResults, setWorkerRemovalResults] = useState<Array<{ id: string; name: string; status: string }>>([]);
+  const workerRemovalLock = useRef(false);
 
   const [editingWorker, setEditingWorker] = useState<Worker | null>(null);
   const [editWorkerName, setEditWorkerName] = useState('');
@@ -195,9 +210,13 @@ function AttendancePageInner() {
   const [isSavingWorker, setIsSavingWorker] = useState(false);
 
   // Terminal drafts stay local until the explicit Submit action writes official attendance.
-  const [draftAttendance, setDraftAttendance] = useState<AttendanceDraftMap>({});
-  const [dirtyDraftWorkerIds, setDirtyDraftWorkerIds] = useState<string[]>([]);
+  // Keep entries and their dirty markers in one state update so a queued
+  // baseline refresh cannot erase a selection made at the same time.
+  const [draftState, setDraftState] = useState<{ entries: AttendanceDraftMap; dirtyIds: string[] }>({ entries: {}, dirtyIds: [] });
+  const draftAttendance = draftState.entries;
+  const dirtyDraftWorkerIds = draftState.dirtyIds;
   const [draftStorageReadyKey, setDraftStorageReadyKey] = useState<string | null>(null);
+  const [draftReadySnapshot, setDraftReadySnapshot] = useState<ProjectRollCallSnapshot | null>(null);
   const [draftStorageStatus, setDraftStorageStatus] = useState<'ready' | 'saved' | 'error'>('ready');
   const initializedDraftContextRef = useRef<string | null>(null);
 
@@ -207,7 +226,10 @@ function AttendancePageInner() {
       : null;
 
   const [isSubmitting, setIsSubmitting] = useState(false);
+  const submitLock = useRef(false);
   const [attendanceSaveFailed, setAttendanceSaveFailed] = useState(false);
+  const [unreadableDraft, setUnreadableDraft] = useState(false);
+  const [discardHiddenDraftOpen, setDiscardHiddenDraftOpen] = useState(false);
   const [isReviewingSupervisor, setIsReviewingSupervisor] = useState(false);
   const reviewInFlightRef = useRef(false);
   const [searchWorker, setSearchWorker] = useState('');
@@ -245,72 +267,42 @@ function AttendancePageInner() {
   const [overrideStatus, setOverrideStatus] = useState<AttendanceStatus>('present');
   const [overrideNotes, setOverrideNotes] = useState('');
 
-  // Automatically ensure every Supervisor account in `users` (and the signed-in
-  // Supervisor) has a linked 1:1 `workers` row so Supervisors never need to be
-  // manually registered as workers.
-  const autoEnrolledSupervisorIdsRef = useRef<Set<string>>(new Set());
-  useEffect(() => {
-    if (!isLoaded) return;
-    const supervisorAccounts = [
-      ...(isSupervisor && user ? [user] : []),
-      ...users.filter((u) => u.role === 'supervisor'),
-    ].filter((sup, idx, arr) => arr.findIndex((item) => item.id === sup.id) === idx);
-
-    supervisorAccounts.forEach((sup) => {
-      if (autoEnrolledSupervisorIdsRef.current.has(sup.id)) return;
-      const alreadyInWorkers = workers.some(
-        (w) =>
-          w.id === sup.id ||
-          w.name.trim().toLowerCase() === sup.name.trim().toLowerCase()
-      );
-      if (!alreadyInWorkers) {
-        autoEnrolledSupervisorIdsRef.current.add(sup.id);
-        void createWorker({
-          id: sup.id,
-          name: sup.name,
-          position: 'Site Supervisor',
-          pay_rate: 1200,
-          pay_rate_type: 'daily',
-          contact_number: '—',
-          active: true,
-        });
-      }
-    });
-  }, [isLoaded, isSupervisor, user, users, workers, createWorker]);
-
-  // Identify whether a worker row belongs to the currently signed-in Supervisor
+  // A worker is linked to an account by ID, never by name. Names are only
+  // used below to flag a possible collision for review, not to infer identity.
   const isSelfSupervisorWorker = useCallback(
-    (w: Worker): boolean => {
-      if (!isSupervisor || !user) return false;
-      return (
-        w.id === user.id || w.name.trim().toLowerCase() === user.name.trim().toLowerCase()
-      );
-    },
+    (w: Worker): boolean => Boolean(isSupervisor && user && w.id === user.id),
     [isSupervisor, user]
   );
 
-  // Identify whether a worker row represents a Supervisor account in `users`
   const findSupervisorAccountForWorker = useCallback(
     (w: Worker) => {
-      if (isSupervisor && user && isSelfSupervisorWorker(w)) {
-        return user;
-      }
-      return users.find(
-        (u) =>
-          u.role === 'supervisor' &&
-          (u.id === w.id || u.name.trim().toLowerCase() === w.name.trim().toLowerCase())
-      );
+      if (isSupervisor && user && w.id === user.id) return user;
+      return users.find((u) => u.role === 'supervisor' && u.id === w.id);
     },
-    [isSupervisor, user, isSelfSupervisorWorker, users]
+    [isSupervisor, user, users]
   );
+
+  // Pause this UI's submission when an active workforce profile has the same
+  // name as a supervisor but a different ID. This is a review signal, not
+  // proof of identity, and does not merge or change any historical records.
+  const possibleSupervisorDuplicates = useMemo(() => {
+    const accounts = [...users.filter((u) => u.role === 'supervisor'), ...(isSupervisor && user ? [user] : [])]
+      .filter((account, index, all) => all.findIndex((item) => item.id === account.id) === index);
+    return accounts.filter((account) => {
+      const assignments = projectSupervisors.filter((ps) => ps.supervisor_id === account.id);
+      if (assignments.length > 0 && !assignments.some((ps) => ps.project_id === selectedProjectId)) return false;
+      const name = account.name.trim().toLowerCase();
+      return Boolean(name) && workers.some((w) => w.active && w.id !== account.id && w.name.trim().toLowerCase() === name);
+    });
+  }, [users, workers, projectSupervisors, selectedProjectId, isSupervisor, user]);
+  const missingSupervisorWorker = Boolean(isSupervisor && user && isLoaded && !workers.some((w) => w.id === user.id && w.active));
+  const supervisorIdentityNeedsReview = possibleSupervisorDuplicates.length > 0;
 
   // Update selectedProjectId when accessible projects change
   useEffect(() => {
-    if (
-      accessibleProjects.length > 0 &&
-      !accessibleProjects.some((p) => p.id === selectedProjectId)
-    ) {
-      setSelectedProjectId(accessibleProjects[0].id);
+    if (!accessibleProjects.some((p) => p.id === selectedProjectId)) {
+      const nextProjectId = accessibleProjects[0]?.id || '';
+      if (nextProjectId !== selectedProjectId) setSelectedProjectId(nextProjectId);
     }
   }, [accessibleProjects, selectedProjectId]);
 
@@ -323,6 +315,15 @@ function AttendancePageInner() {
       setActiveTab(tabParam);
     }
   }, []);
+
+  const rollCall = useProjectRollCall(user?.id, selectedProjectId, selectedDate, activeTab === 'terminal' && isLoaded && !loadError);
+  const rosterReady = rollCall.status === 'ready' && Boolean(rollCall.snapshot) && isLoaded && !loadError;
+  const rollCallSnapshot = rosterReady ? rollCall.snapshot! : EMPTY_ROLL_CALL;
+  const draftReady = rosterReady && draftStorageReadyKey === attendanceDraftStorageKey && draftReadySnapshot === rollCallSnapshot;
+  const existingSiteDateRecords = rollCallSnapshot.records;
+  const unavailableAssignedIds = useMemo(() => rollCallSnapshot.workerIds.filter(
+    (id) => !workers.some((worker) => worker.id === id && worker.active)
+  ), [rollCallSnapshot, workers]);
 
   // Map of workers who are ALREADY marked Present or Half Day on ANOTHER project
   // site on `selectedDate` (Scenario 5 & 6: prevents double-marking a worker or
@@ -344,64 +345,29 @@ function AttendancePageInner() {
     return map;
   }, [attendance, selectedDate, selectedProjectId, projects]);
 
-  // Workers visible on the Daily Roster for `selectedProjectId`:
-  // - Regular craftsmen (active)
-  // - Supervisors assigned to `selectedProjectId` (via `project_supervisors`),
-  //   so only the Supervisor(s) supervising the selected project appear on its roster!
+  // Active assigned crew plus active workers with saved attendance for this
+  // site/date. An assigned Supervisor is included when there is a team to
+  // submit; an empty team alone must not create self-attendance.
   const siteRosterWorkers = useMemo(() => {
-    const assignedSupervisorIdsForSite = new Set(
-      projectSupervisors
-        .filter((ps) => ps.project_id === selectedProjectId)
-        .map((ps) => ps.supervisor_id)
-    );
-
-    return workers
-      .filter((w) => w.active)
-      .filter((w) => {
-        const linkedSup = findSupervisorAccountForWorker(w);
-        const isSupervisorRow =
-          Boolean(linkedSup) || w.position.toLowerCase().includes('supervisor');
-
-        if (!isSupervisorRow) return true;
-
-        // If this worker is a Supervisor:
-        // 1. Show if they already have an attendance record on this site & date
-        const hasRecordOnSite = attendance.some(
-          (a) =>
-            a.project_id === selectedProjectId &&
-            a.date === selectedDate &&
-            a.worker_id === w.id
-        );
-        if (hasRecordOnSite) return true;
-
-        // 2. If linked to a Supervisor account, check `project_supervisors`
-        if (linkedSup) {
-          const allAssignedForSup = projectSupervisors.filter(
-            (ps) => ps.supervisor_id === linkedSup.id
-          );
-          if (allAssignedForSup.length === 0) return true;
-          return assignedSupervisorIdsForSite.has(linkedSup.id);
-        }
-
-        return true;
-      });
-  }, [
-    workers,
-    projectSupervisors,
-    selectedProjectId,
-    selectedDate,
-    attendance,
-    findSupervisorAccountForWorker,
-  ]);
+    const assigned = new Set(rollCallSnapshot.workerIds);
+    const recorded = new Set(existingSiteDateRecords.map((record) => record.worker_id));
+    const supervisors = new Set(projectSupervisors.filter((ps) => ps.project_id === selectedProjectId).map((ps) => ps.supervisor_id));
+    const hasTeam = rollCallSnapshot.workerIds.length > 0;
+    return workers.filter((worker) => worker.active && (
+      assigned.has(worker.id) || recorded.has(worker.id) || (hasTeam && supervisors.has(worker.id))
+    ));
+  }, [workers, rollCallSnapshot, existingSiteDateRecords, projectSupervisors, selectedProjectId]);
+  const unavailableSavedRecords = useMemo(() => existingSiteDateRecords.filter(
+    (record) => !workers.some((worker) => worker.id === record.worker_id && worker.active)
+  ), [existingSiteDateRecords, workers]);
+  const hiddenDraftIds = useMemo(() => {
+    const visible = new Set(siteRosterWorkers.map((worker) => worker.id));
+    return dirtyDraftWorkerIds.filter((id) => !visible.has(id));
+  }, [dirtyDraftWorkerIds, siteRosterWorkers]);
 
   const getBaselineDraftEntry = useCallback(
     (workerId: string): AttendanceDraftEntry => {
-      const saved = attendance.find(
-        (record) =>
-          record.worker_id === workerId &&
-          record.project_id === selectedProjectId &&
-          record.date === selectedDate
-      );
+      const saved = existingSiteDateRecords.find((record) => record.worker_id === workerId);
       if (saved) {
         return { status: saved.status, notes: saved.notes || '' };
       }
@@ -414,13 +380,13 @@ function AttendancePageInner() {
       // A new day/site starts unchecked, preserving the existing roll-call rule.
       return { status: null, notes: '' };
     },
-    [attendance, selectedProjectId, selectedDate, otherSiteActiveAttendanceByWorker]
+    [existingSiteDateRecords, otherSiteActiveAttendanceByWorker]
   );
 
   // Hydrate once per user/site/date. On later data refreshes, update untouched rows
   // from the server but never replace a worker's in-progress local selection.
   useEffect(() => {
-    if (!isLoaded || !attendanceDraftStorageKey) return;
+    if (!rosterReady || !attendanceDraftStorageKey) return;
 
     const baseline: AttendanceDraftMap = {};
     siteRosterWorkers.forEach((worker) => {
@@ -433,31 +399,26 @@ function AttendancePageInner() {
       try {
         const raw = window.localStorage.getItem(attendanceDraftStorageKey);
         if (raw) {
-          const parsed = parseAttendanceDraft(raw);
+          const parsed = parseCompleteAttendanceDraft(raw);
           if (parsed) {
-            const knownWorkerIds = new Set(workers.map((worker) => worker.id));
             restoredEntries = Object.fromEntries(
               Object.entries(parsed).filter(([workerId, entry]) => {
                 const savedBaseline = baseline[workerId];
-                return (
-                  knownWorkerIds.has(workerId) &&
-                  Boolean(savedBaseline) &&
-                  (entry.status !== savedBaseline?.status ||
-                    entry.notes.trim() !== savedBaseline?.notes.trim())
-                );
+                return !savedBaseline || entry.status !== savedBaseline.status || entry.notes.trim() !== savedBaseline.notes.trim();
               })
             );
           } else {
-            window.localStorage.removeItem(attendanceDraftStorageKey);
+            storageReadFailed = true;
           }
         }
       } catch {
         storageReadFailed = true;
       }
 
-      setDraftAttendance({ ...baseline, ...restoredEntries });
-      setDirtyDraftWorkerIds(Object.keys(restoredEntries));
+      setUnreadableDraft(storageReadFailed);
+      setDraftState({ entries: { ...baseline, ...restoredEntries }, dirtyIds: Object.keys(restoredEntries) });
       setDraftStorageReadyKey(attendanceDraftStorageKey);
+      setDraftReadySnapshot(rollCallSnapshot);
       setDraftStorageStatus(
         storageReadFailed ? 'error' : Object.keys(restoredEntries).length > 0 ? 'saved' : 'ready'
       );
@@ -466,25 +427,28 @@ function AttendancePageInner() {
       return;
     }
 
-    setDraftAttendance((current) => {
+    setDraftState((current) => {
       const next = { ...baseline };
-      dirtyDraftWorkerIds.forEach((workerId) => {
-        if (current[workerId]) next[workerId] = current[workerId];
+      current.dirtyIds.forEach((workerId) => {
+        if (current.entries[workerId]) next[workerId] = current.entries[workerId];
       });
-      return next;
+      return { ...current, entries: next };
     });
+    setDraftReadySnapshot(rollCallSnapshot);
   }, [
-    isLoaded,
+    rosterReady,
+    rollCallSnapshot,
     attendanceDraftStorageKey,
     siteRosterWorkers,
     getBaselineDraftEntry,
     workers,
-    dirtyDraftWorkerIds,
   ]);
 
   // Persist only locally changed rows; official attendance still requires Submit.
   useEffect(() => {
     if (
+      unreadableDraft ||
+      !draftReady ||
       !attendanceDraftStorageKey ||
       draftStorageReadyKey !== attendanceDraftStorageKey
     ) {
@@ -513,6 +477,8 @@ function AttendancePageInner() {
       setDraftStorageStatus('error');
     }
   }, [
+    unreadableDraft,
+    draftReady,
     attendanceDraftStorageKey,
     draftStorageReadyKey,
     dirtyDraftWorkerIds,
@@ -524,9 +490,8 @@ function AttendancePageInner() {
     if (changedEntries.length === 0) return;
 
     setAttendanceSaveFailed(false);
-    setDraftAttendance((current) => ({ ...current, ...changes }));
-    setDirtyDraftWorkerIds((current) => {
-      const next = new Set(current);
+    setDraftState((current) => {
+      const next = new Set(current.dirtyIds);
       changedEntries.forEach(([workerId, entry]) => {
         const baseline = getBaselineDraftEntry(workerId);
         if (
@@ -538,7 +503,7 @@ function AttendancePageInner() {
           next.delete(workerId);
         }
       });
-      return Array.from(next);
+      return { entries: { ...current.entries, ...changes }, dirtyIds: Array.from(next) };
     });
   };
 
@@ -597,11 +562,6 @@ function AttendancePageInner() {
     applyDraftChanges(changes);
   };
 
-  // Existing submitted attendance records for the active project & date
-  const existingSiteDateRecords = attendance.filter(
-    (a) => a.project_id === selectedProjectId && a.date === selectedDate
-  );
-
   // Workers that the current user must mark before submitting:
   // - For a Supervisor: all `siteRosterWorkers` EXCEPT their own locked row (`!isSelfSupervisorWorker(w)`)
   // - For a Founder: all `siteRosterWorkers`
@@ -617,7 +577,15 @@ function AttendancePageInner() {
 
   const handleBatchSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (isSubmitting || !selectedProjectId || !user) return;
+    if (submitLock.current || isSubmitting || !selectedProjectId || !user) return;
+    if (supervisorIdentityNeedsReview) {
+      showToast('error', 'Supervisor workforce details need review before submitting Roll Call.');
+      return;
+    }
+    if (!draftReady || unreadableDraft || hiddenDraftIds.length > 0 || unavailableAssignedIds.length > 0) {
+      showToast('error', 'Review the project team and draft before submitting Roll Call.');
+      return;
+    }
     if (selectedDate > manilaDateISO()) {
       showToast('error', 'Attendance cannot be recorded for a future date.');
       return;
@@ -630,8 +598,26 @@ function AttendancePageInner() {
       return;
     }
 
+    submitLock.current = true;
     setIsSubmitting(true);
     setAttendanceSaveFailed(false);
+    // Recheck before writing. This reduces stale submissions, but is not a
+    // database lock: data may still change after this read.
+    try {
+      const fresh = await loadProjectRollCall(selectedProjectId, selectedDate);
+      if (projectRollCallFingerprint(fresh) !== projectRollCallFingerprint(rollCallSnapshot)) {
+        showToast('error', 'The project team or saved attendance changed. Review the refreshed list before submitting.');
+        await rollCall.reload();
+        submitLock.current = false;
+        setIsSubmitting(false);
+        return;
+      }
+    } catch {
+      showToast('error', 'Could not recheck the project team and saved attendance. Try again after refreshing.');
+      submitLock.current = false;
+      setIsSubmitting(false);
+      return;
+    }
 
     const timeLabel = new Date().toLocaleTimeString('en-PH', {
       hour: '2-digit',
@@ -657,6 +643,7 @@ function AttendancePageInner() {
         Boolean(findSupervisorAccountForWorker(w)) ||
         w.position.toLowerCase().includes('supervisor');
       const existingRec = existingSiteDateRecords.find((a) => a.worker_id === w.id);
+      if (existingRec && existingRec.status === d.status && (existingRec.notes || '').trim() === d.notes.trim()) return;
       batch.push({
         worker_id: w.id,
         project_id: selectedProjectId,
@@ -685,22 +672,7 @@ function AttendancePageInner() {
         );
         const otherSiteSelf = otherSiteActiveAttendanceByWorker.get(selfWorker.id);
 
-        if (existingSelfOnSite) {
-          // Preserve existing status & notes (append update timestamp if still pending)
-          const updatedNote = existingSelfOnSite.is_founder_override
-            ? existingSelfOnSite.notes
-            : `[Auto-logged on site attendance submission · Updated ${timeLabel} · Pending Founder Review]`;
-          batch.push({
-            worker_id: selfWorker.id,
-            project_id: selectedProjectId,
-            date: selectedDate,
-            status: existingSelfOnSite.status,
-            hours_worked: statusToHours(existingSelfOnSite.status),
-            notes: updatedNote,
-            recorded_by: existingSelfOnSite.recorded_by || user.id,
-            is_founder_override: Boolean(existingSelfOnSite.is_founder_override),
-          });
-        } else if (!otherSiteSelf) {
+        if (!existingSelfOnSite && !otherSiteSelf && rollCallSnapshot.workerIds.length > 0) {
           // First submission of the day for this Supervisor
           batch.push({
             worker_id: selfWorker.id,
@@ -716,17 +688,24 @@ function AttendancePageInner() {
       }
     }
 
+    if (batch.length === 0) {
+      submitLock.current = false;
+      setIsSubmitting(false);
+      showToast('info', 'There are no changes to submit.');
+      return;
+    }
     let success = false;
     try {
       success = await recordAttendanceBatch(batch);
     } catch {
       success = false;
     } finally {
+      submitLock.current = false;
       setIsSubmitting(false);
     }
     if (success) {
       setAttendanceSaveFailed(false);
-      setDirtyDraftWorkerIds([]);
+      setDraftState((current) => ({ ...current, dirtyIds: [] }));
       setDraftStorageStatus('ready');
       if (attendanceDraftStorageKey) {
         try {
@@ -737,6 +716,7 @@ function AttendancePageInner() {
       }
       showToast('success', 'Attendance saved. Supervisor self-attendance may still require Founder review before payroll.');
       if (isFounder) void pendingApprovals.refresh();
+      void rollCall.reload();
       setHistoryRevision((n) => n + 1);
     } else {
       setAttendanceSaveFailed(true);
@@ -931,6 +911,9 @@ function AttendancePageInner() {
   // Group Workforce tab workers by craft group
   const groupedWorkforceDirectory = useMemo(() => {
     const filtered = workers.filter((w) => {
+      if (workforceStatusFilter === 'removed' ? !w.removed_at : Boolean(w.removed_at)) return false;
+      if (workforceStatusFilter === 'active' && !w.active) return false;
+      if (workforceStatusFilter === 'inactive' && w.active) return false;
       if (workforceCraftFilter !== 'all' && getCraftGroup(w.position) !== workforceCraftFilter) {
         return false;
       }
@@ -949,7 +932,38 @@ function AttendancePageInner() {
     return Array.from(map.entries()).sort(
       (a, b) => CRAFT_GROUP_META[a[0]].order - CRAFT_GROUP_META[b[0]].order
     );
-  }, [workers, workforceCraftFilter, workforceSearch]);
+  }, [workers, workforceCraftFilter, workforceSearch, workforceStatusFilter]);
+
+  const selectedWorkerDetails = workers.filter((worker) => selectedWorkers.includes(worker.id));
+  const visibleWorkerIds = groupedWorkforceDirectory.flatMap(([, group]) => group.filter((worker) => !worker.removed_at).map((worker) => worker.id));
+  const changeWorkersRemoved = async (action: 'remove' | 'restore', target: Worker[]) => {
+    if (workerRemovalLock.current || !isFounder || target.length === 0 || target.length > 100) return;
+    workerRemovalLock.current = true;
+    setWorkerRemovalPending(true);
+    const ids = target.map((worker) => worker.id);
+    const names = new Map(target.map((worker) => [worker.id, worker.name]));
+    const statuses = action === 'remove' ? ['removed', 'already_removed', 'missing'] : ['restored', 'already_available', 'missing'];
+    try {
+      const response = await fetch('/api/workers/remove', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ ids, action }) });
+      const data = await response.json();
+      if (!response.ok || !data.ok || !Array.isArray(data.results) || data.results.length !== ids.length ||
+        new Set(data.results.map((item: { id: string }) => item.id)).size !== ids.length ||
+        data.results.some((item: { id: string; status: string }) => !names.has(item.id) || !statuses.includes(item.status))) {
+        throw new Error('Change was not confirmed.');
+      }
+      setWorkerRemovalResults(data.results.map((item: { id: string; status: string }) => ({ id: item.id, name: names.get(item.id) || 'Worker', status: item.status })));
+      if (action === 'remove') setSelectedWorkers([]);
+      setWorkerRemovalOpen(false); setWorkerRestoreTarget(null);
+      try { await refresh(); } catch { showToast('error', 'The change was confirmed, but the roster could not refresh. Refresh before making more changes.'); }
+    } catch {
+      setSelectedWorkers([]); setWorkerRemovalOpen(false); setWorkerRestoreTarget(null); setWorkerRemovalResults([]);
+      showToast('error', 'Change was not confirmed. Refresh the roster and check before trying again.');
+      try { await refresh(); } catch { /* Check the roster before retrying. */ }
+    } finally {
+      workerRemovalLock.current = false;
+      setWorkerRemovalPending(false);
+    }
+  };
 
   const activeHistoryFilterCount =
     Number(historyProjectFilter !== 'all') +
@@ -980,6 +994,7 @@ function AttendancePageInner() {
 
   return (
     <AppShell>
+      {activeTab === 'terminal' && <RollCallWalkthrough isSupervisor={isSupervisor} />}
       <div key={activeTab} className="animate-panel-enter w-full space-y-4">
         {/* Clean Dedicated Page Header for each separated view */}
         <div className="animate-mobile-lift blueprint-accent relative flex flex-col gap-4 overflow-hidden rounded-2xl border border-[#e3ddd2] bg-[#f8f6f0] px-4 py-5 shadow-sm sm:flex-row sm:items-end sm:justify-between sm:px-6 sm:py-6">
@@ -1138,9 +1153,21 @@ function AttendancePageInner() {
           </div>
         )}
 
+        {activeTab === 'terminal' && supervisorIdentityNeedsReview && (
+          <div role="alert" className="rounded-xl border border-status-warning/30 bg-status-warning-bg p-4 text-sm text-navy">
+            <strong>Supervisor workforce details need review.</strong>{' '}
+            An active worker has the same name as a Supervisor assigned here, but is not linked to that account. This may or may not be the same person. Roll Call submission is paused to prevent duplicate attendance. Please ask the Founder to check the profiles and their history. Do not delete or change them based on name alone.
+          </div>
+        )}
+        {activeTab === 'terminal' && missingSupervisorWorker && !supervisorIdentityNeedsReview && (
+          <div role="status" className="rounded-xl border border-surface-border bg-white p-4 text-sm text-ink-secondary">
+            Your account does not have an active linked workforce profile, so your attendance will not be auto-logged. Ask the Founder if this is unexpected.
+          </div>
+        )}
+
         {/* Active Project & Date Selector Bar (Only shown on Daily Roster tab) */}
         {activeTab === 'terminal' && (
-          <div className="rounded-xl border border-surface-border bg-white p-3 sm:p-3.5 grid grid-cols-1 md:grid-cols-2 gap-2.5 md:gap-3 items-start">
+          <div data-roll-call-guide="site" className="rounded-xl border border-surface-border bg-white p-3 sm:p-3.5 grid grid-cols-1 md:grid-cols-2 gap-2.5 md:gap-3 items-start">
             <div>
               <SearchableSelect
                 id="attendance-project"
@@ -1201,10 +1228,32 @@ function AttendancePageInner() {
         )}
 
         {/* TAB 1: TERMINAL / DAILY ROSTER */}
-        {activeTab === 'terminal' && (
+        {activeTab === 'terminal' && !draftReady && (
+          <div className="rounded-xl border border-surface-border bg-white p-4 text-sm">
+            {!selectedProjectId
+              ? <p role="status">Choose an available project to see its Roll Call.</p>
+              : rollCall.status === 'error' || loadError
+                ? <><p role="alert" className="text-status-danger">Could not load the complete project team and saved attendance. Your draft has not been submitted.</p><Button type="button" variant="secondary" size="sm" onClick={() => void (loadError ? refresh() : rollCall.reload())}>Retry roster</Button></>
+                : <p role="status">{rosterReady ? 'Restoring this device’s draft…' : 'Loading project team and saved attendance…'}</p>}
+          </div>
+        )}
+        {activeTab === 'terminal' && draftReady && (
           <form onSubmit={handleBatchSubmit} className="space-y-2.5 sm:space-y-3.5">
+            {unavailableAssignedIds.length > 0 && <div role="alert" className="rounded-xl border border-status-warning/30 bg-status-warning-bg p-4 text-sm text-navy">Some assigned workers are inactive or their details are unavailable. Check the project team before submitting.</div>}
+            {unreadableDraft && <div role="alert" className="rounded-xl border border-status-warning/30 bg-status-warning-bg p-4 text-sm text-navy">Could not read the draft storage on this device. Nothing was submitted or deliberately deleted. Check browser storage before submitting.</div>}
+            {hiddenDraftIds.length > 0 && <div role="alert" className="rounded-xl border border-status-warning/30 bg-status-warning-bg p-4 text-sm text-navy">
+              <p>A saved draft includes {hiddenDraftIds.length} worker(s) not in the current roster. The draft is preserved on this device. Add the worker back to the project, or discard only these hidden draft selections before submitting.</p>
+              <Button type="button" variant="secondary" size="sm" onClick={() => setDiscardHiddenDraftOpen(true)}>Review hidden draft selections</Button>
+            </div>}
+            {rollCallSnapshot.workerIds.length === 0 && <div role="status" className="rounded-xl border border-surface-border bg-white p-4 text-sm text-ink-secondary">No workers are assigned to this project yet. Saved attendance for this date remains visible below. <Link href={`/projects/${encodeURIComponent(selectedProjectId)}`} className="font-semibold text-brand underline">Manage project workers</Link></div>}
+            {unavailableSavedRecords.length > 0 && <section aria-label="Saved attendance for unavailable workers" className="rounded-xl border border-surface-border bg-white p-4 text-sm">
+              <h2 className="font-semibold text-navy">Saved attendance for unavailable workers</h2>
+              <p className="mt-1 text-xs text-ink-secondary">These saved records are shown read-only. Worker details may be unavailable to your account. Use Attendance History for more information.</p>
+              <ul className="mt-2 space-y-2">{unavailableSavedRecords.map((record) => <li key={record.id} className="text-xs text-ink-secondary"><strong>{record.worker_name || 'Worker (details unavailable)'}</strong> · {formatStatusLabel(record.status)}{record.notes ? ` · ${record.notes}` : ''}</li>)}</ul>
+            </section>}
             {/* Compact progress summary: the roster remains the focus, counts stay scannable. */}
             <section
+              data-roll-call-guide="summary"
               aria-label="Attendance summary"
               className="rounded-xl border border-surface-border bg-white px-3 py-2.5 sm:px-3.5 sm:py-3"
             >
@@ -1255,7 +1304,7 @@ function AttendancePageInner() {
             </section>
 
             {/* Search stays visible; the craft filter moves to a focused sheet on phones. */}
-            <div className="rounded-xl border border-surface-border bg-white p-2.5 sm:p-3">
+            <div data-roll-call-guide="filters" className="rounded-xl border border-surface-border bg-white p-2.5 sm:p-3">
               <div className="grid grid-cols-1 gap-2 md:grid-cols-[minmax(0,1fr)_minmax(13rem,18rem)] md:items-center">
                 <div className="flex min-w-0 items-center gap-2">
                   <div className="min-w-0 flex-1">
@@ -1377,7 +1426,7 @@ function AttendancePageInner() {
             </Modal>
 
             {/* GROUPED WORKER ROSTER */}
-            <div className="space-y-2 sm:space-y-2.5">
+            <div data-roll-call-guide="crew" className="space-y-2 sm:space-y-2.5">
               {groupedRosterWorkers.map(([groupKey, groupWorkers]) => {
                 const isCollapsed = Boolean(collapsedGroups[groupKey]);
                 const groupMarkableWorkers = groupWorkers.filter(
@@ -1556,7 +1605,7 @@ function AttendancePageInner() {
                                         isVerifiedByFounder ? (
                                           `Founder Approved (${formatStatusLabel(savedRec.status)}) ✓`
                                         ) : (
-                                          'Submitted as Present · Pending Founder Approval'
+                                          `Submitted: ${formatStatusLabel(savedRec.status)}${savedRec.status === 'present' || savedRec.status === 'half_day' ? ' · Pending Founder Approval' : ''}`
                                         )
                                       ) : (
                                         'Auto-logged when you submit crew roll call.'
@@ -1688,8 +1737,8 @@ function AttendancePageInner() {
                   <EmptyState
                     title={unmarkedWorkerIds !== null ? 'No workers in this view' : 'No workers on this site'}
                     description={
-                      workers.length === 0
-                        ? 'Add workers from the Workforce tab. They will appear here grouped by craft.'
+                      siteRosterWorkers.length === 0
+                        ? 'Add workers to this project in Project Details to begin a new Roll Call.'
                         : unmarkedWorkerIds !== null
                           ? 'Refresh the unmarked list or turn off Unmarked only to see the full roster.'
                           : 'No worker matches the current filter.'
@@ -1699,8 +1748,10 @@ function AttendancePageInner() {
               )}
             </div>
 
+            <ConfirmDialog isOpen={discardHiddenDraftOpen} title="Discard hidden draft selections?" message="Only selections for workers no longer in this roster will be removed from this device. Saved attendance and payroll are not changed." destructive confirmLabel="Discard hidden selections" onCancel={() => setDiscardHiddenDraftOpen(false)} onConfirm={() => { setDraftState((current) => ({ dirtyIds: current.dirtyIds.filter((id) => !hiddenDraftIds.includes(id)), entries: Object.fromEntries(Object.entries(current.entries).filter(([id]) => !hiddenDraftIds.includes(id))) })); setDiscardHiddenDraftOpen(false); }} />
+
             {/* In-Flow Bottom Submit & Sync Card (Moves naturally with collapsed/expanded groups — never overlaps) */}
-            <div className="mt-3 px-3 sm:px-4 py-3 rounded-xl bg-white border border-surface-border flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+            <div data-roll-call-guide="submit" className="mt-3 px-3 sm:px-4 py-3 rounded-xl bg-white border border-surface-border flex flex-col sm:flex-row sm:items-center justify-between gap-3">
               <div
                 role="status"
                 aria-live="polite"
@@ -1712,6 +1763,8 @@ function AttendancePageInner() {
                     <span className="text-status-warning">
                       Attendance submission could not be confirmed. Your selections remain in the draft; check the saved records before retrying.
                     </span>
+                  ) : markableWorkers.length === 0 ? (
+                    <span>No crew ready to submit.</span>
                   ) : uncheckedCount > 0 ? (
                     <span>
                       <strong className="font-semibold tabular-nums text-status-warning">{uncheckedCount}</strong> statuses left to choose
@@ -1740,6 +1793,11 @@ function AttendancePageInner() {
                 disabled={
                   isSubmitting ||
                   !selectedProjectId ||
+                  supervisorIdentityNeedsReview ||
+                  unreadableDraft ||
+                  hiddenDraftIds.length > 0 ||
+                  unavailableAssignedIds.length > 0 ||
+                  draftStorageReadyKey !== attendanceDraftStorageKey ||
                   markableWorkers.length === 0 ||
                   uncheckedCount > 0 ||
                   (existingSiteDateRecords.length > 0 && !hasUnsavedChanges)
@@ -2011,7 +2069,7 @@ function AttendancePageInner() {
                     Register Site Worker
                   </h3>
                   <p className="mt-1 text-xs leading-relaxed text-ink-secondary">
-                    New workers appear on Roll Call and Payroll. Supervisor accounts sync from Team Accounts.
+                    Add registered workers to a project to include them in that project’s Roll Call. Supervisor accounts sync from Team Accounts.
                   </p>
                 </div>
 
@@ -2103,12 +2161,46 @@ function AttendancePageInner() {
                     ]}
                   />
                 </div>
+                <div className="w-full sm:w-36">
+                  <Select aria-label="Filter workforce by status" value={workforceStatusFilter} onChange={(e) => setWorkforceStatusFilter(e.target.value)} options={[{ label: 'Active', value: 'active' }, { label: 'Inactive', value: 'inactive' }, { label: 'Active and inactive', value: 'all' }, ...(isFounder ? [{ label: 'Removed', value: 'removed' }] : [])]} />
+                </div>
               </div>
 
               <Badge variant="neutral" size="sm">
-                {workers.filter((w) => w.active).length} active / {workers.length} total
+                {workers.filter((w) => w.active && !w.removed_at).length} active / {workers.filter((w) => !w.removed_at).length} in workforce
               </Badge>
             </div>
+
+            {isFounder && (
+              <div className="rounded-xl border border-surface-border bg-white p-3 space-y-2">
+                <div className="flex flex-wrap items-center gap-2">
+                  <Button type="button" variant="secondary" size="sm" disabled={workerRemovalPending || !isLoaded || Boolean(loadError) || visibleWorkerIds.length === 0} onClick={() => {
+                    const combined = Array.from(new Set([...selectedWorkers, ...visibleWorkerIds]));
+                    if (combined.length > 100) { showToast('error', 'Select at most 100 workers at a time. Narrow the filter or select individuals.'); return; }
+                    setSelectedWorkers(combined);
+                  }}>Select visible</Button>
+                  <Button type="button" variant="ghost" size="sm" disabled={workerRemovalPending || selectedWorkers.length === 0} onClick={() => setSelectedWorkers([])}>Clear selection</Button>
+                  <span className="text-xs text-ink-secondary">{selectedWorkers.length} selected (including selections outside the current filter)</span>
+                  <Button type="button" variant="danger" size="sm" disabled={workerRemovalPending || !isLoaded || Boolean(loadError) || selectedWorkers.length === 0 || selectedWorkerDetails.length !== selectedWorkers.length} onClick={() => setWorkerRemovalOpen(true)}>Remove selected</Button>
+                </div>
+                <p className="text-xs text-ink-secondary">Removed workers are hidden from normal lists; their history remains. Use the Removed filter to review or restore them.</p>
+              </div>
+            )}
+            {workerRemovalResults.length > 0 && (
+              <div role="status" className="rounded-xl border border-surface-border bg-white p-3 text-xs space-y-1">
+                <p className="font-semibold text-navy">Worker removal results</p>
+                {workerRemovalResults.map((item, index) => <p key={`${item.id}-${index}`}><strong>{item.name} (ID {item.id.slice(0, 8)}):</strong> {item.status === 'removed' ? 'Removed from workforce and current project teams; history kept.' : item.status === 'restored' ? 'Restored as inactive; project teams were not restored.' : item.status === 'already_removed' ? 'Already removed.' : item.status === 'already_available' ? 'Already in the workforce.' : 'Not found; refresh and check.'}</p>)}
+                <button type="button" className="underline" onClick={() => setWorkerRemovalResults([])}>Dismiss results</button>
+              </div>
+            )}
+            <Modal isOpen={workerRemovalOpen} onClose={() => { if (!workerRemovalPending) setWorkerRemovalOpen(false); }} title="Remove selected workers?" description="Attendance, payroll and Bale history stay. Workers are removed from current project teams and future payroll generation, including unprocessed dates. Finish any payroll first. Supervisor logins and project access are not removed. Review every selected worker below." role="alertdialog" dismissOnBackdrop={false} dismissOnEscape={!workerRemovalPending} showCloseButton={!workerRemovalPending} maxWidth="md">
+              <ul className="max-h-56 overflow-y-auto rounded-lg border border-surface-border divide-y divide-surface-border text-xs">
+                {selectedWorkerDetails.map((worker) => <li key={worker.id} className="p-2">{worker.name} · {worker.position} · {worker.active ? 'Active' : 'Inactive'} · ID {worker.id.slice(0, 8)}</li>)}
+              </ul>
+              <div className="mt-3 flex justify-end gap-2"><Button type="button" variant="secondary" disabled={workerRemovalPending} onClick={() => setWorkerRemovalOpen(false)}>Cancel</Button><Button type="button" variant="danger" isLoading={workerRemovalPending} onClick={() => void changeWorkersRemoved('remove', selectedWorkerDetails)}>Remove workers</Button></div>
+            </Modal>
+
+            <ConfirmDialog isOpen={Boolean(workerRestoreTarget)} title="Restore worker?" message={`${workerRestoreTarget?.name || 'This worker'} will return as inactive. Reactivation and adding them to project teams are separate steps.`} confirmLabel="Restore as inactive" isPending={workerRemovalPending} onCancel={() => setWorkerRestoreTarget(null)} onConfirm={() => { if (workerRestoreTarget) void changeWorkersRemoved('restore', [workerRestoreTarget]); }} />
 
             {/* Grouped Compact Workforce List */}
             <div className="space-y-3">
@@ -2144,6 +2236,11 @@ function AttendancePageInner() {
                           className="px-4 py-2.5 flex items-center justify-between gap-3 text-xs hover:bg-slate-50 transition-colors"
                         >
                           <div className="flex items-center flex-wrap gap-2 min-w-0">
+                            {isFounder && !w.removed_at && <label className="inline-flex min-h-11 min-w-11 items-center justify-center"><input type="checkbox" aria-label={`Select ${w.name}, ${w.position}, ${w.active ? 'active' : 'inactive'} for removal`} checked={selectedWorkers.includes(w.id)} disabled={workerRemovalPending || !isLoaded || Boolean(loadError)} onChange={(e) => {
+                              const checked = e.target.checked;
+                              if (checked && selectedWorkers.length >= 100) { showToast('error', 'Select at most 100 workers at a time.'); return; }
+                              setSelectedWorkers((current) => checked ? [...current, w.id] : current.filter((id) => id !== w.id));
+                            }} className="h-4 w-4 rounded border-surface-border" /></label>}
                             <span className="font-bold text-navy text-sm">{w.name}</span>
                             <span className="text-ink-secondary">
                               {w.position} · ₱{w.pay_rate}/day
@@ -2152,7 +2249,7 @@ function AttendancePageInner() {
                                 : ''}
                             </span>
                             <Badge variant={w.active ? 'success' : 'neutral'} size="sm">
-                              {w.active ? 'Active' : 'Inactive'}
+                              {w.removed_at ? 'Removed' : w.active ? 'Active' : 'Inactive'}
                             </Badge>
                             {w.position.toLowerCase().includes('supervisor') && (
                               <Badge variant="warning" size="sm">
@@ -2169,7 +2266,9 @@ function AttendancePageInner() {
                             ))}
                           </div>
 
-                          {isFounder && (
+                          {isFounder && (w.removed_at ? (
+                            <Button type="button" variant="secondary" size="sm" disabled={workerRemovalPending} onClick={() => setWorkerRestoreTarget(w)}>Restore</Button>
+                          ) : (
                             <Button
                               type="button"
                               variant="secondary"
@@ -2179,7 +2278,7 @@ function AttendancePageInner() {
                             >
                               Manage
                             </Button>
-                          )}
+                          ))}
                         </div>
                       );
                     })}
@@ -2191,7 +2290,7 @@ function AttendancePageInner() {
                 <div className="bg-white rounded-xl border border-surface-border">
                   <EmptyState
                     title="No workers match"
-                    description="Choose Add Worker above to register a craftsman, or clear your search filter."
+                    description="Change the search or filters to see other workers, or choose Add Worker above to register a worker."
                   />
                 </div>
               )}

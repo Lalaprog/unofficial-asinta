@@ -195,7 +195,7 @@ describe('mobile workspace launcher', () => {
   });
 
 
-  it('shows the highlighted action button and groups the three expense starts without removing More', () => {
+  it('shows the highlighted action button and groups the three expense starts without removing More', async () => {
     render(React.createElement(MobileNav));
     const nav = screen.getByRole('navigation', { name: 'Mobile Bottom Navigation' });
     const quick = within(nav).getByRole('button', { name: 'Quick actions' });
@@ -206,12 +206,39 @@ describe('mobile workspace launcher', () => {
     let dialog = screen.getByRole('dialog', { name: 'Quick actions' });
     expect(within(dialog).getByRole('button', { name: 'New invoice' })).toBeTruthy();
     fireEvent.click(within(dialog).getByRole('button', { name: 'Expense' }));
-    dialog = screen.getByRole('dialog', { name: 'Start an expense' });
+    dialog = await screen.findByRole('dialog', { name: 'Expense quick actions' });
     for (const name of ['Scan receipt', 'Describe', 'Manual entry']) expect(within(dialog).getByRole('button', { name })).toBeTruthy();
     fireEvent.click(within(dialog).getByRole('button', { name: 'Describe' }));
     expect(push).toHaveBeenCalledWith('/expenses');
     expect(JSON.parse(sessionStorage.getItem('asinta:mobile-quick-action')!).action).toBe('expense-describe');
     expect(screen.queryByRole('dialog')).toBeNull();
+  });
+
+  it('animates back to the main fan without starting an action', async () => {
+    render(React.createElement(MobileNav));
+    fireEvent.click(screen.getByRole('button', { name: 'Quick actions' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Expense' }));
+    let dialog = await screen.findByRole('dialog', { name: 'Expense quick actions' });
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Back' }));
+    dialog = await screen.findByRole('dialog', { name: 'Quick actions' });
+    expect(within(dialog).getByRole('button', { name: 'New invoice' })).toBeTruthy();
+    expect(push).not.toHaveBeenCalled();
+  });
+
+  it('returns between fans, closes with Escape, and honors reduced motion', async () => {
+    window.matchMedia = vi.fn().mockImplementation((query: string) => ({ matches: query.includes('prefers-reduced-motion'), addEventListener: vi.fn(), removeEventListener: vi.fn() }));
+    render(React.createElement(MobileNav));
+    const quick = screen.getByRole('button', { name: 'Quick actions' });
+    fireEvent.click(quick);
+    let dialog = screen.getByRole('dialog', { name: 'Quick actions' });
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Expense' }));
+    dialog = screen.getByRole('dialog', { name: 'Expense quick actions' });
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Back' }));
+    expect(screen.getByRole('dialog', { name: 'Quick actions' })).toBeTruthy();
+    fireEvent.keyDown(window, { key: 'Escape' });
+    expect(screen.queryByRole('dialog')).toBeNull();
+    expect(document.activeElement).toBe(quick);
+    expect(push).not.toHaveBeenCalled();
   });
 
   it('drags from panel content at the top, without selecting a link', () => {

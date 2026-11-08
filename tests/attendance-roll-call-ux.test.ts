@@ -3,7 +3,20 @@ import React from 'react';
 import { act, cleanup, fireEvent, render, screen, within } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
-const mock = vi.hoisted(() => ({ supervisor: false, extraSites: [] as Array<{id:string;name:string;location:string}>, record: vi.fn(), toast: vi.fn(), createWorker: vi.fn() }));
+const mock = vi.hoisted(() => ({ supervisor: false, duplicate: false, missingLinked: false, extraSites: [] as Array<{id:string;name:string;location:string}>, record: vi.fn(), toast: vi.fn(), createWorker: vi.fn(), snapshots: new Map<string, any>(), siteAttendance: [] as any[] }));
+function getSnapshot(projectId: string, date: string) {
+  const key = `${projectId}:${date}`;
+  if (!mock.snapshots.has(key)) mock.snapshots.set(key, {
+    workerIds: ['amy','ben','cara','dan','eva'],
+    records: mock.siteAttendance.filter((rec) => rec.project_id === projectId && rec.date === date),
+  });
+  return mock.snapshots.get(key);
+}
+vi.mock('@/lib/attendance/useProjectRollCall', () => ({ useProjectRollCall: (_user: string, project: string, date: string) => ({ status: 'ready', snapshot: getSnapshot(project, date), reload: vi.fn(async () => {}) }) }));
+vi.mock('@/lib/attendance/project-roll-call', () => ({
+  loadProjectRollCall: async (project: string, date: string) => getSnapshot(project, date),
+  projectRollCallFingerprint: (snapshot: unknown) => JSON.stringify(snapshot),
+}));
 vi.mock('@/lib/attendance/usePendingApprovals', () => ({ usePendingApprovals: () => ({items: [], total: 0, hasMore: false, loading: false, error: null, loadMore: vi.fn(), refresh: vi.fn()}) }));
 vi.mock('next/navigation', () => { const params = new URLSearchParams(); return { useSearchParams: () => params }; });
 vi.mock('next/link', () => ({ default: ({ children, href, prefetch: _prefetch, ...props }: React.AnchorHTMLAttributes<HTMLAnchorElement> & { prefetch?: boolean }) => React.createElement('a', { ...props, href }, children) }));
@@ -23,14 +36,17 @@ vi.mock('@/lib/data/store', () => {
     { id: 'c', worker_id: 'cara', project_id: 'site-1', date: '2026-11-03', status: 'absent', notes: '', recorded_by: 'founder' },
     { id: 'd', worker_id: 'dan', project_id: 'site-2', date: '2026-11-03', status: 'present', notes: '', recorded_by: 'founder' },
   ];
+  mock.siteAttendance = attendance;
   const store = { projects, workers, attendance, users: [{ id: 'sup', name: 'Site Supervisor', role: 'supervisor' }], projectSupervisors: [{ project_id: 'site-1', supervisor_id: 'sup' }], isLoaded: true, createWorker: mock.createWorker, updateWorker: vi.fn(), toggleWorkerStatus: vi.fn(), recordAttendanceBatch: mock.record, updateAttendanceRecord: vi.fn(), getProjectsForSupervisor: () => [...projects, ...mock.extraSites] };
-  return { useDataStore: () => store };
+  const duplicate = worker('legacy-sup', 'Site Supervisor', 'Site Supervisor');
+  const variants = [workers, [...workers, duplicate], workers.filter((w) => w.id !== 'sup'), [...workers.filter((w) => w.id !== 'sup'), duplicate]];
+  return { useDataStore: () => ({ ...store, workers: variants[(mock.missingLinked ? 2 : 0) + (mock.duplicate ? 1 : 0)] }) };
 });
 import AttendancePage from '@/app/attendance/page';
 
 beforeEach(() => {
   vi.useFakeTimers(); vi.setSystemTime(new Date('2026-11-03T04:00:00Z'));
-  mock.supervisor = true; mock.extraSites = []; mock.record.mockReset(); mock.toast.mockReset(); mock.createWorker.mockReset();
+  mock.snapshots.clear(); mock.supervisor = true; mock.duplicate = false; mock.missingLinked = false; mock.extraSites = []; mock.record.mockReset(); mock.toast.mockReset(); mock.createWorker.mockReset();
   window.localStorage.clear(); window.history.replaceState({}, '', '/attendance');
 });
 afterEach(() => { cleanup(); vi.useRealTimers(); });
@@ -40,6 +56,24 @@ function status(worker: string, label: string) {
 }
 
 describe('roll call usability and safety', () => {
+  it.each([true, false])('pauses submission for a possible duplicate for supervisor=%s', (supervisor) => {
+    mock.supervisor = supervisor; mock.duplicate = true;
+    render(React.createElement(AttendancePage));
+    expect(screen.getByRole('alert').textContent).toContain('An active worker has the same name');
+    const submit = document.querySelector('form button[type="submit"]') as HTMLButtonElement;
+    expect(submit.disabled).toBe(true);
+    fireEvent.submit(submit.closest('form')!);
+    expect(mock.record).not.toHaveBeenCalled();
+    expect(mock.createWorker).not.toHaveBeenCalled();
+  });
+
+  it('does not create a missing supervisor worker just by visiting Roll Call', () => {
+    mock.missingLinked = true;
+    render(React.createElement(AttendancePage));
+    expect(screen.getByText(/does not have an active linked workforce profile/)).toBeTruthy();
+    expect(mock.createWorker).not.toHaveBeenCalled();
+  });
+
   it('opens the existing worker registration without changing attendance', () => {
     mock.supervisor = false;
     HTMLElement.prototype.scrollIntoView = vi.fn();
@@ -154,16 +188,16 @@ describe('roll call usability and safety', () => {
     expect(status('Cara', 'Absent').getAttribute('aria-pressed')).toBe('true');
     expect(status('Dan', 'Absent').getAttribute('aria-pressed')).toBe('true');
     fireEvent.click(screen.getByRole('button', { name: 'Save Changes' }));
+    await act(async () => {});
     expect(mock.record).toHaveBeenCalledTimes(1);
     const sent = mock.record.mock.calls[0][0] as Array<{worker_id: string; status: string}>;
     expect(sent).toEqual(expect.arrayContaining([
       expect.objectContaining({ worker_id: 'amy', status: 'present' }),
-      expect.objectContaining({ worker_id: 'ben', status: 'half_day' }),
-      expect.objectContaining({ worker_id: 'cara', status: 'absent' }),
       expect.objectContaining({ worker_id: 'dan', status: 'absent' }),
       expect.objectContaining({ worker_id: 'eva', status: 'present' }),
       expect.objectContaining({ worker_id: 'sup', status: 'present' }),
     ]));
+    expect(sent.some(row => row.worker_id === 'ben' || row.worker_id === 'cara')).toBe(false);
     expect((status('Amy', 'Absent') as HTMLButtonElement).disabled).toBe(true);
     expect((screen.getByRole('button', { name: 'Unmarked only' }) as HTMLButtonElement).disabled).toBe(true);
     await act(async () => { finish(false); });

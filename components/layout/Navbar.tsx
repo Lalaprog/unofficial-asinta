@@ -30,7 +30,7 @@ import {
   Settings,
 } from 'lucide-react';
 import { Badge } from '@/components/ui/Badge';
-import { DASHBOARD_GUIDE_EVENT } from '@/components/dashboard/DashboardWalkthrough';
+import { DASHBOARD_GUIDE_EVENT, ROLL_CALL_GUIDE_EVENT } from '@/components/dashboard/DashboardWalkthrough';
 import { BaleLogo } from '@/components/ui/AsintaLogo';
 import { AsintaLoader } from '@/components/ui/AsintaLoader';
 import * as Popover from '@radix-ui/react-popover';
@@ -851,8 +851,8 @@ export const Navbar: React.FC<NavbarProps> = ({ showDesktopNavigation = true }) 
 
           {/* Right: Notification Bell & Role Icon Account Menu */}
           <div className="flex items-center space-x-2 shrink-0">
-            {isFounder && pathname === '/dashboard' && <button type="button" aria-label="Open dashboard guide" title="Dashboard guide"
-              onClick={() => { setShowNotifications(false); setShowUserMenu(false); setOpenDropdownId(null); window.dispatchEvent(new Event(DASHBOARD_GUIDE_EVENT)); }}
+            {((isFounder && pathname === '/dashboard') || (pathname === '/attendance' && localAttendanceTab === 'terminal')) && <button type="button" aria-label={pathname === '/dashboard' ? 'Open dashboard guide' : 'Open Roll Call guide'} title={pathname === '/dashboard' ? 'Dashboard guide' : 'Roll Call guide'}
+              onClick={() => { setShowNotifications(false); setShowUserMenu(false); setOpenDropdownId(null); window.dispatchEvent(new Event(pathname === '/dashboard' ? DASHBOARD_GUIDE_EVENT : ROLL_CALL_GUIDE_EVENT)); }}
               className="inline-flex min-h-11 min-w-11 items-center justify-center rounded-full text-ink-secondary hover:bg-surface-inset hover:text-brand focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand focus-visible:ring-offset-2 lg:hidden">
               <CircleHelp className="h-5 w-5" aria-hidden="true" />
             </button>}

@@ -65,3 +65,18 @@ export function serializeAttendanceDraft(
   };
   return JSON.stringify(payload);
 }
+
+/**
+ * For workflows that would rewrite the draft, require every stored entry to
+ * parse. Otherwise preserve the original raw draft instead of dropping fields.
+ */
+export function parseCompleteAttendanceDraft(raw: string | null): AttendanceDraftMap | null {
+  const parsed = parseAttendanceDraft(raw);
+  if (!parsed || !raw) return null;
+  try {
+    const stored = JSON.parse(raw) as { entries: Record<string, unknown> };
+    return Object.keys(stored.entries).length === Object.keys(parsed).length ? parsed : null;
+  } catch {
+    return null;
+  }
+}

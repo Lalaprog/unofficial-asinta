@@ -1,0 +1,54 @@
+import { PGlite } from '@electric-sql/pglite';
+import { readFileSync } from 'node:fs';
+import { describe, expect, it } from 'vitest';
+const sql=readFileSync('supabase/migrations/20261107000006_guarded_worker_removal.sql','utf8');
+const f='00000000-0000-0000-0000-000000000001', s='00000000-0000-0000-0000-000000000002';
+const w=(n:number)=>`10000000-0000-0000-0000-${String(n).padStart(12,'0')}`;
+describe('guarded worker removal',()=>{
+  it('archives active and inactive profiles while keeping history and project rows; restores as inactive',async()=>{
+    const db=new PGlite();
+    try {
+      await db.exec(`create role anon; create role authenticated; create role service_role; create schema app_private;
+        create table public.users(id uuid primary key, role text, email text);
+        create table public.workers(id uuid primary key,name text, active boolean);
+        create table public.attendance(worker_id uuid references public.workers(id) on delete restrict);
+        create table public.payroll(worker_id uuid references public.workers(id) on delete restrict);
+        create table public.advances(worker_id uuid references public.workers(id) on delete restrict);
+        create table public.project_worker_assignments(project_id uuid,worker_id uuid references public.workers(id),active boolean,updated_at timestamptz,updated_by uuid,primary key(project_id,worker_id));
+        create table public.audit_log(actor_id uuid,actor_email text,action text,table_name text,record_id uuid,before_row jsonb,after_row jsonb);
+        create function app_private.lock_founder_guard() returns void language sql as $$ select $$;
+        grant all on public.workers to authenticated; grant usage on schema public to service_role,authenticated;
+        insert into public.users values ('${f}','founder','founder@example.test'),('${s}','supervisor',null);
+        insert into public.workers values ('${w(1)}','Active',true),('${w(2)}','Inactive',false),('${s}','Linked supervisor',true);
+        insert into public.attendance values ('${w(1)}'); insert into public.payroll values ('${w(1)}'); insert into public.advances values ('${w(1)}');
+        insert into public.project_worker_assignments values ('${w(9)}','${w(1)}',true,now(),'${f}');`);
+      await db.exec(sql);
+      await expect(db.query('select public.set_workers_removed_guarded($1,$2::uuid[],true)',[s,[w(1)]])).rejects.toThrow(/Founder access/);
+      await expect(db.query('select public.set_workers_removed_guarded($1,$2::uuid[],true)',[f,[w(1),w(1)]])).rejects.toThrow(/Invalid worker selection/);
+      await db.exec('set role authenticated');
+      await expect(db.query('delete from public.workers')).rejects.toThrow(/permission denied/i);
+      await expect(db.query('select public.set_workers_removed_guarded($1,$2::uuid[],true)',[f,[w(1)]])).rejects.toThrow(/permission denied/i);
+      await db.exec('reset role; set role service_role');
+      const result=await db.query<{result:{results:Array<{id:string;status:string}>}}>('select public.set_workers_removed_guarded($1,$2::uuid[],true) result',[f,[w(2),s,w(1),w(8)]]);
+      expect(result.rows[0].result.results).toEqual([{id:s,status:'removed'},{id:w(1),status:'removed'},{id:w(2),status:'removed'},{id:w(8),status:'missing'}]);
+      await db.exec('reset role');
+      expect((await db.query('select * from public.workers')).rows).toHaveLength(3);
+      expect((await db.query('select * from public.attendance')).rows).toHaveLength(1);
+      expect((await db.query('select * from public.payroll')).rows).toHaveLength(1);
+      expect((await db.query('select * from public.advances')).rows).toHaveLength(1);
+      expect((await db.query<{active:boolean}>('select active from public.project_worker_assignments')).rows[0].active).toBe(false);
+      expect((await db.query('select * from public.audit_log')).rows).toHaveLength(3);
+      await expect(db.query('update public.workers set active=true where id=$1',[w(1)])).rejects.toThrow(/removed_workers_are_inactive/);
+      const restored=await db.query<{result:{results:Array<{id:string;status:string}>}}>('select public.set_workers_removed_guarded($1,$2::uuid[],false) result',[f,[w(1)]]);
+      expect(restored.rows[0].result.results).toEqual([{id:w(1),status:'restored'}]);
+      expect((await db.query<{active:boolean;removed_at:unknown}>('select active,removed_at from public.workers where id=$1',[w(1)])).rows[0]).toEqual({active:false,removed_at:null});
+      expect((await db.query<{active:boolean}>('select active from public.project_worker_assignments')).rows[0].active).toBe(false);
+      await db.exec(`alter table public.audit_log add constraint audit_deny_test check (record_id <> '${w(1)}'::uuid) not valid;`);
+      await expect(db.query('select public.set_workers_removed_guarded($1,$2::uuid[],true)',[f,[w(1)]])).rejects.toThrow();
+      expect((await db.query<{removed_at:unknown}>('select removed_at from public.workers where id=$1',[w(1)])).rows[0].removed_at).toBeNull();
+      await db.exec('begin isolation level repeatable read');
+      await expect(db.query('select public.set_workers_removed_guarded($1,$2::uuid[],true)',[f,[w(1)]])).rejects.toThrow(/REQUIRES_READ_COMMITTED/);
+      await db.exec('rollback');
+    } finally { await db.close(); }
+  },15000);
+});

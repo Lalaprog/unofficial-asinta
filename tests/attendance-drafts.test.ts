@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
   parseAttendanceDraft,
+  parseCompleteAttendanceDraft,
   serializeAttendanceDraft,
   type AttendanceDraftMap,
 } from '@/lib/attendance/drafts';
@@ -31,6 +32,13 @@ describe('browser-local attendance drafts', () => {
 
     expect(parseAttendanceDraft(raw)).toEqual({ workerA: { status: 'absent', notes: '' } });
     expect(parseAttendanceDraft(JSON.stringify({ version: 2, entries: {} }))).toBeNull();
+  });
+
+  it('does not partially parse a draft that will be rewritten', () => {
+    const raw = JSON.stringify({version: 1, entries: { good: {status:'present', notes:'ok'}, bad: {status:'unknown', notes:'retain raw'} }});
+    expect(parseAttendanceDraft(raw)).toEqual({good:{status:'present',notes:'ok'}});
+    expect(parseCompleteAttendanceDraft(raw)).toBeNull();
+    expect(parseCompleteAttendanceDraft(serializeAttendanceDraft({good:{status:'present',notes:'ok'}}))).toEqual({good:{status:'present',notes:'ok'}});
   });
 
   it('returns null for missing or invalid JSON', () => {

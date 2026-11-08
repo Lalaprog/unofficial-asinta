@@ -12,6 +12,9 @@ const mock = vi.hoisted(() => ({
   recordAttendanceBatch: vi.fn(),
   showToast: vi.fn(),
 }));
+const roster = { workerIds: ['worker-1'], records: [] };
+vi.mock('@/lib/attendance/useProjectRollCall', () => ({ useProjectRollCall: () => ({ status: 'ready', snapshot: roster, reload: vi.fn(async () => {}) }) }));
+vi.mock('@/lib/attendance/project-roll-call', () => ({ loadProjectRollCall: async () => roster, projectRollCallFingerprint: (snapshot: unknown) => JSON.stringify(snapshot) }));
 vi.mock('@/lib/attendance/usePendingApprovals', () => ({ usePendingApprovals: () => ({items: [], total: 0, hasMore: false, loading: false, error: null, loadMore: vi.fn(), refresh: vi.fn()}) }));
 vi.mock('next/navigation', () => ({ useSearchParams: () => new URLSearchParams(mock.tab) }));
 vi.mock('next/link', () => ({

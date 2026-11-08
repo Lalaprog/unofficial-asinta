@@ -11,6 +11,8 @@ import {
 
 function makeMockAdminClient(options?: {
   existingEmail?: boolean;
+  removedWorker?: boolean;
+  workerReadError?: boolean;
   targetUser?: { id: string; name: string; email: string; role: 'founder' | 'supervisor'; created_at: string } | null;
   foundersCount?: number;
   profileInsertError?: { message: string } | null;
@@ -70,6 +72,7 @@ function makeMockAdminClient(options?: {
       if (table === 'workers') {
         return {
           upsert: workerUpsertSpy,
+          select: () => ({ eq: () => ({ maybeSingle: async () => ({data: options?.removedWorker ? {id:'sup-1',removed_at:'2026-11-07'} : null,error:options?.workerReadError ? {message:'read failed'} : null}) }) }),
           update: () => ({ eq: workerDeactivateSpy }),
         };
       }
@@ -351,6 +354,19 @@ describe('updateTeamAccount & deleteTeamAccount safety guards', () => {
 });
 
 describe('team administration partial outcomes', () => {
+  it('does not implicitly restore a removed worker during an account edit', async () => {
+    const {client,rpcSpy,updateUserByIdSpy,workerUpsertSpy}=makeMockAdminClient({removedWorker:true});
+    const result=await updateTeamAccount({callerId:'founder-1',input:{userId:'sup-1',includeInPayroll:true},adminClient:client});
+    expect(result.status).toBe(409);expect(result.body.error).toMatch(/restore.*Workforce/i);
+    expect(rpcSpy).not.toHaveBeenCalled();expect(updateUserByIdSpy).not.toHaveBeenCalled();expect(workerUpsertSpy).not.toHaveBeenCalled();
+    const accountOnly=await updateTeamAccount({callerId:'founder-1',input:{userId:'sup-1',includeInPayroll:false},adminClient:client});
+    expect(accountOnly.body.ok).toBe(true);expect(workerUpsertSpy).not.toHaveBeenCalled();
+  });
+  it('does not change an account when its worker profile cannot be checked', async () => {
+    const {client,rpcSpy}=makeMockAdminClient({workerReadError:true});
+    const result=await updateTeamAccount({callerId:'founder-1',input:{userId:'sup-1',includeInPayroll:true},adminClient:client});
+    expect(result.status).toBe(503);expect(rpcSpy).not.toHaveBeenCalled();
+  });
   it('uses the atomic assignment RPC when a supervisor is assigned several projects', async () => {
     const { client, rpcSpy, supervisorInsertSpy } = makeMockAdminClient();
     const res = await updateTeamAccount({ callerId:'founder-1', input:{userId:'sup-1',assignedProjectIds:['proj-1','proj-2']}, adminClient:client });

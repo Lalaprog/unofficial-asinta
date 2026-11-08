@@ -532,6 +532,20 @@ export async function updateTeamAccount(params: {
     return { status: 400, body: { ok: false, error: 'Enter a valid payroll rate from 0 to 99,999,999.99 with at most two decimal places.' } };
   }
 
+  // Do not let an account edit implicitly restore a removed workforce profile.
+  // Check before changing the account; the database constraint also protects
+  // against a concurrent removal after this read.
+  if (nextRole === 'supervisor' && input.includeInPayroll !== false) {
+    try {
+      const { data: worker, error: workerError } = await adminClient.from('workers')
+        .select('id, removed_at').eq('id', targetUserId).maybeSingle();
+      if (workerError) throw workerError;
+      if (worker?.removed_at) return { status: 409, body: { ok: false, error: 'This workforce profile is removed. Restore it in Workforce before including this Supervisor in payroll; no account changes were made.' } };
+    } catch {
+      return { status: 503, body: { ok: false, error: 'Could not check the workforce profile. Refresh and try again; no account changes were made.' } };
+    }
+  }
+
   // The database re-checks actor and last-Founder invariants under a
   // transaction lock. Missing migration or an unconfirmed result fails closed.
   let updateResult: Awaited<ReturnType<MinimalAdminSupabaseClient['rpc']>>;
@@ -609,7 +623,7 @@ export async function updateTeamAccount(params: {
       },
       { onConflict: 'id' }
     ));
-    if (workerFailed) warnings.push('Payroll roster update was not confirmed. Check the worker record before running payroll.');
+    if (workerFailed) warnings.push('Payroll roster update was not confirmed. The profile may have been removed; check Workforce and restore it before including this Supervisor in payroll. Check the account changes before retrying.');
   } else if (nextRole === 'founder' || input.includeInPayroll === false) {
     const workerFailed = await mutationFailed(() => adminClient
       .from('workers')

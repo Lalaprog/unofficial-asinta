@@ -285,6 +285,7 @@ export default function ExpensesPage() {
   // It is never used to pre-select or auto-assign a worker.
   const mentionedWorkers = balePrompt
     ? workers.filter((worker) => {
+        if (worker.removed_at) return false;
         const firstName = worker.name.toLowerCase().split(' ')[0];
         return firstName.length > 2 && balePrompt.description.toLowerCase().includes(firstName);
       })
