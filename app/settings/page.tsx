@@ -17,8 +17,6 @@ import { WorkspaceHeader } from '@/components/ui/WorkspaceHeader';
 import { ReminderPreferences } from '@/components/reminders/ReminderPreferences';
 
 interface IntegrationStatus {
-  groqModel?: string;
-  groqVisionModel?: string;
   mfaEnforcedForFounders?: boolean;
   sessionPolicy?: {
     idleMinutes: number;
@@ -29,9 +27,7 @@ interface IntegrationStatus {
   groqConfigured: boolean;
   philsmsConfigured: boolean;
   philsmsSenderId?: string;
-  supabaseConfigured: boolean;
   smtpConfigured: boolean;
-  automaticRemindersEnabled: boolean;
 }
 
 export default function SettingsPage() {
@@ -251,13 +247,13 @@ export default function SettingsPage() {
                 <Bot className="w-5 h-5 text-navy" />
                 <CardTitle>External Service Integrations</CardTitle>
               </div>
-              <CardDescription>Groq AI semantic ledger assistance and PhilSMS gateway</CardDescription>
+              <CardDescription>Review expense assistance and communication service status.</CardDescription>
             </CardHeader>
             <CardContent className="space-y-4 text-xs">
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                 <div className="p-4 rounded-2xl bg-surface-inset/50 border border-surface-border space-y-2">
                   <div className="flex items-center justify-between">
-                    <span className="font-bold text-navy">Groq AI Engine</span>
+                    <span className="font-bold text-navy">AI expense assistance</span>
                     <Badge
                       variant={integrationStatus?.groqConfigured ? 'success' : 'warning'}
                       size="sm"
@@ -269,36 +265,12 @@ export default function SettingsPage() {
                           : 'Not Configured'}
                     </Badge>
                   </div>
-                  <div className="text-ink-secondary space-y-0.5">
-                    <div>
-                      Text model:{' '}
-                      <span className="font-mono text-navy font-semibold">
-                        {integrationStatus?.groqModel || '—'}
-                      </span>
-                    </div>
-                    <div>
-                      Receipt (vision):{' '}
-                      <span className="font-mono text-navy font-semibold">
-                        {integrationStatus?.groqVisionModel || '—'}
-                      </span>
-                    </div>
-                  </div>
-                  <div className="text-[11px] text-ink-muted">
-                    Suggests an expense category, drafts expenses from one messy line, reads receipt
-                    photos. Every suggestion is confirmed by a Founder
-                    before it reaches the ledger, and model IDs are overridable by environment
-                    variable because Groq retires models regularly.
-                  </div>
-                  <div className="text-[11px] text-ink-muted">
-                    Founder two-factor enforcement:{' '}
-                    <span className="font-semibold text-navy">
-                      {!integrationStatus ? 'unknown' : integrationStatus.mfaEnforcedForFounders ? 'enabled' : 'not enabled (enrolment available)'}
-                    </span>
-                  </div>
-                  <div className="text-[11px] text-ink-muted">
-                    Without a key, expense entry still works — the built-in rule categorizer is used
-                    and labelled as such.
-                  </div>
+                  <p className="text-ink-secondary">
+                    Helps suggest expense details and read receipts. Review suggestions before saving.
+                  </p>
+                  <p className="text-[11px] text-ink-muted">
+                    When AI assistance is not configured, manual expense entry remains available and category suggestions use built-in rules.
+                  </p>
                 </div>
 
                 <div className="p-4 rounded-2xl bg-surface-inset/50 border border-surface-border space-y-2">
@@ -352,7 +324,7 @@ export default function SettingsPage() {
 
                 <div className="p-4 rounded-2xl bg-surface-inset/50 border border-surface-border space-y-2">
                   <div className="flex items-center justify-between">
-                    <span className="font-bold text-navy">SMTP Email (Nodemailer)</span>
+                    <span className="font-bold text-navy">Email service</span>
                     <Badge
                       variant={integrationStatus?.smtpConfigured ? 'success' : 'warning'}
                       size="sm"
@@ -368,8 +340,7 @@ export default function SettingsPage() {
                     Request for Payment emails and SMTP test messages.
                   </div>
                   <div className="text-[11px] text-ink-muted">
-                    Credentials are server-side environment variables and are never displayed
-                    here. See <span className="font-mono">docs/COMMUNICATIONS_SETUP.md</span>.
+                    Configuration does not confirm that a message was accepted or delivered.
                   </div>
                 </div>
 
@@ -397,31 +368,12 @@ export default function SettingsPage() {
           <CardHeader>
             <div className="flex items-center space-x-2.5">
               <Database className="w-5 h-5 text-navy" />
-              <CardTitle>Supabase Database & Sync</CardTitle>
+              <CardTitle>Data &amp; Session</CardTitle>
             </div>
-            <CardDescription>Live PostgreSQL ledger — all records are stored and mutated server-side</CardDescription>
+            <CardDescription>Refresh workspace records and review session security.</CardDescription>
           </CardHeader>
           <CardContent className="space-y-4 text-xs">
             <div className="p-4 rounded-2xl bg-slate-50 border border-slate-200 space-y-2">
-              <div className="flex items-center justify-between">
-                <span className="font-bold text-navy">Supabase Project</span>
-                <Badge
-                  variant={integrationStatus?.supabaseConfigured ? 'success' : 'warning'}
-                  size="sm"
-                >
-                  {!integrationStatus
-                    ? statusState === 'loading' ? 'Checking' : 'Unknown'
-                    : integrationStatus.supabaseConfigured
-                      ? 'Configured'
-                      : 'Local Dev Default'}
-                </Badge>
-              </div>
-              <div className="text-ink-secondary truncate">
-                Endpoint:{' '}
-                <span className="font-mono text-navy font-semibold">
-                  {process.env.NEXT_PUBLIC_SUPABASE_URL || 'http://localhost:54321'}
-                </span>
-              </div>
               <div className="text-[11px] text-ink-secondary">
                 Ledger status:{' '}
                 <span className="font-semibold text-navy">
@@ -432,7 +384,7 @@ export default function SettingsPage() {
 
             <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4 p-4 rounded-2xl bg-slate-50 border border-slate-200">
               <div className="space-y-0.5">
-                <div className="font-bold text-navy">Resync Ledger from Supabase</div>
+                <div className="font-bold text-navy">Refresh workspace data</div>
                 <div className="text-ink-secondary">
                   Refresh projects, invoices, expenses, attendance, payroll, and bale records.
                 </div>
@@ -444,12 +396,17 @@ export default function SettingsPage() {
                 isLoading={isResyncing}
                 leftIcon={<RefreshCw className="w-3.5 h-3.5" />}
               >
-                Resync Now
+                Refresh Now
               </Button>
             </div>
 
             <div className="p-4 rounded-2xl bg-slate-50 border border-slate-200 space-y-1">
               <div className="font-bold text-navy">Session Security Policy</div>
+              {isFounder && <div className="text-ink-secondary">
+                Founder two-factor enforcement: <span className="font-semibold text-navy">
+                  {!integrationStatus ? 'unknown' : integrationStatus.mfaEnforcedForFounders ? 'enabled' : 'not enabled (enrolment available)'}
+                </span>
+              </div>}
               <div className="text-ink-secondary">
                 <span className="font-mono font-semibold text-navy">
                   {integrationStatus?.sessionPolicy ? `${integrationStatus.sessionPolicy.idleMinutes} min idle` : 'Idle limit unknown'}

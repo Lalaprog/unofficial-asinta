@@ -1749,31 +1749,6 @@ export default function FounderDashboard() {
           </section>
         </div>
 
-        <aside
-          aria-label="How to read the dashboard figures"
-          className="hidden rounded-2xl border border-[#ded7c9] bg-[#f8f6f0] p-4 sm:p-5 lg:block"
-        >
-          <div className="flex items-center gap-2">
-            <span className="h-2 w-2 rounded-full bg-brand" aria-hidden="true" />
-            <h2 className="text-[10px] font-bold uppercase tracking-[0.15em] text-navy">
-              How to read this snapshot
-            </h2>
-          </div>
-          <ul className="mt-3 grid grid-cols-1 gap-3 text-[11px] leading-relaxed text-ink-secondary sm:grid-cols-2 2xl:grid-cols-4">
-            <li className="border-l border-[#cfc4b2] pl-3">
-              Receivables exclude draft and cancelled invoices.
-            </li>
-            <li className="border-l border-[#cfc4b2] pl-3">
-              Workforce &amp; pay splits payroll vouchers above the cut from Bale requests and advances below.
-            </li>
-            <li className="border-l border-[#cfc4b2] pl-3">
-              Project cost velocity tracks today’s budget burn percentage and falls back to 7-day or latest activity.
-            </li>
-            <li className="border-l border-[#cfc4b2] pl-3">
-              Selecting a site in the Project Scope Filter scopes balances, workforce pay, costs, and follow-ups.
-            </li>
-          </ul>
-        </aside>
       </div>
 
       <DashboardWalkthrough />
