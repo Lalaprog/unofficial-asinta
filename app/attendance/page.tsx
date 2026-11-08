@@ -203,8 +203,11 @@ function AttendancePageInner() {
   const [isSavingWorker, setIsSavingWorker] = useState(false);
 
   // Terminal drafts stay local until the explicit Submit action writes official attendance.
-  const [draftAttendance, setDraftAttendance] = useState<AttendanceDraftMap>({});
-  const [dirtyDraftWorkerIds, setDirtyDraftWorkerIds] = useState<string[]>([]);
+  // Keep entries and their dirty markers in one state update so a queued
+  // baseline refresh cannot erase a selection made at the same time.
+  const [draftState, setDraftState] = useState<{ entries: AttendanceDraftMap; dirtyIds: string[] }>({ entries: {}, dirtyIds: [] });
+  const draftAttendance = draftState.entries;
+  const dirtyDraftWorkerIds = draftState.dirtyIds;
   const [draftStorageReadyKey, setDraftStorageReadyKey] = useState<string | null>(null);
   const [draftReadySnapshot, setDraftReadySnapshot] = useState<ProjectRollCallSnapshot | null>(null);
   const [draftStorageStatus, setDraftStorageStatus] = useState<'ready' | 'saved' | 'error'>('ready');
@@ -406,8 +409,7 @@ function AttendancePageInner() {
       }
 
       setUnreadableDraft(storageReadFailed);
-      setDraftAttendance({ ...baseline, ...restoredEntries });
-      setDirtyDraftWorkerIds(Object.keys(restoredEntries));
+      setDraftState({ entries: { ...baseline, ...restoredEntries }, dirtyIds: Object.keys(restoredEntries) });
       setDraftStorageReadyKey(attendanceDraftStorageKey);
       setDraftReadySnapshot(rollCallSnapshot);
       setDraftStorageStatus(
@@ -418,12 +420,12 @@ function AttendancePageInner() {
       return;
     }
 
-    setDraftAttendance((current) => {
+    setDraftState((current) => {
       const next = { ...baseline };
-      dirtyDraftWorkerIds.forEach((workerId) => {
-        if (current[workerId]) next[workerId] = current[workerId];
+      current.dirtyIds.forEach((workerId) => {
+        if (current.entries[workerId]) next[workerId] = current.entries[workerId];
       });
-      return next;
+      return { ...current, entries: next };
     });
     setDraftReadySnapshot(rollCallSnapshot);
   }, [
@@ -433,7 +435,6 @@ function AttendancePageInner() {
     siteRosterWorkers,
     getBaselineDraftEntry,
     workers,
-    dirtyDraftWorkerIds,
   ]);
 
   // Persist only locally changed rows; official attendance still requires Submit.
@@ -482,9 +483,8 @@ function AttendancePageInner() {
     if (changedEntries.length === 0) return;
 
     setAttendanceSaveFailed(false);
-    setDraftAttendance((current) => ({ ...current, ...changes }));
-    setDirtyDraftWorkerIds((current) => {
-      const next = new Set(current);
+    setDraftState((current) => {
+      const next = new Set(current.dirtyIds);
       changedEntries.forEach(([workerId, entry]) => {
         const baseline = getBaselineDraftEntry(workerId);
         if (
@@ -496,7 +496,7 @@ function AttendancePageInner() {
           next.delete(workerId);
         }
       });
-      return Array.from(next);
+      return { entries: { ...current.entries, ...changes }, dirtyIds: Array.from(next) };
     });
   };
 
@@ -698,7 +698,7 @@ function AttendancePageInner() {
     }
     if (success) {
       setAttendanceSaveFailed(false);
-      setDirtyDraftWorkerIds([]);
+      setDraftState((current) => ({ ...current, dirtyIds: [] }));
       setDraftStorageStatus('ready');
       if (attendanceDraftStorageKey) {
         try {
@@ -1707,7 +1707,7 @@ function AttendancePageInner() {
               )}
             </div>
 
-            <ConfirmDialog isOpen={discardHiddenDraftOpen} title="Discard hidden draft selections?" message="Only selections for workers no longer in this roster will be removed from this device. Saved attendance and payroll are not changed." destructive confirmLabel="Discard hidden selections" onCancel={() => setDiscardHiddenDraftOpen(false)} onConfirm={() => { setDirtyDraftWorkerIds((ids) => ids.filter((id) => !hiddenDraftIds.includes(id))); setDraftAttendance((current) => Object.fromEntries(Object.entries(current).filter(([id]) => !hiddenDraftIds.includes(id)))); setDiscardHiddenDraftOpen(false); }} />
+            <ConfirmDialog isOpen={discardHiddenDraftOpen} title="Discard hidden draft selections?" message="Only selections for workers no longer in this roster will be removed from this device. Saved attendance and payroll are not changed." destructive confirmLabel="Discard hidden selections" onCancel={() => setDiscardHiddenDraftOpen(false)} onConfirm={() => { setDraftState((current) => ({ dirtyIds: current.dirtyIds.filter((id) => !hiddenDraftIds.includes(id)), entries: Object.fromEntries(Object.entries(current.entries).filter(([id]) => !hiddenDraftIds.includes(id))) })); setDiscardHiddenDraftOpen(false); }} />
 
             {/* In-Flow Bottom Submit & Sync Card (Moves naturally with collapsed/expanded groups — never overlaps) */}
             <div data-roll-call-guide="submit" className="mt-3 px-3 sm:px-4 py-3 rounded-xl bg-white border border-surface-border flex flex-col sm:flex-row sm:items-center justify-between gap-3">
