@@ -409,7 +409,7 @@ export default function InvoicesPage() {
         </WorkspaceFilters>
 
         {/* Invoices List / Table */}
-        <div className="bg-white rounded-xl border border-surface-border overflow-hidden">
+        <div data-page-guide="list" className="bg-white rounded-xl border border-surface-border overflow-hidden">
           <div className="divide-y divide-surface-border/70">
             {filteredInvoices.map((inv) => {
               const proj = projects.find((p) => p.id === inv.project_id);

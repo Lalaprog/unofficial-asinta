@@ -265,7 +265,7 @@ export default function SMSPage() {
           </div>
         </WorkspaceFilters>
 
-        <div className="bg-white rounded-xl border border-surface-border overflow-hidden">
+        <div data-page-guide="list" className="bg-white rounded-xl border border-surface-border overflow-hidden">
           <div className="p-4 border-b border-surface-border/60 flex flex-wrap justify-between items-center gap-3">
             <div><h3 className="font-bold text-navy text-sm">SMS Dispatch History</h3><p className="text-xs text-ink-secondary mt-1">Newest first · times in Manila · sent means accepted, not delivered</p></div>
             <Button variant="secondary" size="sm" onClick={refreshHistory} leftIcon={<RefreshCw className="w-4 h-4" />}>Refresh</Button>

@@ -11,11 +11,13 @@ const mocks = vi.hoisted(() => ({
   push: vi.fn(),
   replace: vi.fn(),
   compact: true,
+  path: '/dashboard',
+  tab: '',
 }));
 vi.mock('next/navigation', () => ({
-  usePathname: () => '/dashboard',
+  usePathname: () => mocks.path,
   useRouter: () => ({ push: mocks.push, replace: mocks.replace }),
-  useSearchParams: () => new URLSearchParams(),
+  useSearchParams: () => new URLSearchParams(mocks.tab ? `tab=${mocks.tab}` : ''),
 }));
 vi.mock('next/link', () => ({
   default: ({ children, onClick, ...props }: React.AnchorHTMLAttributes<HTMLAnchorElement>) =>
@@ -66,6 +68,7 @@ beforeEach(() => {
   vi.setSystemTime(NOW);
   window.localStorage.clear();
   mocks.compact = true;
+  mocks.path = '/dashboard'; mocks.tab = '';
   mocks.auth = {
     user: { id: 'founder-1', name: 'Founder', email: 'founder@example.test' },
     isFounder: true, isSupervisor: false, logout: vi.fn(),
@@ -114,6 +117,29 @@ describe('notification timestamp provenance', () => {
     expect(within(notice).getByText('Collect or Send Reminder')).toBeTruthy();
     expect(within(panel).queryByText(/INV-PAID/)).toBeNull();
     expect(fetchSpy).not.toHaveBeenCalled();
+  });
+
+  it('does not notify that an invoice due today is overdue', async () => {
+    vi.setSystemTime(Date.parse('2026-11-03T02:00:00Z'));
+    mocks.store.invoices = [
+      { id: 'today', invoice_number: 'INV-TODAY', due_date: '2026-11-03', status: 'pending', amount: 1000, amount_paid: 0 },
+      { id: 'yesterday', invoice_number: 'INV-YESTERDAY', due_date: '2026-11-02', status: 'pending', amount: 1000, amount_paid: 0 },
+    ];
+    render(React.createElement(Navbar));
+    const panel = await openPanel();
+    expect(within(panel).queryByText(/Overdue Billing: INV-TODAY/)).toBeNull();
+    expect(itemByTitle(panel, 'Overdue Billing: INV-YESTERDAY')).toBeTruthy();
+  });
+
+  it('offers the Dashboard guide on desktop and requests it only on click', () => {
+    mocks.compact = false;
+    const listener = vi.fn();
+    window.addEventListener('asinta:dashboard-guide', listener);
+    render(React.createElement(Navbar));
+    expect(listener).not.toHaveBeenCalled();
+    fireEvent.click(screen.getByRole('button', { name: 'Open dashboard guide' }));
+    expect(listener).toHaveBeenCalledTimes(1);
+    window.removeEventListener('asinta:dashboard-guide', listener);
   });
 
   it('labels a site group with its newest stored event, not its first row or render time', async () => {
@@ -239,11 +265,31 @@ describe('dashboard help entry', () => {
     const listener = vi.fn();
     window.addEventListener('asinta:dashboard-guide', listener);
     const help = screen.getByRole('button', { name: 'Open dashboard guide' });
-    expect(help.className).toContain('lg:hidden');
+    expect(help.className).not.toContain('lg:hidden');
     fireEvent.click(help);
     expect(listener).toHaveBeenCalledOnce();
     expect(bell()).toBeTruthy();
     window.removeEventListener('asinta:dashboard-guide', listener);
+  });
+  it('requests the current workspace guide and switches immediately with attendance tabs', () => {
+    mocks.path = '/attendance';
+    render(React.createElement(Navbar));
+    const rollCall = vi.fn(); const workspace = vi.fn();
+    window.addEventListener('asinta:roll-call-guide', rollCall);
+    window.addEventListener('asinta:workspace-guide', workspace);
+    fireEvent.click(screen.getByRole('button', { name: 'Open roll call guide' }));
+    expect(rollCall).toHaveBeenCalledOnce();
+    act(() => window.dispatchEvent(new CustomEvent('bale:attendance-tab', { detail: 'history' })));
+    fireEvent.click(screen.getByRole('button', { name: 'Open attendance history guide' }));
+    expect(workspace).toHaveBeenCalledOnce();
+    window.removeEventListener('asinta:roll-call-guide', rollCall);
+    window.removeEventListener('asinta:workspace-guide', workspace);
+  });
+  it('does not offer restricted page help to a Supervisor', () => {
+    mocks.path = '/invoices';
+    mocks.auth = { ...mocks.auth, isFounder: false, isSupervisor: true };
+    render(React.createElement(Navbar));
+    expect(screen.queryByRole('button', { name: /open .*guide/i })).toBeNull();
   });
   it('does not offer the Founder dashboard guide to Supervisors', () => {
     mocks.auth = { ...mocks.auth, isFounder: false, isSupervisor: true };

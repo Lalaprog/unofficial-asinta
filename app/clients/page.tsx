@@ -123,7 +123,7 @@ export default function ClientsPage() {
         </WorkspaceFilters>
 
         {/* Client Cards Grid */}
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-4 auto-rows-fr">
+        <div data-page-guide="list" className="grid grid-cols-1 md:grid-cols-2 gap-4 auto-rows-fr">
           {filteredClients.map((client) => {
             const clientProjects = projects.filter((p) => p.client_id === client.id);
             const clientInvoices = invoices.filter((i) => i.client_id === client.id);

@@ -257,7 +257,7 @@ export default function PayrollPage() {
         </WorkspaceFilters>
 
         {/* Payroll Table */}
-        <div className="bg-white rounded-xl border border-surface-border overflow-hidden">
+        <div data-page-guide="list" className="bg-white rounded-xl border border-surface-border overflow-hidden">
           <div className="divide-y divide-surface-border/70">
             {filteredPayroll.map((pay) => {
               const worker = workers.find((w) => w.id === pay.worker_id);

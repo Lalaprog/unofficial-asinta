@@ -882,7 +882,7 @@ export default function ExpensesPage() {
             The model extracts; the Founder confirms in the modal below. Nothing
             written here reaches the ledger.
            ------------------------------------------------------------------ */}
-        <div className="rounded-xl border border-surface-border bg-white p-4 sm:p-5 space-y-3">
+        <div data-page-guide="draft" className="rounded-xl border border-surface-border bg-white p-4 sm:p-5 space-y-3">
           <div className="flex flex-wrap items-center justify-between gap-2">
             <div className="flex items-center gap-2">
               <Sparkles className="h-4 w-4 text-navy" />
@@ -1055,7 +1055,7 @@ export default function ExpensesPage() {
         </WorkspaceFilters>
 
         {/* Expenses List */}
-        <div className="bg-white rounded-xl border border-surface-border overflow-hidden">
+        <div data-page-guide="list" className="bg-white rounded-xl border border-surface-border overflow-hidden">
           <div className="divide-y divide-surface-border/70">
             {filteredExpenses.map((exp) => {
               const proj = projects.find((p) => p.id === exp.project_id);

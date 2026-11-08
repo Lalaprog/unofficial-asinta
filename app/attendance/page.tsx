@@ -997,7 +997,7 @@ function AttendancePageInner() {
       {activeTab === 'terminal' && <RollCallWalkthrough isSupervisor={isSupervisor} />}
       <div key={activeTab} className="animate-panel-enter w-full space-y-4">
         {/* Clean Dedicated Page Header for each separated view */}
-        <div className="animate-mobile-lift blueprint-accent relative flex flex-col gap-4 overflow-hidden rounded-2xl border border-[#e3ddd2] bg-[#f8f6f0] px-4 py-5 shadow-sm sm:flex-row sm:items-end sm:justify-between sm:px-6 sm:py-6">
+        <div data-page-guide="intro" className="animate-mobile-lift blueprint-accent relative flex flex-col gap-4 overflow-hidden rounded-2xl border border-[#e3ddd2] bg-[#f8f6f0] px-4 py-5 shadow-sm sm:flex-row sm:items-end sm:justify-between sm:px-6 sm:py-6">
           <div className="min-w-0">
             <p className="mb-1.5 text-[11px] font-bold uppercase tracking-[0.14em] text-brand">Workforce &amp; attendance</p>
             <div className="flex items-center gap-2.5">
@@ -1830,7 +1830,7 @@ function AttendancePageInner() {
         {activeTab === 'history' && (
           <div className="space-y-4">
             {/* Keep search visible on mobile; reveal secondary filters only on request. */}
-            <div className="space-y-3 rounded-2xl border border-surface-border bg-white p-3.5 shadow-sm">
+            <div data-page-guide="filters" className="space-y-3 rounded-2xl border border-surface-border bg-white p-3.5 shadow-sm">
               <div className="flex items-center gap-2 lg:hidden">
                 <div className="min-w-0 flex-1">
                   <Input
@@ -2022,7 +2022,7 @@ function AttendancePageInner() {
               <p aria-live="polite">{history.loading || isHistorySearchSettling ? 'Updating results…' : history.error ? 'History could not be loaded; retry to update results.' : `Showing ${history.items.length} date/site ${history.items.length === 1 ? 'sheet' : 'sheets'} from the server. Counts reflect the current filters.`}</p>
               <p>Results are a snapshot; refresh to include changes made elsewhere.</p>
             </div>
-            <div className="space-y-2">
+            <div data-page-guide="list" className="space-y-2">
               {history.items.map((sheet) => {
                 const key = `${sheet.date}::${sheet.project_id}`;
                 const isExpanded = Boolean(expandedHistorySheets[key]);
@@ -2135,7 +2135,7 @@ function AttendancePageInner() {
             </section>
 
             {/* Filter Bar for Workforce Directory */}
-            <div className="p-3 rounded-2xl bg-white border border-surface-border shadow-sm flex flex-col sm:flex-row items-center justify-between gap-2.5">
+            <div data-page-guide="filters" className="p-3 rounded-2xl bg-white border border-surface-border shadow-sm flex flex-col sm:flex-row items-center justify-between gap-2.5">
               <div className="flex flex-col sm:flex-row items-center gap-2 w-full sm:w-auto">
                 <div className="w-full sm:w-64">
                   <Input
@@ -2203,7 +2203,7 @@ function AttendancePageInner() {
             <ConfirmDialog isOpen={Boolean(workerRestoreTarget)} title="Restore worker?" message={`${workerRestoreTarget?.name || 'This worker'} will return as inactive. Reactivation and adding them to project teams are separate steps.`} confirmLabel="Restore as inactive" isPending={workerRemovalPending} onCancel={() => setWorkerRestoreTarget(null)} onConfirm={() => { if (workerRestoreTarget) void changeWorkersRemoved('restore', [workerRestoreTarget]); }} />
 
             {/* Grouped Compact Workforce List */}
-            <div className="space-y-3">
+            <div data-page-guide="list" className="space-y-3">
               {groupedWorkforceDirectory.map(([groupKey, groupWorkers]) => (
                 <div
                   key={groupKey}

@@ -1,5 +1,7 @@
 'use client';
 
+import { isInvoiceOverdue } from '@/lib/invoices/overdue';
+
 import React, { useEffect, useRef, useState } from 'react';
 import Link from 'next/link';
 import { usePathname, useRouter, useSearchParams } from 'next/navigation';
@@ -31,6 +33,7 @@ import {
 } from 'lucide-react';
 import { Badge } from '@/components/ui/Badge';
 import { DASHBOARD_GUIDE_EVENT, ROLL_CALL_GUIDE_EVENT } from '@/components/dashboard/DashboardWalkthrough';
+import { getWorkspaceGuide, WORKSPACE_GUIDE_EVENT } from '@/lib/guides/workspace';
 import { BaleLogo } from '@/components/ui/AsintaLogo';
 import { AsintaLoader } from '@/components/ui/AsintaLoader';
 import * as Popover from '@radix-ui/react-popover';
@@ -94,7 +97,7 @@ const FOUNDER_DROPDOWN_GROUPS: NavDropdownGroup[] = [
       },
       {
         label: 'Reminder Queue',
-        description: 'Automated billing follow-ups',
+        description: 'Review billing follow-ups',
         href: '/reminders',
         icon: CalendarClock,
       },
@@ -396,9 +399,10 @@ export const Navbar: React.FC<NavbarProps> = ({ showDesktopNavigation = true }) 
     });
 
   const formatPHP = formatPesoCompact;
-  const now = new Date();
   const todayStr = useManilaToday();
 
+  const guide = getWorkspaceGuide(pathname, isFounder, localAttendanceTab);
+  const guideLabel = isFounder && pathname === '/dashboard' ? 'Dashboard guide' : pathname === '/attendance' && localAttendanceTab === 'terminal' ? 'Roll Call guide' : guide?.label;
   const allNotifications: ActionNotification[] = [];
 
   if (isFounder) {
@@ -518,10 +522,7 @@ export const Navbar: React.FC<NavbarProps> = ({ showDesktopNavigation = true }) 
     }
 
     const overdueInvoices = invoices.filter(
-      (i) =>
-        i.status !== 'paid' &&
-        i.status !== 'cancelled' &&
-        (i.status === 'overdue' || new Date(i.due_date) < now)
+      (i) => isInvoiceOverdue(i, todayStr)
     );
     overdueInvoices.slice(0, 3).forEach((inv) => {
       const balance = inv.amount - inv.amount_paid;
@@ -851,9 +852,9 @@ export const Navbar: React.FC<NavbarProps> = ({ showDesktopNavigation = true }) 
 
           {/* Right: Notification Bell & Role Icon Account Menu */}
           <div className="flex items-center space-x-2 shrink-0">
-            {((isFounder && pathname === '/dashboard') || (pathname === '/attendance' && localAttendanceTab === 'terminal')) && <button type="button" aria-label={pathname === '/dashboard' ? 'Open dashboard guide' : 'Open Roll Call guide'} title={pathname === '/dashboard' ? 'Dashboard guide' : 'Roll Call guide'}
-              onClick={() => { setShowNotifications(false); setShowUserMenu(false); setOpenDropdownId(null); window.dispatchEvent(new Event(pathname === '/dashboard' ? DASHBOARD_GUIDE_EVENT : ROLL_CALL_GUIDE_EVENT)); }}
-              className="inline-flex min-h-11 min-w-11 items-center justify-center rounded-full text-ink-secondary hover:bg-surface-inset hover:text-brand focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand focus-visible:ring-offset-2 lg:hidden">
+            {guideLabel && <button type="button" aria-label={`Open ${guideLabel.toLowerCase()}`} title={guideLabel}
+              onClick={() => { setShowNotifications(false); setShowUserMenu(false); setOpenDropdownId(null); window.dispatchEvent(new Event(pathname === '/dashboard' ? DASHBOARD_GUIDE_EVENT : pathname === '/attendance' && localAttendanceTab === 'terminal' ? ROLL_CALL_GUIDE_EVENT : WORKSPACE_GUIDE_EVENT)); }}
+              className="inline-flex min-h-11 min-w-11 items-center justify-center rounded-full text-ink-secondary hover:bg-surface-inset hover:text-brand focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand focus-visible:ring-offset-2">
               <CircleHelp className="h-5 w-5" aria-hidden="true" />
             </button>}
             {/* One anchored, non-modal surface on desktop and mobile. */}

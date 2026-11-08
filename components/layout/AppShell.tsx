@@ -3,6 +3,7 @@
 import React, { Suspense, useEffect } from 'react';
 import { useRouter } from 'next/navigation';
 import { Navbar } from './Navbar';
+import { WorkspaceWalkthrough } from '@/components/dashboard/WorkspaceWalkthrough';
 import { MobileNav } from './MobileNav';
 import { Sidebar } from './Sidebar';
 import { Footer } from './Footer';
@@ -252,7 +253,10 @@ export const AppShell: React.FC<AppShellProps> = ({ children, requireFounder = f
         </Suspense>
         <main id="workspace-main" tabIndex={-1} className="flex-1 min-w-0 w-full overflow-x-hidden px-4 sm:px-6 lg:px-8 py-6 lg:pb-14">
           <div className="w-full min-w-0">
-            <PasswordSetupGate>{children}</PasswordSetupGate>
+            <PasswordSetupGate>
+              <Suspense fallback={null}><WorkspaceWalkthrough isFounder={isFounder} /></Suspense>
+              {children}
+            </PasswordSetupGate>
           </div>
         </main>
       </div>

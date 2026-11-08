@@ -164,7 +164,7 @@ export default function ProjectsPage() {
         </WorkspaceFilters>
 
         {/* Projects Cards Grid */}
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-4 auto-rows-fr">
+        <div data-page-guide="list" className="grid grid-cols-1 md:grid-cols-2 gap-4 auto-rows-fr">
           {filteredProjects.map((proj) => {
             const client = clients.find((c) => c.id === proj.client_id);
             const projInvoices = invoices.filter((i) => i.project_id === proj.id);

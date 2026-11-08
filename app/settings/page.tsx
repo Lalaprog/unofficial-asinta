@@ -119,7 +119,7 @@ export default function SettingsPage() {
 
         {/* Supervisor Account Profile Card */}
         {isSupervisor && user && (
-          <Card>
+          <Card data-page-guide="details">
             <CardHeader>
               <div className="flex items-center justify-between gap-2">
                 <div className="flex items-center space-x-2.5">
@@ -245,7 +245,7 @@ export default function SettingsPage() {
 
         {/* AI & SMS Integrations */}
         {isFounder && (
-          <Card>
+          <Card data-page-guide="details">
             <CardHeader>
               <div className="flex items-center space-x-2.5">
                 <Bot className="w-5 h-5 text-navy" />
