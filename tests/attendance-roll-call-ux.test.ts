@@ -5,13 +5,13 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 const mock = vi.hoisted(() => ({ supervisor: false, extraSites: [] as Array<{id:string;name:string;location:string}>, record: vi.fn(), toast: vi.fn(), createWorker: vi.fn() }));
 vi.mock('@/lib/attendance/usePendingApprovals', () => ({ usePendingApprovals: () => ({items: [], total: 0, hasMore: false, loading: false, error: null, loadMore: vi.fn(), refresh: vi.fn()}) }));
-vi.mock('next/navigation', () => ({ useSearchParams: () => new URLSearchParams() }));
+vi.mock('next/navigation', () => { const params = new URLSearchParams(); return { useSearchParams: () => params }; });
 vi.mock('next/link', () => ({ default: ({ children, href, prefetch: _prefetch, ...props }: React.AnchorHTMLAttributes<HTMLAnchorElement> & { prefetch?: boolean }) => React.createElement('a', { ...props, href }, children) }));
 vi.mock('@/components/layout/AppShell', () => ({ AppShell: ({ children }: { children: React.ReactNode }) => children }));
 vi.mock('@/lib/auth/authContext', () => {
   const founder = { id: 'founder', name: 'Founder', role: 'founder' };
   const supervisor = { id: 'sup', name: 'Site Supervisor', role: 'supervisor' };
-  return { useAuth: () => ({ user: mock.supervisor ? supervisor : founder, isFounder: !mock.supervisor, isSupervisor: mock.supervisor }) };
+  return { useAuth: () => ({ user: mock.supervisor ? supervisor : founder, isFounder: !mock.supervisor, isSupervisor: mock.supervisor, assurance: 'ready', isLoading: false }) };
 });
 vi.mock('@/components/ui/Toast', () => ({ useToast: () => ({ showToast: mock.toast }) }));
 vi.mock('@/lib/data/store', () => {
@@ -40,6 +40,17 @@ function status(worker: string, label: string) {
 }
 
 describe('roll call usability and safety', () => {
+  it('opens the existing worker registration without changing attendance', () => {
+    mock.supervisor = false;
+    HTMLElement.prototype.scrollIntoView = vi.fn();
+    window.matchMedia = vi.fn().mockReturnValue({ matches: false });
+    render(React.createElement(AttendancePage));
+    act(() => { window.dispatchEvent(new CustomEvent('asinta:mobile-quick-action', { detail: 'worker' })); });
+    expect(screen.getByText('Register Site Worker')).toBeTruthy();
+    expect(mock.createWorker).not.toHaveBeenCalled();
+    expect(mock.record).not.toHaveBeenCalled();
+  });
+
   it('searches long site lists without switching the roster or submitting attendance', () => {
     mock.extraSites = Array.from({length: 8}, (_, i) => ({id:`extra-${i}`, name:i === 7 ? 'Luna Site' : `Extra Site ${i}`, location:'Batangas, PH'}));
     render(React.createElement(AttendancePage));

@@ -55,12 +55,14 @@ import {
 import { EXPENSE_CATEGORY_LABELS } from '@/lib/ai/categories';
 import { resolveReceiptForSubmission } from '@/lib/expenses/receiptSubmission';
 import { VISION_MAX_IMAGE_BYTES } from '@/lib/ai/models';
+import { useQuickAction } from '@/lib/mobile/quickActions';
 import { formatRetryWait, validRetryAfter } from '@/lib/ai/cooldown';
 
 export default function ExpensesPage() {
-  const { user } = useAuth();
+  const { user, isFounder, assurance, isLoading: authLoading } = useAuth();
   const {
     expenses,
+    isLoaded,
     projects,
     createExpense,
     updateExpense,
@@ -246,6 +248,27 @@ export default function ExpensesPage() {
     if (savedDraft && !hasUnfinishedEntry) void resumeDraft();
     else setIsAddModalOpen(true);
   };
+
+  useQuickAction('/expenses', ['expense-manual', 'expense-scan', 'expense-describe'], isFounder && assurance === 'ready' && !authLoading && isLoaded && draftLoadState !== 'loading', (action) => {
+    if (draftLoadState === 'error') { showToast('error', 'Saved drafts could not be checked. Refresh before starting a shortcut.'); return; }
+    if (action === 'expense-manual') { openEntry(); return; }
+    if (isAddModalOpen) { showToast('info', 'Finish or save your current expense before starting another.'); return; }
+    const target = document.getElementById(action === 'expense-scan' ? 'quick-receipt-input' : 'quick-expense-description');
+    target?.scrollIntoView({ block: 'center', behavior: window.matchMedia('(prefers-reduced-motion: reduce)').matches ? 'auto' : 'smooth' });
+    target?.focus({ preventScroll: true });
+    if (action === 'expense-scan') showToast('info', 'Choose Scan a receipt photo to take or select a photo.');
+  });
+
+  React.useEffect(() => {
+    const beforeQuickLeave = (event: Event) => {
+      const destination = (event as CustomEvent<{ destination: string }>).detail.destination.split('?')[0];
+      if (destination !== '/expenses' && ((hasUnfinishedEntry && !unchangedSavedDraft) || quickText.trim())) {
+        if (!window.confirm('You have an unfinished expense or description. Leave and lose unsaved changes? Cancel to stay and finish or save your work.')) event.preventDefault();
+      }
+    };
+    window.addEventListener('asinta:quick-leave', beforeQuickLeave);
+    return () => window.removeEventListener('asinta:quick-leave', beforeQuickLeave);
+  }, [hasUnfinishedEntry, unchangedSavedDraft, quickText]);
 
   // Bale confirmation. A detected advance is NEVER created automatically —
   // the Founder must name the recipient first.
@@ -878,6 +901,7 @@ export default function ExpensesPage() {
           </div>
 
           <Textarea
+            id="quick-expense-description"
             label="Describe the expense"
             placeholder={'e.g. 12 bags cement at JMC Hardware for Casa Batangas, 4800, kahapon, receipt na kay Danilo'}
             value={quickText}
@@ -901,6 +925,7 @@ export default function ExpensesPage() {
               <ScanLine className="h-3.5 w-3.5" />
               <span>{isDrafting ? 'Reading…' : 'Scan a receipt photo'}</span>
               <input
+                id="quick-receipt-input"
                 type="file"
                 accept="image/*"
                 capture="environment"

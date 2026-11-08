@@ -4,6 +4,8 @@ import React, { useMemo, useState } from 'react';
 import * as DropdownMenu from '@radix-ui/react-dropdown-menu';
 import { AppShell } from '@/components/layout/AppShell';
 import { useDataStore } from '@/lib/data/store';
+import { useAuth } from '@/lib/auth/authContext';
+import { useQuickAction } from '@/lib/mobile/quickActions';
 import { Invoice, InvoiceStatus } from '@/types';
 import {
   Plus,
@@ -129,12 +131,14 @@ const defaultDueDate = () => new Date(Date.now() + 15 * 86400000).toISOString().
 
 export default function InvoicesPage() {
   const { showToast } = useToast();
+  const { isFounder, assurance, isLoading: authLoading } = useAuth();
   const [isCreating, setIsCreating] = useState(false);
   const [isRecordingPayment, setIsRecordingPayment] = useState(false);
   const createLock = React.useRef(false);
   const paymentLock = React.useRef(false);
   const {
     invoices,
+    isLoaded,
     projects,
     clients,
     createInvoice,
@@ -147,6 +151,10 @@ export default function InvoicesPage() {
 
   // Modals state
   const [isCreateModalOpen, setIsCreateModalOpen] = useState(false);
+  useQuickAction('/invoices', ['invoice'], isFounder && assurance === 'ready' && !authLoading && isLoaded, () => {
+    setFormData(current => ({ ...current, invoice_number: getNextInvoiceNumber(invoices, Number(current.issue_date.slice(0, 4)) || new Date().getFullYear()) }));
+    setIsCreateModalOpen(true);
+  });
   const [isPaymentModalOpen, setIsPaymentModalOpen] = useState(false);
   const [isPreviewModalOpen, setIsPreviewModalOpen] = useState(false);
   const [isSmsModalOpen, setIsSmsModalOpen] = useState(false);

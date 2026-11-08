@@ -4,8 +4,10 @@ import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testi
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 let founder = true;
+const push = vi.fn();
 vi.mock('next/navigation', () => ({
   usePathname: () => '/dashboard',
+  useRouter: () => ({ push }),
   useSearchParams: () => new URLSearchParams(),
 }));
 vi.mock('next/link', () => ({
@@ -19,6 +21,8 @@ let desktop: boolean;
 
 beforeEach(() => {
   founder = true;
+  sessionStorage.clear();
+  push.mockReset();
   desktop = false;
   desktopChange = undefined;
   window.matchMedia = vi.fn().mockImplementation(() => ({
@@ -86,8 +90,11 @@ describe('mobile workspace launcher', () => {
     // Do not activate a nav item if the browser synthesizes a click after a swipe.
     expect(fireEvent.click(projects, { detail: 1 })).toBe(false);
     expect(screen.getByRole('dialog')).toBe(dialog);
-    swipe(dialog, [100, 100], [100, 200]); // Content scrolling is not a dismiss gesture.
+    const content = dialog.querySelector('[data-launcher-content]') as HTMLElement;
+    content.scrollTop = 100;
+    swipe(content, [100, 100], [100, 200]); // A scrolled list continues scrolling.
     expect(screen.getByRole('dialog')).toBe(dialog);
+    content.scrollTop = 0;
     const handle = dialog.querySelector('[data-swipe-handle]')!;
     swipe(handle, [100, 100], [180, 140]);
     expect(screen.getByRole('dialog')).toBe(dialog);
@@ -185,6 +192,44 @@ describe('mobile workspace launcher', () => {
     swipe(nav, [100, 400], [100, 300]);
     expect(screen.queryByRole('button', { name: 'More' })).toBeNull();
     expect(screen.queryByRole('dialog')).toBeNull();
+  });
+
+
+  it('shows the highlighted action button and groups the three expense starts without removing More', () => {
+    render(React.createElement(MobileNav));
+    const nav = screen.getByRole('navigation', { name: 'Mobile Bottom Navigation' });
+    const quick = within(nav).getByRole('button', { name: 'Quick actions' });
+    expect(quick.textContent).toBe('');
+    expect(within(nav).getByRole('button', { name: 'More' })).toBeTruthy();
+    expect(within(nav).queryByRole('link', { name: 'Payroll' })).toBeNull();
+    fireEvent.click(quick);
+    let dialog = screen.getByRole('dialog', { name: 'Quick actions' });
+    expect(within(dialog).getByRole('button', { name: 'New invoice' })).toBeTruthy();
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Expense' }));
+    dialog = screen.getByRole('dialog', { name: 'Start an expense' });
+    for (const name of ['Scan receipt', 'Describe', 'Manual entry']) expect(within(dialog).getByRole('button', { name })).toBeTruthy();
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Describe' }));
+    expect(push).toHaveBeenCalledWith('/expenses');
+    expect(JSON.parse(sessionStorage.getItem('asinta:mobile-quick-action')!).action).toBe('expense-describe');
+    expect(screen.queryByRole('dialog')).toBeNull();
+  });
+
+  it('drags from panel content at the top, without selecting a link', () => {
+    render(React.createElement(MobileNav));
+    fireEvent.click(screen.getByRole('button', { name: 'More' }));
+    const panel = screen.getByRole('dialog');
+    const content = panel.querySelector('[data-launcher-content]')!;
+    const link = within(content as HTMLElement).getByRole('link', { name: 'Expenses' });
+    const touch = (y: number) => ({ identifier: 1, clientX: 100, clientY: y });
+    fireEvent.touchStart(link, { touches: [touch(100)] });
+    const move = new Event('touchmove', { bubbles: true, cancelable: true });
+    Object.defineProperty(move, 'touches', { value: [touch(170)] });
+    fireEvent(link, move);
+    expect(move.defaultPrevented).toBe(true);
+    expect((panel as HTMLElement).style.transform).toBe('translateY(70px)');
+    fireEvent.touchEnd(link, { touches: [], changedTouches: [touch(170)] });
+    expect(screen.queryByRole('dialog')).toBeNull();
+    expect(fireEvent.click(link, { detail: 1 })).toBe(false);
   });
 
   it('closes the mobile sheet when the viewport becomes desktop width', () => {

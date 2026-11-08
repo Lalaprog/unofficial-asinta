@@ -5,18 +5,54 @@ import {afterEach,beforeEach,describe,expect,it,vi} from 'vitest';
 const mock=vi.hoisted(()=>({create:vi.fn(),toast:vi.fn(),upload:vi.fn(),load:vi.fn(),save:vi.fn(),remove:vi.fn()}));
 vi.mock('@/components/layout/AppShell',()=>({AppShell:({children}:{children:React.ReactNode})=>children}));
 vi.mock('@/components/ui/Toast',()=>({useToast:()=>({showToast:mock.toast})}));
-vi.mock('@/lib/auth/authContext',()=>({useAuth:()=>({user:{id:'founder'}})}));
+vi.mock('@/lib/auth/authContext',()=>({useAuth:()=>({user:{id:'founder'},isFounder:true,assurance:'ready',isLoading:false})}));
 vi.mock('@/lib/supabase/client',()=>({createClient:()=>({storage:{from:()=>({upload:mock.upload,createSignedUrl:async()=>({data:{signedUrl:'https://example.test/private-photo'},error:null})})}})}));
 vi.mock('@/lib/expenses/draftStore',()=>({loadExpenseDraft:mock.load,saveExpenseDraft:mock.save,deleteExpenseDraft:mock.remove}));
-vi.mock('@/lib/data/store',()=>{const store={expenses:[],projects:[{id:'p',name:'Site'}],workers:[],createExpense:mock.create,createAdvance:vi.fn()};return {useDataStore:()=>store}});
+vi.mock('@/lib/data/store',()=>{const store={isLoaded:true,expenses:[],projects:[{id:'p',name:'Site'}],workers:[],createExpense:mock.create,createAdvance:vi.fn()};return {useDataStore:()=>store}});
 import ExpensesPage from '@/app/expenses/page';
 const reading='JMC Hardware\nCEMENT\nITEM 4800';
 const draft={description:'CEMENT',amount:null,expenseDate:null,projectId:null,projectLabel:null,category:null,categorySource:'none',vendor:null,vendorToken:null,isBaleHint:false,noteEvidence:null,evidence:[],unresolved:['The receipt date needs your input.'],source:'llm',verification:'model-reported'};
-beforeEach(()=>{mock.load.mockReset().mockResolvedValue({ok:true,value:null});mock.save.mockReset().mockImplementation(async (_client,owner,previous,id,payload)=>({ok:true,value:{owner_id:owner,draft_id:id,revision:(previous?.revision||0)+1,payload,updated_at:'2026-11-06'}}));mock.remove.mockReset().mockResolvedValue({ok:true,value:true});mock.create.mockReset();mock.toast.mockReset();mock.upload.mockReset().mockResolvedValue({error:null});vi.stubGlobal('fetch',vi.fn().mockResolvedValue({ok:true,json:async()=>({ok:true,draft,read:{model:'mock',extractedText:reading}})}));URL.createObjectURL=vi.fn().mockReturnValue('blob:receipt');URL.revokeObjectURL=vi.fn()});
+beforeEach(()=>{sessionStorage.clear(); HTMLElement.prototype.scrollIntoView=vi.fn(); window.matchMedia=vi.fn().mockReturnValue({matches:false}); mock.load.mockReset().mockResolvedValue({ok:true,value:null});mock.save.mockReset().mockImplementation(async (_client,owner,previous,id,payload)=>({ok:true,value:{owner_id:owner,draft_id:id,revision:(previous?.revision||0)+1,payload,updated_at:'2026-11-06'}}));mock.remove.mockReset().mockResolvedValue({ok:true,value:true});mock.create.mockReset();mock.toast.mockReset();mock.upload.mockReset().mockResolvedValue({error:null});vi.stubGlobal('fetch',vi.fn().mockResolvedValue({ok:true,json:async()=>({ok:true,draft,read:{model:'mock',extractedText:reading}})}));URL.createObjectURL=vi.fn().mockReturnValue('blob:receipt');URL.revokeObjectURL=vi.fn()});
 afterEach(()=>{cleanup();vi.unstubAllGlobals()});
 async function saveAndClose(dialog:HTMLElement){fireEvent.click(within(dialog).getByRole('button',{name:'Cancel'}));const confirmation=screen.getByRole('alertdialog',{name:'Unfinished expense'});await waitFor(()=>expect((within(confirmation).getByRole('button',{name:'Save draft'}) as HTMLButtonElement).disabled).toBe(false));await act(async()=>{fireEvent.click(within(confirmation).getByRole('button',{name:'Save draft'}))});await waitFor(()=>expect(screen.queryByRole('alertdialog',{name:'Unfinished expense'})).toBeNull());}
 async function scan(){const file=new File(['photo'],'receipt.jpg',{type:'image/jpeg'});fireEvent.change(screen.getByLabelText('Scan a receipt photo'),{target:{files:[file]}});const confirm=screen.queryByRole('alertdialog');if(confirm)fireEvent.click(within(confirm).getByRole('button',{name:'Scan new receipt'}));await screen.findByText('Read from the receipt photo')}
 describe('expense receipt review',()=>{
+  it('opens a saved expense draft from the manual shortcut without overwriting it', async()=>{
+    render(React.createElement(ExpensesPage));
+    fireEvent.click(screen.getAllByRole('button',{name:'Record Expense'})[0]);
+    const dialog=screen.getByRole('dialog',{name:'Record Site Expense'});
+    fireEvent.change(within(dialog).getByLabelText('Expense title'),{target:{value:'Keep draft'}});
+    await saveAndClose(dialog);
+    act(()=>{ window.dispatchEvent(new CustomEvent('asinta:mobile-quick-action',{detail:'expense-manual'})); });
+    await waitFor(()=>expect(screen.getByRole('dialog',{name:'Record Site Expense'})).toBeTruthy());
+    expect((within(screen.getByRole('dialog',{name:'Record Site Expense'})).getByLabelText('Expense title') as HTMLInputElement).value).toBe('Keep draft');
+    expect(mock.create).not.toHaveBeenCalled();
+  });
+  it('keeps a saved draft when starting a scan and asks before replacing unfinished work', async()=>{
+    render(React.createElement(ExpensesPage));
+    fireEvent.click(screen.getAllByRole('button',{name:'Record Expense'})[0]);
+    const dialog=screen.getByRole('dialog',{name:'Record Site Expense'});
+    fireEvent.change(within(dialog).getByLabelText('Expense title'),{target:{value:'Keep draft'}});
+    await saveAndClose(dialog);
+    act(()=>{ window.dispatchEvent(new CustomEvent('asinta:mobile-quick-action',{detail:'expense-scan'})); });
+    expect(screen.getByRole('button',{name:'Continue draft'})).toBeTruthy();
+    fireEvent.change(screen.getByLabelText('Scan a receipt photo'),{target:{files:[new File(['photo'],'receipt.jpg',{type:'image/jpeg'})]}});
+    expect(screen.getByRole('alertdialog',{name:'Replace unfinished expense?'})).toBeTruthy();
+    expect(fetch).not.toHaveBeenCalled();
+    fireEvent.click(within(screen.getByRole('alertdialog')).getByRole('button',{name:'Keep my entry'}));
+    expect(screen.getByRole('button',{name:'Continue draft'})).toBeTruthy();
+  });
+  it('prevents quick navigation away from an unsaved expense description when cancelled',async()=>{
+    vi.spyOn(window,'confirm').mockReturnValue(false);
+    render(React.createElement(ExpensesPage));
+    await waitFor(()=>expect(mock.load).toHaveBeenCalled());
+    fireEvent.change(screen.getByLabelText('Describe the expense'),{target:{value:'cement for site'}});
+    const event=new CustomEvent('asinta:quick-leave',{cancelable:true,detail:{destination:'/invoices'}});
+    expect(window.dispatchEvent(event)).toBe(false);
+    expect((screen.getByLabelText('Describe the expense') as HTMLTextAreaElement).value).toBe('cement for site');
+    vi.restoreAllMocks();
+  });
+
   it('removes voice controls, opens a review with short editable description and keeps full OCR separate',async()=>{
     render(React.createElement(ExpensesPage));expect(screen.queryByText(/voice note/i)).toBeNull();await scan();
     const dialog=screen.getByRole('dialog',{name:'Record Site Expense'});expect((within(dialog).getByLabelText('Expense title') as HTMLInputElement).value).toBe('CEMENT');

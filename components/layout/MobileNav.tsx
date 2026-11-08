@@ -2,7 +2,9 @@
 
 import React, { useState, useEffect, useLayoutEffect, useRef, useCallback } from 'react';
 import Link from 'next/link';
-import { usePathname, useSearchParams } from 'next/navigation';
+import { usePathname, useRouter, useSearchParams } from 'next/navigation';
+import { MobileQuickActions } from './MobileQuickActions';
+import { startQuickAction, type QuickAction } from '@/lib/mobile/quickActions';
 import { useAuth } from '@/lib/auth/authContext';
 import { MobileWorkspaceLauncher, type LauncherMotion } from './MobileWorkspaceLauncher';
 import {
@@ -11,7 +13,7 @@ import {
   UserCheck,
   History,
   UserPlus,
-  Banknote,
+  Plus,
   LayoutGrid,
 } from 'lucide-react';
 
@@ -22,10 +24,21 @@ interface MobileNavProps {
 
 export const MobileNav: React.FC<MobileNavProps> = () => {
   const pathname = usePathname();
+  const router = useRouter();
   const searchParams = useSearchParams();
   const urlTab = searchParams?.get('tab') || 'terminal';
   const { isFounder } = useAuth();
   const [isSheetOpen, setIsSheetOpen] = useState(false);
+  const [isQuickOpen, setIsQuickOpen] = useState(false);
+  const [quickMounted, setQuickMounted] = useState(false);
+  useEffect(() => {
+    if (isQuickOpen) { setQuickMounted(true); return; }
+    if (window.matchMedia('(prefers-reduced-motion: reduce)').matches) { setQuickMounted(false); return; }
+    const timer = window.setTimeout(() => setQuickMounted(false), 220);
+    return () => window.clearTimeout(timer);
+  }, [isQuickOpen]);
+  const quickRef = useRef<HTMLButtonElement>(null);
+  const closeQuick = useCallback(() => { setIsQuickOpen(false); quickRef.current?.focus(); }, []);
   const navRef = useRef<HTMLElement>(null);
   const moreRef = useRef<HTMLButtonElement>(null);
   const swipeStart = useRef<{ x: number; y: number; id: number; tracking: boolean; cancelled: boolean } | null>(null);
@@ -62,7 +75,7 @@ export const MobileNav: React.FC<MobileNavProps> = () => {
 
   const onDockTouchStart = (event: React.TouchEvent) => {
     suppressedClick.current = null;
-    if (!isFounder || isSheetOpen || event.touches.length !== 1) { if (swipeStart.current?.tracking) settle(false); swipeStart.current = null; return; }
+    if (!isFounder || isSheetOpen || isQuickOpen || event.touches.length !== 1) { if (swipeStart.current?.tracking) settle(false); swipeStart.current = null; return; }
     const touch = event.touches[0];
     swipeStart.current = { x: touch.clientX, y: touch.clientY, id: touch.identifier, tracking: false, cancelled: false };
   };
@@ -119,13 +132,14 @@ export const MobileNav: React.FC<MobileNavProps> = () => {
     setLocalAttendanceTab(urlTab);
     setPendingHref(null);
     dismiss();
+    setIsQuickOpen(false);
   }, [pathname, urlTab, dismiss]);
 
   useEffect(() => {
     // A sheet opened on mobile must not remain over the desktop workspace
     // after a resize or device rotation.
     const desktop = window.matchMedia('(min-width: 1024px)');
-    const onChange = () => { if (desktop.matches) dismiss(); };
+    const onChange = () => { if (desktop.matches) { dismiss(); setIsQuickOpen(false); } };
     onChange();
     desktop.addEventListener('change', onChange);
     return () => desktop.removeEventListener('change', onChange);
@@ -160,6 +174,7 @@ export const MobileNav: React.FC<MobileNavProps> = () => {
 
   const handleNavClick = (e: React.MouseEvent<HTMLAnchorElement>, href: string) => {
     dismiss();
+    setIsQuickOpen(false);
     const [basePath, query] = href.split('?');
 
     // 0ms client-side tab switch when already on `/attendance`
@@ -182,7 +197,6 @@ export const MobileNav: React.FC<MobileNavProps> = () => {
     { label: 'Overview', href: '/dashboard', icon: LayoutDashboard },
     { label: 'Projects', href: '/projects', icon: FolderKanban },
     { label: 'Roll Call', href: '/attendance', icon: UserCheck },
-    { label: 'Payroll', href: '/payroll', icon: Banknote },
   ];
 
   const supervisorDockItems = [
@@ -224,18 +238,24 @@ export const MobileNav: React.FC<MobileNavProps> = () => {
         } ${isSheetOpen || motion ? 'border-t border-transparent' : 'border-t border-surface-border/90 shadow-[0_-4px_20px_rgba(11,31,58,0.07)]'}`}
       >
         {isFounder && !isSheetOpen && !motion && (
-          <span aria-hidden="true" data-dock-handle="true" className="pointer-events-none absolute left-1/2 top-[4px] h-1 w-9 -translate-x-1/2 rounded-full bg-slate-300" />
+          <span aria-hidden="true" data-dock-handle="true" className="pointer-events-none absolute left-[90%] top-[4px] h-1 w-9 -translate-x-1/2 rounded-full bg-slate-300" />
         )}
         <div
           className={`grid ${
             isFounder ? 'grid-cols-5' : 'grid-cols-4'
           } gap-1 max-w-md mx-auto`}
         >
-          {dockItems.map((item) => {
+          {dockItems.map((item, index) => {
             const Icon = item.icon;
-            const active = isHrefActive(item.href) && !isSheetOpen;
+            const active = isHrefActive(item.href) && !isSheetOpen && !isQuickOpen;
 
             return (
+              <React.Fragment key={item.href}>
+              {isFounder && index === 2 && <button type="button" ref={quickRef} aria-label="Quick actions" aria-haspopup="dialog" aria-expanded={isQuickOpen} aria-controls={isQuickOpen ? 'mobile-quick-actions' : undefined}
+                onClick={() => { dismiss(); setIsQuickOpen(value => !value); }}
+                className="mx-auto -mt-2 flex h-12 w-12 items-center justify-center rounded-2xl bg-brand text-white shadow-[0_5px_15px_rgba(27,73,120,0.28)] transition-transform focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand focus-visible:ring-offset-2 motion-safe:active:scale-95">
+                <Plus aria-hidden="true" className={`h-6 w-6 transition-transform duration-200 motion-reduce:transition-none ${isQuickOpen ? 'rotate-45' : ''}`} />
+              </button>}
               <Link
                 key={item.href}
                 href={item.href}
@@ -256,6 +276,7 @@ export const MobileNav: React.FC<MobileNavProps> = () => {
                   {item.label}
                 </span>
               </Link>
+              </React.Fragment>
             );
           })}
 
@@ -264,7 +285,7 @@ export const MobileNav: React.FC<MobileNavProps> = () => {
             <button
               type="button"
               ref={moreRef}
-              onClick={() => { if (isSheetOpen) dismiss(); else { clearSettle(); updateMotion(null); setTapEntrance(true); setIsSheetOpen(true); } }}
+              onClick={() => { setIsQuickOpen(false); if (isSheetOpen) dismiss(); else { clearSettle(); updateMotion(null); setTapEntrance(true); setIsSheetOpen(true); } }}
               aria-haspopup="dialog"
               aria-expanded={isSheetOpen}
               aria-controls={isSheetOpen ? "mobile-workspace-panel" : undefined}
@@ -285,6 +306,9 @@ export const MobileNav: React.FC<MobileNavProps> = () => {
         </div>
       </nav>
 
+      {isFounder && (isQuickOpen || quickMounted) && <MobileQuickActions open={isQuickOpen} bottom={navHeight} onClose={closeQuick} onSelect={(action: QuickAction, href: string) => {
+        if (startQuickAction(action, href, pathname || '', router.push)) setIsQuickOpen(false);
+      }} />}
       {isFounder && (
         <MobileWorkspaceLauncher
           isOpen={isSheetOpen}
