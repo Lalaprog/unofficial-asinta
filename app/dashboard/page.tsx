@@ -4,6 +4,7 @@ import React, { useEffect, useMemo, useRef, useState } from 'react';
 import Link from 'next/link';
 import { ChevronDown } from 'lucide-react';
 import { AppShell } from '@/components/layout/AppShell';
+import { DashboardWalkthrough } from '@/components/dashboard/DashboardWalkthrough';
 import { useDataStore } from '@/lib/data/store';
 import type { Invoice, ToolCondition } from '@/types';
 import type { CostBurnSummary, ProjectFinancialSummary } from '@/lib/dashboard/financialMetrics';
@@ -766,6 +767,7 @@ export default function FounderDashboard() {
         >
           {/* CARD 1: Client Balances Due */}
           <Card
+            data-dashboard-guide="balances"
             style={{ '--rise-delay': '55ms' } as React.CSSProperties}
             className="group animate-card-rise relative flex h-full min-w-0 flex-col justify-between overflow-hidden border-[#e3ddd2] p-4 shadow-sm sm:p-5"
           >
@@ -782,6 +784,7 @@ export default function FounderDashboard() {
                     <h2 className="break-words text-[10px] font-bold uppercase tracking-[0.13em] text-ink-secondary">
                       Client balances due
                     </h2>
+                    <details className="mt-1 text-[11px] text-ink-secondary lg:hidden"><summary className="cursor-pointer font-semibold text-brand">About this figure</summary><p className="mt-1 leading-relaxed">Draft and cancelled invoices are excluded.</p></details>
                     <p className="mt-0.5 truncate text-[11px] text-ink-muted">
                       {activeProject ? activeProject.name : 'Across all projects'}
                     </p>
@@ -901,6 +904,7 @@ export default function FounderDashboard() {
 
           {/* CARD 2: Workforce & Pay (Horizontal Architectural Cut Between Payroll & Bale) */}
           <Card
+            data-dashboard-guide="workforce"
             style={{ '--rise-delay': '110ms' } as React.CSSProperties}
             className="group animate-card-rise relative flex h-full min-w-0 flex-col justify-between overflow-hidden border-[#e3ddd2] p-4 shadow-sm sm:p-5"
           >
@@ -1010,6 +1014,7 @@ export default function FounderDashboard() {
 
           {/* CARD 3: Project Costs Recorded (With Daily Budget Burn % + Smart Fallback) */}
           <Card
+            data-dashboard-guide="costs"
             style={{ '--rise-delay': '165ms' } as React.CSSProperties}
             className="group animate-card-rise relative flex h-full min-w-0 flex-col justify-between overflow-hidden border-[#e3ddd2] p-4 shadow-sm sm:p-5"
           >
@@ -1026,6 +1031,7 @@ export default function FounderDashboard() {
                     <h2 className="break-words text-[10px] font-bold uppercase tracking-[0.13em] text-ink-secondary">
                       Project costs recorded
                     </h2>
+                    <details className="mt-1 text-[11px] text-ink-secondary lg:hidden"><summary className="cursor-pointer font-semibold text-brand">About this figure</summary><p className="mt-1 leading-relaxed">The activity indicator shows today’s spending, or falls back to the last seven days or the latest active day.</p></details>
                     <p className="mt-0.5 truncate text-[11px] text-ink-muted">
                       {activeProject
                         ? `Logged expenses for ${activeProject.name}`
@@ -1138,6 +1144,7 @@ export default function FounderDashboard() {
 
           {/* CARD 4: Interactive Project Scope Filter (Scrollable, Replaces Tools Card) */}
           <Card
+            data-dashboard-guide="scope"
             style={{ '--rise-delay': '220ms' } as React.CSSProperties}
             className="group animate-card-rise relative flex h-full min-w-0 flex-col justify-between overflow-hidden border-[#e3ddd2] p-4 shadow-sm sm:p-5"
           >
@@ -1293,7 +1300,7 @@ export default function FounderDashboard() {
           className="dashboard-detail-grid animate-card-rise grid grid-cols-1 gap-4"
         >
           {/* FOLLOW-UP BOARD: Needs Attention (Includes Tools Needing Attention) */}
-          <section className="relative min-w-0 overflow-hidden rounded-2xl border border-[#e3ddd2] bg-white shadow-sm">
+          <section data-dashboard-guide="attention" className="relative min-w-0 overflow-hidden rounded-2xl border border-[#e3ddd2] bg-white shadow-sm">
             <AttentionBoardWatermark />
 
             <div className="relative z-10 flex items-center justify-between gap-3 border-b border-[#e9e3d8] bg-[#fbfaf7] px-4 py-4 sm:px-5">
@@ -1536,7 +1543,7 @@ export default function FounderDashboard() {
           </section>
 
           {/* PROJECT REGISTER */}
-          <section className="dashboard-register relative min-w-0 overflow-hidden rounded-2xl border border-[#e3ddd2] bg-white shadow-sm">
+          <section data-dashboard-guide="register" className="dashboard-register relative min-w-0 overflow-hidden rounded-2xl border border-[#e3ddd2] bg-white shadow-sm">
             <ProjectRegisterWatermark />
 
             <div className="relative z-10 flex flex-col gap-3 border-b border-[#e9e3d8] bg-[#fbfaf7] px-4 py-4 sm:flex-row sm:items-center sm:justify-between sm:px-5">
@@ -1744,7 +1751,7 @@ export default function FounderDashboard() {
 
         <aside
           aria-label="How to read the dashboard figures"
-          className="rounded-2xl border border-[#ded7c9] bg-[#f8f6f0] p-4 sm:p-5"
+          className="hidden rounded-2xl border border-[#ded7c9] bg-[#f8f6f0] p-4 sm:p-5 lg:block"
         >
           <div className="flex items-center gap-2">
             <span className="h-2 w-2 rounded-full bg-brand" aria-hidden="true" />
@@ -1768,6 +1775,8 @@ export default function FounderDashboard() {
           </ul>
         </aside>
       </div>
+
+      <DashboardWalkthrough />
 
       <Modal
         isOpen={smsModalOpen}

@@ -21,6 +21,11 @@ A plain-language record of work still to consider. This is a planning document, 
 - **Hosting terms are separate from the scheduler:** Vercel describes Hobby as personal, non-commercial use. Before using the app for actual firm business, check whether the hosting plan permits that use and consider a suitable no-cost host if necessary. Changing only the scheduler does not resolve hosting eligibility. [Vercel Hobby plan](https://vercel.com/docs/plans/hobby).
 - No scheduler has been installed or activated. Do not resume automation work without the user’s direction; keep automatic reminders OFF and obtain separate approval before hosted changes or real messages. Continue the outstanding security, historical-data and provider checks in `REMINDER_ROLLOUT_NOTES.md` before any rollout.
 
+## Dashboard walkthrough follow-up
+
+- [ ] **Optional page guides:** The first guide is limited to the Founder dashboard on mobile. The question-mark button starts it only on request; it does not track first visits. Real-phone checks of scrolling, spotlight placement, orientation, screen readers and reduced-motion behavior are still needed. Other pages and desktop guidance are not included and need separate review before expanding.
+- The mobile dashboard retains short contextual explanations for receivable exclusions and cost activity. The existing desktop snapshot guide remains unchanged. Keep important financial context accessible even when simplifying the interface.
+
 ## AI follow-up
 
 - **Receipt AI cooldown:** This work adds an advisory provider-reported retry interval when available, without automatic retries. It is not a guarantee that Groq will be available afterward; real-provider behavior still needs a real-world check.
