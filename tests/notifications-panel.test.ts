@@ -232,3 +232,22 @@ describe('bell-anchored notification controls', () => {
     expect(itemByTitle(panel, "Today's Site Attendance Pending")).toBeTruthy();
   });
 });
+
+describe('dashboard help entry', () => {
+  it('offers the mobile guide to a Founder without changing notifications', () => {
+    render(React.createElement(Navbar));
+    const listener = vi.fn();
+    window.addEventListener('asinta:dashboard-guide', listener);
+    const help = screen.getByRole('button', { name: 'Open dashboard guide' });
+    expect(help.className).toContain('lg:hidden');
+    fireEvent.click(help);
+    expect(listener).toHaveBeenCalledOnce();
+    expect(bell()).toBeTruthy();
+    window.removeEventListener('asinta:dashboard-guide', listener);
+  });
+  it('does not offer the Founder dashboard guide to Supervisors', () => {
+    mocks.auth = { ...mocks.auth, isFounder: false, isSupervisor: true };
+    render(React.createElement(Navbar));
+    expect(screen.queryByRole('button', { name: 'Open dashboard guide' })).toBeNull();
+  });
+});
