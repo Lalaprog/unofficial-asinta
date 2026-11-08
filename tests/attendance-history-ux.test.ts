@@ -4,6 +4,7 @@ import { act, cleanup, fireEvent, render, screen, within } from '@testing-librar
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 const mock = vi.hoisted(() => ({ founder: true, update: vi.fn(), showToast: vi.fn(), failHistory:false, rpc:vi.fn() }));
+vi.mock('@/lib/attendance/useProjectRollCall', () => ({ useProjectRollCall: () => ({ status: 'loading', snapshot: null, reload: vi.fn() }) }));
 vi.mock('@/lib/attendance/usePendingApprovals', async () => {
   const React = await import('react');
   const rows = Array.from({length:4},(_,i)=>({id:`pending-${i+1}`,worker_id:`sup-${i+1}`,worker_name:`Supervisor ${i+1}`,project_id:'site-1',project_name:'Alpha Site',date:'2026-10-15',status:'present',hours_worked:8,notes:'Pending Founder Review',recorded_by:`sup-${i+1}`,is_founder_override:false}));

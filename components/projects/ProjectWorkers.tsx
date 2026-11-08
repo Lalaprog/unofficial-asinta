@@ -87,7 +87,7 @@ export function ProjectWorkers({ projectId }: { projectId: string }) {
         <p className="mt-1 text-xs text-ink-secondary">The current team for this project. Adding or removing someone does not mark attendance or change payroll.</p></div>
       <Button type="button" size="sm" variant="secondary" onClick={() => {setShowAdd(!showAdd);setShowNew(false);}} disabled={loading || needsCheck || pending} leftIcon={<Plus className="h-4 w-4" />}>{showAdd ? 'Close' : 'Add worker'}</Button>
     </div>
-    <p className="text-xs text-ink-secondary">This new list starts empty; past attendance does not automatically assign workers. The attendance roster still shows active workers across sites until that workflow is reviewed.</p>
+    <p className="text-xs text-ink-secondary">This list starts empty; past attendance does not automatically assign workers. Roll Call uses the project team and keeps saved attendance visible for the selected date.</p>
     {error && <div role="alert" className="rounded-xl border border-status-danger/20 bg-status-danger-bg p-3 text-xs text-status-danger">{error}</div>}
     {message && <p role="status" className="text-xs text-status-success">{message}</p>}
     {needsCheck && <Button type="button" variant="secondary" size="sm" disabled={pending} onClick={() => void load(true)}>Refresh and check team</Button>}

@@ -28,9 +28,11 @@ export async function GET(_req: NextRequest, { params }: Context) {
     const auth = await authorize(params.id);
     if (auth.error || !auth.db) return auth.error!;
     // RLS checks the project scope again during this read; no service-role read.
-    const { data, error } = await auth.db.from('project_worker_assignments')
-      .select('worker_id').eq('project_id', params.id).eq('active', true);
-    if (error || !Array.isArray(data)) return fail('Could not load the project team.', 503);
+    const { data, error, count } = await auth.db.from('project_worker_assignments')
+      .select('worker_id', { count: 'exact' }).eq('project_id', params.id).eq('active', true);
+    // PostgREST may truncate a successful select at its configured row limit.
+    // Never mistake that partial result for the complete team.
+    if (error || !Array.isArray(data) || count === null || count !== data.length) return fail('Could not load the complete project team.', 503);
     return NextResponse.json({ workerIds: data.map((row: {worker_id:string}) => row.worker_id) }, { headers });
   } catch { return fail('Could not load the project team.', 503); }
 }

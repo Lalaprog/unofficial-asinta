@@ -3,7 +3,7 @@
 import { PageWalkthrough, ROLL_CALL_GUIDE_EVENT } from './DashboardWalkthrough';
 
 const COMMON = [
-  { target: 'site', title: 'Project and date', description: 'Choose the site and date carefully before marking attendance. Saved attendance belongs to that site and date.' },
+  { target: 'site', title: 'Project and date', description: 'Choose the site and date carefully. Roll Call uses the project team and keeps saved attendance for that date visible.' },
   { target: 'summary', title: 'Crew status', description: 'See how many workers are marked and how many still need a status. Your device can keep an unfinished draft; it is not official attendance until submitted.' },
   { target: 'filters', title: 'Find a worker', description: 'Search, filter by craft or show unmarked workers. Filters change the visible list, not the full submission requirements.' },
   { target: 'crew', title: 'Mark the crew', description: 'Choose a status for each worker. Check any warning about attendance at another site before submitting.' },

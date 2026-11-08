@@ -19,6 +19,7 @@ vi.mock('@/lib/data/store', () => {
   const store={users:[], workers:[], projects, projectSupervisors:[], attendance:[], isLoaded:true, createWorker:vi.fn(), updateWorker:vi.fn(), toggleWorkerStatus:vi.fn(), recordAttendanceBatch:vi.fn(), updateAttendanceRecord:mock.update, getProjectsForSupervisor:()=>projects};
   return {useDataStore:()=>store};
 });
+vi.mock('@/lib/attendance/useProjectRollCall', () => ({ useProjectRollCall: () => ({ status: 'loading', snapshot: null, reload: vi.fn() }) }));
 import AttendancePage from '@/app/attendance/page';
 const rec=(id:string)=>({id,worker_id:'s',worker_name:`Supervisor ${id}`,worker_position:'Site Supervisor',project_id:'site',project_name:'Alpha',date:'2024-01-01',status:'present',hours_worked:8,notes:'Pending Founder Review',recorded_by:'s',is_founder_override:false});
 const response=(items: ReturnType<typeof rec>[], total:number, has_more:boolean)=>({data:{items,total,has_more},error:null});
