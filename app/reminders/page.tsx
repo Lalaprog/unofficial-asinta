@@ -222,7 +222,7 @@ export default function RemindersPage() {
         {dismissed.size > 0 && <div className="text-xs text-ink-secondary">{dismissed.size} reminder(s) hidden in this session. <button type="button" className="font-semibold text-navy underline" onClick={() => setDismissed(new Set())}>Restore hidden reminders</button></div>}
 
         {/* Queue */}
-        <div className="space-y-4">
+        <div data-page-guide="list" className="space-y-4">
           {queue.length === 0 && !loadError && (
             <div className="bg-white rounded-xl border border-surface-border">
               <EmptyState title="No reminders to show" description="No reminders in this view. Eligible invoices appear here unless paused or hidden in this session." icon={<BellRing className="relative h-7 w-7" />} />

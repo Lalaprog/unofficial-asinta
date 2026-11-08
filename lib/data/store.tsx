@@ -1,5 +1,8 @@
 'use client';
 
+import { isInvoiceOverdue } from '@/lib/invoices/overdue';
+import { manilaDateISO } from '@/lib/dates/manila';
+
 import React, { createContext, useContext, useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import type { SupabaseClient, PostgrestError } from '@supabase/supabase-js';
 import {
@@ -1543,10 +1546,8 @@ export const DataStoreProvider: React.FC<{ children: React.ReactNode }> = ({ chi
     const totalCollected = invoices.reduce((sum, i) => sum + Number(i.amount_paid || 0), 0);
     const totalOutstanding = Math.max(0, totalInvoiced - totalCollected);
 
-    const now = new Date();
-    const overdueInvoices = invoices.filter(
-      (i) => i.status === 'overdue' || (i.status !== 'paid' && i.status !== 'cancelled' && new Date(i.due_date) < now)
-    );
+    const today = manilaDateISO();
+    const overdueInvoices = invoices.filter((i) => isInvoiceOverdue(i, today));
     const totalOverdue = overdueInvoices.reduce(
       (sum, i) => sum + (Number(i.amount) - Number(i.amount_paid)),
       0

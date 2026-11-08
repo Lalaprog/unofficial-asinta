@@ -42,13 +42,11 @@ describe('dashboard walkthrough', () => {
     expect(screen.queryByRole('dialog')).toBeNull();
     trigger.remove();
   });
-  it('closes with Escape and does not start on desktop', () => {
+  it('opens on desktop and closes with Escape', () => {
     render(React.createElement(DashboardWalkthrough));
     mobile = false;
     act(() => window.dispatchEvent(new Event(DASHBOARD_GUIDE_EVENT)));
-    expect(screen.queryByRole('dialog')).toBeNull();
-    mobile = true;
-    act(() => window.dispatchEvent(new Event(DASHBOARD_GUIDE_EVENT)));
+    expect(screen.getByRole('dialog', { name: 'Client balances' })).toBeTruthy();
     fireEvent.keyDown(window, { key: 'Escape' });
     expect(screen.queryByRole('dialog')).toBeNull();
   });

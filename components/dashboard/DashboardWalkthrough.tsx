@@ -32,7 +32,6 @@ export function PageWalkthrough({ eventName, label, targetAttribute, steps }: Gu
 
   useEffect(() => {
     const open = () => {
-      if (!window.matchMedia('(max-width: 1023px)').matches) return;
       returnFocus.current = document.activeElement as HTMLElement;
       setStep(0);
     };
@@ -53,14 +52,10 @@ export function PageWalkthrough({ eventName, label, targetAttribute, steps }: Gu
       if (event.shiftKey && (document.activeElement === buttons[0] || document.activeElement === panelRef.current)) { event.preventDefault(); buttons[buttons.length - 1].focus(); }
       else if (!event.shiftKey && document.activeElement === buttons[buttons.length - 1]) { event.preventDefault(); buttons[0].focus(); }
     };
-    const media = window.matchMedia('(min-width: 1024px)');
-    const onResize = () => { if (media.matches) close(); };
     window.addEventListener('keydown', onKey);
-    media.addEventListener('change', onResize);
     return () => {
       window.cancelAnimationFrame(frame);
       window.removeEventListener('keydown', onKey);
-      media.removeEventListener('change', onResize);
       document.documentElement.style.overscrollBehaviorY = previousOverflow;
     };
   }, [isOpen]); // Keep the same focus and listeners while changing steps.
@@ -75,7 +70,7 @@ export function PageWalkthrough({ eventName, label, targetAttribute, steps }: Gu
   useLayoutEffect(() => {
     if (step === null) { setRect(null); return; }
     const target = document.querySelector<HTMLElement>(`[${targetAttribute}="${steps[step].target}"]`);
-    if (!target) { setRect(null); return; }
+    if (!target || target.getBoundingClientRect().width <= 0 || target.getBoundingClientRect().height <= 0) { setRect(null); return; }
     const reduced = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
     const top = Math.max(0, window.scrollY + target.getBoundingClientRect().top - 80);
     window.scrollTo({ top, behavior: reduced ? 'auto' : 'smooth' });
@@ -99,7 +94,7 @@ export function PageWalkthrough({ eventName, label, targetAttribute, steps }: Gu
 
   if (step === null || typeof document === 'undefined') return null;
   const current = steps[step];
-  return createPortal(<div className="fixed inset-0 z-[100] lg:hidden">
+  return createPortal(<div className="fixed inset-0 z-[100]">
     <div aria-hidden="true" className="absolute inset-0 overflow-hidden" style={{ touchAction: 'none', background: rect ? 'transparent' : 'rgba(11,31,58,.68)' }}>
       {rect && <div className="absolute rounded-2xl border-2 border-white/90 motion-safe:transition-[top,left,width,height] motion-safe:duration-200" style={{ ...rect, boxShadow: '0 0 0 200vmax rgba(11,31,58,.68)' }} />}
     </div>
@@ -111,6 +106,7 @@ export function PageWalkthrough({ eventName, label, targetAttribute, steps }: Gu
         <button type="button" onClick={close} aria-label={`Close ${label.toLowerCase()}`} className="grid h-11 w-11 shrink-0 place-items-center rounded-xl text-ink-secondary focus-visible:ring-2 focus-visible:ring-brand"><X aria-hidden="true" className="h-5 w-5" /></button>
       </div>
       <p id="dashboard-guide-description" className="mt-2 text-sm leading-relaxed text-ink-secondary" aria-live="polite">{current.description}</p>
+      {!rect && <p className="mt-2 text-xs text-ink-muted">This section is not currently visible. You can continue the guide or close it.</p>}
       <div className="mt-4 flex items-center justify-between gap-2">
         <button type="button" onClick={close} className="min-h-11 rounded-xl px-3 text-xs font-semibold text-ink-secondary focus-visible:ring-2 focus-visible:ring-brand">Skip</button>
         <div className="flex gap-2">

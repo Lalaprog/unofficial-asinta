@@ -28,11 +28,9 @@ function scopeGroup() { return screen.getByRole('group', { name: 'Filter dashboa
 function balancesCard() { return screen.getByRole('heading', { name: 'Client balances due' }).closest('.group') as HTMLElement; }
 
 describe('dashboard project scope selector', () => {
-  it('keeps desktop guidance and the mobile financial context without changing figures', () => {
+  it('removes the static dashboard guide while retaining mobile context and walkthrough targets', () => {
     const view = render(React.createElement(FounderDashboard));
-    const guide = screen.getByRole('complementary', { name: 'How to read the dashboard figures' });
-    expect(guide.className).toContain('hidden');
-    expect(guide.className).toContain('lg:block');
+    expect(screen.queryByRole('complementary', { name: 'How to read the dashboard figures' })).toBeNull();
     const balances = view.container.querySelector('[data-dashboard-guide="balances"]') as HTMLElement;
     const costs = view.container.querySelector('[data-dashboard-guide="costs"]') as HTMLElement;
     expect(within(balances).getByText('Draft and cancelled invoices are excluded.').closest('details')?.className).toContain('lg:hidden');

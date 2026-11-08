@@ -65,7 +65,7 @@ function AdvancesPageContent() {
         />
 
         {isFounder && (
-          <div className="flex flex-wrap gap-2" role="group" aria-label="Bale request and advance views">
+          <div data-page-guide="tabs" className="flex flex-wrap gap-2" role="group" aria-label="Bale request and advance views">
             <button
               type="button"
               id="advances-requests-tab"
@@ -98,6 +98,7 @@ function AdvancesPageContent() {
         )}
 
         <div
+          data-page-guide="list"
           id="advances-panel"
           aria-label={isFounder ? (activeTab === 'requests' ? 'Requests' : 'Issued advances') : undefined}
         >

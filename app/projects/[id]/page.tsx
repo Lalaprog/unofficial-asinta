@@ -164,7 +164,7 @@ export default function ProjectDetailPage() {
     <AppShell>
       <div className="space-y-6">
         {/* Navigation & Header */}
-        <div>
+        <div data-page-guide="intro">
           <Link
             href="/projects"
             className="inline-flex items-center space-x-2 text-xs font-semibold text-ink-secondary hover:text-navy transition-colors mb-3"
@@ -228,7 +228,7 @@ export default function ProjectDetailPage() {
         {isFounder && <ProjectPhotoManager projectId={project.id} />}
 
         {/* Tab Navigation */}
-        <div className="grid grid-cols-2 gap-x-2 border-b border-surface-border/80 sm:flex sm:flex-wrap">
+        <div data-page-guide="tabs" className="grid grid-cols-2 gap-x-2 border-b border-surface-border/80 sm:flex sm:flex-wrap">
           {[
             { id: 'overview', label: 'Overview & Summary' },
             ...(isFounder ? [{ id: 'invoices', label: `Invoices (${projInvoices.length})` }] : []),

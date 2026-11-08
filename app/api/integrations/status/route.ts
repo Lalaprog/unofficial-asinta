@@ -2,8 +2,6 @@ import { NextResponse } from 'next/server';
 import { createServerSupabaseClient } from '@/lib/supabase/server';
 import { isSmtpConfigured } from '@/lib/email/mailer';
 import { isGlobalAutomaticRemindersEnabled } from '@/lib/reminders/scheduler';
-import { GROQ_MODEL } from '@/lib/ai/groq';
-import { getVisionModel } from '@/lib/ai/models';
 import { isMfaEnforcementEnabled } from '@/lib/auth/mfa';
 import { getSessionPolicy } from '@/lib/auth/session';
 import { requireSessionAssurance } from '@/lib/auth/session-assurance';
@@ -39,10 +37,6 @@ export async function GET() {
   return NextResponse.json(
     {
       groqConfigured: Boolean(process.env.GROQ_API_KEY),
-      groqModel: GROQ_MODEL,
-      // Model IDs are data, not code: Groq retired the two IDs this app used to
-      // depend on (2026-07-17 and 2026-08-16), so ops needs to see what is live.
-      groqVisionModel: getVisionModel(),
       // Enforcement is opt-in; reporting it prevents "is MFA on?" guesswork.
       mfaEnforcedForFounders: isMfaEnforcementEnabled(),
       // Session timeout values baked into this build. Applies to all roles.

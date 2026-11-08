@@ -396,7 +396,7 @@ export default function UsersPage() {
         </WorkspaceFilters>
 
         {/* Users Cards Grid */}
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-4 auto-rows-fr">
+        <div data-page-guide="list" className="grid grid-cols-1 md:grid-cols-2 gap-4 auto-rows-fr">
           {filteredUsers.map((u) => {
             const assignedProjectIds = projectSupervisors
               .filter((ps) => ps.supervisor_id === u.id)
