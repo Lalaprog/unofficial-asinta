@@ -22,6 +22,8 @@ describe('workforce removal',()=>{
   it('selects active and inactive workers, reviews names and reports protected history',async()=>{
     mock.fetch.mockResolvedValue({ok:true,json:async()=>({ok:true,results:[{id:ids[0],status:'deleted'},{id:ids[1],status:'linked'}]})});
     render(React.createElement(AttendancePage));
+    expect(screen.queryByText('Ben')).toBeNull();
+    expect((screen.getByLabelText('Filter workforce by status') as HTMLSelectElement).value).toBe('active');
     fireEvent.click(screen.getByRole('checkbox',{name:'Select Amy, Mason, active for deletion'}));
     fireEvent.change(screen.getByLabelText('Filter workforce by status'),{target:{value:'inactive'}});
     fireEvent.click(screen.getByRole('checkbox',{name:'Select Ben, Mason, inactive for deletion'}));

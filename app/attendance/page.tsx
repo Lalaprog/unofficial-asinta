@@ -193,7 +193,7 @@ function AttendancePageInner() {
   const [isAddingWorker, setIsAddingWorker] = useState(false);
   const [workforceSearch, setWorkforceSearch] = useState('');
   const [workforceCraftFilter, setWorkforceCraftFilter] = useState<string>('all');
-  const [workforceStatusFilter, setWorkforceStatusFilter] = useState('all');
+  const [workforceStatusFilter, setWorkforceStatusFilter] = useState('active');
   const [selectedWorkers, setSelectedWorkers] = useState<string[]>([]);
   const [workerRemovalOpen, setWorkerRemovalOpen] = useState(false);
   const [workerRemovalPending, setWorkerRemovalPending] = useState(false);
@@ -2283,7 +2283,7 @@ function AttendancePageInner() {
                 <div className="bg-white rounded-xl border border-surface-border">
                   <EmptyState
                     title="No workers match"
-                    description="Choose Add Worker above to register a craftsman, or clear your search filter."
+                    description="Change the search or filters to see other workers, or choose Add Worker above to register a worker."
                   />
                 </div>
               )}
