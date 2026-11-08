@@ -772,6 +772,7 @@ export default function UsersPage() {
                       <input
                         type="checkbox"
                         checked={editIncludeInPayroll}
+                        disabled={Boolean(editingUser && workers.find((worker) => worker.id === editingUser.id)?.removed_at)}
                         onChange={(e) => setEditIncludeInPayroll(e.target.checked)}
                         className="mt-0.5 rounded border-surface-border text-navy focus:ring-navy"
                       />
@@ -785,6 +786,9 @@ export default function UsersPage() {
                       </div>
                     </label>
 
+                    {editingUser && workers.find((worker) => worker.id === editingUser.id)?.removed_at && (
+                      <p className="text-[11px] text-status-warning">This workforce profile was removed. Restore it in Workforce before including this Supervisor in payroll. The login and project access remain separate.</p>
+                    )}
                     {editIncludeInPayroll && (
                       <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 pt-1">
                         <Input

@@ -196,8 +196,9 @@ function AttendancePageInner() {
   const [workforceStatusFilter, setWorkforceStatusFilter] = useState('active');
   const [selectedWorkers, setSelectedWorkers] = useState<string[]>([]);
   const [workerRemovalOpen, setWorkerRemovalOpen] = useState(false);
+  const [workerRestoreTarget, setWorkerRestoreTarget] = useState<Worker | null>(null);
   const [workerRemovalPending, setWorkerRemovalPending] = useState(false);
-  const [workerRemovalResults, setWorkerRemovalResults] = useState<Array<{ id: string; name: string; status: string; reasons?: string[] }>>([]);
+  const [workerRemovalResults, setWorkerRemovalResults] = useState<Array<{ id: string; name: string; status: string }>>([]);
   const workerRemovalLock = useRef(false);
 
   const [editingWorker, setEditingWorker] = useState<Worker | null>(null);
@@ -910,7 +911,9 @@ function AttendancePageInner() {
   // Group Workforce tab workers by craft group
   const groupedWorkforceDirectory = useMemo(() => {
     const filtered = workers.filter((w) => {
-      if (workforceStatusFilter !== 'all' && w.active !== (workforceStatusFilter === 'active')) return false;
+      if (workforceStatusFilter === 'removed' ? !w.removed_at : Boolean(w.removed_at)) return false;
+      if (workforceStatusFilter === 'active' && !w.active) return false;
+      if (workforceStatusFilter === 'inactive' && w.active) return false;
       if (workforceCraftFilter !== 'all' && getCraftGroup(w.position) !== workforceCraftFilter) {
         return false;
       }
@@ -932,30 +935,30 @@ function AttendancePageInner() {
   }, [workers, workforceCraftFilter, workforceSearch, workforceStatusFilter]);
 
   const selectedWorkerDetails = workers.filter((worker) => selectedWorkers.includes(worker.id));
-  const visibleWorkerIds = groupedWorkforceDirectory.flatMap(([, group]) => group.map((worker) => worker.id));
-  const removeSelectedWorkers = async () => {
-    if (workerRemovalLock.current || !isFounder || selectedWorkers.length === 0 || selectedWorkerDetails.length !== selectedWorkers.length) return;
+  const visibleWorkerIds = groupedWorkforceDirectory.flatMap(([, group]) => group.filter((worker) => !worker.removed_at).map((worker) => worker.id));
+  const changeWorkersRemoved = async (action: 'remove' | 'restore', target: Worker[]) => {
+    if (workerRemovalLock.current || !isFounder || target.length === 0 || target.length > 100) return;
     workerRemovalLock.current = true;
     setWorkerRemovalPending(true);
-    const names = new Map(selectedWorkerDetails.map((worker) => [worker.id, worker.name]));
+    const ids = target.map((worker) => worker.id);
+    const names = new Map(target.map((worker) => [worker.id, worker.name]));
+    const statuses = action === 'remove' ? ['removed', 'already_removed', 'missing'] : ['restored', 'already_available', 'missing'];
     try {
-      const response = await fetch('/api/workers/remove', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ ids: selectedWorkers }) });
+      const response = await fetch('/api/workers/remove', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ ids, action }) });
       const data = await response.json();
-      if (!response.ok || !data.ok || !Array.isArray(data.results) || data.results.length !== selectedWorkers.length ||
-        new Set(data.results.map((item: { id: string }) => item.id)).size !== selectedWorkers.length ||
-        data.results.some((item: { id: string; status: string; reasons?: unknown }) => !names.has(item.id) || !['deleted', 'account', 'linked', 'missing'].includes(item.status) || (item.status === 'linked' && (!Array.isArray(item.reasons) || item.reasons.length === 0 || item.reasons.some((reason: unknown) => typeof reason !== 'string'))))) {
-        throw new Error('Removal was not confirmed. Refresh the roster and check before trying again.');
+      if (!response.ok || !data.ok || !Array.isArray(data.results) || data.results.length !== ids.length ||
+        new Set(data.results.map((item: { id: string }) => item.id)).size !== ids.length ||
+        data.results.some((item: { id: string; status: string }) => !names.has(item.id) || !statuses.includes(item.status))) {
+        throw new Error('Change was not confirmed.');
       }
-      setWorkerRemovalResults(data.results.map((item: { id: string; status: string; reasons?: string[] }) => ({ id: item.id, name: names.get(item.id) || 'Worker', status: item.status, reasons: item.reasons })));
-      setSelectedWorkers([]);
-      setWorkerRemovalOpen(false);
-      try { await refresh(); } catch { showToast('error', 'Removal results were confirmed, but the roster could not refresh. Refresh before making more changes.'); }
+      setWorkerRemovalResults(data.results.map((item: { id: string; status: string }) => ({ id: item.id, name: names.get(item.id) || 'Worker', status: item.status })));
+      if (action === 'remove') setSelectedWorkers([]);
+      setWorkerRemovalOpen(false); setWorkerRestoreTarget(null);
+      try { await refresh(); } catch { showToast('error', 'The change was confirmed, but the roster could not refresh. Refresh before making more changes.'); }
     } catch {
-      setSelectedWorkers([]);
-      setWorkerRemovalOpen(false);
-      setWorkerRemovalResults([]);
-      showToast('error', 'Removal was not confirmed. Refresh the roster and check before trying again.');
-      try { await refresh(); } catch { /* The user must refresh before retrying. */ }
+      setSelectedWorkers([]); setWorkerRemovalOpen(false); setWorkerRestoreTarget(null); setWorkerRemovalResults([]);
+      showToast('error', 'Change was not confirmed. Refresh the roster and check before trying again.');
+      try { await refresh(); } catch { /* Check the roster before retrying. */ }
     } finally {
       workerRemovalLock.current = false;
       setWorkerRemovalPending(false);
@@ -2159,12 +2162,12 @@ function AttendancePageInner() {
                   />
                 </div>
                 <div className="w-full sm:w-36">
-                  <Select aria-label="Filter workforce by status" value={workforceStatusFilter} onChange={(e) => setWorkforceStatusFilter(e.target.value)} options={[{ label: 'All statuses', value: 'all' }, { label: 'Active', value: 'active' }, { label: 'Inactive', value: 'inactive' }]} />
+                  <Select aria-label="Filter workforce by status" value={workforceStatusFilter} onChange={(e) => setWorkforceStatusFilter(e.target.value)} options={[{ label: 'Active', value: 'active' }, { label: 'Inactive', value: 'inactive' }, { label: 'Active and inactive', value: 'all' }, ...(isFounder ? [{ label: 'Removed', value: 'removed' }] : [])]} />
                 </div>
               </div>
 
               <Badge variant="neutral" size="sm">
-                {workers.filter((w) => w.active).length} active / {workers.length} total
+                {workers.filter((w) => w.active && !w.removed_at).length} active / {workers.filter((w) => !w.removed_at).length} in workforce
               </Badge>
             </div>
 
@@ -2178,24 +2181,26 @@ function AttendancePageInner() {
                   }}>Select visible</Button>
                   <Button type="button" variant="ghost" size="sm" disabled={workerRemovalPending || selectedWorkers.length === 0} onClick={() => setSelectedWorkers([])}>Clear selection</Button>
                   <span className="text-xs text-ink-secondary">{selectedWorkers.length} selected (including selections outside the current filter)</span>
-                  <Button type="button" variant="danger" size="sm" disabled={workerRemovalPending || !isLoaded || Boolean(loadError) || selectedWorkers.length === 0 || selectedWorkerDetails.length !== selectedWorkers.length} onClick={() => setWorkerRemovalOpen(true)}>Delete selected</Button>
+                  <Button type="button" variant="danger" size="sm" disabled={workerRemovalPending || !isLoaded || Boolean(loadError) || selectedWorkers.length === 0 || selectedWorkerDetails.length !== selectedWorkers.length} onClick={() => setWorkerRemovalOpen(true)}>Remove selected</Button>
                 </div>
-                <p className="text-xs text-ink-secondary">Only workers without linked records or accounts can be deleted. To keep a worker’s history, use Manage → Set Inactive.</p>
+                <p className="text-xs text-ink-secondary">Removed workers are hidden from normal lists; their history remains. Use the Removed filter to review or restore them.</p>
               </div>
             )}
             {workerRemovalResults.length > 0 && (
               <div role="status" className="rounded-xl border border-surface-border bg-white p-3 text-xs space-y-1">
                 <p className="font-semibold text-navy">Worker removal results</p>
-                {workerRemovalResults.map((item, index) => <p key={`${item.id}-${index}`}><strong>{item.name} (ID {item.id.slice(0, 8)}):</strong> {item.status === 'deleted' ? 'Deleted.' : item.status === 'linked' ? `Kept: ${item.reasons?.join(', ') || 'linked records'}. Use Manage → Set Inactive if appropriate.` : item.status === 'account' ? 'Kept: linked to an account.' : 'Not found; refresh and check.'}</p>)}
+                {workerRemovalResults.map((item, index) => <p key={`${item.id}-${index}`}><strong>{item.name} (ID {item.id.slice(0, 8)}):</strong> {item.status === 'removed' ? 'Removed from workforce and current project teams; history kept.' : item.status === 'restored' ? 'Restored as inactive; project teams were not restored.' : item.status === 'already_removed' ? 'Already removed.' : item.status === 'already_available' ? 'Already in the workforce.' : 'Not found; refresh and check.'}</p>)}
                 <button type="button" className="underline" onClick={() => setWorkerRemovalResults([])}>Dismiss results</button>
               </div>
             )}
-            <Modal isOpen={workerRemovalOpen} onClose={() => { if (!workerRemovalPending) setWorkerRemovalOpen(false); }} title="Delete selected workers?" description="This permanently deletes only eligible profiles. Linked records and accounts are protected. Review every selected worker below." role="alertdialog" dismissOnBackdrop={false} dismissOnEscape={!workerRemovalPending} showCloseButton={!workerRemovalPending} maxWidth="md">
+            <Modal isOpen={workerRemovalOpen} onClose={() => { if (!workerRemovalPending) setWorkerRemovalOpen(false); }} title="Remove selected workers?" description="Attendance, payroll and Bale history stay. Workers are removed from current project teams and future payroll generation, including unprocessed dates. Finish any payroll first. Supervisor logins and project access are not removed. Review every selected worker below." role="alertdialog" dismissOnBackdrop={false} dismissOnEscape={!workerRemovalPending} showCloseButton={!workerRemovalPending} maxWidth="md">
               <ul className="max-h-56 overflow-y-auto rounded-lg border border-surface-border divide-y divide-surface-border text-xs">
                 {selectedWorkerDetails.map((worker) => <li key={worker.id} className="p-2">{worker.name} · {worker.position} · {worker.active ? 'Active' : 'Inactive'} · ID {worker.id.slice(0, 8)}</li>)}
               </ul>
-              <div className="mt-3 flex justify-end gap-2"><Button type="button" variant="secondary" disabled={workerRemovalPending} onClick={() => setWorkerRemovalOpen(false)}>Cancel</Button><Button type="button" variant="danger" isLoading={workerRemovalPending} onClick={() => void removeSelectedWorkers()}>Delete eligible workers</Button></div>
+              <div className="mt-3 flex justify-end gap-2"><Button type="button" variant="secondary" disabled={workerRemovalPending} onClick={() => setWorkerRemovalOpen(false)}>Cancel</Button><Button type="button" variant="danger" isLoading={workerRemovalPending} onClick={() => void changeWorkersRemoved('remove', selectedWorkerDetails)}>Remove workers</Button></div>
             </Modal>
+
+            <ConfirmDialog isOpen={Boolean(workerRestoreTarget)} title="Restore worker?" message={`${workerRestoreTarget?.name || 'This worker'} will return as inactive. Reactivation and adding them to project teams are separate steps.`} confirmLabel="Restore as inactive" isPending={workerRemovalPending} onCancel={() => setWorkerRestoreTarget(null)} onConfirm={() => { if (workerRestoreTarget) void changeWorkersRemoved('restore', [workerRestoreTarget]); }} />
 
             {/* Grouped Compact Workforce List */}
             <div className="space-y-3">
@@ -2231,7 +2236,7 @@ function AttendancePageInner() {
                           className="px-4 py-2.5 flex items-center justify-between gap-3 text-xs hover:bg-slate-50 transition-colors"
                         >
                           <div className="flex items-center flex-wrap gap-2 min-w-0">
-                            {isFounder && <label className="inline-flex min-h-11 min-w-11 items-center justify-center"><input type="checkbox" aria-label={`Select ${w.name}, ${w.position}, ${w.active ? 'active' : 'inactive'} for deletion`} checked={selectedWorkers.includes(w.id)} disabled={workerRemovalPending || !isLoaded || Boolean(loadError)} onChange={(e) => {
+                            {isFounder && !w.removed_at && <label className="inline-flex min-h-11 min-w-11 items-center justify-center"><input type="checkbox" aria-label={`Select ${w.name}, ${w.position}, ${w.active ? 'active' : 'inactive'} for removal`} checked={selectedWorkers.includes(w.id)} disabled={workerRemovalPending || !isLoaded || Boolean(loadError)} onChange={(e) => {
                               const checked = e.target.checked;
                               if (checked && selectedWorkers.length >= 100) { showToast('error', 'Select at most 100 workers at a time.'); return; }
                               setSelectedWorkers((current) => checked ? [...current, w.id] : current.filter((id) => id !== w.id));
@@ -2244,7 +2249,7 @@ function AttendancePageInner() {
                                 : ''}
                             </span>
                             <Badge variant={w.active ? 'success' : 'neutral'} size="sm">
-                              {w.active ? 'Active' : 'Inactive'}
+                              {w.removed_at ? 'Removed' : w.active ? 'Active' : 'Inactive'}
                             </Badge>
                             {w.position.toLowerCase().includes('supervisor') && (
                               <Badge variant="warning" size="sm">
@@ -2261,7 +2266,9 @@ function AttendancePageInner() {
                             ))}
                           </div>
 
-                          {isFounder && (
+                          {isFounder && (w.removed_at ? (
+                            <Button type="button" variant="secondary" size="sm" disabled={workerRemovalPending} onClick={() => setWorkerRestoreTarget(w)}>Restore</Button>
+                          ) : (
                             <Button
                               type="button"
                               variant="secondary"
@@ -2271,7 +2278,7 @@ function AttendancePageInner() {
                             >
                               Manage
                             </Button>
-                          )}
+                          ))}
                         </div>
                       );
                     })}

@@ -12,39 +12,52 @@ vi.mock('@/components/ui/Toast',()=>({useToast:()=>({showToast:mock.toast})}));
 vi.mock('@/lib/attendance/usePendingApprovals',()=>({usePendingApprovals:()=>({items:[],total:0,hasMore:false,loading:false,error:null,refresh:vi.fn(),loadMore:vi.fn()})}));
 vi.mock('@/lib/attendance/useProjectRollCall',()=>({useProjectRollCall:()=>({status:'loading',snapshot:null,reload:vi.fn()})}));
 vi.mock('@/lib/data/store',()=>{
-  const workers=[{id:'10000000-0000-0000-0000-000000000001',name:'Amy',position:'Mason',active:true,pay_rate:850,pay_rate_type:'daily',contact_number:'—'},{id:'20000000-0000-0000-0000-000000000002',name:'Ben',position:'Mason',active:false,pay_rate:850,pay_rate_type:'daily',contact_number:'—'}];
+  const workers=[{id:'10000000-0000-0000-0000-000000000001',name:'Amy',position:'Mason',active:true,pay_rate:850,pay_rate_type:'daily',contact_number:'—'},{id:'20000000-0000-0000-0000-000000000002',name:'Ben',position:'Mason',active:false,pay_rate:850,pay_rate_type:'daily',contact_number:'—'},{id:'30000000-0000-0000-0000-000000000003',name:'Cora',position:'Mason',active:false,removed_at:'2026-11-07T00:00:00Z',pay_rate:850,pay_rate_type:'daily',contact_number:'—'}];
   return {useDataStore:()=>({workers,projects:[],users:[],projectSupervisors:[],attendance:[],isLoaded:true,loadError:null,refresh:mock.refresh,createWorker:vi.fn(),updateWorker:vi.fn(),toggleWorkerStatus:vi.fn(),recordAttendanceBatch:vi.fn(),updateAttendanceRecord:vi.fn(),getProjectsForSupervisor:()=>[]})};
 });
 import AttendancePage from '@/app/attendance/page';
 beforeEach(()=>{mock.founder=true;mock.fetch.mockReset();mock.refresh.mockClear();mock.toast.mockClear();vi.stubGlobal('fetch',mock.fetch);window.history.replaceState({},'','/attendance?tab=workforce');localStorage.clear();});
 afterEach(()=>{cleanup();vi.unstubAllGlobals();});
 describe('workforce removal',()=>{
-  it('selects active and inactive workers, reviews names and reports protected history',async()=>{
-    mock.fetch.mockResolvedValue({ok:true,json:async()=>({ok:true,results:[{id:ids[0],status:'deleted'},{id:ids[1],status:'linked',reasons:['Attendance','Payroll']}]})});
+  it('selects active and inactive workers, reviews names and preserves history and explains effects',async()=>{
+    mock.fetch.mockResolvedValue({ok:true,json:async()=>({ok:true,results:[{id:ids[0],status:'removed'},{id:ids[1],status:'removed'}]})});
     render(React.createElement(AttendancePage));
     expect(screen.queryByText('Ben')).toBeNull();
     expect((screen.getByLabelText('Filter workforce by status') as HTMLSelectElement).value).toBe('active');
-    fireEvent.click(screen.getByRole('checkbox',{name:'Select Amy, Mason, active for deletion'}));
+    fireEvent.click(screen.getByRole('checkbox',{name:'Select Amy, Mason, active for removal'}));
     fireEvent.change(screen.getByLabelText('Filter workforce by status'),{target:{value:'inactive'}});
-    fireEvent.click(screen.getByRole('checkbox',{name:'Select Ben, Mason, inactive for deletion'}));
+    fireEvent.click(screen.getByRole('checkbox',{name:'Select Ben, Mason, inactive for removal'}));
     expect(screen.getByText(/2 selected/)).toBeTruthy();
-    fireEvent.click(screen.getByRole('button',{name:'Delete selected'}));
+    fireEvent.click(screen.getByRole('button',{name:'Remove selected'}));
     const dialog=screen.getByRole('alertdialog');expect(within(dialog).getByText(/Amy · Mason · Active/)).toBeTruthy();expect(within(dialog).getByText(/Ben · Mason · Inactive/)).toBeTruthy();
     expect(mock.fetch).not.toHaveBeenCalled();
-    fireEvent.click(within(dialog).getByRole('button',{name:'Delete eligible workers'}));
-    await waitFor(()=>expect(screen.getByText(/Kept: Attendance, Payroll/)).toBeTruthy());
-    expect(screen.getByText(/Deleted\./)).toBeTruthy();expect(mock.fetch).toHaveBeenCalledOnce();
-    expect(JSON.parse(mock.fetch.mock.calls[0][1].body)).toEqual({ids});expect(mock.refresh).toHaveBeenCalledOnce();
+    fireEvent.click(within(dialog).getByRole('button',{name:'Remove workers'}));
+    await waitFor(()=>expect(screen.getAllByText(/history kept/)).toHaveLength(2));
+    expect(mock.fetch).toHaveBeenCalledOnce();
+    expect(JSON.parse(mock.fetch.mock.calls[0][1].body)).toEqual({ids,action:'remove'});expect(mock.refresh).toHaveBeenCalledOnce();
+  });
+  it('keeps removed people out of normal lists and lets a Founder restore inactive',async()=>{
+    mock.fetch.mockResolvedValue({ok:true,json:async()=>({ok:true,results:[{id:'30000000-0000-0000-0000-000000000003',status:'restored'}]})});
+    render(React.createElement(AttendancePage));
+    fireEvent.change(screen.getByLabelText('Filter workforce by status'),{target:{value:'all'}});
+    expect(screen.queryByText('Cora')).toBeNull();
+    fireEvent.change(screen.getByLabelText('Filter workforce by status'),{target:{value:'removed'}});
+    expect(screen.getByText('Cora')).toBeTruthy();
+    fireEvent.click(screen.getByRole('button',{name:'Restore'}));
+    expect(within(screen.getByRole('alertdialog')).getByText(/return as inactive/)).toBeTruthy();
+    fireEvent.click(within(screen.getByRole('alertdialog')).getByRole('button',{name:'Restore as inactive'}));
+    await waitFor(()=>expect(screen.getByText(/project teams were not restored/)).toBeTruthy());
+    expect(JSON.parse(mock.fetch.mock.calls[0][1].body)).toEqual({ids:['30000000-0000-0000-0000-000000000003'],action:'restore'});
   });
   it('does not offer deletion to Supervisors',()=>{
     mock.founder=false;render(React.createElement(AttendancePage));
-    expect(screen.queryByRole('button',{name:'Delete selected'})).toBeNull();
-    expect(screen.queryByRole('checkbox',{name:/for deletion/})).toBeNull();
+    expect(screen.queryByRole('button',{name:'Remove selected'})).toBeNull();
+    expect(screen.queryByRole('checkbox',{name:/for removal/})).toBeNull();
   });
   it('reports an unconfirmed response without automatically retrying',async()=>{
     mock.fetch.mockRejectedValue(new Error('lost'));
-    render(React.createElement(AttendancePage));fireEvent.click(screen.getByRole('checkbox',{name:'Select Amy, Mason, active for deletion'}));
-    fireEvent.click(screen.getByRole('button',{name:'Delete selected'}));fireEvent.click(within(screen.getByRole('alertdialog')).getByRole('button',{name:'Delete eligible workers'}));
+    render(React.createElement(AttendancePage));fireEvent.click(screen.getByRole('checkbox',{name:'Select Amy, Mason, active for removal'}));
+    fireEvent.click(screen.getByRole('button',{name:'Remove selected'}));fireEvent.click(within(screen.getByRole('alertdialog')).getByRole('button',{name:'Remove workers'}));
     await waitFor(()=>expect(mock.toast).toHaveBeenCalledWith('error',expect.stringMatching(/not confirmed/i)));
     expect(mock.fetch).toHaveBeenCalledOnce();expect(mock.refresh).toHaveBeenCalledOnce();
   });

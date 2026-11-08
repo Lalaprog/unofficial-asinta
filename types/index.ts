@@ -16,6 +16,8 @@ export interface Worker {
   pay_rate: number;
   pay_rate_type: 'daily' | 'hourly';
   active: boolean;
+  /** Removed workers remain available for historical records. */
+  removed_at?: string | null;
   created_at: string;
 }
 
