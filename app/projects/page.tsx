@@ -28,6 +28,7 @@ import { formatPesoCompact } from '@/lib/email/format';
 import { getBudgetSummary } from '@/lib/projects/budgetSummary';
 import { ProjectCover } from '@/components/projects/ProjectCover';
 import { localDateInputValue, validateProjectForm } from '@/lib/projects/form';
+import { normalizeClientForm } from '@/lib/clients/form';
 
 export default function ProjectsPage() {
   const { isFounder, isSupervisor, user } = useAuth();
@@ -40,6 +41,7 @@ export default function ProjectsPage() {
     invoices,
     expenses,
     createProject,
+    createClient,
     getProjectsForSupervisor,
   } = useDataStore();
 
@@ -47,6 +49,11 @@ export default function ProjectsPage() {
   const [statusFilter, setStatusFilter] = useState<string>('all');
   const [isCreateModalOpen, setIsCreateModalOpen] = useState(false);
   const [showFormErrors, setShowFormErrors] = useState(false);
+  const [isClientModalOpen, setIsClientModalOpen] = useState(false);
+  const [isSavingClient, setIsSavingClient] = useState(false);
+  const [clientSaveUnconfirmed, setClientSaveUnconfirmed] = useState(false);
+  const clientSaveLock = React.useRef(false);
+  const [clientForm, setClientForm] = useState({ name: '', contact_person: '', phone: '', email: '', address: '' });
 
   // Form state
   const [formData, setFormData] = useState({
@@ -114,6 +121,34 @@ export default function ProjectsPage() {
     } finally {
       creatingRef.current = false;
       setIsCreating(false);
+    }
+  };
+
+  const handleCreateClient = async (event: React.FormEvent) => {
+    event.preventDefault();
+    if (!isFounder || clientSaveLock.current || clientSaveUnconfirmed) return;
+    const payload = normalizeClientForm(clientForm);
+    if (!payload) {
+      showToast('error', 'Complete every field with the client’s actual contact details.');
+      return;
+    }
+    clientSaveLock.current = true;
+    setIsSavingClient(true);
+    try {
+      const client = await createClient(payload);
+      if (!client) {
+        setClientSaveUnconfirmed(true);
+        return;
+      }
+      setFormData((current) => ({ ...current, client_id: client.id }));
+      setIsClientModalOpen(false);
+      setClientForm({ name: '', contact_person: '', phone: '', email: '', address: '' });
+      showToast('success', 'Client added and selected. The project has not been created yet.');
+    } catch {
+      setClientSaveUnconfirmed(true);
+    } finally {
+      clientSaveLock.current = false;
+      setIsSavingClient(false);
     }
   };
 
@@ -327,6 +362,14 @@ export default function ProjectsPage() {
               required
             />
 
+            <div className="flex flex-wrap items-center gap-2">
+              <Button type="button" variant="outline" size="sm" leftIcon={<Plus className="h-4 w-4" />}
+                onClick={() => { setClientForm({ name: '', contact_person: '', phone: '', email: '', address: '' }); setClientSaveUnconfirmed(false); setIsClientModalOpen(true); }}>
+                Add New Client
+              </Button>
+              <span className="text-ink-secondary">Check the list first to avoid duplicates. New clients are saved separately.</span>
+            </div>
+
             <Input
               label="Site Location"
               error={showFormErrors ? projectValidation.errors.location : undefined}
@@ -389,6 +432,45 @@ export default function ProjectsPage() {
               </Button>
             </div>
           </fieldset>
+        </form>
+      </Modal>
+
+      {/* A separate, stacked dialog preserves the project draft while adding a client. */}
+      <Modal
+        isOpen={isFounder && isCreateModalOpen && isClientModalOpen}
+        onClose={() => setIsClientModalOpen(false)}
+        dismissOnBackdrop={!isSavingClient}
+        dismissOnEscape={!isSavingClient}
+        showCloseButton={!isSavingClient}
+        title="Add New Client"
+        description="The client is saved to the directory immediately, even if you later cancel the project."
+      >
+        <form onSubmit={handleCreateClient} className="space-y-4 text-xs">
+          {clientSaveUnconfirmed && <p role="alert" className="rounded-lg border border-status-warning/30 bg-status-warning-bg p-3 text-navy">
+            Client save was not confirmed. Close this form, refresh and check the client directory before trying again to avoid a duplicate. Your project details are still here.
+          </p>}
+          <fieldset disabled={isSavingClient || clientSaveUnconfirmed} className="space-y-4">
+            <Input label="Client / Company Name" value={clientForm.name}
+              onChange={(event) => setClientForm((current) => ({ ...current, name: event.target.value }))} required />
+            <Input label="Contact Person / Representative" value={clientForm.contact_person}
+              onChange={(event) => setClientForm((current) => ({ ...current, contact_person: event.target.value }))} required />
+            <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+              <Input label="Contact Number" type="tel" autoComplete="tel" value={clientForm.phone}
+                onChange={(event) => setClientForm((current) => ({ ...current, phone: event.target.value }))} required />
+              <Input label="Email Address" type="email" autoComplete="email" value={clientForm.email}
+                onChange={(event) => setClientForm((current) => ({ ...current, email: event.target.value }))} required />
+            </div>
+            <Input label="Billing / Residence Address" value={clientForm.address}
+              onChange={(event) => setClientForm((current) => ({ ...current, address: event.target.value }))} required />
+          </fieldset>
+          <div className="flex flex-wrap justify-end gap-2 pt-3">
+            <Button type="button" variant="secondary" disabled={isSavingClient} onClick={() => setIsClientModalOpen(false)}>
+              {clientSaveUnconfirmed ? 'Back to Project' : 'Cancel'}
+            </Button>
+            <Button type="submit" isLoading={isSavingClient} disabled={clientSaveUnconfirmed}>
+              {isSavingClient ? 'Saving client…' : 'Save and Select Client'}
+            </Button>
+          </div>
         </form>
       </Modal>
     </AppShell>
