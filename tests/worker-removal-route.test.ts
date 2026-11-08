@@ -15,8 +15,8 @@ describe('worker removal endpoint',()=>{
     expect((await POST(request({ids:['bad']}))).status).toBe(400);expect(mock.create).not.toHaveBeenCalled();
   });
   it('returns only validated results and does not claim a lost response succeeded',async()=>{
-    mock.rpc.mockResolvedValueOnce({data:{results:[{id:w,status:'linked'}]},error:null});
-    expect(await (await POST(request({ids:[w]}))).json()).toEqual({ok:true,results:[{id:w,status:'linked'}]});
+    mock.rpc.mockResolvedValueOnce({data:{results:[{id:w,status:'linked',reasons:['Payroll']}]},error:null});
+    expect(await (await POST(request({ids:[w]}))).json()).toEqual({ok:true,results:[{id:w,status:'linked',reasons:['Payroll']}]});
     mock.rpc.mockRejectedValueOnce(new Error('lost response'));
     const response=await POST(request({ids:[w]}));expect(response.status).toBe(503);expect((await response.json()).error).toMatch(/not confirmed/i);
     mock.rpc.mockResolvedValueOnce({data:{results:[]},error:null});expect((await POST(request({ids:[w]}))).status).toBe(503);

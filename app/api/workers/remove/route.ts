@@ -23,8 +23,9 @@ export async function POST(request: NextRequest) {
   try {
     const { data, error } = await createServiceRoleClient().rpc('delete_workers_guarded', { p_actor: founder.userId, p_ids: normalizedIds });
     const results = data?.results;
-    const valid = Array.isArray(results) && results.length === ids.length && results.every((item: {id?: unknown; status?: unknown}) =>
-      typeof item.id === 'string' && normalizedIds.includes(item.id) && ['deleted','linked','account','missing'].includes(String(item.status))) && new Set(results.map((item: {id:string}) => item.id)).size === ids.length;
+    const valid = Array.isArray(results) && results.length === ids.length && results.every((item: {id?: unknown; status?: unknown; reasons?: unknown}) =>
+      typeof item.id === 'string' && normalizedIds.includes(item.id) && ['deleted','linked','account','missing'].includes(String(item.status)) &&
+      (item.status !== 'linked' || (Array.isArray(item.reasons) && item.reasons.length > 0 && item.reasons.every((reason: unknown) => typeof reason === 'string' && reason.length <= 100)))) && new Set(results.map((item: {id:string}) => item.id)).size === ids.length;
     if (error || !valid) return NextResponse.json({ ok: false, error: unconfirmed }, { status: 503, headers });
     return NextResponse.json({ ok: true, results }, { headers });
   } catch {

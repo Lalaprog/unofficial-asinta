@@ -30,8 +30,8 @@ describe('guarded worker removal',()=>{
       await db.exec('reset role; set role service_role');
       const result=await db.query<{result:{results:Array<{id:string;status:string}>}}>('select public.delete_workers_guarded($1,$2::uuid[]) result',[f,[w(7),w(6),w(5),w(4),w(3),w(2),w(1),w(8)]]);
       expect(result.rows[0].result.results).toEqual([
-        {id:w(1),status:'deleted'},{id:w(2),status:'deleted'},{id:w(3),status:'linked'},{id:w(4),status:'account'},
-        {id:w(5),status:'account'},{id:w(6),status:'linked'},{id:w(7),status:'linked'},{id:w(8),status:'missing'},
+        {id:w(1),status:'deleted'},{id:w(2),status:'deleted'},{id:w(3),status:'linked',reasons:['Attendance']},{id:w(4),status:'account'},
+        {id:w(5),status:'account'},{id:w(6),status:'linked',reasons:['Other linked records']},{id:w(7),status:'linked',reasons:['Other linked records']},{id:w(8),status:'missing'},
       ]);
       await db.exec('reset role');
       expect((await db.query('select * from public.workers')).rows).toHaveLength(5);

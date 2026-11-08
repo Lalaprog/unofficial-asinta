@@ -8,7 +8,7 @@ DECLARE
   v_worker public.workers%ROWTYPE;
   v_ref record;
   v_referenced boolean;
-  v_protected boolean;
+  v_reasons jsonb;
   v_results jsonb := '[]'::jsonb;
 BEGIN
   IF current_setting('transaction_isolation') <> 'read committed' THEN
@@ -38,7 +38,7 @@ BEGIN
       v_results := v_results || jsonb_build_array(jsonb_build_object('id',v_id,'status','account'));
       CONTINUE;
     END IF;
-    v_protected := false;
+    v_reasons := '[]'::jsonb;
     -- Check every FK, including SET NULL/CASCADE and future tables. The worker
     -- row lock makes concurrent FK insertions wait. Composite FKs fail closed.
     FOR v_ref IN
@@ -54,10 +54,19 @@ BEGIN
       END IF;
       EXECUTE format('SELECT EXISTS (SELECT 1 FROM %I.%I WHERE %I = $1)',v_ref.nspname,v_ref.relname,v_ref.column_name)
         INTO v_referenced USING v_id;
-      IF v_referenced THEN v_protected := true; EXIT; END IF;
+      IF v_referenced THEN
+        v_reasons := v_reasons || jsonb_build_array(CASE
+          WHEN v_ref.nspname='public' AND v_ref.relname='attendance' THEN 'Attendance'
+          WHEN v_ref.nspname='public' AND v_ref.relname='payroll' THEN 'Payroll'
+          WHEN v_ref.nspname='public' AND v_ref.relname IN ('advances','advance_requests') THEN 'Advances or Bale requests'
+          WHEN v_ref.nspname='public' AND v_ref.relname='project_worker_assignments' THEN 'Project assignment records'
+          WHEN v_ref.nspname='public' AND v_ref.relname='user_notifications' THEN 'Notifications'
+          WHEN v_ref.nspname='app_private' AND v_ref.relname='project_worker_create_requests' THEN 'Registration records'
+          ELSE 'Other linked records' END);
+      END IF;
     END LOOP;
-    IF v_protected THEN
-      v_results := v_results || jsonb_build_array(jsonb_build_object('id',v_id,'status','linked'));
+    IF jsonb_array_length(v_reasons) > 0 THEN
+      v_results := v_results || jsonb_build_array(jsonb_build_object('id',v_id,'status','linked','reasons',v_reasons));
       CONTINUE;
     END IF;
     DELETE FROM public.workers WHERE id = v_id;

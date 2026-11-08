@@ -20,7 +20,7 @@ beforeEach(()=>{mock.founder=true;mock.fetch.mockReset();mock.refresh.mockClear(
 afterEach(()=>{cleanup();vi.unstubAllGlobals();});
 describe('workforce removal',()=>{
   it('selects active and inactive workers, reviews names and reports protected history',async()=>{
-    mock.fetch.mockResolvedValue({ok:true,json:async()=>({ok:true,results:[{id:ids[0],status:'deleted'},{id:ids[1],status:'linked'}]})});
+    mock.fetch.mockResolvedValue({ok:true,json:async()=>({ok:true,results:[{id:ids[0],status:'deleted'},{id:ids[1],status:'linked',reasons:['Attendance','Payroll']}]})});
     render(React.createElement(AttendancePage));
     expect(screen.queryByText('Ben')).toBeNull();
     expect((screen.getByLabelText('Filter workforce by status') as HTMLSelectElement).value).toBe('active');
@@ -32,7 +32,7 @@ describe('workforce removal',()=>{
     const dialog=screen.getByRole('alertdialog');expect(within(dialog).getByText(/Amy · Mason · Active/)).toBeTruthy();expect(within(dialog).getByText(/Ben · Mason · Inactive/)).toBeTruthy();
     expect(mock.fetch).not.toHaveBeenCalled();
     fireEvent.click(within(dialog).getByRole('button',{name:'Delete eligible workers'}));
-    await waitFor(()=>expect(screen.getByText(/Kept: linked records exist/)).toBeTruthy());
+    await waitFor(()=>expect(screen.getByText(/Kept: Attendance, Payroll/)).toBeTruthy());
     expect(screen.getByText(/Deleted\./)).toBeTruthy();expect(mock.fetch).toHaveBeenCalledOnce();
     expect(JSON.parse(mock.fetch.mock.calls[0][1].body)).toEqual({ids});expect(mock.refresh).toHaveBeenCalledOnce();
   });

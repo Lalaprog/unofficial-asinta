@@ -197,7 +197,7 @@ function AttendancePageInner() {
   const [selectedWorkers, setSelectedWorkers] = useState<string[]>([]);
   const [workerRemovalOpen, setWorkerRemovalOpen] = useState(false);
   const [workerRemovalPending, setWorkerRemovalPending] = useState(false);
-  const [workerRemovalResults, setWorkerRemovalResults] = useState<Array<{ id: string; name: string; status: string }>>([]);
+  const [workerRemovalResults, setWorkerRemovalResults] = useState<Array<{ id: string; name: string; status: string; reasons?: string[] }>>([]);
   const workerRemovalLock = useRef(false);
 
   const [editingWorker, setEditingWorker] = useState<Worker | null>(null);
@@ -943,10 +943,10 @@ function AttendancePageInner() {
       const data = await response.json();
       if (!response.ok || !data.ok || !Array.isArray(data.results) || data.results.length !== selectedWorkers.length ||
         new Set(data.results.map((item: { id: string }) => item.id)).size !== selectedWorkers.length ||
-        data.results.some((item: { id: string; status: string }) => !names.has(item.id) || !['deleted', 'account', 'linked', 'missing'].includes(item.status))) {
+        data.results.some((item: { id: string; status: string; reasons?: unknown }) => !names.has(item.id) || !['deleted', 'account', 'linked', 'missing'].includes(item.status) || (item.status === 'linked' && (!Array.isArray(item.reasons) || item.reasons.length === 0 || item.reasons.some((reason: unknown) => typeof reason !== 'string'))))) {
         throw new Error('Removal was not confirmed. Refresh the roster and check before trying again.');
       }
-      setWorkerRemovalResults(data.results.map((item: { id: string; status: string }) => ({ id: item.id, name: names.get(item.id) || 'Worker', status: item.status })));
+      setWorkerRemovalResults(data.results.map((item: { id: string; status: string; reasons?: string[] }) => ({ id: item.id, name: names.get(item.id) || 'Worker', status: item.status, reasons: item.reasons })));
       setSelectedWorkers([]);
       setWorkerRemovalOpen(false);
       try { await refresh(); } catch { showToast('error', 'Removal results were confirmed, but the roster could not refresh. Refresh before making more changes.'); }
@@ -2186,7 +2186,7 @@ function AttendancePageInner() {
             {workerRemovalResults.length > 0 && (
               <div role="status" className="rounded-xl border border-surface-border bg-white p-3 text-xs space-y-1">
                 <p className="font-semibold text-navy">Worker removal results</p>
-                {workerRemovalResults.map((item, index) => <p key={`${item.id}-${index}`}><strong>{item.name} (ID {item.id.slice(0, 8)}):</strong> {item.status === 'deleted' ? 'Deleted.' : item.status === 'linked' ? 'Kept: linked records exist. Use Manage → Set Inactive if appropriate.' : item.status === 'account' ? 'Kept: linked to an account.' : 'Not found; refresh and check.'}</p>)}
+                {workerRemovalResults.map((item, index) => <p key={`${item.id}-${index}`}><strong>{item.name} (ID {item.id.slice(0, 8)}):</strong> {item.status === 'deleted' ? 'Deleted.' : item.status === 'linked' ? `Kept: ${item.reasons?.join(', ') || 'linked records'}. Use Manage → Set Inactive if appropriate.` : item.status === 'account' ? 'Kept: linked to an account.' : 'Not found; refresh and check.'}</p>)}
                 <button type="button" className="underline" onClick={() => setWorkerRemovalResults([])}>Dismiss results</button>
               </div>
             )}
