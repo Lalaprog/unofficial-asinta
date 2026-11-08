@@ -5,6 +5,7 @@ import { useRouter, useSearchParams } from 'next/navigation';
 import { AppShell } from '@/components/layout/AppShell';
 import { AdvanceRequestsPanel } from '@/components/advances/AdvanceRequestsPanel';
 import { useAuth } from '@/lib/auth/authContext';
+import { useQuickAction } from '@/lib/mobile/quickActions';
 import { useDataStore } from '@/lib/data/store';
 import { Advance } from '@/types';
 import {
@@ -39,10 +40,16 @@ export default function AdvancesPage() {
 }
 
 function AdvancesPageContent() {
-  const { isFounder } = useAuth();
+  const { isFounder, assurance, isLoading: authLoading } = useAuth();
+  const { isLoaded } = useDataStore();
   const router = useRouter();
   const searchParams = useSearchParams();
   const activeTab = isFounder && searchParams?.get('tab') === 'issued' ? 'issued' : 'requests';
+  const [quickBale, setQuickBale] = useState(false);
+  useQuickAction('/advances', ['bale'], isFounder && assurance === 'ready' && !authLoading && isLoaded, () => {
+    setQuickBale(true);
+    router.replace('/advances?tab=issued', { scroll: false });
+  });
 
   const selectTab = (tab: 'requests' | 'issued') => {
     router.replace(`/advances?tab=${tab}`, { scroll: false });
@@ -97,7 +104,7 @@ function AdvancesPageContent() {
           {activeTab === 'requests' ? (
             <div key="requests" className="animate-panel-enter"><AdvanceRequestsPanel /></div>
           ) : (
-            <div key="issued" className="animate-panel-enter"><IssuedAdvancesPanel /></div>
+            <div key="issued" className="animate-panel-enter"><IssuedAdvancesPanel openQuick={quickBale} onQuickOpened={() => setQuickBale(false)} /></div>
           )}
         </div>
       </div>
@@ -105,7 +112,7 @@ function AdvancesPageContent() {
   );
 }
 
-function IssuedAdvancesPanel() {
+function IssuedAdvancesPanel({ openQuick, onQuickOpened }: { openQuick: boolean; onQuickOpened: () => void }) {
   const { showToast } = useToast();
   const [isAdding, setIsAdding] = useState(false);
   const [isDeducting, setIsDeducting] = useState(false);
@@ -125,6 +132,7 @@ function IssuedAdvancesPanel() {
 
   // Modals
   const [isAddModalOpen, setIsAddModalOpen] = useState(false);
+  React.useEffect(() => { if (openQuick) { setIsAddModalOpen(true); onQuickOpened(); } }, [openQuick, onQuickOpened]);
   const [isDeductModalOpen, setIsDeductModalOpen] = useState(false);
   const [selectedAdvance, setSelectedAdvance] = useState<Advance | null>(null);
   const [deductionAmount, setDeductionAmount] = useState('');

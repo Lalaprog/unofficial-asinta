@@ -1,13 +1,15 @@
 // @vitest-environment jsdom
 vi.mock('@/lib/sms/loadTemplate', () => ({ loadSMSTemplate: async () => 'Dear {{client_contact_name}}, invoice {{invoice_number}}.' }));
 import React from 'react';
-import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 
 const mock = vi.hoisted(() => ({ sendSMS: vi.fn(), createInvoice: vi.fn(), recordInvoicePayment: vi.fn(), emailLookup: vi.fn() }));
 vi.mock('@/components/layout/AppShell', () => ({ AppShell: ({ children }: { children: React.ReactNode }) => React.createElement('main', null, children) }));
 vi.mock('@/components/ui/Toast', () => ({ useToast: () => ({ showToast: vi.fn() }) }));
+vi.mock('@/lib/auth/authContext', () => ({ useAuth: () => ({ isFounder: true, assurance: 'ready', isLoading: false }) }));
 vi.mock('@/lib/data/store', () => ({ useDataStore: () => ({
+  isLoaded: true,
   invoices: [
     { id: 'pending', invoice_number: 'ASINTA-2026-001', status: 'pending', project_id: 'site', client_id: 'client', amount: 1000, amount_paid: 0, issue_date: '2026-10-01', due_date: '2026-11-01' },
     { id: 'paid', invoice_number: 'ASINTA-2026-002', status: 'paid', project_id: 'site', client_id: 'client', amount: 500, amount_paid: 500, issue_date: '2026-10-01', due_date: '2026-11-01' },
@@ -42,6 +44,12 @@ function open(number: string) {
 }
 
 describe('invoice action menu', () => {
+  it('opens the existing new-invoice form through the quick action without creating an invoice', () => {
+    render(React.createElement(InvoicesPage));
+    act(() => window.dispatchEvent(new CustomEvent('asinta:mobile-quick-action', { detail: 'invoice' })));
+    expect(screen.getByRole('dialog', { name: 'Create Milestone Progress Invoice' })).toBeTruthy();
+    expect(mock.createInvoice).not.toHaveBeenCalled();
+  });
   it('opens a portalled overlay without adding actions inside the invoice row, and Escape returns focus', async () => {
     render(React.createElement(InvoicesPage));
     const button = trigger('ASINTA-2026-001');

@@ -5,6 +5,7 @@ import {afterEach,beforeEach,describe,expect,it,vi} from 'vitest';
 const mock=vi.hoisted(()=>({record:vi.fn(),toast:vi.fn(),invoice:{id:'inv',invoice_number:'INV-1',status:'pending',project_id:'p',client_id:'c',amount:100,amount_paid:0,issue_date:'2026-01-01',due_date:'2026-02-01'}}));
 vi.mock('@/components/layout/AppShell',()=>({AppShell:({children}:{children:React.ReactNode})=>children}));
 vi.mock('@/components/ui/Toast',()=>({useToast:()=>({showToast:mock.toast})}));
+vi.mock('@/lib/auth/authContext', () => ({ useAuth: () => ({ isFounder: true }) }));
 vi.mock('@/lib/data/store',()=>({useDataStore:()=>({invoices:[mock.invoice],projects:[{id:'p',name:'Site'}],clients:[{id:'c',name:'Client'}],createInvoice:vi.fn(),recordInvoicePayment:mock.record,sendSMS:vi.fn()})}));
 vi.mock('@/lib/supabase/client',()=>({createClient:()=>({})}));
 vi.mock('@/components/email/RequestPaymentModal',()=>({RequestPaymentModal:()=>null}));

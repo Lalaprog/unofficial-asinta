@@ -6,6 +6,7 @@ import Link from 'next/link';
 import { AppShell } from '@/components/layout/AppShell';
 import { useDataStore } from '@/lib/data/store';
 import { useAuth } from '@/lib/auth/authContext';
+import { useQuickAction } from '@/lib/mobile/quickActions';
 import { Attendance, AttendanceStatus, Worker } from '@/types';
 import {
   CheckCircle2,
@@ -110,7 +111,7 @@ function formatStatusLabel(status: AttendanceStatus): string {
 }
 
 function AttendancePageInner() {
-  const { user, isFounder, isSupervisor } = useAuth();
+  const { user, isFounder, isSupervisor, assurance, isLoading: authLoading } = useAuth();
   const searchParams = useSearchParams();
   const { showToast } = useToast();
   const pendingApprovals = usePendingApprovals(isFounder, user?.id);
@@ -170,6 +171,13 @@ function AttendancePageInner() {
 
   // Workforce registration stays collapsed until the user asks to add a worker.
   const [isWorkerFormOpen, setIsWorkerFormOpen] = useState(false);
+  useQuickAction('/attendance', ['worker'], (isFounder || isSupervisor) && assurance === 'ready' && !authLoading && isLoaded, () => {
+    setActiveTab('workforce');
+    setIsWorkerFormOpen(true);
+    window.history.replaceState(null, '', '/attendance?tab=workforce');
+    window.dispatchEvent(new CustomEvent('bale:attendance-tab', { detail: 'workforce' }));
+    window.setTimeout(() => document.getElementById('workforce-worker-form')?.scrollIntoView({ block: 'start', behavior: window.matchMedia('(prefers-reduced-motion: reduce)').matches ? 'auto' : 'smooth' }), 100);
+  });
   const [workerName, setWorkerName] = useState('');
   const [workerPosition, setWorkerPosition] = useState('Mason');
   const [workerRate, setWorkerRate] = useState('850');
