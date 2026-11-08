@@ -193,6 +193,12 @@ function AttendancePageInner() {
   const [isAddingWorker, setIsAddingWorker] = useState(false);
   const [workforceSearch, setWorkforceSearch] = useState('');
   const [workforceCraftFilter, setWorkforceCraftFilter] = useState<string>('all');
+  const [workforceStatusFilter, setWorkforceStatusFilter] = useState('all');
+  const [selectedWorkers, setSelectedWorkers] = useState<string[]>([]);
+  const [workerRemovalOpen, setWorkerRemovalOpen] = useState(false);
+  const [workerRemovalPending, setWorkerRemovalPending] = useState(false);
+  const [workerRemovalResults, setWorkerRemovalResults] = useState<Array<{ id: string; name: string; status: string }>>([]);
+  const workerRemovalLock = useRef(false);
 
   const [editingWorker, setEditingWorker] = useState<Worker | null>(null);
   const [editWorkerName, setEditWorkerName] = useState('');
@@ -904,6 +910,7 @@ function AttendancePageInner() {
   // Group Workforce tab workers by craft group
   const groupedWorkforceDirectory = useMemo(() => {
     const filtered = workers.filter((w) => {
+      if (workforceStatusFilter !== 'all' && w.active !== (workforceStatusFilter === 'active')) return false;
       if (workforceCraftFilter !== 'all' && getCraftGroup(w.position) !== workforceCraftFilter) {
         return false;
       }
@@ -922,7 +929,38 @@ function AttendancePageInner() {
     return Array.from(map.entries()).sort(
       (a, b) => CRAFT_GROUP_META[a[0]].order - CRAFT_GROUP_META[b[0]].order
     );
-  }, [workers, workforceCraftFilter, workforceSearch]);
+  }, [workers, workforceCraftFilter, workforceSearch, workforceStatusFilter]);
+
+  const selectedWorkerDetails = workers.filter((worker) => selectedWorkers.includes(worker.id));
+  const visibleWorkerIds = groupedWorkforceDirectory.flatMap(([, group]) => group.map((worker) => worker.id));
+  const removeSelectedWorkers = async () => {
+    if (workerRemovalLock.current || !isFounder || selectedWorkers.length === 0 || selectedWorkerDetails.length !== selectedWorkers.length) return;
+    workerRemovalLock.current = true;
+    setWorkerRemovalPending(true);
+    const names = new Map(selectedWorkerDetails.map((worker) => [worker.id, worker.name]));
+    try {
+      const response = await fetch('/api/workers/remove', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ ids: selectedWorkers }) });
+      const data = await response.json();
+      if (!response.ok || !data.ok || !Array.isArray(data.results) || data.results.length !== selectedWorkers.length ||
+        new Set(data.results.map((item: { id: string }) => item.id)).size !== selectedWorkers.length ||
+        data.results.some((item: { id: string; status: string }) => !names.has(item.id) || !['deleted', 'account', 'linked', 'missing'].includes(item.status))) {
+        throw new Error('Removal was not confirmed. Refresh the roster and check before trying again.');
+      }
+      setWorkerRemovalResults(data.results.map((item: { id: string; status: string }) => ({ id: item.id, name: names.get(item.id) || 'Worker', status: item.status })));
+      setSelectedWorkers([]);
+      setWorkerRemovalOpen(false);
+      try { await refresh(); } catch { showToast('error', 'Removal results were confirmed, but the roster could not refresh. Refresh before making more changes.'); }
+    } catch {
+      setSelectedWorkers([]);
+      setWorkerRemovalOpen(false);
+      setWorkerRemovalResults([]);
+      showToast('error', 'Removal was not confirmed. Refresh the roster and check before trying again.');
+      try { await refresh(); } catch { /* The user must refresh before retrying. */ }
+    } finally {
+      workerRemovalLock.current = false;
+      setWorkerRemovalPending(false);
+    }
+  };
 
   const activeHistoryFilterCount =
     Number(historyProjectFilter !== 'all') +
@@ -2120,12 +2158,44 @@ function AttendancePageInner() {
                     ]}
                   />
                 </div>
+                <div className="w-full sm:w-36">
+                  <Select aria-label="Filter workforce by status" value={workforceStatusFilter} onChange={(e) => setWorkforceStatusFilter(e.target.value)} options={[{ label: 'All statuses', value: 'all' }, { label: 'Active', value: 'active' }, { label: 'Inactive', value: 'inactive' }]} />
+                </div>
               </div>
 
               <Badge variant="neutral" size="sm">
                 {workers.filter((w) => w.active).length} active / {workers.length} total
               </Badge>
             </div>
+
+            {isFounder && (
+              <div className="rounded-xl border border-surface-border bg-white p-3 space-y-2">
+                <div className="flex flex-wrap items-center gap-2">
+                  <Button type="button" variant="secondary" size="sm" disabled={workerRemovalPending || !isLoaded || Boolean(loadError) || visibleWorkerIds.length === 0} onClick={() => {
+                    const combined = Array.from(new Set([...selectedWorkers, ...visibleWorkerIds]));
+                    if (combined.length > 100) { showToast('error', 'Select at most 100 workers at a time. Narrow the filter or select individuals.'); return; }
+                    setSelectedWorkers(combined);
+                  }}>Select visible</Button>
+                  <Button type="button" variant="ghost" size="sm" disabled={workerRemovalPending || selectedWorkers.length === 0} onClick={() => setSelectedWorkers([])}>Clear selection</Button>
+                  <span className="text-xs text-ink-secondary">{selectedWorkers.length} selected (including selections outside the current filter)</span>
+                  <Button type="button" variant="danger" size="sm" disabled={workerRemovalPending || !isLoaded || Boolean(loadError) || selectedWorkers.length === 0 || selectedWorkerDetails.length !== selectedWorkers.length} onClick={() => setWorkerRemovalOpen(true)}>Delete selected</Button>
+                </div>
+                <p className="text-xs text-ink-secondary">Only workers without linked records or accounts can be deleted. To keep a worker’s history, use Manage → Set Inactive.</p>
+              </div>
+            )}
+            {workerRemovalResults.length > 0 && (
+              <div role="status" className="rounded-xl border border-surface-border bg-white p-3 text-xs space-y-1">
+                <p className="font-semibold text-navy">Worker removal results</p>
+                {workerRemovalResults.map((item, index) => <p key={`${item.id}-${index}`}><strong>{item.name} (ID {item.id.slice(0, 8)}):</strong> {item.status === 'deleted' ? 'Deleted.' : item.status === 'linked' ? 'Kept: linked records exist. Use Manage → Set Inactive if appropriate.' : item.status === 'account' ? 'Kept: linked to an account.' : 'Not found; refresh and check.'}</p>)}
+                <button type="button" className="underline" onClick={() => setWorkerRemovalResults([])}>Dismiss results</button>
+              </div>
+            )}
+            <Modal isOpen={workerRemovalOpen} onClose={() => { if (!workerRemovalPending) setWorkerRemovalOpen(false); }} title="Delete selected workers?" description="This permanently deletes only eligible profiles. Linked records and accounts are protected. Review every selected worker below." role="alertdialog" dismissOnBackdrop={false} dismissOnEscape={!workerRemovalPending} showCloseButton={!workerRemovalPending} maxWidth="md">
+              <ul className="max-h-56 overflow-y-auto rounded-lg border border-surface-border divide-y divide-surface-border text-xs">
+                {selectedWorkerDetails.map((worker) => <li key={worker.id} className="p-2">{worker.name} · {worker.position} · {worker.active ? 'Active' : 'Inactive'} · ID {worker.id.slice(0, 8)}</li>)}
+              </ul>
+              <div className="mt-3 flex justify-end gap-2"><Button type="button" variant="secondary" disabled={workerRemovalPending} onClick={() => setWorkerRemovalOpen(false)}>Cancel</Button><Button type="button" variant="danger" isLoading={workerRemovalPending} onClick={() => void removeSelectedWorkers()}>Delete eligible workers</Button></div>
+            </Modal>
 
             {/* Grouped Compact Workforce List */}
             <div className="space-y-3">
@@ -2161,6 +2231,11 @@ function AttendancePageInner() {
                           className="px-4 py-2.5 flex items-center justify-between gap-3 text-xs hover:bg-slate-50 transition-colors"
                         >
                           <div className="flex items-center flex-wrap gap-2 min-w-0">
+                            {isFounder && <label className="inline-flex min-h-11 min-w-11 items-center justify-center"><input type="checkbox" aria-label={`Select ${w.name}, ${w.position}, ${w.active ? 'active' : 'inactive'} for deletion`} checked={selectedWorkers.includes(w.id)} disabled={workerRemovalPending || !isLoaded || Boolean(loadError)} onChange={(e) => {
+                              const checked = e.target.checked;
+                              if (checked && selectedWorkers.length >= 100) { showToast('error', 'Select at most 100 workers at a time.'); return; }
+                              setSelectedWorkers((current) => checked ? [...current, w.id] : current.filter((id) => id !== w.id));
+                            }} className="h-4 w-4 rounded border-surface-border" /></label>}
                             <span className="font-bold text-navy text-sm">{w.name}</span>
                             <span className="text-ink-secondary">
                               {w.position} · ₱{w.pay_rate}/day
