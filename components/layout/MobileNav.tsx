@@ -34,7 +34,7 @@ export const MobileNav: React.FC<MobileNavProps> = () => {
   useEffect(() => {
     if (isQuickOpen) { setQuickMounted(true); return; }
     if (window.matchMedia('(prefers-reduced-motion: reduce)').matches) { setQuickMounted(false); return; }
-    const timer = window.setTimeout(() => setQuickMounted(false), 220);
+    const timer = window.setTimeout(() => setQuickMounted(false), 280);
     return () => window.clearTimeout(timer);
   }, [isQuickOpen]);
   const quickRef = useRef<HTMLButtonElement>(null);
@@ -238,7 +238,7 @@ export const MobileNav: React.FC<MobileNavProps> = () => {
         } ${isSheetOpen || motion ? 'border-t border-transparent' : 'border-t border-surface-border/90 shadow-[0_-4px_20px_rgba(11,31,58,0.07)]'}`}
       >
         {isFounder && !isSheetOpen && !motion && (
-          <span aria-hidden="true" data-dock-handle="true" className="pointer-events-none absolute left-[90%] top-[4px] h-1 w-9 -translate-x-1/2 rounded-full bg-slate-300" />
+          <span aria-hidden="true" data-dock-handle="true" className="pointer-events-none absolute left-1/2 top-[4px] h-1 w-9 -translate-x-1/2 rounded-full bg-slate-300" />
         )}
         <div
           className={`grid ${
@@ -253,7 +253,7 @@ export const MobileNav: React.FC<MobileNavProps> = () => {
               <React.Fragment key={item.href}>
               {isFounder && index === 2 && <button type="button" ref={quickRef} aria-label="Quick actions" aria-haspopup="dialog" aria-expanded={isQuickOpen} aria-controls={isQuickOpen ? 'mobile-quick-actions' : undefined}
                 onClick={() => { dismiss(); setIsQuickOpen(value => !value); }}
-                className="mx-auto -mt-2 flex h-12 w-12 items-center justify-center rounded-2xl bg-brand text-white shadow-[0_5px_15px_rgba(27,73,120,0.28)] transition-transform focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand focus-visible:ring-offset-2 motion-safe:active:scale-95">
+                className="mx-auto flex h-12 w-12 items-center justify-center rounded-2xl bg-brand text-white shadow-[0_5px_15px_rgba(27,73,120,0.28)] transition-transform focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand focus-visible:ring-offset-2 motion-safe:active:scale-95">
                 <Plus aria-hidden="true" className={`h-6 w-6 transition-transform duration-200 motion-reduce:transition-none ${isQuickOpen ? 'rotate-45' : ''}`} />
               </button>}
               <Link

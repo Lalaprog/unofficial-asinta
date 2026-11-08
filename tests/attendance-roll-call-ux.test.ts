@@ -3,7 +3,7 @@ import React from 'react';
 import { act, cleanup, fireEvent, render, screen, within } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
-const mock = vi.hoisted(() => ({ supervisor: false, extraSites: [] as Array<{id:string;name:string;location:string}>, record: vi.fn(), toast: vi.fn(), createWorker: vi.fn() }));
+const mock = vi.hoisted(() => ({ supervisor: false, duplicate: false, missingLinked: false, extraSites: [] as Array<{id:string;name:string;location:string}>, record: vi.fn(), toast: vi.fn(), createWorker: vi.fn() }));
 vi.mock('@/lib/attendance/usePendingApprovals', () => ({ usePendingApprovals: () => ({items: [], total: 0, hasMore: false, loading: false, error: null, loadMore: vi.fn(), refresh: vi.fn()}) }));
 vi.mock('next/navigation', () => { const params = new URLSearchParams(); return { useSearchParams: () => params }; });
 vi.mock('next/link', () => ({ default: ({ children, href, prefetch: _prefetch, ...props }: React.AnchorHTMLAttributes<HTMLAnchorElement> & { prefetch?: boolean }) => React.createElement('a', { ...props, href }, children) }));
@@ -24,13 +24,15 @@ vi.mock('@/lib/data/store', () => {
     { id: 'd', worker_id: 'dan', project_id: 'site-2', date: '2026-11-03', status: 'present', notes: '', recorded_by: 'founder' },
   ];
   const store = { projects, workers, attendance, users: [{ id: 'sup', name: 'Site Supervisor', role: 'supervisor' }], projectSupervisors: [{ project_id: 'site-1', supervisor_id: 'sup' }], isLoaded: true, createWorker: mock.createWorker, updateWorker: vi.fn(), toggleWorkerStatus: vi.fn(), recordAttendanceBatch: mock.record, updateAttendanceRecord: vi.fn(), getProjectsForSupervisor: () => [...projects, ...mock.extraSites] };
-  return { useDataStore: () => store };
+  const duplicate = worker('legacy-sup', 'Site Supervisor', 'Site Supervisor');
+  const variants = [workers, [...workers, duplicate], workers.filter((w) => w.id !== 'sup'), [...workers.filter((w) => w.id !== 'sup'), duplicate]];
+  return { useDataStore: () => ({ ...store, workers: variants[(mock.missingLinked ? 2 : 0) + (mock.duplicate ? 1 : 0)] }) };
 });
 import AttendancePage from '@/app/attendance/page';
 
 beforeEach(() => {
   vi.useFakeTimers(); vi.setSystemTime(new Date('2026-11-03T04:00:00Z'));
-  mock.supervisor = true; mock.extraSites = []; mock.record.mockReset(); mock.toast.mockReset(); mock.createWorker.mockReset();
+  mock.supervisor = true; mock.duplicate = false; mock.missingLinked = false; mock.extraSites = []; mock.record.mockReset(); mock.toast.mockReset(); mock.createWorker.mockReset();
   window.localStorage.clear(); window.history.replaceState({}, '', '/attendance');
 });
 afterEach(() => { cleanup(); vi.useRealTimers(); });
@@ -40,6 +42,24 @@ function status(worker: string, label: string) {
 }
 
 describe('roll call usability and safety', () => {
+  it.each([true, false])('pauses submission for a possible duplicate for supervisor=%s', (supervisor) => {
+    mock.supervisor = supervisor; mock.duplicate = true;
+    render(React.createElement(AttendancePage));
+    expect(screen.getByRole('alert').textContent).toContain('An active worker has the same name');
+    const submit = document.querySelector('form button[type="submit"]') as HTMLButtonElement;
+    expect(submit.disabled).toBe(true);
+    fireEvent.submit(submit.closest('form')!);
+    expect(mock.record).not.toHaveBeenCalled();
+    expect(mock.createWorker).not.toHaveBeenCalled();
+  });
+
+  it('does not create a missing supervisor worker just by visiting Roll Call', () => {
+    mock.missingLinked = true;
+    render(React.createElement(AttendancePage));
+    expect(screen.getByText(/does not have an active linked workforce profile/)).toBeTruthy();
+    expect(mock.createWorker).not.toHaveBeenCalled();
+  });
+
   it('opens the existing worker registration without changing attendance', () => {
     mock.supervisor = false;
     HTMLElement.prototype.scrollIntoView = vi.fn();

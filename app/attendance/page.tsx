@@ -44,6 +44,7 @@ import {
 import { useToast } from '@/components/ui/Toast';
 import { usePendingApprovals } from '@/lib/attendance/usePendingApprovals';
 import { useAttendanceHistory } from '@/lib/attendance/useAttendanceHistory';
+import { RollCallWalkthrough } from '@/components/dashboard/RollCallWalkthrough';
 import type { HistoryRecord, HistorySheet } from '@/lib/attendance/history';
 import { HistorySheetRecords } from '@/components/attendance/HistorySheetRecords';
 
@@ -245,64 +246,36 @@ function AttendancePageInner() {
   const [overrideStatus, setOverrideStatus] = useState<AttendanceStatus>('present');
   const [overrideNotes, setOverrideNotes] = useState('');
 
-  // Automatically ensure every Supervisor account in `users` (and the signed-in
-  // Supervisor) has a linked 1:1 `workers` row so Supervisors never need to be
-  // manually registered as workers.
-  const autoEnrolledSupervisorIdsRef = useRef<Set<string>>(new Set());
-  useEffect(() => {
-    if (!isLoaded) return;
-    const supervisorAccounts = [
-      ...(isSupervisor && user ? [user] : []),
-      ...users.filter((u) => u.role === 'supervisor'),
-    ].filter((sup, idx, arr) => arr.findIndex((item) => item.id === sup.id) === idx);
-
-    supervisorAccounts.forEach((sup) => {
-      if (autoEnrolledSupervisorIdsRef.current.has(sup.id)) return;
-      const alreadyInWorkers = workers.some(
-        (w) =>
-          w.id === sup.id ||
-          w.name.trim().toLowerCase() === sup.name.trim().toLowerCase()
-      );
-      if (!alreadyInWorkers) {
-        autoEnrolledSupervisorIdsRef.current.add(sup.id);
-        void createWorker({
-          id: sup.id,
-          name: sup.name,
-          position: 'Site Supervisor',
-          pay_rate: 1200,
-          pay_rate_type: 'daily',
-          contact_number: '—',
-          active: true,
-        });
-      }
-    });
-  }, [isLoaded, isSupervisor, user, users, workers, createWorker]);
-
-  // Identify whether a worker row belongs to the currently signed-in Supervisor
+  // A worker is linked to an account by ID, never by name. Names are only
+  // used below to flag a possible collision for review, not to infer identity.
   const isSelfSupervisorWorker = useCallback(
-    (w: Worker): boolean => {
-      if (!isSupervisor || !user) return false;
-      return (
-        w.id === user.id || w.name.trim().toLowerCase() === user.name.trim().toLowerCase()
-      );
-    },
+    (w: Worker): boolean => Boolean(isSupervisor && user && w.id === user.id),
     [isSupervisor, user]
   );
 
-  // Identify whether a worker row represents a Supervisor account in `users`
   const findSupervisorAccountForWorker = useCallback(
     (w: Worker) => {
-      if (isSupervisor && user && isSelfSupervisorWorker(w)) {
-        return user;
-      }
-      return users.find(
-        (u) =>
-          u.role === 'supervisor' &&
-          (u.id === w.id || u.name.trim().toLowerCase() === w.name.trim().toLowerCase())
-      );
+      if (isSupervisor && user && w.id === user.id) return user;
+      return users.find((u) => u.role === 'supervisor' && u.id === w.id);
     },
-    [isSupervisor, user, isSelfSupervisorWorker, users]
+    [isSupervisor, user, users]
   );
+
+  // Pause this UI's submission when an active workforce profile has the same
+  // name as a supervisor but a different ID. This is a review signal, not
+  // proof of identity, and does not merge or change any historical records.
+  const possibleSupervisorDuplicates = useMemo(() => {
+    const accounts = [...users.filter((u) => u.role === 'supervisor'), ...(isSupervisor && user ? [user] : [])]
+      .filter((account, index, all) => all.findIndex((item) => item.id === account.id) === index);
+    return accounts.filter((account) => {
+      const assignments = projectSupervisors.filter((ps) => ps.supervisor_id === account.id);
+      if (assignments.length > 0 && !assignments.some((ps) => ps.project_id === selectedProjectId)) return false;
+      const name = account.name.trim().toLowerCase();
+      return Boolean(name) && workers.some((w) => w.active && w.id !== account.id && w.name.trim().toLowerCase() === name);
+    });
+  }, [users, workers, projectSupervisors, selectedProjectId, isSupervisor, user]);
+  const missingSupervisorWorker = Boolean(isSupervisor && user && isLoaded && !workers.some((w) => w.id === user.id && w.active));
+  const supervisorIdentityNeedsReview = possibleSupervisorDuplicates.length > 0;
 
   // Update selectedProjectId when accessible projects change
   useEffect(() => {
@@ -618,6 +591,10 @@ function AttendancePageInner() {
   const handleBatchSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (isSubmitting || !selectedProjectId || !user) return;
+    if (supervisorIdentityNeedsReview) {
+      showToast('error', 'Supervisor workforce details need review before submitting Roll Call.');
+      return;
+    }
     if (selectedDate > manilaDateISO()) {
       showToast('error', 'Attendance cannot be recorded for a future date.');
       return;
@@ -980,6 +957,7 @@ function AttendancePageInner() {
 
   return (
     <AppShell>
+      {activeTab === 'terminal' && <RollCallWalkthrough isSupervisor={isSupervisor} />}
       <div key={activeTab} className="animate-panel-enter w-full space-y-4">
         {/* Clean Dedicated Page Header for each separated view */}
         <div className="animate-mobile-lift blueprint-accent relative flex flex-col gap-4 overflow-hidden rounded-2xl border border-[#e3ddd2] bg-[#f8f6f0] px-4 py-5 shadow-sm sm:flex-row sm:items-end sm:justify-between sm:px-6 sm:py-6">
@@ -1138,9 +1116,21 @@ function AttendancePageInner() {
           </div>
         )}
 
+        {activeTab === 'terminal' && supervisorIdentityNeedsReview && (
+          <div role="alert" className="rounded-xl border border-status-warning/30 bg-status-warning-bg p-4 text-sm text-navy">
+            <strong>Supervisor workforce details need review.</strong>{' '}
+            An active worker has the same name as a Supervisor assigned here, but is not linked to that account. This may or may not be the same person. Roll Call submission is paused to prevent duplicate attendance. Please ask the Founder to check the profiles and their history. Do not delete or change them based on name alone.
+          </div>
+        )}
+        {activeTab === 'terminal' && missingSupervisorWorker && !supervisorIdentityNeedsReview && (
+          <div role="status" className="rounded-xl border border-surface-border bg-white p-4 text-sm text-ink-secondary">
+            Your account does not have an active linked workforce profile, so your attendance will not be auto-logged. Ask the Founder if this is unexpected.
+          </div>
+        )}
+
         {/* Active Project & Date Selector Bar (Only shown on Daily Roster tab) */}
         {activeTab === 'terminal' && (
-          <div className="rounded-xl border border-surface-border bg-white p-3 sm:p-3.5 grid grid-cols-1 md:grid-cols-2 gap-2.5 md:gap-3 items-start">
+          <div data-roll-call-guide="site" className="rounded-xl border border-surface-border bg-white p-3 sm:p-3.5 grid grid-cols-1 md:grid-cols-2 gap-2.5 md:gap-3 items-start">
             <div>
               <SearchableSelect
                 id="attendance-project"
@@ -1205,6 +1195,7 @@ function AttendancePageInner() {
           <form onSubmit={handleBatchSubmit} className="space-y-2.5 sm:space-y-3.5">
             {/* Compact progress summary: the roster remains the focus, counts stay scannable. */}
             <section
+              data-roll-call-guide="summary"
               aria-label="Attendance summary"
               className="rounded-xl border border-surface-border bg-white px-3 py-2.5 sm:px-3.5 sm:py-3"
             >
@@ -1255,7 +1246,7 @@ function AttendancePageInner() {
             </section>
 
             {/* Search stays visible; the craft filter moves to a focused sheet on phones. */}
-            <div className="rounded-xl border border-surface-border bg-white p-2.5 sm:p-3">
+            <div data-roll-call-guide="filters" className="rounded-xl border border-surface-border bg-white p-2.5 sm:p-3">
               <div className="grid grid-cols-1 gap-2 md:grid-cols-[minmax(0,1fr)_minmax(13rem,18rem)] md:items-center">
                 <div className="flex min-w-0 items-center gap-2">
                   <div className="min-w-0 flex-1">
@@ -1377,7 +1368,7 @@ function AttendancePageInner() {
             </Modal>
 
             {/* GROUPED WORKER ROSTER */}
-            <div className="space-y-2 sm:space-y-2.5">
+            <div data-roll-call-guide="crew" className="space-y-2 sm:space-y-2.5">
               {groupedRosterWorkers.map(([groupKey, groupWorkers]) => {
                 const isCollapsed = Boolean(collapsedGroups[groupKey]);
                 const groupMarkableWorkers = groupWorkers.filter(
@@ -1700,7 +1691,7 @@ function AttendancePageInner() {
             </div>
 
             {/* In-Flow Bottom Submit & Sync Card (Moves naturally with collapsed/expanded groups — never overlaps) */}
-            <div className="mt-3 px-3 sm:px-4 py-3 rounded-xl bg-white border border-surface-border flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+            <div data-roll-call-guide="submit" className="mt-3 px-3 sm:px-4 py-3 rounded-xl bg-white border border-surface-border flex flex-col sm:flex-row sm:items-center justify-between gap-3">
               <div
                 role="status"
                 aria-live="polite"
@@ -1740,6 +1731,7 @@ function AttendancePageInner() {
                 disabled={
                   isSubmitting ||
                   !selectedProjectId ||
+                  supervisorIdentityNeedsReview ||
                   markableWorkers.length === 0 ||
                   uncheckedCount > 0 ||
                   (existingSiteDateRecords.length > 0 && !hasUnsavedChanges)
