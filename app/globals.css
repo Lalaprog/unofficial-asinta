@@ -455,4 +455,22 @@
   [data-print-document] table { width: 100%; table-layout: fixed; }
   [data-print-document] th, [data-print-document] td { overflow-wrap: anywhere; }
   [data-print-document] tr { break-inside: avoid; }
+  .payslip-batch-page {
+    display: grid !important;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    grid-template-rows: repeat(3, minmax(0, 1fr));
+    gap: 3mm;
+    min-height: 272mm;
+    break-after: page;
+    page-break-after: always;
+  }
+  .payslip-batch-page.payslip-batch-last { break-after: auto; page-break-after: auto; }
+  .payslip-batch-card {
+    break-inside: avoid;
+    border: 0.3mm solid #999 !important;
+    border-radius: 0 !important;
+    font-size: 8pt !important;
+    line-height: 1.2 !important;
+    overflow-wrap: anywhere;
+  }
 }
