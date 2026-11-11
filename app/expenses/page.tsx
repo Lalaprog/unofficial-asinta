@@ -9,6 +9,7 @@ import { createClient } from '@/lib/supabase/client';
 import { ExpenseCategory, type Expense, type ExpenseLineItem } from '@/types';
 import { ExpenseItemsEditor } from '@/components/expenses/ExpenseItemsEditor';
 import { ReceiptPhotoViewer } from '@/components/expenses/ReceiptPhotoViewer';
+import { ReceiptInbox } from '@/components/expenses/ReceiptInbox';
 import { ExpenseDetailsModal } from '@/components/expenses/ExpenseDetailsModal';
 import { loadExpenseDraft, saveExpenseDraft, deleteExpenseDraft } from '@/lib/expenses/draftStore';
 import { stableDraftJson, type SavedDraftPayload, type SavedDraftRow } from '@/lib/expenses/savedDraft';
@@ -876,6 +877,16 @@ export default function ExpensesPage() {
         {draftLoadState === 'error' && <div role="status" className="rounded-xl border border-status-warning/20 bg-status-warning-bg p-4 text-sm text-status-warning">Saved drafts could not be checked. Refresh before saving a draft; manual expense entry still works.</div>}
         {savedDraft && <div className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-brand/20 bg-surface-inset p-4"><div><p className="text-sm font-bold text-navy">Saved expense draft</p><p className="text-xs text-ink-secondary">{expenses.some(expense => expense.id === savedDraft.draft_id) ? 'This draft matches a recorded expense. Check the ledger before discarding it.' : 'Review before recording. Saving a draft does not add an expense.'}</p></div><div className="flex flex-wrap gap-2"><Button type="button" size="sm" variant="secondary" isLoading={isOpeningDraft} onClick={() => void resumeDraft()}>Continue draft</Button><Button type="button" size="sm" variant="ghost" onClick={() => setShowDiscardDraft(true)}>Discard draft</Button></div></div>}
         {hasUnfinishedEntry && (!savedDraft || activeDraftId !== savedDraft.draft_id) && <div className="rounded-xl border border-brand/20 bg-surface-inset p-4 text-sm text-ink-secondary">You have an unfinished entry on this page. <button type="button" onClick={() => setIsAddModalOpen(true)} className="font-semibold text-navy underline">Continue entry</button>. It is not saved until you choose Save draft or confirm the expense.</div>}
+
+        {isFounder && assurance === 'ready' && user && <ReceiptInbox key={user.id} userId={user.id} canUse={draftLoadState === 'ready' && isLoaded && !hasUnfinishedEntry && !savedDraft && !isAddModalOpen && !isDrafting && !isSubmitting} onView={path => void openReceiptPreview(path)} onUse={item => {
+          if (draftLoadState !== 'ready' || !isLoaded || hasUnfinishedEntry || savedDraft || isAddModalOpen || isDrafting || isSubmitting) return;
+          setActiveDraftId(crypto.randomUUID());
+          setFormData(previous => ({...previous, receipt_url:item.object_path}));
+          setReceiptFileName(item.file_name);
+          setPendingReceiptFile(null);
+          setPendingReceiptPreview(previous => {if(previous?.startsWith('blob:')) URL.revokeObjectURL(previous); return null;});
+          setIsAddModalOpen(true);
+        }} />}
 
         {/* ------------------------------------------------------------------
             Draft from text or a receipt photo.
