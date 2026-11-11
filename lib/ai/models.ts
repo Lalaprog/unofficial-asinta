@@ -45,7 +45,7 @@ export function getVisionModel(): string {
  *     20 MB figure for URL inputs; base64 bodies are capped lower). 4 MB of
  *     image bytes is ~5.3 MB of base64 and sits safely inside the documented
  *     URL ceiling while staying well under any body-size limit.
- *   - Receipts bucket: 5 MB per object (storage.objects.file_size_limit).
+ *   - App receipt uploads: 5 MB per object. Bucket enforcement is deployment-specific.
  * A photo between those two numbers is still storable — it just cannot be sent
  * to the vision model, and the UI says exactly that instead of failing vaguely.
  */
