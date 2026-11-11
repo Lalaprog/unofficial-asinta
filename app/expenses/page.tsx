@@ -660,7 +660,7 @@ export default function ExpensesPage() {
     } : {
       ...previous,
       description: nextDraft.description || previous.description,
-      amount: nextDraft.amount !== null ? String(nextDraft.amount) : previous.amount,
+      amount: nextDraft.amount !== null ? String(nextDraft.amount) : '',
       expense_date: nextDraft.expenseDate ?? previous.expense_date,
       project_id: nextDraft.projectId ?? previous.project_id,
       category: nextDraft.category ?? previous.category,
@@ -701,7 +701,7 @@ export default function ExpensesPage() {
       'info',
       amount
         ? `Draft ready — ${amount}${nextDraft.vendor ? ` at ${nextDraft.vendor}` : ''}. Review every field, then save.`
-        : 'Draft ready. The amount was not stated, so it was left blank — enter it yourself.'
+        : 'Draft ready. The total could not be determined safely, so it was left blank — enter it yourself.'
     );
   };
 
@@ -904,12 +904,13 @@ export default function ExpensesPage() {
           <Textarea
             id="quick-expense-description"
             label="Describe the expense"
-            placeholder={'e.g. 12 bags cement at JMC Hardware for Casa Batangas, 4800, kahapon, receipt na kay Danilo'}
+            placeholder={'e.g. 12 bags cement @ ₱400 each, total ₱4,800, kahapon'}
             value={quickText}
             onChange={(event) => setQuickText(event.target.value)}
             rows={2}
           />
 
+          <p className="text-xs text-ink-secondary">For each item, include quantity and price each, or state the final total. Review the amount before saving; unrelated questions are not supported.</p>
           <div className="flex flex-wrap items-center gap-2">
             <Button
               variant="primary"
@@ -1225,7 +1226,7 @@ export default function ExpensesPage() {
                 <div className="min-w-0 break-words rounded-xl border border-slate-200 bg-white p-2">
                   <span className="text-ink-secondary">Amount</span>
                   <div className="font-bold text-navy">
-                    {draft.amount !== null ? formatPeso(draft.amount) : 'Not stated — left blank'}
+                    {draft.amount !== null ? formatPeso(draft.amount) : 'Not determined — left blank'}
                   </div>
                 </div>
                 <div className="min-w-0 break-words rounded-xl border border-slate-200 bg-white p-2">
@@ -1253,6 +1254,12 @@ export default function ExpensesPage() {
                   <div className="font-bold text-navy">{draft.vendor || 'Not named'}</div>
                 </div>
               </div>
+
+              {draftInputKind === 'text' && draft.evidence.find((line) => line.startsWith('Calculated from ')) && (
+                <p className="rounded-xl border border-slate-200 bg-white p-2.5 text-xs text-ink-secondary">
+                  {draft.evidence.find((line) => line.startsWith('Calculated from '))}
+                </p>
+              )}
 
               {draft.evidence.length > 0 && (
                 <details className="rounded-xl border border-slate-200 bg-white p-2.5 text-xs">
