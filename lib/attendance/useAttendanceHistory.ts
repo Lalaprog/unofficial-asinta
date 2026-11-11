@@ -32,6 +32,9 @@ export function useAttendanceHistory<T extends Item>(mode: 'sheets' | 'records',
       });
       if (error) throw new Error(error.message);
       const page = parseHistoryPage<T>(data, mode);
+      if (page.items.some(item => (projectId !== 'all' && projectId && item.project_id !== projectId) || (date && item.date !== date))) {
+        throw new Error('Attendance history response did not match the requested scope.');
+      }
       if (token !== requestId.current || currentKey.current !== key) return;
       setState((prev) => {
         const existing = cursor && prev.key === key ? prev.items : [];

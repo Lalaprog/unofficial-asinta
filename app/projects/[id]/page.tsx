@@ -37,7 +37,7 @@ export default function ProjectDetailPage() {
   const router = useRouter();
   const id = params?.id as string;
 
-  const { isFounder } = useAuth();
+  const { isFounder, user } = useAuth();
   const { showToast } = useToast();
   const {
     projects,
@@ -45,8 +45,6 @@ export default function ProjectDetailPage() {
     invoices,
     expenses,
     tools,
-    attendance,
-    workers,
     users,
     projectSupervisors,
     updateProject,
@@ -58,7 +56,6 @@ export default function ProjectDetailPage() {
   const projInvoices = invoices.filter((i) => i.project_id === id);
   const projExpenses = expenses.filter((e) => e.project_id === id);
   const projTools = tools.filter((t) => t.project_id === id);
-  const projAttendance = attendance.filter((a) => a.project_id === id);
 
   // Assigned supervisors
   const assignedSupervisorIds = projectSupervisors
@@ -235,7 +232,7 @@ export default function ProjectDetailPage() {
             ...(isFounder ? [{ id: 'expenses', label: `Expenses (${projExpenses.length})` }] : []),
             { id: 'tools', label: `Site Tools (${projTools.length})` },
             { id: 'workers', label: 'Project Workers' },
-            { id: 'attendance', label: `Workforce Logs (${projAttendance.length} loaded)` },
+            { id: 'attendance', label: 'Workforce Logs' },
           ].map((tab) => (
             <button
               key={tab.id}
@@ -503,7 +500,7 @@ export default function ProjectDetailPage() {
 
         {/* TAB 5: ATTENDANCE */}
         {activeTab === 'attendance' && (
-          <ProjectWorkforceLogs key={id} records={projAttendance} workers={workers} />
+          <ProjectWorkforceLogs key={id} projectId={id} userId={user?.id} />
         )}
       </div>
 

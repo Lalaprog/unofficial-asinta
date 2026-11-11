@@ -1,9 +1,10 @@
 // @vitest-environment jsdom
 import React from 'react';
-import { cleanup, fireEvent, render, screen, within } from '@testing-library/react';
+import { cleanup, fireEvent, render, screen } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
-const mocks = vi.hoisted(() => ({ founder: false }));
+const mocks = vi.hoisted(() => ({ founder: false, rpc: vi.fn() }));
+vi.mock('@/lib/supabase/client', () => ({ createClient: () => ({ rpc: mocks.rpc }) }));
 vi.mock('next/navigation', () => ({ useParams: () => ({ id: 'site-1' }), useRouter: () => ({ push: vi.fn() }) }));
 vi.mock('next/link', () => ({ default: ({ children, href, prefetch: _prefetch, ...props }: React.AnchorHTMLAttributes<HTMLAnchorElement> & { prefetch?: boolean }) => React.createElement('a', { ...props, href }, children) }));
 vi.mock('@/components/layout/AppShell', () => ({ AppShell: ({ children }: { children: React.ReactNode }) => React.createElement('main', null, children) }));
@@ -26,7 +27,7 @@ vi.mock('@/lib/data/store', () => {
 import ProjectDetailPage from '@/app/projects/[id]/page';
 import ProjectsPage from '@/app/projects/page';
 
-beforeEach(() => { mocks.founder = false; });
+beforeEach(() => { mocks.founder = false; mocks.rpc.mockResolvedValue({ data: [], error: null }); });
 afterEach(() => cleanup());
 
 describe('project roles and workforce logs', () => {
@@ -63,28 +64,4 @@ describe('project roles and workforce logs', () => {
     expect(screen.getByRole('button', { name: 'Edit Project' })).toBeTruthy();
   });
 
-  it('groups loaded records by date, limits rows and dates, and supports searching and date filtering', () => {
-    render(React.createElement(ProjectDetailPage));
-    fireEvent.click(screen.getByRole('button', { name: /Workforce Logs/ }));
-    expect(screen.getByText('37 matching records in loaded data. Showing 10 of 12 matching dates.')).toBeTruthy();
-    const day = screen.getByText('October 12, 2026').closest('details')!;
-    expect(day.open).toBe(false);
-    expect(within(day).getByText('26 records')).toBeTruthy();
-    fireEvent.click(within(day).getByText('October 12, 2026'));
-    expect(day.open).toBe(true);
-    expect(within(day).getByText('Worker 00')).toBeTruthy();
-    expect(within(day).queryByText('Worker 25')).toBeNull();
-    expect(within(day).getByText('Leave')).toBeTruthy();
-    fireEvent.click(within(day).getByRole('button', { name: 'Show more records for October 12, 2026' }));
-    expect(within(day).getByText('Worker 25')).toBeTruthy();
-    expect(within(day).getByText('Paint repair')).toBeTruthy();
-    fireEvent.click(screen.getByRole('button', { name: 'Show more dates' }));
-    expect(screen.getByText('October 1, 2026')).toBeTruthy();
-    fireEvent.change(screen.getByLabelText('Search loaded logs'), { target: { value: 'Paint repair' } });
-    expect(screen.getByText('1 matching record in loaded data. Showing 1 of 1 matching dates.')).toBeTruthy();
-    fireEvent.change(screen.getByLabelText('Attendance date'), { target: { value: '2026-10-01' } });
-    expect(screen.getByText('No loaded attendance records match these filters.')).toBeTruthy();
-    fireEvent.change(screen.getByLabelText('Search loaded logs'), { target: { value: '' } });
-    expect(screen.getByText('October 1, 2026')).toBeTruthy();
-  });
 });

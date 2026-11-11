@@ -1,107 +1,94 @@
 'use client';
 
-import React, { useMemo, useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import Link from 'next/link';
-import { ChevronDown, Search, UserCheck } from 'lucide-react';
+import { UserCheck } from 'lucide-react';
 import { Badge } from '@/components/ui/Badge';
 import { Button } from '@/components/ui/Button';
 import { Input } from '@/components/ui/Input';
 import { formatDatePH } from '@/lib/email/format';
-import type { Attendance, Worker } from '@/types';
+import { manilaDateISO, shiftCalendarDate } from '@/lib/dates/manila';
+import { firstOfMonth, monthDates, parseCalendarCounts, shiftMonth, weekDates } from '@/lib/attendance/calendar';
+import { useAttendanceHistory } from '@/lib/attendance/useAttendanceHistory';
+import { createClient } from '@/lib/supabase/client';
+import type { HistoryRecord } from '@/lib/attendance/history';
 
-const DATE_PAGE_SIZE = 10;
-const RECORD_PAGE_SIZE = 20;
+const weekday = ['Sun','Mon','Tue','Wed','Thu','Fri','Sat'];
+type CalendarState = { key:string; counts:Map<string,number>; loading:boolean; error:boolean };
 
-function AttendanceDay({ date, records, workers }: { date: string; records: Attendance[]; workers: Map<string, Worker> }) {
-  const [visibleRecords, setVisibleRecords] = useState(RECORD_PAGE_SIZE);
-  return (
-    <details className="group rounded-xl border border-surface-border bg-white">
-      <summary className="flex min-h-11 cursor-pointer list-none items-center gap-3 rounded-xl px-3 py-3 text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand sm:px-4 [&::-webkit-details-marker]:hidden">
-        <ChevronDown aria-hidden="true" className="h-4 w-4 shrink-0 -rotate-90 text-ink-secondary transition-transform duration-200 group-open:rotate-0 motion-reduce:transition-none" />
-        <time dateTime={date} className="min-w-0 flex-1 text-sm font-semibold text-navy">{formatDatePH(date)}</time>
-        <span className="shrink-0 text-xs font-medium tabular-nums text-ink-secondary">{records.length} {records.length === 1 ? 'record' : 'records'}</span>
-      </summary>
-      <div className="divide-y divide-surface-border/70 border-t border-surface-border/70">
-        {records.slice(0, visibleRecords).map((record) => {
-          const worker = workers.get(record.worker_id);
-          const label = record.status === 'half_day' ? 'Half day' : record.status === 'leave' ? 'Leave' : record.status === 'present' ? 'Present' : 'Absent';
-          return (
-            <div key={record.id} className="flex flex-wrap items-start justify-between gap-2 px-3 py-3 text-xs sm:px-4">
-              <div className="min-w-0 flex-1">
-                <div className="break-words font-semibold text-navy">{worker?.name || 'Worker'}</div>
-                {worker?.position && <div className="mt-0.5 break-words text-ink-secondary">{worker.position}</div>}
-                {record.notes && <div className="mt-1 break-words text-ink-secondary">{record.notes}</div>}
-              </div>
-              <div className="flex shrink-0 items-center gap-2 text-right">
-                <span className="font-medium tabular-nums text-ink-secondary">{record.hours_worked} hrs</span>
-                <Badge variant={record.status === 'present' ? 'success' : record.status === 'half_day' ? 'warning' : record.status === 'leave' ? 'info' : 'danger'} size="sm">{label}</Badge>
-              </div>
-            </div>
-          );
-        })}
-        {visibleRecords < records.length && (
-          <div className="px-3 py-2 sm:px-4">
-            <Button type="button" variant="secondary" size="sm" onClick={() => setVisibleRecords((n) => n + RECORD_PAGE_SIZE)}>
-              Show more records for {formatDatePH(date)}
-            </Button>
-            <span className="ml-2 text-xs text-ink-secondary">Showing {visibleRecords} of {records.length}</span>
-          </div>
-        )}
+/** Scoped server reads: the shared, potentially truncated data store is not used. */
+export function ProjectWorkforceLogs({ projectId, userId }: { projectId:string; userId:string | undefined }) {
+  const [selected,setSelected]=useState(()=>manilaDateISO());
+  const [search,setSearch]=useState('');
+  const [revision,setRevision]=useState(0);
+  const month=firstOfMonth(selected);
+  const key=JSON.stringify([projectId,userId,month,revision]);
+  const currentKey=useRef(key); currentKey.current=key;
+  const [calendar,setCalendar]=useState<CalendarState>({key:'',counts:new Map(),loading:true,error:false});
+  useEffect(()=>{
+    let live=true;
+    setCalendar({key,counts:new Map(),loading:Boolean(userId),error:false});
+    if (!userId) return ()=>{live=false};
+    void (async()=>{
+      try {
+        const {data,error}=await createClient().rpc('project_attendance_calendar',{p_project_id:projectId,p_month:month});
+        if (error) throw error;
+        const counts=parseCalendarCounts(data,month);
+        if(live && currentKey.current===key) setCalendar({key,counts,loading:false,error:false});
+      } catch {
+        if(live && currentKey.current===key) setCalendar({key,counts:new Map(),loading:false,error:true});
+      }
+    })();
+    return ()=>{live=false};
+  },[key,month,projectId,userId]);
+  const view=calendar.key===key ? calendar : {key,counts:new Map<string,number>(),loading:Boolean(userId),error:false};
+  const records=useAttendanceHistory<HistoryRecord>('records',true,userId,{projectId,status:'all',date:selected,search},revision);
+  const dateButton=(date:string) => {
+    const count=view.counts.get(date);
+    return <button type="button" key={date} disabled={date < '1900-01-01' || date > '9998-12-31'} aria-pressed={selected===date} aria-label={`${formatDatePH(date)}${view.loading || view.error ? '' : count ? `, ${count} records` : ', no records'}`} onClick={()=>setSelected(date)} className={`min-h-11 rounded-lg border p-1 text-xs focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand ${selected===date?'border-brand bg-brand text-white':'border-surface-border bg-white text-navy hover:bg-surface'}`}>
+      <span className="block font-bold">{Number(date.slice(8))}</span>
+      {!view.loading && !view.error && count != null && <span className="block text-[10px]">{count} rec.</span>}
+    </button>;
+  };
+  if (!userId) return <div role="status" className="text-xs text-ink-secondary">Sign in to view site attendance.</div>;
+  return <div className="animate-panel-enter animate-panel-lift space-y-4">
+    <div className="flex flex-wrap items-center justify-between gap-2">
+      <h3 className="text-sm font-bold text-navy">Site Attendance Logs</h3>
+      <Link href="/attendance" className="inline-flex min-h-11 items-center gap-2 rounded-lg border border-brand bg-brand px-3 text-xs font-medium text-white hover:bg-brand-deep focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand focus-visible:ring-offset-2"><UserCheck className="h-3.5 w-3.5" aria-hidden="true" />Go to Attendance Terminal</Link>
+    </div>
+    <div className="flex flex-wrap items-center justify-between gap-2"><p className="text-xs text-ink-secondary">Dates show recorded entries for this site, not complete attendance or proof of absence. Select a day to view its records.</p><Button type="button" variant="secondary" size="sm" onClick={()=>setRevision(n=>n+1)}>Refresh logs</Button></div>
+    <div className="rounded-xl border border-surface-border bg-white p-3 space-y-3">
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <Button type="button" variant="secondary" size="sm" disabled={month <= '1900-01-01'} onClick={()=>setSelected(shiftMonth(month,-1))}>Previous month</Button>
+        <h4 className="font-bold text-navy">{new Date(`${month}T00:00:00Z`).toLocaleDateString('en-PH',{month:'long',year:'numeric',timeZone:'UTC'})}</h4>
+        <Button type="button" variant="secondary" size="sm" disabled={month >= '9998-12-01'} onClick={()=>setSelected(shiftMonth(month,1))}>Next month</Button>
+      </div>
+      {view.loading && <p role="status" className="text-xs text-ink-secondary">Loading calendar…</p>}
+      {view.error && <div role="alert" className="text-xs text-status-danger">Calendar could not be loaded. <Button type="button" variant="secondary" size="sm" onClick={()=>setRevision(n=>n+1)}>Retry calendar</Button></div>}
+      <div className="hidden sm:block">
+        <div className="grid grid-cols-7 gap-1 text-center text-xs text-ink-secondary">{weekday.map(d=><span key={d}>{d}</span>)}</div>
+        <div className="mt-1 grid grid-cols-7 gap-1">{monthDates(month).map((date,i)=>date ? dateButton(date) : <span key={`blank-${i}`} />)}</div>
+      </div>
+      <div className="sm:hidden space-y-2">
+        <div className="flex justify-between gap-2"><Button type="button" variant="secondary" size="sm" disabled={selected < '1900-01-08'} onClick={()=>setSelected(shiftCalendarDate(selected,-7))}>Previous week</Button><Button type="button" variant="secondary" size="sm" disabled={selected > '9998-12-24'} onClick={()=>setSelected(shiftCalendarDate(selected,7))}>Next week</Button></div>
+        <div className="grid grid-cols-7 gap-1 text-center text-xs text-ink-secondary">{weekday.map(d=><span key={d}>{d}</span>)}</div>
+        <div className="grid grid-cols-7 gap-1">{weekDates(selected).map(dateButton)}</div>
+      </div>
+      <Input label="Choose attendance date" type="date" value={selected} min="1900-01-01" max="9998-12-31" onChange={event=>{const value=event.target.value; if(value >= '1900-01-01' && value <= '9998-12-31') setSelected(value)}} />
+    </div>
+    <details key={selected} open className="rounded-xl border border-surface-border bg-white p-3">
+      <summary className="cursor-pointer font-bold text-navy focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand">{formatDatePH(selected)} · recorded attendance</summary>
+      <div className="mt-3 space-y-3">
+      <Input label="Search day records" placeholder="Worker, craft or note" value={search} onChange={event=>setSearch(event.target.value)} />
+      {records.loading && <p role="status" className="text-xs text-ink-secondary">Loading attendance records…</p>}
+      {records.error && <div role="alert" className="space-y-2 text-xs text-status-danger">Could not load day records. <Button type="button" variant="secondary" size="sm" onClick={records.retry}>Retry records</Button></div>}
+      {!records.loading && !records.error && records.items.length===0 && <p className="text-xs text-ink-secondary">{search ? 'No records match this search for the selected date.' : 'No records found for this date. Unmarked is not absent.'}</p>}
+      <div className="divide-y divide-surface-border/70">{records.items.map(rec=><div key={rec.id} className="flex flex-wrap items-start justify-between gap-2 py-3 text-xs">
+        <div className="min-w-0 flex-1"><div className="break-words font-semibold text-navy">{rec.worker_name || 'Worker (details unavailable)'}</div>{rec.worker_position && <div className="text-ink-secondary">{rec.worker_position}</div>}{rec.notes && <div className="mt-1 whitespace-pre-wrap break-words text-ink-secondary">{rec.notes}</div>}</div>
+        <div className="flex items-center gap-2"><span className="text-ink-secondary">{rec.hours_worked} hrs recorded</span><Badge variant={rec.status==='present'?'success':rec.status==='half_day'?'warning':rec.status==='leave'?'info':'danger'} size="sm">{rec.status==='half_day'?'Half day':rec.status==='present'?'Present':rec.status==='leave'?'Leave':'Absent'}</Badge></div>
+      </div>)}</div>
+      {records.hasMore && !records.error && <Button type="button" variant="secondary" size="sm" disabled={records.loading} onClick={records.loadMore}>Show more day records</Button>}
       </div>
     </details>
-  );
-}
-
-/** A compact view over the records already in the shared store, not a server-wide search. */
-export function ProjectWorkforceLogs({ records, workers }: { records: Attendance[]; workers: Worker[] }) {
-  const [query, setQuery] = useState('');
-  const [date, setDate] = useState('');
-  const [visibleDates, setVisibleDates] = useState(DATE_PAGE_SIZE);
-  const workerById = useMemo(() => new Map(workers.map((worker) => [worker.id, worker])), [workers]);
-  const groups = useMemo(() => {
-    const search = query.trim().toLowerCase();
-    const grouped = new Map<string, Attendance[]>();
-    records.forEach((record) => {
-      if (date && record.date !== date) return;
-      const worker = workerById.get(record.worker_id);
-      const searchable = [worker?.name || 'Worker', worker?.position || '', record.notes || ''].join(' ').toLowerCase();
-      if (search && !searchable.includes(search)) return;
-      const day = grouped.get(record.date) || [];
-      day.push(record);
-      grouped.set(record.date, day);
-    });
-    return [...grouped.entries()].sort(([a], [b]) => b.localeCompare(a));
-  }, [records, workerById, query, date]);
-  const matchingRecords = groups.reduce((sum, [, day]) => sum + day.length, 0);
-
-  return (
-    <div className="animate-panel-enter animate-panel-lift space-y-4">
-      <div className="flex flex-wrap items-center justify-between gap-2">
-        <h3 className="text-sm font-bold text-navy">Site Attendance Logs</h3>
-        <Link href="/attendance" className="inline-flex min-h-11 items-center gap-2 rounded-lg border border-brand bg-brand px-3 text-xs font-medium text-white hover:bg-brand-deep focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand focus-visible:ring-offset-2">
-          <UserCheck className="h-3.5 w-3.5" aria-hidden="true" />
-          Go to Attendance Terminal
-        </Link>
-      </div>
-      <div className="grid grid-cols-1 gap-3 rounded-xl border border-surface-border bg-white p-3 sm:grid-cols-[minmax(0,1fr)_12rem]">
-        <Input label="Search loaded logs" placeholder="Worker, craft or note" value={query} onChange={(event) => { setQuery(event.target.value); setVisibleDates(DATE_PAGE_SIZE); }} leftIcon={<Search className="h-4 w-4" aria-hidden="true" />} />
-        <Input label="Attendance date" type="date" value={date} onChange={(event) => { setDate(event.target.value); setVisibleDates(DATE_PAGE_SIZE); }} />
-      </div>
-      <p aria-live="polite" className="text-xs text-ink-secondary">
-        {matchingRecords} matching {matchingRecords === 1 ? 'record' : 'records'} in loaded data. Showing {Math.min(visibleDates, groups.length)} of {groups.length} matching dates.
-      </p>
-      {groups.length ? (
-        <div className="space-y-2">
-          {groups.slice(0, visibleDates).map(([day, dayRecords]) => <AttendanceDay key={day} date={day} records={dayRecords} workers={workerById} />)}
-          {visibleDates < groups.length && (
-            <Button type="button" variant="secondary" onClick={() => setVisibleDates((n) => n + DATE_PAGE_SIZE)} className="w-full sm:w-auto">Show more dates</Button>
-          )}
-        </div>
-      ) : (
-        <div className="rounded-xl border border-surface-border bg-white p-8 text-center text-xs text-ink-secondary">
-          {records.length ? 'No loaded attendance records match these filters.' : 'No attendance records are currently loaded for this site.'}
-        </div>
-      )}
-    </div>
-  );
+  </div>;
 }
