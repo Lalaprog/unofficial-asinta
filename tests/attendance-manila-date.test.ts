@@ -128,6 +128,6 @@ describe('Philippine site calendar', () => {
     fireEvent.change(screen.getByLabelText('Worker Full Name'), { target: { value: 'New Worker' } });
     fireEvent.click(screen.getByRole('button', { name: 'Add Worker to Roster' }));
     await waitFor(() => expect(mock.createWorker).toHaveBeenCalledWith(expect.objectContaining({ name: 'New Worker', position: 'Mason', active: true })));
-    expect(mock.showToast).toHaveBeenCalledWith('success', expect.stringContaining('Added New Worker'));
+    expect(mock.showToast).toHaveBeenCalledWith('success', expect.stringContaining('Registered New Worker'));
   });
 });

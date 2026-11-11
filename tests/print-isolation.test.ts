@@ -8,4 +8,8 @@ describe('document printing',()=>{
   expect(invoice).toContain('window.print()');expect(payroll).toContain('window.print()');
   const css=readFileSync('app/globals.css','utf8');expect(css).toContain('body:has([data-print-document])');expect(css).toContain('display: none !important');expect(css).toContain('overflow: visible !important');
  });
+ it('removes screen spacing around and between A4 batch pages during printing',()=>{
+  const css=readFileSync('app/globals.css','utf8');
+  expect(css).toMatch(/\[data-print-document="payslip-batch"\],\s*\.payslip-batch-page\s*\{\s*margin:\s*0\s*!important;\s*\}/);
+ });
 });

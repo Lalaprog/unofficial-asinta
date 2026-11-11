@@ -342,7 +342,7 @@ function renderHtmlEmail(bodyText: string, data: TemplateInvoiceData): string {
           <tr>
             <td style="background-color:#0b1f3a;padding:24px 32px;">
               <div style="color:#ffffff;font-size:20px;font-weight:800;letter-spacing:1px;">ASINTA ARCHITECTS</div>
-              <div style="color:#cbd5e1;font-size:11px;letter-spacing:2px;text-transform:uppercase;margin-top:4px;">Billing &amp; Advance Ledger Engine</div>
+              <div style="color:#cbd5e1;font-size:11px;letter-spacing:2px;text-transform:uppercase;margin-top:4px;">architecture curated to your style.</div>
             </td>
           </tr>
           <tr>

@@ -38,6 +38,7 @@ export function HistorySheetRecords({sheet, filters, userId, revision, isFounder
               {rec.notes && <div className="max-w-2xl whitespace-pre-wrap break-words text-[11px] text-ink-muted">{rec.notes}</div>}
             </div>
             <div className="flex shrink-0 flex-wrap items-center gap-1.5">
+              {typeof rec.hours_worked === 'number' && Number.isFinite(rec.hours_worked) && <span className="text-ink-secondary">{rec.hours_worked} hrs recorded</span>}
               <Badge variant={rec.status === 'present' ? 'success' : rec.status === 'half_day' ? 'warning' : rec.status === 'leave' ? 'info' : 'danger'} size="sm">{formatStatusLabel(rec.status)}</Badge>
               {isFounder && isUnverifiedSelf && <>
                 <Button type="button" variant="primary" size="sm" disabled={reviewing || records.loading || Boolean(records.error)} onClick={() => onReview(rec,'present')}>Full Day</Button>

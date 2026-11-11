@@ -22,7 +22,7 @@ import { Input } from '@/components/ui/Input';
 import { Select } from '@/components/ui/Select';
 import { SearchableSelect } from '@/components/ui/SearchableSelect';
 import { Modal } from '@/components/ui/Modal';
-import { AsintaEmblem, AsintaWordmark } from '@/components/ui/AsintaLogo';
+import { PayslipBatch } from '@/components/payroll/PayslipBatch';
 import { formatPeso, formatPesoCompact } from '@/lib/email/format';
 import { formatRecordedWork } from '@/lib/payroll/display';
 import { AttendanceMatrix } from '@/components/payroll/AttendanceMatrix';
@@ -51,6 +51,7 @@ export default function PayrollPage() {
   // Modals
   const [isGenerateModalOpen, setIsGenerateModalOpen] = useState(false);
   const [isPayslipModalOpen, setIsPayslipModalOpen] = useState(false);
+  const [isBatchPayslipOpen, setIsBatchPayslipOpen] = useState(false);
   const [selectedPayroll, setSelectedPayroll] = useState<Payroll | null>(null);
 
   // Generate run state (defaults to the past 7 days through today)
@@ -186,7 +187,7 @@ export default function PayrollPage() {
           eyebrow="Workforce & pay"
           title="Payroll"
           description="Review attendance-based vouchers, Bale deductions and worker payslips."
-          action={<Button variant="primary" size="md" onClick={() => setIsGenerateModalOpen(true)} leftIcon={<Plus className="w-4 h-4" />}>New Payroll Run</Button>}
+          action={<div className="flex flex-wrap gap-2"><Button variant="secondary" size="md" onClick={() => setIsBatchPayslipOpen(true)} leftIcon={<Printer className="w-4 h-4" />}>Print worker payslips</Button><Button variant="primary" size="md" onClick={() => setIsGenerateModalOpen(true)} leftIcon={<Plus className="w-4 h-4" />}>New Payroll Run</Button></div>}
         />
 
         <AttendanceMatrix start={periodStart} end={periodEnd} site={generateProjectId} setStart={setPeriodStart} setEnd={setPeriodEnd} setSite={setGenerateProjectId} projects={projects} />
@@ -491,6 +492,8 @@ export default function PayrollPage() {
         )}
       </Modal>
 
+      {isBatchPayslipOpen && <PayslipBatch onClose={() => setIsBatchPayslipOpen(false)} />}
+
       {/* PRINTABLE PAYSLIP MODAL */}
       <Modal
         isOpen={isPayslipModalOpen}
@@ -508,15 +511,7 @@ export default function PayrollPage() {
               <div data-print-document="payslip" className="p-6 rounded-2xl bg-white border border-slate-300 font-sans space-y-5 text-ink-primary">
                 {/* Header */}
                 <div className="flex items-start justify-between pb-4 border-b-2 border-navy">
-                  <div className="flex items-center gap-3">
-                    <AsintaEmblem size={30} />
-                    <div>
-                      <AsintaWordmark height={18} />
-                      <div className="text-[11px] font-medium text-ink-secondary mt-1">
-                        Design · Build · Batangas
-                      </div>
-                    </div>
-                  </div>
+                  <div className="font-bold text-navy">ASINTA ARCHITECTS</div>
                   <div className="text-right">
                     <div className="text-xs font-bold text-navy">WORKER PAYSLIP · {selectedPayroll.status.toUpperCase()}</div>
                     <div className="text-[11px] text-ink-secondary tabular-nums">
@@ -531,16 +526,10 @@ export default function PayrollPage() {
                     <div className="text-[10px] font-bold uppercase text-ink-secondary">Worker Name</div>
                     <div className="font-bold text-navy text-sm mt-0.5">{worker?.name}</div>
                     <div className="text-ink-secondary">{worker?.position}</div>
-                    {getProjectsForPayroll(selectedPayroll).length > 0 && (
-                      <div className="text-[11px] text-navy font-semibold mt-1">
-                        Site: {getProjectsForPayroll(selectedPayroll).map((p) => p.name).join(', ')}
-                      </div>
-                    )}
                   </div>
                   <div className="text-right">
-                    <div className="text-[10px] font-bold uppercase text-ink-secondary">Current worker rate</div>
-                    <div className="font-bold text-navy mt-0.5">{worker ? `${formatPeso(worker.pay_rate)} / ${worker.pay_rate_type === 'hourly' ? 'hour' : 'day'}` : 'Not available'}</div>
                     <div className="text-ink-secondary">Days worked: {formatRecordedWork(selectedPayroll.days_worked, 'days')}</div>
+                    <div className="text-ink-secondary">Hours worked: {formatRecordedWork(selectedPayroll.hours_worked, 'hours')}</div>
                   </div>
                 </div>
 

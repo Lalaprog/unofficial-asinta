@@ -17,7 +17,7 @@
  * Nothing here writes to the ledger and nothing here trusts the browser.
  */
 
-/** Maximum object size, mirrored from the bucket's file_size_limit. */
+/** App-level upload limit. Verify storage bucket limits independently at deployment. */
 export const RECEIPT_MAX_BYTES = 5 * 1024 * 1024;
 
 /** Signed URL lifetime. Long enough to render, short enough to be useless if leaked. */
@@ -46,7 +46,7 @@ export interface ReceiptFileCheck {
   extension?: string;
 }
 
-/** Validates an uploaded receipt against the same rules the bucket enforces. */
+/** Client-side validation; storage bucket configuration must be verified separately. */
 export function validateReceiptFile(file: { type?: string; size?: number } | null): ReceiptFileCheck {
   if (!file) {
     return { ok: false, error: 'Choose a receipt photo first.' };

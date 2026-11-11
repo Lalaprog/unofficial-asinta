@@ -13,7 +13,7 @@ vi.mock('@/lib/auth/authContext', () => {
   const founder={id:'f',name:'Founder',role:'founder'}, supervisor={id:'s',name:'Supervisor',role:'supervisor'};
   return {useAuth: () => ({user:mock.founder?founder:supervisor,isFounder:mock.founder,isSupervisor:!mock.founder})};
 });
-vi.mock('@/lib/supabase/client', () => ({createClient: () => ({rpc:mock.rpc})}));
+vi.mock('@/lib/supabase/client', () => ({createClient: () => ({rpc:(name:string, args:unknown) => name === 'attendance_history_calendar' ? Promise.resolve({data:[],error:null}) : mock.rpc(name,args)})}));
 vi.mock('@/lib/data/store', () => {
   const projects=[{id:'site',name:'Alpha',location:'Batangas, PH'}];
   const store={users:[], workers:[], projects, projectSupervisors:[], attendance:[], isLoaded:true, createWorker:vi.fn(), updateWorker:vi.fn(), toggleWorkerStatus:vi.fn(), recordAttendanceBatch:vi.fn(), updateAttendanceRecord:mock.update, getProjectsForSupervisor:()=>projects};

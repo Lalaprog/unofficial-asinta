@@ -47,9 +47,11 @@ import { usePendingApprovals } from '@/lib/attendance/usePendingApprovals';
 import { useAttendanceHistory } from '@/lib/attendance/useAttendanceHistory';
 import { useProjectRollCall } from '@/lib/attendance/useProjectRollCall';
 import { loadProjectRollCall, projectRollCallFingerprint, type ProjectRollCallSnapshot } from '@/lib/attendance/project-roll-call';
+import { useProjectTeam } from '@/lib/attendance/useProjectTeam';
 import { RollCallWalkthrough } from '@/components/dashboard/RollCallWalkthrough';
 import type { HistoryRecord, HistorySheet } from '@/lib/attendance/history';
 import { HistorySheetRecords } from '@/components/attendance/HistorySheetRecords';
+import { AttendanceHistoryCalendar } from '@/components/attendance/AttendanceHistoryCalendar';
 
 const EMPTY_ROLL_CALL: ProjectRollCallSnapshot = { workerIds: [], records: [] };
 
@@ -317,6 +319,7 @@ function AttendancePageInner() {
   }, []);
 
   const rollCall = useProjectRollCall(user?.id, selectedProjectId, selectedDate, activeTab === 'terminal' && isLoaded && !loadError);
+  const workforceTeam = useProjectTeam(user?.id, selectedProjectId, isSupervisor && activeTab === 'workforce' && isLoaded && !loadError);
   const rosterReady = rollCall.status === 'ready' && Boolean(rollCall.snapshot) && isLoaded && !loadError;
   const rollCallSnapshot = rosterReady ? rollCall.snapshot! : EMPTY_ROLL_CALL;
   const draftReady = rosterReady && draftStorageReadyKey === attendanceDraftStorageKey && draftReadySnapshot === rollCallSnapshot;
@@ -800,7 +803,7 @@ function AttendancePageInner() {
       setIsWorkerFormOpen(false);
       showToast(
         'success',
-        `Added ${created.name} (${created.position}) to the workforce roster.`
+        `Registered ${created.name} (${created.position}). Add them to a project separately before Roll Call.`
       );
     }
   };
@@ -908,9 +911,22 @@ function AttendancePageInner() {
     (worker) => draftAttendance[worker.id]?.status === 'leave'
   ).length;
 
+  // Supervisors see only the current project's team in the workforce view.
+  // Never present a failed or pending scoped read as an empty directory.
+  const workforceScopedWorkers = useMemo(() => {
+    if (!isSupervisor) return workers;
+    if (workforceTeam.status !== 'ready') return [];
+    const assigned = new Set(workforceTeam.ids);
+    return workers.filter((worker) => assigned.has(worker.id) && worker.id !== user?.id);
+  }, [workers, isSupervisor, workforceTeam.status, workforceTeam.ids, user?.id]);
+
+  const missingWorkforceProfiles = isSupervisor && workforceTeam.status === 'ready'
+    ? workforceTeam.ids.filter((id) => id !== user?.id && !workers.some((worker) => worker.id === id)).length
+    : 0;
+
   // Group Workforce tab workers by craft group
   const groupedWorkforceDirectory = useMemo(() => {
-    const filtered = workers.filter((w) => {
+    const filtered = workforceScopedWorkers.filter((w) => {
       if (workforceStatusFilter === 'removed' ? !w.removed_at : Boolean(w.removed_at)) return false;
       if (workforceStatusFilter === 'active' && !w.active) return false;
       if (workforceStatusFilter === 'inactive' && w.active) return false;
@@ -932,7 +948,7 @@ function AttendancePageInner() {
     return Array.from(map.entries()).sort(
       (a, b) => CRAFT_GROUP_META[a[0]].order - CRAFT_GROUP_META[b[0]].order
     );
-  }, [workers, workforceCraftFilter, workforceSearch, workforceStatusFilter]);
+  }, [workforceScopedWorkers, workforceCraftFilter, workforceSearch, workforceStatusFilter]);
 
   const selectedWorkerDetails = workers.filter((worker) => selectedWorkers.includes(worker.id));
   const visibleWorkerIds = groupedWorkforceDirectory.flatMap(([, group]) => group.filter((worker) => !worker.removed_at).map((worker) => worker.id));
@@ -1013,7 +1029,7 @@ function AttendancePageInner() {
               {activeTab === 'history'
                 ? 'Submitted daily attendance logs & approval status'
                 : activeTab === 'workforce'
-                  ? `${workers.filter((w) => w.active).length} active craftsmen & supervisors`
+                  ? isSupervisor ? 'Workers assigned to the selected project' : `${workers.filter((w) => w.active).length} active craftsmen & supervisors`
                   : 'Mark crew on site'}
             </p>
           </div>
@@ -1027,6 +1043,9 @@ function AttendancePageInner() {
 
           {activeTab === 'workforce' && (
             <div className="flex flex-wrap gap-2">
+              <Link href="/attendance" prefetch={false} className="inline-flex min-h-11 items-center gap-2 rounded-lg border border-surface-border bg-white px-3 text-xs font-medium text-navy hover:bg-surface-inset focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand focus-visible:ring-offset-2">
+                Back to Daily Roll Call
+              </Link>
               {isSupervisor && (
                 <Link href="/advances?tab=requests" prefetch={false} className="inline-flex min-h-11 items-center gap-2 rounded-lg border border-surface-border bg-white px-3 text-xs font-medium text-navy hover:bg-surface-inset focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand focus-visible:ring-offset-2">
                   <HandCoins className="h-4 w-4" aria-hidden="true" />
@@ -2018,37 +2037,42 @@ function AttendancePageInner() {
               </div>
             </Modal>
 
-            <div className="space-y-1 text-xs text-ink-secondary">
-              <p aria-live="polite">{history.loading || isHistorySearchSettling ? 'Updating results…' : history.error ? 'History could not be loaded; retry to update results.' : `Showing ${history.items.length} date/site ${history.items.length === 1 ? 'sheet' : 'sheets'} from the server. Counts reflect the current filters.`}</p>
-              <p>Results are a snapshot; refresh to include changes made elsewhere.</p>
-            </div>
-            <div data-page-guide="list" className="space-y-2">
-              {history.items.map((sheet) => {
-                const key = `${sheet.date}::${sheet.project_id}`;
-                const isExpanded = Boolean(expandedHistorySheets[key]);
-                const sheetId = `history-sheet-${encodeURIComponent(key)}`;
-                return <div key={key} className="overflow-hidden rounded-2xl border border-surface-border bg-white shadow-sm">
-                  <button type="button" aria-expanded={isExpanded} aria-controls={isExpanded ? sheetId : undefined}
-                    onClick={() => setExpandedHistorySheets((prev) => ({...prev,[key]:!prev[key]}))}
-                    className="flex min-h-11 w-full flex-wrap items-center gap-x-3 gap-y-1 bg-surface-inset/70 px-4 py-3 text-left transition-colors hover:bg-surface-inset focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-brand">
-                    {isExpanded ? <ChevronDown className="h-4 w-4 shrink-0 text-ink-secondary" aria-hidden="true" /> : <ChevronRight className="h-4 w-4 shrink-0 text-ink-secondary" aria-hidden="true" />}
-                    <span className="min-w-0 flex-1 break-words text-xs font-bold text-navy sm:text-sm">{formatDatePH(sheet.date)} · {sheet.project_name || 'Project Site'}</span>
-                    <span className="text-xs font-medium tabular-nums text-ink-secondary">{sheet.record_count} {sheet.record_count === 1 ? 'record' : 'records'}</span>
-                    <span className="flex w-full flex-wrap gap-x-3 gap-y-0.5 pl-7 text-[11px] font-medium text-ink-secondary">
-                      <span>{sheet.present_count} Present</span><span>{sheet.half_day_count} Half Day</span><span>{sheet.absent_count} Absent</span><span>{sheet.leave_count} Leave</span>
-                      {sheet.pending_count > 0 && <span className="font-semibold text-status-warning">{sheet.pending_count} pending Founder review</span>}
-                    </span>
-                  </button>
-                  {isExpanded && <div id={sheetId}><HistorySheetRecords sheet={sheet} filters={historyFilters} userId={user?.id} revision={historyRevision} isFounder={isFounder} reviewing={isReviewingSupervisor}
-                    onReview={handleFounderSupervisorReview}
-                    onEdit={(rec: HistoryRecord) => {setSelectedRecordForOverride(rec);setOverrideStatus(rec.status);setOverrideNotes(rec.notes || '');setOverrideModalOpen(true);}} /></div>}
-                </div>;
-              })}
-              {(history.loading || isHistorySearchSettling) && <p role="status" className="text-xs text-ink-secondary">Loading attendance history…</p>}
-              {history.error && <div className="space-y-2 rounded-xl border border-surface-border bg-white p-4 text-xs"><p role="alert" className="text-status-danger">Unable to load attendance history. Please retry.</p><Button type="button" variant="secondary" size="sm" onClick={history.retry}>Retry history</Button></div>}
-              {history.hasMore && !history.error && <Button type="button" variant="secondary" className="w-full sm:w-auto" disabled={history.loading} onClick={history.loadMore}>Show more date/site sheets</Button>}
-              {!history.loading && !history.error && !isHistorySearchSettling && history.items.length === 0 && <div className="rounded-xl border border-surface-border bg-white"><EmptyState title="No attendance records match" description="Try clearing the site, date, status or search filters." /></div>}
-              <Button type="button" variant="ghost" size="sm" disabled={history.loading || isHistorySearchSettling} onClick={() => setHistoryRevision((n) => n + 1)}>Refresh history</Button>
+            <div className="grid gap-4 lg:grid-cols-[minmax(19rem,0.85fr)_minmax(0,1.15fr)] lg:items-start">
+              <AttendanceHistoryCalendar userId={user?.id} today={today} filters={historyFilters} settling={isHistorySearchSettling} revision={historyRevision} onSelectDate={setHistoryDateFilter} />
+              <div className="min-w-0 space-y-3">
+                <div className="space-y-1 text-xs text-ink-secondary">
+                  <p aria-live="polite">{history.loading || isHistorySearchSettling ? 'Updating results…' : history.error ? 'History could not be loaded; retry to update results.' : `Showing ${history.items.length} date/site ${history.items.length === 1 ? 'sheet' : 'sheets'} from the server. Counts reflect the current filters.`}</p>
+                  <p>Results are a snapshot; refresh to include changes made elsewhere.</p>
+                </div>
+                <div data-page-guide="list" className="space-y-2">
+                  {history.items.map((sheet) => {
+                    const key = `${sheet.date}::${sheet.project_id}`;
+                    const isExpanded = Boolean(expandedHistorySheets[key]);
+                    const sheetId = `history-sheet-${encodeURIComponent(key)}`;
+                    return <div key={key} className="overflow-hidden rounded-2xl border border-surface-border bg-white shadow-sm">
+                      <button type="button" aria-expanded={isExpanded} aria-controls={isExpanded ? sheetId : undefined}
+                        onClick={() => setExpandedHistorySheets((prev) => ({...prev,[key]:!prev[key]}))}
+                        className="flex min-h-11 w-full flex-wrap items-center gap-x-3 gap-y-1 bg-surface-inset/70 px-4 py-3 text-left transition-colors hover:bg-surface-inset focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-brand">
+                        {isExpanded ? <ChevronDown className="h-4 w-4 shrink-0 text-ink-secondary" aria-hidden="true" /> : <ChevronRight className="h-4 w-4 shrink-0 text-ink-secondary" aria-hidden="true" />}
+                        <span className="min-w-0 flex-1 break-words text-xs font-bold text-navy sm:text-sm">{formatDatePH(sheet.date)} · {sheet.project_name || 'Project Site'}</span>
+                        <span className="text-xs font-medium tabular-nums text-ink-secondary">{sheet.record_count} {sheet.record_count === 1 ? 'record' : 'records'}</span>
+                        <span className="flex w-full flex-wrap gap-x-3 gap-y-0.5 pl-7 text-[11px] font-medium text-ink-secondary">
+                          <span>{sheet.present_count} Present</span><span>{sheet.half_day_count} Half Day</span><span>{sheet.absent_count} Absent</span><span>{sheet.leave_count} Leave</span>
+                          {sheet.pending_count > 0 && <span className="font-semibold text-status-warning">{sheet.pending_count} pending Founder review</span>}
+                        </span>
+                      </button>
+                      {isExpanded && <div id={sheetId}><HistorySheetRecords sheet={sheet} filters={historyFilters} userId={user?.id} revision={historyRevision} isFounder={isFounder} reviewing={isReviewingSupervisor}
+                        onReview={handleFounderSupervisorReview}
+                        onEdit={(rec: HistoryRecord) => {setSelectedRecordForOverride(rec);setOverrideStatus(rec.status);setOverrideNotes(rec.notes || '');setOverrideModalOpen(true);}} /></div>}
+                    </div>;
+                  })}
+                  {(history.loading || isHistorySearchSettling) && <p role="status" className="text-xs text-ink-secondary">Loading attendance history…</p>}
+                  {history.error && <div className="space-y-2 rounded-xl border border-surface-border bg-white p-4 text-xs"><p role="alert" className="text-status-danger">Unable to load attendance history. Please retry.</p><Button type="button" variant="secondary" size="sm" onClick={history.retry}>Retry history</Button></div>}
+                  {history.hasMore && !history.error && <Button type="button" variant="secondary" className="w-full sm:w-auto" disabled={history.loading} onClick={history.loadMore}>Show more date/site sheets</Button>}
+                  {!history.loading && !history.error && !isHistorySearchSettling && history.items.length === 0 && <div className="rounded-xl border border-surface-border bg-white"><EmptyState title="No attendance records match" description="Try clearing the site, date, status or search filters." /></div>}
+                  <Button type="button" variant="ghost" size="sm" disabled={history.loading || isHistorySearchSettling} onClick={() => setHistoryRevision((n) => n + 1)}>Refresh history</Button>
+                </div>
+              </div>
             </div>
           </div>
         )}
@@ -2128,11 +2152,23 @@ function AttendancePageInner() {
                     leftIcon={<UserPlus className="h-4 w-4" />}
                     className="w-full sm:w-auto"
                   >
-                    Add Worker to Roster
+                    {isSupervisor ? 'Register Worker' : 'Add Worker to Roster'}
                   </Button>
                 </div>
               </form>
             </section>
+
+            {isSupervisor && <div className="rounded-xl border border-surface-border bg-white p-3 space-y-2">
+              <label htmlFor="workforce-project" className="block text-xs font-semibold text-ink-secondary">Workforce project</label>
+              <select id="workforce-project" value={selectedProjectId} onChange={(event) => setSelectedProjectId(event.target.value)} disabled={accessibleProjects.length === 0} className="min-h-11 w-full rounded-lg border border-surface-border bg-white px-3 text-sm text-navy sm:w-auto sm:min-w-56">
+                {accessibleProjects.length === 0 && <option value="">No assigned projects</option>}
+                {accessibleProjects.map((project) => <option key={project.id} value={project.id}>{project.name}</option>)}
+              </select>
+              <p className="text-xs text-ink-secondary">Only the selected project&apos;s assigned workers are shown.</p>
+              {workforceTeam.status === 'loading' && <p role="status" className="text-xs text-ink-secondary">Loading project workforce…</p>}
+              {workforceTeam.status === 'error' && <p role="alert" className="text-xs text-status-danger">Could not load this project&apos;s workforce. <button type="button" className="underline" onClick={workforceTeam.reload}>Try again</button></p>}
+              {missingWorkforceProfiles > 0 && <p role="alert" className="text-xs text-status-danger">Some assigned worker profiles could not be loaded. This list may be incomplete; refresh and check before relying on it.</p>}
+            </div>}
 
             {/* Filter Bar for Workforce Directory */}
             <div data-page-guide="filters" className="p-3 rounded-2xl bg-white border border-surface-border shadow-sm flex flex-col sm:flex-row items-center justify-between gap-2.5">
@@ -2166,9 +2202,9 @@ function AttendancePageInner() {
                 </div>
               </div>
 
-              <Badge variant="neutral" size="sm">
-                {workers.filter((w) => w.active && !w.removed_at).length} active / {workers.filter((w) => !w.removed_at).length} in workforce
-              </Badge>
+              {(!isSupervisor || workforceTeam.status === 'ready') && <Badge variant="neutral" size="sm">
+                {workforceScopedWorkers.filter((w) => w.active && !w.removed_at).length} active / {workforceScopedWorkers.filter((w) => !w.removed_at).length} {missingWorkforceProfiles > 0 ? 'loaded' : 'in workforce'}
+              </Badge>}
             </div>
 
             {isFounder && (
@@ -2286,7 +2322,7 @@ function AttendancePageInner() {
                 </div>
               ))}
 
-              {groupedWorkforceDirectory.length === 0 && (
+              {groupedWorkforceDirectory.length === 0 && (!isSupervisor || (workforceTeam.status === 'ready' && missingWorkforceProfiles === 0)) && (
                 <div className="bg-white rounded-xl border border-surface-border">
                   <EmptyState
                     title="No workers match"

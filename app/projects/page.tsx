@@ -24,8 +24,9 @@ import { Select } from '@/components/ui/Select';
 import { SearchableSelect } from '@/components/ui/SearchableSelect';
 import { Modal } from '@/components/ui/Modal';
 import { useToast } from '@/components/ui/Toast';
-import { formatPesoCompact } from '@/lib/email/format';
+import { formatPeso, formatPesoCompact } from '@/lib/email/format';
 import { getBudgetSummary } from '@/lib/projects/budgetSummary';
+import { useExpenseTotals } from '@/lib/projects/useExpenseTotals';
 import { ProjectCover } from '@/components/projects/ProjectCover';
 import { localDateInputValue, validateProjectForm } from '@/lib/projects/form';
 import { normalizeClientForm } from '@/lib/clients/form';
@@ -39,11 +40,12 @@ export default function ProjectsPage() {
     projects,
     clients,
     invoices,
-    expenses,
     createProject,
     createClient,
     getProjectsForSupervisor,
   } = useDataStore();
+
+  const expenseTotals = useExpenseTotals(user?.id, isFounder, projects.map(project => project.id));
 
   const [searchQuery, setSearchQuery] = useState('');
   const [statusFilter, setStatusFilter] = useState<string>('all');
@@ -198,17 +200,22 @@ export default function ProjectsPage() {
           </div>
         </WorkspaceFilters>
 
+        {isFounder && <div className="flex flex-wrap items-center gap-2 text-xs text-ink-secondary">
+          <span>Recorded expense entries only; payroll and rentals are not yet integrated automatically. Invoice figures use loaded records.</span>
+          <Button type="button" variant="secondary" size="sm" onClick={expenseTotals.refresh}>Refresh expense totals</Button>
+          {expenseTotals.status === 'error' && <span role="alert" className="text-status-danger">Expense totals could not be loaded.</span>}
+        </div>}
+
         {/* Projects Cards Grid */}
         <div data-page-guide="list" className="grid grid-cols-1 md:grid-cols-2 gap-4 auto-rows-fr">
           {filteredProjects.map((proj) => {
             const client = clients.find((c) => c.id === proj.client_id);
             const projInvoices = invoices.filter((i) => i.project_id === proj.id);
-            const projExpenses = expenses.filter((e) => e.project_id === proj.id);
 
             const totalInvoiced = projInvoices.reduce((sum, i) => sum + Number(i.amount || 0), 0);
             const totalCollected = projInvoices.reduce((sum, i) => sum + Number(i.amount_paid || 0), 0);
-            const totalExp = projExpenses.reduce((sum, e) => sum + Number(e.amount || 0), 0);
-            const budget = getBudgetSummary(Number(proj.budget_estimate), totalExp);
+            const totalExp = expenseTotals.totals.get(proj.id)?.total;
+            const budget = totalExp == null ? null : getBudgetSummary(Number(proj.budget_estimate), totalExp);
 
             const statusBadgeVariant =
               proj.status === 'active'
@@ -274,11 +281,11 @@ export default function ProjectsPage() {
                       </div>
                       <div className="flex justify-between text-xs">
                         <span className="text-ink-secondary">Total Site Expenses:</span>
-                        <span className="font-semibold text-navy">{formatPHP(totalExp)}</span>
+                        <span className="font-semibold text-navy">{totalExp == null ? (expenseTotals.status === 'error' ? 'Unavailable' : 'Loading…') : formatPeso(totalExp)}</span>
                       </div>
 
-                      <p className="text-[11px] leading-relaxed text-ink-secondary">Invoice totals include all recorded statuses, including drafts and cancelled invoices.</p>
-                      {budget.percent === null ? (
+                      <p className="text-[11px] leading-relaxed text-ink-secondary">Loaded invoice totals include all statuses, including drafts and cancelled invoices.</p>
+                      {budget == null ? <p className="text-xs text-ink-secondary">Budget usage unavailable until expense totals load.</p> : budget.percent === null ? (
                         <p className="text-xs font-semibold text-ink-secondary">Budget usage unavailable — no estimate set.</p>
                       ) : (
                         <div className="space-y-1.5">

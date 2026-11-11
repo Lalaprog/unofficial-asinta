@@ -574,11 +574,10 @@ export default function LoginPage() {
         </div>
       </main>
 
-      {/* Bottom Trademark Footer */}
+      {/* Bottom Studio Footer */}
       <div className="relative z-10 pt-5 flex items-center justify-center gap-2 text-xs text-ink-secondary">
         <AsintaEmblem size={15} />
         <AsintaWordmark height={12} />
-        <span className="text-[9px] font-bold text-ink-muted">TM</span>
         <span className="text-surface-border">·</span>
         <span className="text-[11px] text-ink-muted">&copy; {new Date().getFullYear()} All Rights Reserved</span>
       </div>

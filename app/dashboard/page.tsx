@@ -713,7 +713,7 @@ export default function FounderDashboard() {
             <p className="mt-2 text-[11px] font-medium text-ink-muted">
               Snapshot as of {formatDatePH(metrics.asOfDate)}
             </p>
-            <div className="mt-4 inline-flex w-full max-w-sm items-center gap-3 rounded-xl border border-[#e3dccd] bg-white/75 px-3 py-1 shadow-sm transition-colors focus-within:border-brand/50 focus-within:ring-2 focus-within:ring-brand/15 sm:w-auto">
+            <div className="mt-4 inline-flex w-full max-w-sm items-center gap-3 rounded-xl border border-[#e3dccd] bg-white/75 px-3 py-1 shadow-sm transition-colors focus-within:border-brand/50 focus-within:ring-2 focus-within:ring-brand/15 sm:w-auto lg:hidden">
               <label htmlFor="dashboard-project-scope" className="shrink-0 text-[10px] font-bold uppercase tracking-wider text-ink-muted">Project</label>
               <div className="relative min-w-0 flex-1">
                 <select

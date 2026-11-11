@@ -35,5 +35,11 @@ describe('history page client',()=>{
     await waitFor(()=>expect(result.current.items).toHaveLength(1));act(()=>result.current.loadMore());await waitFor(()=>expect(result.current.error).toBe('offline'));
     expect(result.current.items).toHaveLength(1);act(()=>result.current.retry());await waitFor(()=>expect(result.current.error).toBeNull());
   });
+  it('rejects records returned for the wrong site or date',async()=>{
+    mock.rpc.mockResolvedValueOnce({data:{items:[{id:'r',worker_id:'w',project_id:'other',date:'2026-01-01',status:'present',is_supervisor:false,is_founder_override:false}],has_more:false},error:null});
+    const {result}=renderHook(()=>useAttendanceHistory('records',true,'f',{projectId:'site',status:'all',date:'2026-01-01',search:''},0));
+    await waitFor(()=>expect(result.current.error).toMatch(/requested scope/));
+    expect(result.current.items).toHaveLength(0);
+  });
   it('rejects malformed responses',()=>{for(const bad of [null,{}, {items:[],has_more:true},{items:[{date:'2025-01-01',project_id:'x'}],has_more:false}]) expect(()=>parseHistoryPage(bad,'sheets')).toThrow()});
 });
