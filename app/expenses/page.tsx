@@ -10,6 +10,7 @@ import { ExpenseCategory, type Expense, type ExpenseLineItem } from '@/types';
 import { ExpenseItemsEditor } from '@/components/expenses/ExpenseItemsEditor';
 import { ReceiptPhotoViewer } from '@/components/expenses/ReceiptPhotoViewer';
 import { ReceiptInbox } from '@/components/expenses/ReceiptInbox';
+import { downloadInboxPhoto, ReceiptInboxMismatchError, type ReceiptInboxItem } from '@/lib/expenses/receiptInbox';
 import { ExpenseDetailsModal } from '@/components/expenses/ExpenseDetailsModal';
 import { loadExpenseDraft, saveExpenseDraft, deleteExpenseDraft } from '@/lib/expenses/draftStore';
 import { stableDraftJson, type SavedDraftPayload, type SavedDraftRow } from '@/lib/expenses/savedDraft';
@@ -58,6 +59,17 @@ import { resolveReceiptForSubmission } from '@/lib/expenses/receiptSubmission';
 import { VISION_MAX_IMAGE_BYTES } from '@/lib/ai/models';
 import { useQuickAction } from '@/lib/mobile/quickActions';
 import { formatRetryWait, validRetryAfter } from '@/lib/ai/cooldown';
+
+/** Bound each saved-photo network stage so an unresponsive request cannot
+ * trap the Founder in a disabled expense form. A late result is never applied. */
+async function withReceiptScanTimeout<T>(operation: PromiseLike<T>, onTimeout?: () => void): Promise<T> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  try {
+    return await Promise.race([Promise.resolve(operation), new Promise<never>((_, reject) => {
+      timer = setTimeout(() => { onTimeout?.(); reject(new Error('Receipt scan timed out')); }, 45000);
+    })]);
+  } finally { if (timer !== undefined) clearTimeout(timer); }
+}
 
 export default function ExpensesPage() {
   const { user, isFounder, assurance, isLoading: authLoading } = useAuth();
@@ -123,6 +135,10 @@ export default function ExpensesPage() {
   // Draft from a line of text or a receipt photo.
   const [quickText, setQuickText] = useState('');
   const [isDrafting, setIsDrafting] = useState(false);
+  const [isScanningInbox, setIsScanningInbox] = useState(false);
+  const receiptScanLock = React.useRef(false);
+  const inboxSelectionLock = React.useRef(false);
+  React.useEffect(() => { if (!isAddModalOpen) inboxSelectionLock.current = false; }, [isAddModalOpen]);
   const [receiptLimitNotice, setReceiptLimitNotice] = useState(false);
   const [receiptRetryAt, setReceiptRetryAt] = useState<number | null>(null);
   const [retryClock, setRetryClock] = useState(0);
@@ -206,7 +222,7 @@ export default function ExpensesPage() {
   };
 
   const handleSaveDraft = async (closeAfter = false) => {
-    if (draftSaveLock.current || !user || draftLoadState !== 'ready' || isUploadingReceipt || isSubmitting) {
+    if (draftSaveLock.current || !user || draftLoadState !== 'ready' || isUploadingReceipt || isSubmitting || isScanningInbox) {
       if (draftLoadState === 'error') showToast('error', 'Saved drafts are unavailable. Refresh before trying to save a draft.');
       return;
     }
@@ -231,7 +247,7 @@ export default function ExpensesPage() {
     finally { draftSaveLock.current = false; setIsSavingDraft(false); }
   };
   const requestCloseEntry = () => {
-    if (isSubmitting || isUploadingReceipt || isSavingDraft) return;
+    if (isSubmitting || isUploadingReceipt || isSavingDraft || isScanningInbox) return;
     if (hasUnfinishedEntry && !unchangedSavedDraft) setShowCloseDraft(true);
     else setIsAddModalOpen(false);
   };
@@ -366,7 +382,7 @@ export default function ExpensesPage() {
   const handleAddSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (activeDraftId && expenses.some(expense => expense.id === activeDraftId)) { showToast('error', 'This draft matches a recorded expense. Check the ledger before doing anything else.'); return; }
-    if (expenseSubmitLock.current || isUploadingReceipt || !formData.project_id || !formData.description || !formData.amount || !formData.expense_date || !formData.category) return;
+    if (expenseSubmitLock.current || isUploadingReceipt || isScanningInbox || !formData.project_id || !formData.description || !formData.amount || !formData.expense_date || !formData.category) return;
     const parsedItems = prepareExpenseItems(itemRows);
     if (parsedItems.error) { showToast('error', parsedItems.error); return; }
     if (formData.details.length > 5000) { showToast('error', 'Keep details under 5,000 characters.'); return; }
@@ -645,7 +661,7 @@ export default function ExpensesPage() {
    */
   const applyDraft = (
     nextDraft: ExpenseDraft,
-    input: { kind: 'text' | 'receipt'; model?: string | null; extractedText?: string | null }
+    input: { kind: 'text' | 'receipt'; model?: string | null; extractedText?: string | null; storedReceiptPath?: string }
   ) => {
     setFormData((previous) => input.kind === 'receipt' ? {
       ...previous,
@@ -657,7 +673,7 @@ export default function ExpensesPage() {
       category: nextDraft.category ?? '',
       vendor: nextDraft.vendor ?? '',
       notes: '',
-      receipt_url: null,
+      receipt_url: input.storedReceiptPath ?? null,
     } : {
       ...previous,
       description: nextDraft.description || previous.description,
@@ -768,25 +784,39 @@ export default function ExpensesPage() {
       reader.readAsDataURL(file);
     });
 
-  const handleDraftFromReceipt = async (file: File) => {
-    if (isDrafting) return;
-    const check = validateReceiptFile(file);
-    if (!check.ok || file.size > VISION_MAX_IMAGE_BYTES) {
-      showToast('error', check.error || 'Receipt scanning accepts JPEG, PNG or WebP up to 4 MB. You can attach a photo up to 5 MB manually.');
+  const handleDraftFromReceipt = async (source: File | ReceiptInboxItem) => {
+    if (isDrafting || receiptScanLock.current || receiptRetrySeconds > 0) return;
+    const saved = source instanceof File ? null : source;
+    const sourceSize = saved ? saved.file_size : (source as File).size;
+    if (sourceSize > VISION_MAX_IMAGE_BYTES) {
+      showToast('error', 'Receipt scanning accepts JPEG, PNG or WebP up to 4 MB. You can attach a photo up to 5 MB manually.');
       return;
     }
-    if (receiptRetrySeconds > 0) return;
+    if (!saved) {
+      const check = validateReceiptFile(source as File);
+      if (!check.ok) { showToast('error', check.error || 'That photo cannot be scanned.'); return; }
+    }
+    receiptScanLock.current = true;
     setReceiptLimitNotice(false); setReceiptRetryAt(null);
     setIsDrafting(true);
+    if (saved) setIsScanningInbox(true);
 
     try {
-      const { mediaType, base64 } = await readReceiptFileAsBase64(file);
-      const response = await fetch('/api/ai/receipt-draft', {
+      // A saved photo is read through the Founder's private storage session.
+      // Keep its existing path; do not upload a second copy on draft/save.
+      const file = saved ? await withReceiptScanTimeout(downloadInboxPhoto(supabase, saved)) : source as File;
+      const reading = readReceiptFileAsBase64(file);
+      const { mediaType, base64 } = saved ? await withReceiptScanTimeout(reading) : await reading;
+      const controller = saved ? new AbortController() : null;
+      const request = fetch('/api/ai/receipt-draft', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ mediaType, base64 }),
+        ...(controller ? { signal: controller.signal } : {}),
       });
-      const payload = await response.json().catch(() => null);
+      const response = saved ? await withReceiptScanTimeout(request, () => controller?.abort()) : await request;
+      const body = response.json().catch(() => null);
+      const payload = saved ? await withReceiptScanTimeout(body, () => controller?.abort()) : await body;
 
       if (!response.ok || !payload?.ok || !payload?.draft) {
         if (response.status === 429 || payload?.rateLimited === true) {
@@ -794,20 +824,20 @@ export default function ExpensesPage() {
           setReceiptLimitNotice(true);
           if (wait) { const now = Date.now(); setRetryClock(now); setReceiptRetryAt(now + wait * 1000); }
         }
-        // Honest failure: the manual path is untouched and we say so.
-        showToast(
-          'error',
-          `${payload?.error || 'The receipt could not be read.'} No new photo was attached; you can attach it manually.`
-        );
+        showToast('error', saved
+          ? `${payload?.error || 'The receipt could not be read.'} Your saved photo is still attached; enter details manually.`
+          : `${payload?.error || 'The receipt could not be read.'} No new photo was attached; you can attach it manually.`);
         return;
       }
 
-      setActiveDraftId(crypto.randomUUID());
+      // For an inbox photo the draft ID and attachment were established before
+      // the asynchronous download; the form is locked until this completes.
+      if (!saved) setActiveDraftId(crypto.randomUUID());
       setItemRows(itemInputs(Array.isArray(payload.items) ? payload.items as ExpenseLineItem[] : []));
-      setPendingReceiptFile(file);
+      setPendingReceiptFile(saved ? null : file);
       setReceiptFileName(file.name);
       setPendingReceiptPreview((previous) => {
-        if (previous) URL.revokeObjectURL(previous);
+        if (previous?.startsWith('blob:')) URL.revokeObjectURL(previous);
         return URL.createObjectURL(file);
       });
       setContextWarnings(Array.isArray(payload.contextWarnings) ? payload.contextWarnings : []);
@@ -828,17 +858,36 @@ export default function ExpensesPage() {
         kind: 'receipt',
         model: payload.read?.model ?? null,
         extractedText: payload.read?.extractedText ?? null,
+        storedReceiptPath: saved?.object_path,
       });
     } catch (caught) {
-      showToast(
-        'error',
-        caught instanceof Error
-          ? `Receipt reading failed: ${caught.message}`
-          : 'Receipt reading failed.'
-      );
+      if (saved && caught instanceof ReceiptInboxMismatchError) {
+        setFormData(previous => ({...previous, receipt_url: null}));
+        setReceiptFileName(null);
+        showToast('error', 'The saved photo no longer matches its inbox record, so it was not attached. Check the photo before continuing.');
+      } else {
+        showToast('error', saved
+          ? 'The saved photo could not be safely scanned. Its link remains attached; check the photo before manual entry.'
+          : caught instanceof Error ? `Receipt reading failed: ${caught.message}` : 'Receipt reading failed.');
+      }
     } finally {
+      receiptScanLock.current = false;
+      setIsScanningInbox(false);
       setIsDrafting(false);
     }
+  };
+
+  const startInboxExpense = (item: ReceiptInboxItem, scan: boolean) => {
+    if (draftLoadState !== 'ready' || !isLoaded || hasUnfinishedEntry || savedDraft || isAddModalOpen || isDrafting || isSubmitting || receiptScanLock.current || inboxSelectionLock.current) return;
+    if (scan && receiptRetrySeconds > 0) return;
+    inboxSelectionLock.current = true;
+    setActiveDraftId(crypto.randomUUID());
+    setFormData(previous => ({...previous, receipt_url:item.object_path}));
+    setReceiptFileName(item.file_name);
+    setPendingReceiptFile(null);
+    setPendingReceiptPreview(previous => {if(previous?.startsWith('blob:')) URL.revokeObjectURL(previous); return null;});
+    setIsAddModalOpen(true);
+    if (scan) void handleDraftFromReceipt(item);
   };
 
   const openDraftPhoto = async () => {
@@ -878,15 +927,7 @@ export default function ExpensesPage() {
         {savedDraft && <div className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-brand/20 bg-surface-inset p-4"><div><p className="text-sm font-bold text-navy">Saved expense draft</p><p className="text-xs text-ink-secondary">{expenses.some(expense => expense.id === savedDraft.draft_id) ? 'This draft matches a recorded expense. Check the ledger before discarding it.' : 'Review before recording. Saving a draft does not add an expense.'}</p></div><div className="flex flex-wrap gap-2"><Button type="button" size="sm" variant="secondary" isLoading={isOpeningDraft} onClick={() => void resumeDraft()}>Continue draft</Button><Button type="button" size="sm" variant="ghost" onClick={() => setShowDiscardDraft(true)}>Discard draft</Button></div></div>}
         {hasUnfinishedEntry && (!savedDraft || activeDraftId !== savedDraft.draft_id) && <div className="rounded-xl border border-brand/20 bg-surface-inset p-4 text-sm text-ink-secondary">You have an unfinished entry on this page. <button type="button" onClick={() => setIsAddModalOpen(true)} className="font-semibold text-navy underline">Continue entry</button>. It is not saved until you choose Save draft or confirm the expense.</div>}
 
-        {isFounder && assurance === 'ready' && user && <ReceiptInbox key={user.id} userId={user.id} canUse={draftLoadState === 'ready' && isLoaded && !hasUnfinishedEntry && !savedDraft && !isAddModalOpen && !isDrafting && !isSubmitting} onView={path => void openReceiptPreview(path)} onUse={item => {
-          if (draftLoadState !== 'ready' || !isLoaded || hasUnfinishedEntry || savedDraft || isAddModalOpen || isDrafting || isSubmitting) return;
-          setActiveDraftId(crypto.randomUUID());
-          setFormData(previous => ({...previous, receipt_url:item.object_path}));
-          setReceiptFileName(item.file_name);
-          setPendingReceiptFile(null);
-          setPendingReceiptPreview(previous => {if(previous?.startsWith('blob:')) URL.revokeObjectURL(previous); return null;});
-          setIsAddModalOpen(true);
-        }} />}
+        {isFounder && assurance === 'ready' && user && <ReceiptInbox key={user.id} userId={user.id} canUse={draftLoadState === 'ready' && isLoaded && !hasUnfinishedEntry && !savedDraft && !isAddModalOpen && !isDrafting && !isSubmitting} canScan={draftLoadState === 'ready' && isLoaded && !hasUnfinishedEntry && !savedDraft && !isAddModalOpen && !isDrafting && !isSubmitting && receiptRetrySeconds === 0} onView={path => void openReceiptPreview(path)} onUse={item => startInboxExpense(item, false)} onScan={item => startInboxExpense(item, true)} />}
 
         {/* ------------------------------------------------------------------
             Draft from text or a receipt photo.
@@ -1205,16 +1246,17 @@ export default function ExpensesPage() {
       <Modal
         isOpen={isAddModalOpen}
         onClose={requestCloseEntry}
-        dismissOnBackdrop={!isSubmitting && !isUploadingReceipt && !isSavingDraft}
-        dismissOnEscape={!isSubmitting && !isUploadingReceipt && !isSavingDraft}
-        showCloseButton={!isSubmitting && !isUploadingReceipt && !isSavingDraft}
+        dismissOnBackdrop={!isSubmitting && !isUploadingReceipt && !isSavingDraft && !isScanningInbox}
+        dismissOnEscape={!isSubmitting && !isUploadingReceipt && !isSavingDraft && !isScanningInbox}
+        showCloseButton={!isSubmitting && !isUploadingReceipt && !isSavingDraft && !isScanningInbox}
         title="Record Site Expense"
         description="Review and correct every field before saving."
         maxWidth="5xl"
         presentation="workspace"
       >
+        {isScanningInbox && <p role="status" className="mb-4 text-sm text-ink-secondary">Reading the saved photo… Please wait. If reading fails, check the photo before continuing.</p>}
         <p role="status" className="mb-4 text-xs text-ink-secondary">{unchangedSavedDraft ? 'Draft saved. Changes after this point need saving again.' : 'Unsaved changes — choose Save draft before leaving to continue later.'}</p>
-        <form onSubmit={handleAddSubmit}><fieldset disabled={isSavingDraft || isSubmitting || isUploadingReceipt} className="min-w-0"><div className={draft ? "grid min-w-0 gap-5 text-sm lg:grid-cols-[minmax(0,0.9fr)_minmax(0,1.1fr)] lg:items-start lg:gap-6" : "min-w-0 space-y-4 text-sm"}>
+        <form onSubmit={handleAddSubmit}><fieldset disabled={isSavingDraft || isSubmitting || isUploadingReceipt || isScanningInbox} className="min-w-0"><div className={draft ? "grid min-w-0 gap-5 text-sm lg:grid-cols-[minmax(0,0.9fr)_minmax(0,1.1fr)] lg:items-start lg:gap-6" : "min-w-0 space-y-4 text-sm"}>
           {/* DRAFT REVIEW — what the AI read, what the rules verified, and what
               is still missing. The Founder confirms; nothing is saved yet. */}
           {draft && (

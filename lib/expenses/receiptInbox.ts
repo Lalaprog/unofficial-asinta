@@ -47,3 +47,19 @@ export async function uploadAndFinishInbox(client:SupabaseClient,item:ReceiptInb
   return !checked.error && !!checked.data && matchesReady(checked.data);
  }catch{return false;}
 }
+
+/** A changed object must not silently remain attached to a new expense. */
+export class ReceiptInboxMismatchError extends Error {
+ constructor() { super('The saved photo no longer matches its inbox record.'); this.name='ReceiptInboxMismatchError'; }
+}
+
+/** Download only the selected private object; verify its bytes before sending to AI. */
+export async function downloadInboxPhoto(client:SupabaseClient,item:ReceiptInboxItem):Promise<File> {
+ if(item.status!=='ready') throw new Error('This photo upload is not ready.');
+ const {data,error}=await client.storage.from(RECEIPT_BUCKET).download(item.object_path);
+ if(error || !data) throw new Error('The saved photo could not be downloaded.');
+ if(data.size!==item.file_size) throw new ReceiptInboxMismatchError();
+ const file=new File([data],item.file_name,{type:item.mime_type});
+ if(!matchesReceiptFile(item,file,await receiptDigest(file))) throw new ReceiptInboxMismatchError();
+ return file;
+}

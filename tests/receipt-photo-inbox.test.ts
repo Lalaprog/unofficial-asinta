@@ -1,5 +1,5 @@
 import {describe,expect,it,vi} from 'vitest';
-import {matchesReceiptFile,parseReceiptItem,parseReceiptPage,prepareInboxItem,receiptDigest,uploadAndFinishInbox} from '@/lib/expenses/receiptInbox';
+import {downloadInboxPhoto,matchesReceiptFile,parseReceiptItem,parseReceiptPage,prepareInboxItem,receiptDigest,uploadAndFinishInbox} from '@/lib/expenses/receiptInbox';
 const owner='11111111-1111-4111-8111-111111111111',id='aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa';
 const item={id,saved_by:owner,object_path:`${owner}/inbox/${id}.jpg`,file_name:'photo.jpg',mime_type:'image/jpeg',file_size:3,sha256:'a'.repeat(64),status:'pending' as const,created_at:'2026-10-01T00:00:00+00:00'};
 describe('receipt inbox preparation and recovery',()=>{
@@ -22,4 +22,16 @@ describe('receipt inbox preparation and recovery',()=>{
   const client={storage:{from:()=>({upload})},from:()=>({update:()=>query})};
   expect(await uploadAndFinishInbox(client as never,data,file)).toBe(true);expect(upload).toHaveBeenCalledTimes(1);
  });
+ it('reads only a ready private photo whose bytes match its recorded digest',async()=>{
+  const file=new File(['abc'],'photo.jpg',{type:'image/jpeg'}),digest=await receiptDigest(file);
+  const ready={...item,status:'ready' as const,sha256:digest};
+  const download=vi.fn().mockResolvedValue({data:new Blob(['abc'],{type:'image/jpeg'}),error:null});
+  const client={storage:{from:()=>({download})}};
+  expect((await downloadInboxPhoto(client as never,ready)).size).toBe(3);
+  expect(download).toHaveBeenCalledWith(item.object_path);
+  download.mockResolvedValue({data:new Blob(['bad'],{type:'image/jpeg'}),error:null});
+  await expect(downloadInboxPhoto(client as never,ready)).rejects.toThrow(/no longer matches/);
+  await expect(downloadInboxPhoto(client as never,item)).rejects.toThrow(/not ready/);
+ });
+
 });
