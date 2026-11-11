@@ -10,7 +10,7 @@ vi.mock('@/lib/supabase/admin',()=>({isServiceRoleConfigured:()=>true,createServ
 import { GET, POST } from '@/app/api/projects/[id]/workers/route';
 const p='10000000-0000-0000-0000-000000000001', w='20000000-0000-0000-0000-000000000001';
 const request=(body:unknown)=>new NextRequest(`http://localhost/api/projects/${p}/workers`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});
-beforeEach(()=>{vi.clearAllMocks();state.allowed=true;state.assured=true;state.signedIn=true;state.countOverride=null;});
+beforeEach(()=>{vi.clearAllMocks();state.allowed=true;state.assured=true;state.signedIn=true;state.countOverride=null;state.rpc.mockResolvedValue({data:[{id:w,name:'Mara',position:'Mason',contact_number:'—'}],error:null});});
 describe('project workers endpoint',()=>{
   it('does not create a service client without verified project access and MFA',async()=>{
     state.allowed=false;expect((await POST(request({action:'assign',workerId:w}),{params:{id:p}})).status).toBe(404);
@@ -18,9 +18,9 @@ describe('project workers endpoint',()=>{
     state.assured=true;state.signedIn=false;expect((await GET(new NextRequest('http://localhost'),{params:{id:p}})).status).toBe(401);
     expect(state.service).not.toHaveBeenCalled();
   });
-  it('reads via user-scoped RLS, not the service client',async()=>{
+  it('reads team via RLS and checks availability through a scoped guarded service function',async()=>{
     const response=await GET(new NextRequest('http://localhost'),{params:{id:p}});
-    expect((await response.json()).workerIds).toEqual([w]);expect(state.service).not.toHaveBeenCalled();
+    const body=await response.json();expect(body.workerIds).toEqual([w]);expect(body.availableWorkers).toEqual([{id:w,name:'Mara',position:'Mason',contact_number:'—'}]);expect(state.rpc).toHaveBeenCalledWith('available_project_workers_guarded',{p_actor:'00000000-0000-0000-0000-000000000002',p_project:p});
   });
   it('does not return a silently truncated project team',async()=>{
     state.countOverride=2;
@@ -34,6 +34,15 @@ describe('project workers endpoint',()=>{
     state.rpc.mockResolvedValue({data:{worker_id:w},error:null});
     expect((await POST(request(create),{params:{id:p}})).status).toBe(200);
     expect(state.rpc).toHaveBeenCalledWith('create_project_worker_guarded',expect.objectContaining({p_actor:'00000000-0000-0000-0000-000000000002',p_project:p,p_request:w,p_rate:'850'}));
+  });
+  it('reports a definite cross-site conflict without claiming a change',async()=>{
+    state.rpc.mockResolvedValue({data:null,error:{code:'P1003'}});
+    const response=await POST(request({action:'assign',workerId:w}),{params:{id:p}});
+    expect(response.status).toBe(409);expect((await response.json()).error).toMatch(/already assigned/);
+  });
+  it('fails closed when availability could not be verified',async()=>{
+    state.rpc.mockResolvedValue({data:null,error:{code:'XX000'}});
+    expect((await GET(new NextRequest('http://localhost'),{params:{id:p}})).status).toBe(503);
   });
   it('does not claim success on an unconfirmed assignment',async()=>{
     state.rpc.mockRejectedValue(new Error('lost response'));

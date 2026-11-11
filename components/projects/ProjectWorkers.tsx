@@ -8,9 +8,12 @@ import { Input } from '@/components/ui/Input';
 import { ConfirmDialog } from '@/components/ui/ConfirmDialog';
 import type { Worker } from '@/types';
 
+type AvailableWorker = Pick<Worker, 'id' | 'name' | 'position' | 'contact_number'>;
+
 export function ProjectWorkers({ projectId }: { projectId: string }) {
   const { workers, refresh, isLoaded, loadError } = useDataStore();
   const [ids, setIds] = useState<string[] | null>(null);
+  const [availableWorkers, setAvailableWorkers] = useState<AvailableWorker[] | null>(null);
   const [loading, setLoading] = useState(true);
   const [pending, setPending] = useState(false);
   const [error, setError] = useState('');
@@ -34,10 +37,10 @@ export function ProjectWorkers({ projectId }: { projectId: string }) {
       if (refreshWorkers) await refresh();
       const res = await fetch(endpoint, {cache:'no-store'});
       const body = await res.json();
-      if (!res.ok || !Array.isArray(body.workerIds) || body.workerIds.some((id:unknown) => typeof id !== 'string')) throw new Error('unavailable');
-      setIds(body.workerIds); setNeedsCheck(false); return true;
+      if (!res.ok || !Array.isArray(body.workerIds) || body.workerIds.some((id:unknown) => typeof id !== 'string') || !Array.isArray(body.availableWorkers) || body.availableWorkers.some((worker: unknown) => !worker || typeof worker !== 'object' || !('id' in worker) || typeof worker.id !== 'string' || !('name' in worker) || typeof worker.name !== 'string' || !('position' in worker) || typeof worker.position !== 'string' || !('contact_number' in worker) || typeof worker.contact_number !== 'string')) throw new Error('unavailable');
+      setIds(body.workerIds); setAvailableWorkers(body.availableWorkers); setNeedsCheck(false); return true;
     } catch {
-      setIds(null); setNeedsCheck(true); setError('Could not load the project team. Please try again.'); return false;
+      setIds(null); setAvailableWorkers(null); setNeedsCheck(true); setError('Could not load the project team. Please try again.'); return false;
     } finally { setLoading(false); }
   }, [endpoint, refresh]);
   // Refresh identity is not stable across store updates; load once for this mounted project.
@@ -68,7 +71,7 @@ export function ProjectWorkers({ projectId }: { projectId: string }) {
   };
 
   const current = (ids || []).map((id) => workers.find((worker) => worker.id === id) || {id, name:'Worker unavailable'});
-  const candidates = workers.filter((worker) => worker.active && !(ids || []).includes(worker.id))
+  const candidates = (availableWorkers || [])
     .filter((worker) => `${worker.name} ${worker.position}`.toLowerCase().includes(search.trim().toLowerCase()))
     .sort((a,b) => a.name.localeCompare(b.name));
   const similar = name.trim().length >= 2 ? workers.filter((worker) => worker.name.toLowerCase().includes(name.trim().toLowerCase())).slice(0,5) : [];
@@ -92,7 +95,7 @@ export function ProjectWorkers({ projectId }: { projectId: string }) {
     {message && <p role="status" className="text-xs text-status-success">{message}</p>}
     {needsCheck && <Button type="button" variant="secondary" size="sm" disabled={pending} onClick={() => void load(true)}>Refresh and check team</Button>}
     {showAdd && !needsCheck && <div className="space-y-3 rounded-xl border border-surface-border bg-white p-4">
-      <div><h4 className="text-sm font-semibold text-navy">Add an existing worker</h4><p className="mt-1 text-xs text-ink-secondary">Search the shared workforce first to avoid duplicate profiles.</p></div>
+      <div><h4 className="text-sm font-semibold text-navy">Add an existing worker</h4><p className="mt-1 text-xs text-ink-secondary">Only unassigned workers are available for this project.</p></div>
       <Input label="Search existing workers" placeholder="Name or craft" leftIcon={<Search className="h-4 w-4" />} value={search} onChange={(e) => setSearch(e.target.value)} />
       {!isLoaded ? <p className="text-xs text-ink-secondary">Loading workforce…</p> : loadError ? <p className="text-xs text-status-danger">The workforce could not be fully loaded. Refresh before adding someone.</p> : <div className="max-h-64 overflow-y-auto rounded-lg border border-surface-border">
         {candidates.length ? candidates.map((worker) => <div key={worker.id} className="flex flex-wrap items-center justify-between gap-2 border-b border-surface-border p-3 last:border-0">

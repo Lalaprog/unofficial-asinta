@@ -1,6 +1,6 @@
 # Client change plan and deferred items
 
-This is a working plan, not a statement that all features below have been delivered. The first batch only includes the items explicitly described by its PR and must not be treated as a payroll, attendance, permission or database rollout.
+This is a working plan, not a statement that all features below have been delivered. The draft PR only includes the items explicitly described in its summary and must not be treated as a completed payroll, attendance, privacy or database rollout.
 
 ## Agreed rules for later implementation
 
@@ -19,3 +19,7 @@ This is a working plan, not a statement that all features below have been delive
 - Supervisor expense photo attachment/scanning and submitting an expense for Founder approval before it counts in project totals. This is not part of the current scope.
 - Revisit whether or how company-wide Supervisor wages should be allocated to projects if the client clarifies their accounting practice.
 - Client-owned deployment: use a reviewed structure-only migration and verify security/configuration. Do not copy development business records or accounts. The existing fresh-install bundle must be verified and updated before use.
+
+## Assignment rollout and outstanding privacy work
+
+The draft adds a guarded single-project assignment path and available-worker lookup; it does not change existing duplicate assignments. Its migration must be applied and verified before the app using the new lookup is deployed. Supervisor exceptions use a worker UUID linked to a Supervisor account; unlinked legacy identities need review. The existing global worker-read policy and other workforce entry points are not yet redesigned, so this change alone does not establish the requested Supervisor privacy boundary. Privileged service-role direct writes bypass the guarded assignment function; all app assignment entry points must use the guarded path. Do not infer live concurrency safety from the single-session database tests. The hosted migration history differs from the repository; do not blindly push migrations.

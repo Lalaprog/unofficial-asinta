@@ -9,11 +9,13 @@ const state = vi.hoisted(() => ({ workers: [
 vi.mock('@/lib/data/store',()=>({useDataStore:()=>({workers:state.workers,refresh:state.refresh,isLoaded:true,loadError:null})}));
 import { ProjectWorkers } from '@/components/projects/ProjectWorkers';
 let ids:string[];
+let unavailable:string[];
+let extraAvailable:Array<{id:string;name:string;position:string;contact_number:string}>;
 beforeEach(()=>{
-  ids=[];
+  ids=[]; unavailable=[]; extraAvailable=[];
   vi.stubGlobal('fetch',vi.fn(async(_url:string,opts?:RequestInit)=>{
     if(opts?.method==='POST') {const body=JSON.parse(String(opts.body));if(body.action==='assign') ids.push(body.workerId);if(body.action==='remove') ids=ids.filter(id=>id!==body.workerId);return {ok:true,json:async()=>({ok:true})};}
-    return {ok:true,json:async()=>({workerIds:ids})};
+    return {ok:true,json:async()=>({workerIds:ids,availableWorkers:[...state.workers.filter(w=>!ids.includes(w.id) && !unavailable.includes(w.id)).map(({id,name,position,contact_number})=>({id,name,position,contact_number})),...extraAvailable]})};
   }));
 });
 afterEach(()=>{cleanup();vi.unstubAllGlobals();vi.clearAllMocks();});
@@ -31,6 +33,21 @@ describe('project team UI',()=>{
     const post=vi.mocked(fetch).mock.calls.find(([,opts])=>opts?.method==='POST');
     expect(JSON.parse(String(post?.[1]?.body))).toMatchObject({action:'assign',workerId:state.workers[0].id});
     expect(screen.getByText(/does not mark attendance or change payroll/)).toBeTruthy();
+  });
+  it('shows only the server-verified unassigned workers as add candidates', async()=>{
+    unavailable=[state.workers[0].id];
+    render(React.createElement(ProjectWorkers,{projectId:'10000000-0000-0000-0000-000000000001'}));
+    await screen.findByText(/No workers have been assigned/);
+    fireEvent.click(screen.getByRole('button',{name:'Add worker'}));
+    expect(screen.queryByRole('button',{name:'Add Mara Cruz'})).toBeNull();
+    expect(screen.getByRole('button',{name:'Add Juan Cruz'})).toBeTruthy();
+  });
+  it('shows server-verified candidates even if absent from the shared worker store', async()=>{
+    extraAvailable=[{id:'20000000-0000-0000-0000-000000000003',name:'Extra Worker',position:'Mason',contact_number:'—'}];
+    render(React.createElement(ProjectWorkers,{projectId:'10000000-0000-0000-0000-000000000001'}));
+    await screen.findByText(/No workers have been assigned/);
+    fireEvent.click(screen.getByRole('button',{name:'Add worker'}));
+    expect(screen.getByRole('button',{name:'Add Extra Worker'})).toBeTruthy();
   });
   it('groups assigned workers by craft in collapsible sections', async()=>{
     ids=state.workers.map(worker=>worker.id);
