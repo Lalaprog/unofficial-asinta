@@ -17,6 +17,28 @@ afterEach(()=>{cleanup();vi.unstubAllGlobals()});
 async function saveAndClose(dialog:HTMLElement){fireEvent.click(within(dialog).getByRole('button',{name:'Cancel'}));const confirmation=screen.getByRole('alertdialog',{name:'Unfinished expense'});await waitFor(()=>expect((within(confirmation).getByRole('button',{name:'Save draft'}) as HTMLButtonElement).disabled).toBe(false));await act(async()=>{fireEvent.click(within(confirmation).getByRole('button',{name:'Save draft'}))});await waitFor(()=>expect(screen.queryByRole('alertdialog',{name:'Unfinished expense'})).toBeNull());}
 async function scan(){const file=new File(['photo'],'receipt.jpg',{type:'image/jpeg'});fireEvent.change(screen.getByLabelText('Scan a receipt photo'),{target:{files:[file]}});const confirm=screen.queryByRole('alertdialog');if(confirm)fireEvent.click(within(confirm).getByRole('button',{name:'Scan new receipt'}));await screen.findByText('Read from the receipt photo')}
 describe('expense receipt review',()=>{
+  it('shows a typed calculation for review without recording an expense', async()=>{
+    vi.mocked(fetch).mockResolvedValueOnce({ok:true,json:async()=>({draft:{...draft,description:'5 bags cement @ 200 each',amount:1000,verification:'text',evidence:['Calculated from “5 bags cement @ 200 each”. Check quantities, prices and any fees before saving.'],unresolved:[]},contextWarnings:[]})} as Response);
+    render(React.createElement(ExpensesPage));await waitFor(()=>expect(mock.load).toHaveBeenCalled());
+    fireEvent.change(screen.getByLabelText('Describe the expense'),{target:{value:'5 bags cement @ 200 each'}});
+    await act(async()=>{fireEvent.click(screen.getByRole('button',{name:'Draft expense'}))});
+    const dialog=await screen.findByRole('dialog',{name:'Record Site Expense'});
+    expect((within(dialog).getByLabelText('Amount (PHP ₱)') as HTMLInputElement).value).toBe('1000');
+    expect(within(dialog).getAllByText(/Calculated from/).length).toBeGreaterThan(0);
+    expect(mock.create).not.toHaveBeenCalled();
+  });
+  it('leaves an uncertain typed amount blank instead of reusing an earlier entry amount', async()=>{
+    render(React.createElement(ExpensesPage));fireEvent.click(screen.getAllByRole('button',{name:'Record Expense'})[0]);
+    const dialog=screen.getByRole('dialog',{name:'Record Site Expense'});
+    fireEvent.change(within(dialog).getByLabelText('Amount (PHP ₱)'),{target:{value:'999'}});await saveAndClose(dialog);
+    vi.mocked(fetch).mockResolvedValueOnce({ok:true,json:async()=>({draft:{...draft,description:'5 bags cement ₱200',verification:'text',unresolved:['The final total is unclear.']},contextWarnings:[]})} as Response);
+    fireEvent.change(screen.getByLabelText('Describe the expense'),{target:{value:'5 bags cement ₱200'}});
+    fireEvent.click(screen.getByRole('button',{name:'Draft expense'}));
+    await act(async()=>{fireEvent.click(within(screen.getByRole('alertdialog',{name:'Replace unfinished expense?'})).getByRole('button',{name:'Create new draft'}))});
+    const next=await screen.findByRole('dialog',{name:'Record Site Expense'});
+    expect((within(next).getByLabelText('Amount (PHP ₱)') as HTMLInputElement).value).toBe('');
+    expect(within(next).getByText(/final total is unclear/i)).toBeTruthy();expect(mock.create).not.toHaveBeenCalled();
+  });
   it('opens a saved expense draft from the manual shortcut without overwriting it', async()=>{
     render(React.createElement(ExpensesPage));
     fireEvent.click(screen.getAllByRole('button',{name:'Record Expense'})[0]);

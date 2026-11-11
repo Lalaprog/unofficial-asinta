@@ -238,7 +238,7 @@ describe('model output validation', () => {
     const draft = validateModelDraft(null, 'cement 4800 at JMC Hardware', context);
     // The value is read from the note itself, never invented to fill a gap.
     expect(draft.amount).toBe(4800);
-    expect(draft.evidence.join(' ')).toMatch(/the text itself states it/i);
+    expect(draft.evidence.join(' ')).toMatch(/checked from the source text/i);
     expect(draft.description).toBe('cement 4800 at JMC Hardware');
   });
 
@@ -274,7 +274,7 @@ describe('rules-only extraction (AI fully off)', () => {
   it('produces a usable draft with no API key, and says the model was not used', async () => {
     vi.stubEnv('GROQ_API_KEY', '');
     const draft = await extractExpenseDraft(
-      '12 bags cement at JMC Hardware for Casa Batangas, ₱4,800, kahapon',
+      '12 bags cement at JMC Hardware for Casa Batangas, total ₱4,800, kahapon',
       context
     );
 

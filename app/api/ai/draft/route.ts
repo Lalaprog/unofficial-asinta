@@ -4,6 +4,7 @@ import { requireFounder } from '@/lib/auth/serverRole';
 import { enforceRateLimit } from '@/lib/api/rateLimitGuard';
 import { extractExpenseDraft } from '@/lib/ai/draft';
 import { loadDraftData } from '@/lib/ai/draftData';
+import { isOffTaskExpenseInstruction } from '@/lib/ai/textExpenseAmount';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -34,6 +35,13 @@ export async function POST(req: NextRequest) {
     if (text.length > 1000) {
       return NextResponse.json(
         { error: 'That description is too long (1,000 character limit).' },
+        { status: 400 }
+      );
+    }
+
+    if (isOffTaskExpenseInstruction(text)) {
+      return NextResponse.json(
+        { error: 'This field is for expense descriptions, not general questions or instructions. Describe the purchase, quantities and prices instead.' },
         { status: 400 }
       );
     }
