@@ -47,6 +47,7 @@ import { usePendingApprovals } from '@/lib/attendance/usePendingApprovals';
 import { useAttendanceHistory } from '@/lib/attendance/useAttendanceHistory';
 import { useProjectRollCall } from '@/lib/attendance/useProjectRollCall';
 import { loadProjectRollCall, projectRollCallFingerprint, type ProjectRollCallSnapshot } from '@/lib/attendance/project-roll-call';
+import { useProjectTeam } from '@/lib/attendance/useProjectTeam';
 import { RollCallWalkthrough } from '@/components/dashboard/RollCallWalkthrough';
 import type { HistoryRecord, HistorySheet } from '@/lib/attendance/history';
 import { HistorySheetRecords } from '@/components/attendance/HistorySheetRecords';
@@ -317,6 +318,7 @@ function AttendancePageInner() {
   }, []);
 
   const rollCall = useProjectRollCall(user?.id, selectedProjectId, selectedDate, activeTab === 'terminal' && isLoaded && !loadError);
+  const workforceTeam = useProjectTeam(user?.id, selectedProjectId, isSupervisor && activeTab === 'workforce' && isLoaded && !loadError);
   const rosterReady = rollCall.status === 'ready' && Boolean(rollCall.snapshot) && isLoaded && !loadError;
   const rollCallSnapshot = rosterReady ? rollCall.snapshot! : EMPTY_ROLL_CALL;
   const draftReady = rosterReady && draftStorageReadyKey === attendanceDraftStorageKey && draftReadySnapshot === rollCallSnapshot;
@@ -800,7 +802,7 @@ function AttendancePageInner() {
       setIsWorkerFormOpen(false);
       showToast(
         'success',
-        `Added ${created.name} (${created.position}) to the workforce roster.`
+        `Registered ${created.name} (${created.position}). Add them to a project separately before Roll Call.`
       );
     }
   };
@@ -908,9 +910,22 @@ function AttendancePageInner() {
     (worker) => draftAttendance[worker.id]?.status === 'leave'
   ).length;
 
+  // Supervisors see only the current project's team in the workforce view.
+  // Never present a failed or pending scoped read as an empty directory.
+  const workforceScopedWorkers = useMemo(() => {
+    if (!isSupervisor) return workers;
+    if (workforceTeam.status !== 'ready') return [];
+    const assigned = new Set(workforceTeam.ids);
+    return workers.filter((worker) => assigned.has(worker.id) && worker.id !== user?.id);
+  }, [workers, isSupervisor, workforceTeam.status, workforceTeam.ids, user?.id]);
+
+  const missingWorkforceProfiles = isSupervisor && workforceTeam.status === 'ready'
+    ? workforceTeam.ids.filter((id) => id !== user?.id && !workers.some((worker) => worker.id === id)).length
+    : 0;
+
   // Group Workforce tab workers by craft group
   const groupedWorkforceDirectory = useMemo(() => {
-    const filtered = workers.filter((w) => {
+    const filtered = workforceScopedWorkers.filter((w) => {
       if (workforceStatusFilter === 'removed' ? !w.removed_at : Boolean(w.removed_at)) return false;
       if (workforceStatusFilter === 'active' && !w.active) return false;
       if (workforceStatusFilter === 'inactive' && w.active) return false;
@@ -932,7 +947,7 @@ function AttendancePageInner() {
     return Array.from(map.entries()).sort(
       (a, b) => CRAFT_GROUP_META[a[0]].order - CRAFT_GROUP_META[b[0]].order
     );
-  }, [workers, workforceCraftFilter, workforceSearch, workforceStatusFilter]);
+  }, [workforceScopedWorkers, workforceCraftFilter, workforceSearch, workforceStatusFilter]);
 
   const selectedWorkerDetails = workers.filter((worker) => selectedWorkers.includes(worker.id));
   const visibleWorkerIds = groupedWorkforceDirectory.flatMap(([, group]) => group.filter((worker) => !worker.removed_at).map((worker) => worker.id));
@@ -1013,7 +1028,7 @@ function AttendancePageInner() {
               {activeTab === 'history'
                 ? 'Submitted daily attendance logs & approval status'
                 : activeTab === 'workforce'
-                  ? `${workers.filter((w) => w.active).length} active craftsmen & supervisors`
+                  ? isSupervisor ? 'Workers assigned to the selected project' : `${workers.filter((w) => w.active).length} active craftsmen & supervisors`
                   : 'Mark crew on site'}
             </p>
           </div>
@@ -2131,11 +2146,23 @@ function AttendancePageInner() {
                     leftIcon={<UserPlus className="h-4 w-4" />}
                     className="w-full sm:w-auto"
                   >
-                    Add Worker to Roster
+                    {isSupervisor ? 'Register Worker' : 'Add Worker to Roster'}
                   </Button>
                 </div>
               </form>
             </section>
+
+            {isSupervisor && <div className="rounded-xl border border-surface-border bg-white p-3 space-y-2">
+              <label htmlFor="workforce-project" className="block text-xs font-semibold text-ink-secondary">Workforce project</label>
+              <select id="workforce-project" value={selectedProjectId} onChange={(event) => setSelectedProjectId(event.target.value)} disabled={accessibleProjects.length === 0} className="min-h-11 w-full rounded-lg border border-surface-border bg-white px-3 text-sm text-navy sm:w-auto sm:min-w-56">
+                {accessibleProjects.length === 0 && <option value="">No assigned projects</option>}
+                {accessibleProjects.map((project) => <option key={project.id} value={project.id}>{project.name}</option>)}
+              </select>
+              <p className="text-xs text-ink-secondary">Only the selected project&apos;s assigned workers are shown.</p>
+              {workforceTeam.status === 'loading' && <p role="status" className="text-xs text-ink-secondary">Loading project workforce…</p>}
+              {workforceTeam.status === 'error' && <p role="alert" className="text-xs text-status-danger">Could not load this project&apos;s workforce. <button type="button" className="underline" onClick={workforceTeam.reload}>Try again</button></p>}
+              {missingWorkforceProfiles > 0 && <p role="alert" className="text-xs text-status-danger">Some assigned worker profiles could not be loaded. This list may be incomplete; refresh and check before relying on it.</p>}
+            </div>}
 
             {/* Filter Bar for Workforce Directory */}
             <div data-page-guide="filters" className="p-3 rounded-2xl bg-white border border-surface-border shadow-sm flex flex-col sm:flex-row items-center justify-between gap-2.5">
@@ -2169,9 +2196,9 @@ function AttendancePageInner() {
                 </div>
               </div>
 
-              <Badge variant="neutral" size="sm">
-                {workers.filter((w) => w.active && !w.removed_at).length} active / {workers.filter((w) => !w.removed_at).length} in workforce
-              </Badge>
+              {(!isSupervisor || workforceTeam.status === 'ready') && <Badge variant="neutral" size="sm">
+                {workforceScopedWorkers.filter((w) => w.active && !w.removed_at).length} active / {workforceScopedWorkers.filter((w) => !w.removed_at).length} {missingWorkforceProfiles > 0 ? 'loaded' : 'in workforce'}
+              </Badge>}
             </div>
 
             {isFounder && (
@@ -2289,7 +2316,7 @@ function AttendancePageInner() {
                 </div>
               ))}
 
-              {groupedWorkforceDirectory.length === 0 && (
+              {groupedWorkforceDirectory.length === 0 && (!isSupervisor || (workforceTeam.status === 'ready' && missingWorkforceProfiles === 0)) && (
                 <div className="bg-white rounded-xl border border-surface-border">
                   <EmptyState
                     title="No workers match"

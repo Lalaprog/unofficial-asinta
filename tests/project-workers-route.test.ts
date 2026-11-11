@@ -18,9 +18,14 @@ describe('project workers endpoint',()=>{
     state.assured=true;state.signedIn=false;expect((await GET(new NextRequest('http://localhost'),{params:{id:p}})).status).toBe(401);
     expect(state.service).not.toHaveBeenCalled();
   });
-  it('reads team via RLS and checks availability through a scoped guarded service function',async()=>{
+  it('reads the team under RLS without returning available workers or creating a service client',async()=>{
     const response=await GET(new NextRequest('http://localhost'),{params:{id:p}});
-    const body=await response.json();expect(body.workerIds).toEqual([w]);expect(body.availableWorkers).toEqual([{id:w,name:'Mara',position:'Mason',contact_number:'—'}]);expect(state.rpc).toHaveBeenCalledWith('available_project_workers_guarded',{p_actor:'00000000-0000-0000-0000-000000000002',p_project:p});
+    const body=await response.json();expect(body.workerIds).toEqual([w]);expect(body.availableWorkers).toBeUndefined();expect(state.service).not.toHaveBeenCalled();
+  });
+  it('returns available workers only on the explicit authorized add-worker request',async()=>{
+    const response=await GET(new NextRequest('http://localhost/?view=available'),{params:{id:p}});
+    const body=await response.json();expect(body.availableWorkers).toEqual([{id:w,name:'Mara',position:'Mason',contact_number:'—'}]);expect(body.workerIds).toBeUndefined();expect(state.rpc).toHaveBeenCalledWith('available_project_workers_guarded',{p_actor:'00000000-0000-0000-0000-000000000002',p_project:p});
+    state.allowed=false;state.service.mockClear();expect((await GET(new NextRequest('http://localhost/?view=available'),{params:{id:p}})).status).toBe(404);expect(state.service).not.toHaveBeenCalled();
   });
   it('does not return a silently truncated project team',async()=>{
     state.countOverride=2;
@@ -42,7 +47,7 @@ describe('project workers endpoint',()=>{
   });
   it('fails closed when availability could not be verified',async()=>{
     state.rpc.mockResolvedValue({data:null,error:{code:'XX000'}});
-    expect((await GET(new NextRequest('http://localhost'),{params:{id:p}})).status).toBe(503);
+    expect((await GET(new NextRequest('http://localhost/?view=available'),{params:{id:p}})).status).toBe(503);
   });
   it('does not claim success on an unconfirmed assignment',async()=>{
     state.rpc.mockRejectedValue(new Error('lost response'));

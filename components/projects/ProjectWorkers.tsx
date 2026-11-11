@@ -3,6 +3,7 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { Plus, Search, Users } from 'lucide-react';
 import { useDataStore } from '@/lib/data/store';
+import { useAuth } from '@/lib/auth/authContext';
 import { Button } from '@/components/ui/Button';
 import { Input } from '@/components/ui/Input';
 import { ConfirmDialog } from '@/components/ui/ConfirmDialog';
@@ -12,8 +13,12 @@ type AvailableWorker = Pick<Worker, 'id' | 'name' | 'position' | 'contact_number
 
 export function ProjectWorkers({ projectId }: { projectId: string }) {
   const { workers, refresh, isLoaded, loadError } = useDataStore();
+  const { isFounder } = useAuth();
   const [ids, setIds] = useState<string[] | null>(null);
   const [availableWorkers, setAvailableWorkers] = useState<AvailableWorker[] | null>(null);
+  const [availableLoading, setAvailableLoading] = useState(false);
+  const [availableError, setAvailableError] = useState(false);
+  const availabilitySequence = useRef(0);
   const [loading, setLoading] = useState(true);
   const [pending, setPending] = useState(false);
   const [error, setError] = useState('');
@@ -37,12 +42,27 @@ export function ProjectWorkers({ projectId }: { projectId: string }) {
       if (refreshWorkers) await refresh();
       const res = await fetch(endpoint, {cache:'no-store'});
       const body = await res.json();
-      if (!res.ok || !Array.isArray(body.workerIds) || body.workerIds.some((id:unknown) => typeof id !== 'string') || !Array.isArray(body.availableWorkers) || body.availableWorkers.some((worker: unknown) => !worker || typeof worker !== 'object' || !('id' in worker) || typeof worker.id !== 'string' || !('name' in worker) || typeof worker.name !== 'string' || !('position' in worker) || typeof worker.position !== 'string' || !('contact_number' in worker) || typeof worker.contact_number !== 'string')) throw new Error('unavailable');
-      setIds(body.workerIds); setAvailableWorkers(body.availableWorkers); setNeedsCheck(false); return true;
+      if (!res.ok || !Array.isArray(body.workerIds) || body.workerIds.some((id:unknown) => typeof id !== 'string')) throw new Error('unavailable');
+      setIds(body.workerIds); setNeedsCheck(false); return true;
     } catch {
       setIds(null); setAvailableWorkers(null); setNeedsCheck(true); setError('Could not load the project team. Please try again.'); return false;
     } finally { setLoading(false); }
   }, [endpoint, refresh]);
+  const loadAvailable = useCallback(async () => {
+    const sequence = ++availabilitySequence.current;
+    setAvailableWorkers(null); setAvailableLoading(true); setAvailableError(false);
+    try {
+      const res = await fetch(`${endpoint}?view=available`, {cache:'no-store'});
+      const body = await res.json();
+      if (!res.ok || !Array.isArray(body.availableWorkers) || body.availableWorkers.some((worker: unknown) => !worker || typeof worker !== 'object' || !('id' in worker) || typeof worker.id !== 'string' || !('name' in worker) || typeof worker.name !== 'string' || !('position' in worker) || typeof worker.position !== 'string' || !('contact_number' in worker) || typeof worker.contact_number !== 'string')) throw new Error('unavailable');
+      if (availabilitySequence.current === sequence) setAvailableWorkers(body.availableWorkers);
+    } catch {
+      if (availabilitySequence.current === sequence) setAvailableError(true);
+    } finally {
+      if (availabilitySequence.current === sequence) setAvailableLoading(false);
+    }
+  }, [endpoint]);
+  useEffect(() => () => { availabilitySequence.current += 1; }, [projectId]);
   // Refresh identity is not stable across store updates; load once for this mounted project.
   const loadRef = useRef(load); loadRef.current = load;
   useEffect(() => { void loadRef.current(); }, [projectId]);
@@ -62,6 +82,7 @@ export function ProjectWorkers({ projectId }: { projectId: string }) {
       }
       const loaded = await load(true);
       if (!loaded) return false;
+      if (showAdd) await loadAvailable();
       return true;
     } catch {
       setNeedsCheck(true); setIds(null);
@@ -74,7 +95,10 @@ export function ProjectWorkers({ projectId }: { projectId: string }) {
   const candidates = (availableWorkers || [])
     .filter((worker) => `${worker.name} ${worker.position}`.toLowerCase().includes(search.trim().toLowerCase()))
     .sort((a,b) => a.name.localeCompare(b.name));
-  const similar = name.trim().length >= 2 ? workers.filter((worker) => worker.name.toLowerCase().includes(name.trim().toLowerCase())).slice(0,5) : [];
+  const allowedHintIds = new Set([...(ids || []), ...(availableWorkers || []).map((worker) => worker.id)]);
+  const matches = name.trim().length >= 2 ? workers.filter((worker) => worker.name.toLowerCase().includes(name.trim().toLowerCase())) : [];
+  const similar = matches.filter((worker) => isFounder || allowedHintIds.has(worker.id)).slice(0,5);
+  const hasHiddenMatch = !isFounder && matches.some((worker) => !allowedHintIds.has(worker.id));
 
   const create = async (event: React.FormEvent) => {
     event.preventDefault();
@@ -88,26 +112,27 @@ export function ProjectWorkers({ projectId }: { projectId: string }) {
     <div className="flex flex-wrap items-start justify-between gap-3">
       <div><h3 className="flex items-center gap-2 text-sm font-bold text-navy"><Users className="h-4 w-4" />Project workers</h3>
         <p className="mt-1 text-xs text-ink-secondary">The current team for this project. Adding or removing someone does not mark attendance or change payroll.</p></div>
-      <Button type="button" size="sm" variant="secondary" onClick={() => {setShowAdd(!showAdd);setShowNew(false);}} disabled={loading || needsCheck || pending} leftIcon={<Plus className="h-4 w-4" />}>{showAdd ? 'Close' : 'Add worker'}</Button>
+      <Button type="button" size="sm" variant="secondary" onClick={() => {if (!showAdd) void loadAvailable(); else {availabilitySequence.current += 1; setAvailableWorkers(null);} setShowAdd(!showAdd);setShowNew(false);}} disabled={loading || needsCheck || pending} leftIcon={<Plus className="h-4 w-4" />}>{showAdd ? 'Close' : 'Add worker'}</Button>
     </div>
     <p className="text-xs text-ink-secondary">This list starts empty; past attendance does not automatically assign workers. Roll Call uses the project team and keeps saved attendance visible for the selected date.</p>
     {error && <div role="alert" className="rounded-xl border border-status-danger/20 bg-status-danger-bg p-3 text-xs text-status-danger">{error}</div>}
     {message && <p role="status" className="text-xs text-status-success">{message}</p>}
-    {needsCheck && <Button type="button" variant="secondary" size="sm" disabled={pending} onClick={() => void load(true)}>Refresh and check team</Button>}
+    {needsCheck && <Button type="button" variant="secondary" size="sm" disabled={pending} onClick={() => void load(true).then(ok => { if (ok && showAdd) void loadAvailable(); })}>Refresh and check team</Button>}
     {showAdd && !needsCheck && <div className="space-y-3 rounded-xl border border-surface-border bg-white p-4">
       <div><h4 className="text-sm font-semibold text-navy">Add an existing worker</h4><p className="mt-1 text-xs text-ink-secondary">Only unassigned workers are available for this project.</p></div>
       <Input label="Search existing workers" placeholder="Name or craft" leftIcon={<Search className="h-4 w-4" />} value={search} onChange={(e) => setSearch(e.target.value)} />
-      {!isLoaded ? <p className="text-xs text-ink-secondary">Loading workforce…</p> : loadError ? <p className="text-xs text-status-danger">The workforce could not be fully loaded. Refresh before adding someone.</p> : <div className="max-h-64 overflow-y-auto rounded-lg border border-surface-border">
+      {availableLoading ? <p role="status" className="text-xs text-ink-secondary">Loading available workers…</p> : availableError ? <div role="alert" className="text-xs text-status-danger">Could not load available workers. <button type="button" onClick={() => void loadAvailable()} className="underline">Try again</button></div> : !isLoaded ? <p className="text-xs text-ink-secondary">Loading workforce…</p> : loadError ? <p className="text-xs text-status-danger">The workforce could not be fully loaded. Refresh before adding someone.</p> : <div className="max-h-64 overflow-y-auto rounded-lg border border-surface-border">
         {candidates.length ? candidates.map((worker) => <div key={worker.id} className="flex flex-wrap items-center justify-between gap-2 border-b border-surface-border p-3 last:border-0">
           <div><div className="text-xs font-semibold text-navy">{worker.name}</div><div className="text-xs text-ink-secondary">{worker.position}{worker.contact_number && worker.contact_number !== '—' ? ` · ${worker.contact_number}` : ''}</div></div>
           <Button type="button" size="sm" variant="secondary" disabled={pending} onClick={() => void change({action:'assign',workerId:worker.id}).then(ok => {if(ok) setMessage(`${worker.name} added to this project.`);})} aria-label={`Add ${worker.name}`}>Add</Button>
         </div>) : <p className="p-3 text-xs text-ink-secondary">No matching available workers.</p>}
       </div>}
-      <Button type="button" size="sm" variant="outline" disabled={pending || !isLoaded || Boolean(loadError)} onClick={() => setShowNew(!showNew)}>{showNew ? 'Cancel new worker' : 'Register a new worker'}</Button>
+      <Button type="button" size="sm" variant="outline" disabled={pending || availableLoading || availableError || !isLoaded || Boolean(loadError)} onClick={() => setShowNew(!showNew)}>{showNew ? 'Cancel new worker' : 'Register a new worker'}</Button>
       {showNew && <form onSubmit={create} className="space-y-3 border-t border-surface-border pt-3">
         <p className="text-xs text-ink-secondary">A new profile will be created and added to this project. Check the existing list first.</p>
         <div className="grid gap-3 sm:grid-cols-2"><Input label="Full name" required maxLength={120} value={name} onChange={e=>setName(e.target.value)} /><Input label="Craft or position" required maxLength={120} value={position} onChange={e=>setPosition(e.target.value)} /><Input label="Contact number (optional)" maxLength={100} value={contact} onChange={e=>setContact(e.target.value)} /><Input label="Pay rate (PHP)" required inputMode="decimal" value={rate} onChange={e=>setRate(e.target.value)} /></div>
         {similar.length > 0 && <p className="rounded-lg bg-status-warning-bg p-3 text-xs text-navy">Similar existing names: {similar.map(w=>`${w.name} (${w.position})`).join(', ')}. Check whether this is the same person before creating another profile.</p>}
+        {hasHiddenMatch && <p className="rounded-lg bg-status-warning-bg p-3 text-xs text-navy">A similar profile may already exist. Ask the Founder to check before registering another worker.</p>}
         <label className="block text-xs font-semibold text-ink-secondary">Pay rate type<select value={rateType} onChange={e=>setRateType(e.target.value as 'daily'|'hourly')} className="mt-1 block min-h-11 w-full rounded-lg border border-surface-border bg-white px-3 text-sm sm:min-h-9"><option value="daily">Daily</option><option value="hourly">Hourly</option></select></label>
         <Button type="submit" size="sm" isLoading={pending} disabled={pending}>Register and add to project</Button>
       </form>}

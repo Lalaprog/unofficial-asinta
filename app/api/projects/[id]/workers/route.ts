@@ -23,27 +23,29 @@ async function authorize(projectId: string) {
   return { db, userId: data.user.id };
 }
 
-export async function GET(_req: NextRequest, { params }: Context) {
+export async function GET(req: NextRequest, { params }: Context) {
   try {
     const auth = await authorize(params.id);
     if (auth.error || !auth.db) return auth.error!;
+    if (req.nextUrl.searchParams.get('view') === 'available') {
+      // Available workers are requested only by the explicit add-worker flow,
+      // never included in the ordinary Roll Call/team response.
+      if (!isServiceRoleConfigured()) return fail('Could not load available workers.', 503);
+      const admin = createServiceRoleClient();
+      const available = await admin.rpc('available_project_workers_guarded', { p_actor: auth.userId, p_project: params.id });
+      if (available.error || !Array.isArray(available.data) || available.data.some((worker: unknown) => {
+        if (!worker || typeof worker !== 'object') return true;
+        const row = worker as Record<string, unknown>;
+        return typeof row.id !== 'string' || !uuid.test(row.id) || typeof row.name !== 'string' || typeof row.position !== 'string' || typeof row.contact_number !== 'string';
+      })) return fail('Could not load available workers.', 503);
+      return NextResponse.json({ availableWorkers: available.data }, { headers });
+    }
     // RLS checks the project scope again during this read; no service-role read.
     const { data, error, count } = await auth.db.from('project_worker_assignments')
       .select('worker_id', { count: 'exact' }).eq('project_id', params.id).eq('active', true);
     // PostgREST may truncate a successful select at its configured row limit.
-    // Never mistake that partial result for the complete team.
     if (error || !Array.isArray(data) || count === null || count !== data.length) return fail('Could not load the complete project team.', 503);
-    if (!isServiceRoleConfigured()) return fail('Could not load available workers.', 503);
-    const admin = createServiceRoleClient();
-    const available = await admin.rpc('available_project_workers_guarded', { p_actor: auth.userId, p_project: params.id });
-    if (available.error || !Array.isArray(available.data) || available.data.some((worker: unknown) => {
-      if (!worker || typeof worker !== 'object') return true;
-      const row = worker as Record<string, unknown>;
-      return typeof row.id !== 'string' || !uuid.test(row.id) || typeof row.name !== 'string' || typeof row.position !== 'string' || typeof row.contact_number !== 'string';
-    })) {
-      return fail('Could not load available workers.', 503);
-    }
-    return NextResponse.json({ workerIds: data.map((row: {worker_id:string}) => row.worker_id), availableWorkers: available.data }, { headers });
+    return NextResponse.json({ workerIds: data.map((row: {worker_id:string}) => row.worker_id) }, { headers });
   } catch { return fail('Could not load the project team.', 503); }
 }
 
