@@ -51,6 +51,7 @@ import { useProjectTeam } from '@/lib/attendance/useProjectTeam';
 import { RollCallWalkthrough } from '@/components/dashboard/RollCallWalkthrough';
 import type { HistoryRecord, HistorySheet } from '@/lib/attendance/history';
 import { HistorySheetRecords } from '@/components/attendance/HistorySheetRecords';
+import { AttendanceHistoryCalendar } from '@/components/attendance/AttendanceHistoryCalendar';
 
 const EMPTY_ROLL_CALL: ProjectRollCallSnapshot = { workerIds: [], records: [] };
 
@@ -2036,37 +2037,42 @@ function AttendancePageInner() {
               </div>
             </Modal>
 
-            <div className="space-y-1 text-xs text-ink-secondary">
-              <p aria-live="polite">{history.loading || isHistorySearchSettling ? 'Updating results…' : history.error ? 'History could not be loaded; retry to update results.' : `Showing ${history.items.length} date/site ${history.items.length === 1 ? 'sheet' : 'sheets'} from the server. Counts reflect the current filters.`}</p>
-              <p>Results are a snapshot; refresh to include changes made elsewhere.</p>
-            </div>
-            <div data-page-guide="list" className="space-y-2">
-              {history.items.map((sheet) => {
-                const key = `${sheet.date}::${sheet.project_id}`;
-                const isExpanded = Boolean(expandedHistorySheets[key]);
-                const sheetId = `history-sheet-${encodeURIComponent(key)}`;
-                return <div key={key} className="overflow-hidden rounded-2xl border border-surface-border bg-white shadow-sm">
-                  <button type="button" aria-expanded={isExpanded} aria-controls={isExpanded ? sheetId : undefined}
-                    onClick={() => setExpandedHistorySheets((prev) => ({...prev,[key]:!prev[key]}))}
-                    className="flex min-h-11 w-full flex-wrap items-center gap-x-3 gap-y-1 bg-surface-inset/70 px-4 py-3 text-left transition-colors hover:bg-surface-inset focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-brand">
-                    {isExpanded ? <ChevronDown className="h-4 w-4 shrink-0 text-ink-secondary" aria-hidden="true" /> : <ChevronRight className="h-4 w-4 shrink-0 text-ink-secondary" aria-hidden="true" />}
-                    <span className="min-w-0 flex-1 break-words text-xs font-bold text-navy sm:text-sm">{formatDatePH(sheet.date)} · {sheet.project_name || 'Project Site'}</span>
-                    <span className="text-xs font-medium tabular-nums text-ink-secondary">{sheet.record_count} {sheet.record_count === 1 ? 'record' : 'records'}</span>
-                    <span className="flex w-full flex-wrap gap-x-3 gap-y-0.5 pl-7 text-[11px] font-medium text-ink-secondary">
-                      <span>{sheet.present_count} Present</span><span>{sheet.half_day_count} Half Day</span><span>{sheet.absent_count} Absent</span><span>{sheet.leave_count} Leave</span>
-                      {sheet.pending_count > 0 && <span className="font-semibold text-status-warning">{sheet.pending_count} pending Founder review</span>}
-                    </span>
-                  </button>
-                  {isExpanded && <div id={sheetId}><HistorySheetRecords sheet={sheet} filters={historyFilters} userId={user?.id} revision={historyRevision} isFounder={isFounder} reviewing={isReviewingSupervisor}
-                    onReview={handleFounderSupervisorReview}
-                    onEdit={(rec: HistoryRecord) => {setSelectedRecordForOverride(rec);setOverrideStatus(rec.status);setOverrideNotes(rec.notes || '');setOverrideModalOpen(true);}} /></div>}
-                </div>;
-              })}
-              {(history.loading || isHistorySearchSettling) && <p role="status" className="text-xs text-ink-secondary">Loading attendance history…</p>}
-              {history.error && <div className="space-y-2 rounded-xl border border-surface-border bg-white p-4 text-xs"><p role="alert" className="text-status-danger">Unable to load attendance history. Please retry.</p><Button type="button" variant="secondary" size="sm" onClick={history.retry}>Retry history</Button></div>}
-              {history.hasMore && !history.error && <Button type="button" variant="secondary" className="w-full sm:w-auto" disabled={history.loading} onClick={history.loadMore}>Show more date/site sheets</Button>}
-              {!history.loading && !history.error && !isHistorySearchSettling && history.items.length === 0 && <div className="rounded-xl border border-surface-border bg-white"><EmptyState title="No attendance records match" description="Try clearing the site, date, status or search filters." /></div>}
-              <Button type="button" variant="ghost" size="sm" disabled={history.loading || isHistorySearchSettling} onClick={() => setHistoryRevision((n) => n + 1)}>Refresh history</Button>
+            <div className="grid gap-4 lg:grid-cols-[minmax(19rem,0.85fr)_minmax(0,1.15fr)] lg:items-start">
+              <AttendanceHistoryCalendar userId={user?.id} today={today} filters={historyFilters} settling={isHistorySearchSettling} revision={historyRevision} onSelectDate={setHistoryDateFilter} />
+              <div className="min-w-0 space-y-3">
+                <div className="space-y-1 text-xs text-ink-secondary">
+                  <p aria-live="polite">{history.loading || isHistorySearchSettling ? 'Updating results…' : history.error ? 'History could not be loaded; retry to update results.' : `Showing ${history.items.length} date/site ${history.items.length === 1 ? 'sheet' : 'sheets'} from the server. Counts reflect the current filters.`}</p>
+                  <p>Results are a snapshot; refresh to include changes made elsewhere.</p>
+                </div>
+                <div data-page-guide="list" className="space-y-2">
+                  {history.items.map((sheet) => {
+                    const key = `${sheet.date}::${sheet.project_id}`;
+                    const isExpanded = Boolean(expandedHistorySheets[key]);
+                    const sheetId = `history-sheet-${encodeURIComponent(key)}`;
+                    return <div key={key} className="overflow-hidden rounded-2xl border border-surface-border bg-white shadow-sm">
+                      <button type="button" aria-expanded={isExpanded} aria-controls={isExpanded ? sheetId : undefined}
+                        onClick={() => setExpandedHistorySheets((prev) => ({...prev,[key]:!prev[key]}))}
+                        className="flex min-h-11 w-full flex-wrap items-center gap-x-3 gap-y-1 bg-surface-inset/70 px-4 py-3 text-left transition-colors hover:bg-surface-inset focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-brand">
+                        {isExpanded ? <ChevronDown className="h-4 w-4 shrink-0 text-ink-secondary" aria-hidden="true" /> : <ChevronRight className="h-4 w-4 shrink-0 text-ink-secondary" aria-hidden="true" />}
+                        <span className="min-w-0 flex-1 break-words text-xs font-bold text-navy sm:text-sm">{formatDatePH(sheet.date)} · {sheet.project_name || 'Project Site'}</span>
+                        <span className="text-xs font-medium tabular-nums text-ink-secondary">{sheet.record_count} {sheet.record_count === 1 ? 'record' : 'records'}</span>
+                        <span className="flex w-full flex-wrap gap-x-3 gap-y-0.5 pl-7 text-[11px] font-medium text-ink-secondary">
+                          <span>{sheet.present_count} Present</span><span>{sheet.half_day_count} Half Day</span><span>{sheet.absent_count} Absent</span><span>{sheet.leave_count} Leave</span>
+                          {sheet.pending_count > 0 && <span className="font-semibold text-status-warning">{sheet.pending_count} pending Founder review</span>}
+                        </span>
+                      </button>
+                      {isExpanded && <div id={sheetId}><HistorySheetRecords sheet={sheet} filters={historyFilters} userId={user?.id} revision={historyRevision} isFounder={isFounder} reviewing={isReviewingSupervisor}
+                        onReview={handleFounderSupervisorReview}
+                        onEdit={(rec: HistoryRecord) => {setSelectedRecordForOverride(rec);setOverrideStatus(rec.status);setOverrideNotes(rec.notes || '');setOverrideModalOpen(true);}} /></div>}
+                    </div>;
+                  })}
+                  {(history.loading || isHistorySearchSettling) && <p role="status" className="text-xs text-ink-secondary">Loading attendance history…</p>}
+                  {history.error && <div className="space-y-2 rounded-xl border border-surface-border bg-white p-4 text-xs"><p role="alert" className="text-status-danger">Unable to load attendance history. Please retry.</p><Button type="button" variant="secondary" size="sm" onClick={history.retry}>Retry history</Button></div>}
+                  {history.hasMore && !history.error && <Button type="button" variant="secondary" className="w-full sm:w-auto" disabled={history.loading} onClick={history.loadMore}>Show more date/site sheets</Button>}
+                  {!history.loading && !history.error && !isHistorySearchSettling && history.items.length === 0 && <div className="rounded-xl border border-surface-border bg-white"><EmptyState title="No attendance records match" description="Try clearing the site, date, status or search filters." /></div>}
+                  <Button type="button" variant="ghost" size="sm" disabled={history.loading || isHistorySearchSettling} onClick={() => setHistoryRevision((n) => n + 1)}>Refresh history</Button>
+                </div>
+              </div>
             </div>
           </div>
         )}

@@ -35,6 +35,11 @@ function historyResponse(_name:string, args:Record<string, string | number | nul
   if (mock.failHistory) return Promise.resolve({data:null,error:{message:'missing migration'}});
   const search=String(args.p_search||'').toLowerCase();
   const filtered=records.filter(r=>(mock.founder || r.project_id==='site-1')&&(!args.p_project_id||r.project_id===args.p_project_id)&&(!args.p_status||r.status===args.p_status)&&(!args.p_date||r.date===args.p_date)&&(!search||[r.worker_name,r.worker_position,r.project_name,r.notes].some(v=>v.toLowerCase().includes(search))));
+  if(_name==='attendance_history_calendar'){
+    const month=String(args.p_month),first=new Date(`${month}T00:00:00Z`);const start=new Date(first);start.setUTCDate(start.getUTCDate()-6);const end=new Date(first);end.setUTCMonth(end.getUTCMonth()+1);end.setUTCDate(end.getUTCDate()+6);
+    const counts=new Map<string,number>();for(const r of filtered){const d=new Date(`${r.date}T00:00:00Z`);if(d>=start&&d<end)counts.set(r.date,(counts.get(r.date)||0)+1);}
+    return Promise.resolve({data:[...counts].map(([date,count])=>({date,count})),error:null});
+  }
   if(args.p_mode==='records'){
     const matched=filtered.filter(r=>!args.p_cursor_id||r.id>String(args.p_cursor_id)).sort((a,b)=>a.id.localeCompare(b.id));
     return Promise.resolve({data:{items:matched.slice(0,20),has_more:matched.length>20},error:null});
@@ -62,6 +67,16 @@ describe('server-backed compact attendance history',()=>{
     fireEvent.click(screen.getByRole('button',{name:'Show more date/site sheets'}));
     await screen.findByText('Showing 15 date/site sheets from the server. Counts reflect the current filters.');
     expect(screen.getByRole('button',{name:/^October 1, 2026 · Alpha Site/})).toBeTruthy();
+  });
+  it('filters paged history when a calendar day is chosen and preserves Founder editing',async()=>{
+    render(React.createElement(AttendancePage));await screen.findByText('Showing 10 date/site sheets from the server. Counts reflect the current filters.');
+    fireEvent.change(screen.getByLabelText('Filter by attendance date'),{target:{value:'2026-10-14'}});
+    const buttons=await screen.findAllByRole('button',{name:/October 13, 2026, 1 matching record/});fireEvent.click(buttons[0]);
+    expect(await screen.findByText('Showing 1 date/site sheet from the server. Counts reflect the current filters.')).toBeTruthy();
+    const header=screen.getByRole('button',{name:/^October 13, 2026 · Alpha Site/});fireEvent.click(header);
+    const sheet=document.getElementById(header.getAttribute('aria-controls')!)!;expect(await within(sheet).findByText('4 hrs recorded')).toBeTruthy();expect(within(sheet).getByRole('button',{name:'Edit'})).toBeTruthy();
+    expect(mock.rpc).toHaveBeenCalledWith('attendance_history_page',expect.objectContaining({p_date:'2026-10-13'}));
+    fireEvent.click(screen.getByRole('button',{name:'Show all dates'}));await screen.findByText('Showing 10 date/site sheets from the server. Counts reflect the current filters.');
   });
   it('debounces server search and keeps the Founder queue independent',async()=>{
     render(React.createElement(AttendancePage));await screen.findByText('Showing 10 date/site sheets from the server. Counts reflect the current filters.');
