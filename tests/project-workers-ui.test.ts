@@ -32,6 +32,18 @@ describe('project team UI',()=>{
     expect(JSON.parse(String(post?.[1]?.body))).toMatchObject({action:'assign',workerId:state.workers[0].id});
     expect(screen.getByText(/does not mark attendance or change payroll/)).toBeTruthy();
   });
+  it('groups assigned workers by craft in collapsible sections', async()=>{
+    ids=state.workers.map(worker=>worker.id);
+    render(React.createElement(ProjectWorkers,{projectId:'10000000-0000-0000-0000-000000000001'}));
+    const mason=(await screen.findByText('Mason')).closest('details')!;
+    const carpenter=screen.getByText('Carpenter').closest('details')!;
+    expect(mason.open).toBe(true);
+    expect(carpenter.open).toBe(true);
+    expect(mason.textContent).toContain('Mara Cruz');
+    expect(carpenter.textContent).toContain('Juan Cruz');
+    fireEvent.click(mason.querySelector('summary')!);
+    expect(mason.open).toBe(false);
+  });
   it('requires confirmation before removal and explains the existing records are preserved',async()=>{
     ids=[state.workers[0].id];
     render(React.createElement(ProjectWorkers,{projectId:'10000000-0000-0000-0000-000000000001'}));

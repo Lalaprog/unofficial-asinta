@@ -85,6 +85,16 @@ describe('roll call usability and safety', () => {
     expect(mock.record).not.toHaveBeenCalled();
   });
 
+  it('offers an explicit return from Workforce to Daily Roll Call', () => {
+    mock.supervisor = false;
+    HTMLElement.prototype.scrollIntoView = vi.fn();
+    window.matchMedia = vi.fn().mockReturnValue({ matches: true });
+    render(React.createElement(AttendancePage));
+    act(() => { window.dispatchEvent(new CustomEvent('asinta:mobile-quick-action', { detail: 'worker' })); });
+    expect(screen.getByRole('link', {name:'Back to Daily Roll Call'}).getAttribute('href')).toBe('/attendance');
+    expect(mock.record).not.toHaveBeenCalled();
+  });
+
   it('searches long site lists without switching the roster or submitting attendance', () => {
     mock.extraSites = Array.from({length: 8}, (_, i) => ({id:`extra-${i}`, name:i === 7 ? 'Luna Site' : `Extra Site ${i}`, location:'Batangas, PH'}));
     render(React.createElement(AttendancePage));

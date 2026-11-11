@@ -42,6 +42,7 @@ describe('dashboard project scope selector', () => {
     const selector = screen.getByRole('combobox', { name: 'Project scope' }) as HTMLSelectElement;
     expect(Array.from(selector.options).map((option) => option.textContent)).toEqual(['All projects', 'Alpha', 'Beta', 'Gamma']);
     expect(selector.value).toBe('');
+    expect(selector.closest('div.relative')?.parentElement?.className).toContain('lg:hidden');
     expect(selector.getAttribute('aria-label')).toBe('Project scope');
     expect(screen.queryByText('Current project options come from loaded data.')).toBeNull();
     // The existing all-project receivables total includes historical projects.

@@ -91,12 +91,6 @@ export function ProjectWorkers({ projectId }: { projectId: string }) {
     {error && <div role="alert" className="rounded-xl border border-status-danger/20 bg-status-danger-bg p-3 text-xs text-status-danger">{error}</div>}
     {message && <p role="status" className="text-xs text-status-success">{message}</p>}
     {needsCheck && <Button type="button" variant="secondary" size="sm" disabled={pending} onClick={() => void load(true)}>Refresh and check team</Button>}
-    {loading ? <p role="status" className="text-xs text-ink-secondary">Loading project team…</p> : ids && <div className="rounded-xl border border-surface-border bg-white">
-      {current.length === 0 ? <p className="p-5 text-xs text-ink-secondary">No workers have been assigned to this project yet.</p> : <div className="divide-y divide-surface-border">{current.map((worker) => <div key={worker.id} className="flex flex-wrap items-center justify-between gap-3 p-3">
-        <div className="min-w-0"><div className="break-words text-sm font-semibold text-navy">{worker.name}</div>{'position' in worker && <div className="text-xs text-ink-secondary">{worker.position}{!worker.active ? ' · Inactive' : ''}</div>}</div>
-        <Button type="button" size="sm" variant="ghost" disabled={pending || needsCheck} onClick={() => setRemove(worker)} aria-label={`Remove ${worker.name} from project`}>Remove from project</Button>
-      </div>)}</div>}
-    </div>}
     {showAdd && !needsCheck && <div className="space-y-3 rounded-xl border border-surface-border bg-white p-4">
       <div><h4 className="text-sm font-semibold text-navy">Add an existing worker</h4><p className="mt-1 text-xs text-ink-secondary">Search the shared workforce first to avoid duplicate profiles.</p></div>
       <Input label="Search existing workers" placeholder="Name or craft" leftIcon={<Search className="h-4 w-4" />} value={search} onChange={(e) => setSearch(e.target.value)} />
@@ -114,6 +108,24 @@ export function ProjectWorkers({ projectId }: { projectId: string }) {
         <label className="block text-xs font-semibold text-ink-secondary">Pay rate type<select value={rateType} onChange={e=>setRateType(e.target.value as 'daily'|'hourly')} className="mt-1 block min-h-11 w-full rounded-lg border border-surface-border bg-white px-3 text-sm sm:min-h-9"><option value="daily">Daily</option><option value="hourly">Hourly</option></select></label>
         <Button type="submit" size="sm" isLoading={pending} disabled={pending}>Register and add to project</Button>
       </form>}
+    </div>}
+    {loading ? <p role="status" className="text-xs text-ink-secondary">Loading project team…</p> : ids && <div className="space-y-2">
+      {current.length === 0 ? <p className="rounded-xl border border-surface-border bg-white p-5 text-xs text-ink-secondary">No workers have been assigned to this project yet.</p> :
+        Array.from(current.reduce((groups, worker) => {
+          const category = 'position' in worker && worker.position?.trim() ? worker.position.trim() : 'Uncategorized';
+          const members = groups.get(category) || [];
+          members.push(worker);
+          groups.set(category, members);
+          return groups;
+        }, new Map<string, typeof current>()), ([category, members]) => ({ category, members }))
+          .sort((a, b) => a.category.localeCompare(b.category))
+          .map(({ category, members }) => <details key={category} open className="rounded-xl border border-surface-border bg-white">
+            <summary className="cursor-pointer p-3 text-sm font-semibold text-navy">{category} <span className="text-xs font-normal text-ink-secondary">({members.length})</span></summary>
+            <div className="divide-y divide-surface-border border-t border-surface-border">{members.map((worker) => <div key={worker.id} className="flex flex-wrap items-center justify-between gap-3 p-3">
+              <div className="min-w-0"><div className="break-words text-sm font-semibold text-navy">{worker.name}</div>{'position' in worker && !worker.active && <div className="text-xs text-ink-secondary">Inactive</div>}</div>
+              <Button type="button" size="sm" variant="ghost" disabled={pending || needsCheck} onClick={() => setRemove(worker)} aria-label={`Remove ${worker.name} from project`}>Remove from project</Button>
+            </div>)}</div>
+          </details>)}
     </div>}
     <ConfirmDialog isOpen={Boolean(remove)} title="Remove worker from this project?" message={`${remove?.name || 'This worker'} will leave this project list. Their profile, attendance, payroll and Bale records will not be deleted.`} destructive confirmLabel="Remove from project" isPending={pending} onCancel={()=>setRemove(null)} onConfirm={()=>{if(remove) void change({action:'remove',workerId:remove.id}).then(ok=>{if(ok)setMessage(`${remove.name} removed from this project.`);setRemove(null);});}} />
   </section>;

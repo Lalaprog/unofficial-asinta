@@ -1027,6 +1027,9 @@ function AttendancePageInner() {
 
           {activeTab === 'workforce' && (
             <div className="flex flex-wrap gap-2">
+              <Link href="/attendance" prefetch={false} className="inline-flex min-h-11 items-center gap-2 rounded-lg border border-surface-border bg-white px-3 text-xs font-medium text-navy hover:bg-surface-inset focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand focus-visible:ring-offset-2">
+                Back to Daily Roll Call
+              </Link>
               {isSupervisor && (
                 <Link href="/advances?tab=requests" prefetch={false} className="inline-flex min-h-11 items-center gap-2 rounded-lg border border-surface-border bg-white px-3 text-xs font-medium text-navy hover:bg-surface-inset focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand focus-visible:ring-offset-2">
                   <HandCoins className="h-4 w-4" aria-hidden="true" />
