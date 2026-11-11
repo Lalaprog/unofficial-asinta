@@ -14,7 +14,6 @@ import {
   Plus,
   Trash2,
   Edit2,
-  Sparkles,
 } from 'lucide-react';
 import { Button } from '@/components/ui/Button';
 import { Badge } from '@/components/ui/Badge';
@@ -31,6 +30,8 @@ import { useToast } from '@/components/ui/Toast';
 import { ProjectWorkforceLogs } from '@/components/projects/ProjectWorkforceLogs';
 import { ProjectPhotoManager } from '@/components/projects/ProjectPhotoManager';
 import { ProjectWorkers } from '@/components/projects/ProjectWorkers';
+import { ProjectExpenseLedger } from '@/components/projects/ProjectExpenseLedger';
+import { useExpenseTotals } from '@/lib/projects/useExpenseTotals';
 
 export default function ProjectDetailPage() {
   const params = useParams();
@@ -43,7 +44,6 @@ export default function ProjectDetailPage() {
     projects,
     clients,
     invoices,
-    expenses,
     tools,
     users,
     projectSupervisors,
@@ -54,7 +54,6 @@ export default function ProjectDetailPage() {
   const project = projects.find((p) => p.id === id);
   const client = clients.find((c) => c.id === project?.client_id);
   const projInvoices = invoices.filter((i) => i.project_id === id);
-  const projExpenses = expenses.filter((e) => e.project_id === id);
   const projTools = tools.filter((t) => t.project_id === id);
 
   // Assigned supervisors
@@ -64,6 +63,7 @@ export default function ProjectDetailPage() {
   const assignedSupervisors = users.filter((u) => assignedSupervisorIds.includes(u.id));
 
   const [activeTab, setActiveTab] = useState<'overview' | 'invoices' | 'expenses' | 'tools' | 'attendance' | 'workers'>('overview');
+  const expenseTotals = useExpenseTotals(user?.id, isFounder, project ? [id] : []);
   const [isEditModalOpen, setIsEditModalOpen] = useState(false);
   const [isDeleteDialogOpen, setIsDeleteDialogOpen] = useState(false);
   const [isSaving, setIsSaving] = useState(false);
@@ -97,8 +97,9 @@ export default function ProjectDetailPage() {
 
   const totalInvoiced = projInvoices.reduce((sum, i) => sum + Number(i.amount || 0), 0);
   const totalCollected = projInvoices.reduce((sum, i) => sum + Number(i.amount_paid || 0), 0);
-  const totalExpenses = projExpenses.reduce((sum, e) => sum + Number(e.amount || 0), 0);
-  const budget = getBudgetSummary(Number(project.budget_estimate), totalExpenses);
+  const totalExpenses = expenseTotals.totals.get(id)?.total;
+  const budget = totalExpenses == null ? null : getBudgetSummary(Number(project.budget_estimate), totalExpenses);
+  const expenseLabel = expenseTotals.status === 'error' ? 'Unavailable' : 'Loading…';
 
   const projectValidation = validateProjectForm(editFormData);
 
@@ -229,7 +230,7 @@ export default function ProjectDetailPage() {
           {[
             { id: 'overview', label: 'Overview & Summary' },
             ...(isFounder ? [{ id: 'invoices', label: `Invoices (${projInvoices.length})` }] : []),
-            ...(isFounder ? [{ id: 'expenses', label: `Expenses (${projExpenses.length})` }] : []),
+            ...(isFounder ? [{ id: 'expenses', label: `Expenses${expenseTotals.totals.get(id) ? ` (${expenseTotals.totals.get(id)!.count})` : ''}` }] : []),
             { id: 'tools', label: `Site Tools (${projTools.length})` },
             { id: 'workers', label: 'Project Workers' },
             { id: 'attendance', label: 'Workforce Logs' },
@@ -264,26 +265,29 @@ export default function ProjectDetailPage() {
                 </div>
 
                 <div className="p-4 rounded-xl bg-white border border-surface-border">
-                  <div className="text-xs font-medium text-ink-secondary">Invoice totals</div>
+                  <div className="text-xs font-medium text-ink-secondary">Loaded invoice totals</div>
                   <div className="text-xl font-bold text-navy mt-1">{formatPHP(totalInvoiced)}</div>
                   <div className="text-[11px] text-ink-secondary mt-0.5">{formatPHP(totalCollected)} collected · includes all invoice statuses</div>
                 </div>
 
                 <div className="p-4 rounded-xl bg-white border border-surface-border">
                   <div className="text-xs font-medium text-ink-secondary">Site Expenses</div>
-                  <div className="text-xl font-bold text-navy mt-1">{formatPHP(totalExpenses)}</div>
-                  <div className="text-[11px] text-ink-secondary mt-0.5">{budget.percent === null ? 'No estimate set' : `${Math.round(budget.percent)}% of estimate`}</div>
+                  <div className="text-xl font-bold text-navy mt-1">{totalExpenses == null ? expenseLabel : formatPeso(totalExpenses)}</div>
+                  <div className="text-[11px] text-ink-secondary mt-0.5">{budget == null ? 'Expense totals not available yet' : budget.percent === null ? 'No estimate set' : `${Math.round(budget.percent)}% of estimate`}</div>
                 </div>
 
                 <div className="p-4 rounded-xl bg-white border border-surface-border">
                   <div className="text-xs font-medium text-ink-secondary">Collected less recorded expenses</div>
-                  <div className={`text-xl font-bold mt-1 ${totalCollected - totalExpenses < 0 ? 'text-status-danger' : 'text-navy'}`}>
-                    {formatPeso(totalCollected - totalExpenses)}
+                  <div className={`text-xl font-bold mt-1 ${totalExpenses != null && totalCollected - totalExpenses < 0 ? 'text-status-danger' : 'text-navy'}`}>
+                    {totalExpenses == null ? expenseLabel : formatPeso(totalCollected - totalExpenses)}
                   </div>
-                  <div className="text-[11px] text-ink-secondary mt-0.5">Not profit; excludes unrecorded costs and other payments.</div>
+                  <div className="text-[11px] text-ink-secondary mt-0.5">Not profit; invoices are loaded data and costs exclude items not recorded as expenses.</div>
                 </div>
               </div>
             )}
+
+            {isFounder && expenseTotals.status === 'error' && <div role="alert" className="text-xs text-status-danger">Expense totals could not be loaded. <Button type="button" variant="secondary" size="sm" onClick={expenseTotals.refresh}>Retry expense totals</Button></div>}
+            {isFounder && <p className="text-xs text-ink-secondary">Expense totals cover recorded expense entries only; payroll and rentals are not yet integrated automatically. <Button type="button" variant="secondary" size="sm" onClick={expenseTotals.refresh}>Refresh expense totals</Button></p>}
 
             {/* Project Site Details */}
             <div className={`grid grid-cols-1 gap-6 ${isFounder ? 'lg:grid-cols-2' : ''}`}>
@@ -418,46 +422,7 @@ export default function ProjectDetailPage() {
         )}
 
         {/* TAB 3: EXPENSES (Founder only) */}
-        {activeTab === 'expenses' && isFounder && (
-          <div className="animate-panel-enter animate-panel-lift space-y-4">
-            <div className="flex items-center justify-between">
-              <h3 className="font-bold text-navy text-sm">Site Disbursements & Cost Ledger</h3>
-              <Link href="/expenses">
-                <Button variant="primary" size="sm" leftIcon={<Sparkles className="w-3.5 h-3.5" />}>
-                  Record Expense
-                </Button>
-              </Link>
-            </div>
-
-            <div className="bg-white rounded-xl border border-surface-border overflow-hidden">
-              <div className="divide-y divide-surface-border/70">
-                {projExpenses.length > 0 ? (
-                  projExpenses.map((exp) => (
-                    <div key={exp.id} className="p-4 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
-                      <div>
-                        <div className="font-bold text-xs sm:text-sm text-navy">{exp.description}</div>
-                        <div className="text-xs text-ink-secondary mt-0.5 capitalize">
-                          Category: {exp.category} · Date: {exp.expense_date}
-                        </div>
-                        {exp.notes && <div className="text-[11px] text-ink-muted mt-0.5">{exp.notes}</div>}
-                      </div>
-                      <div className="text-right">
-                        <div className="text-sm font-bold text-navy">{formatPHP(exp.amount)}</div>
-                        <Badge variant="navy" size="sm" className="mt-1">
-                          Confirmed
-                        </Badge>
-                      </div>
-                    </div>
-                  ))
-                ) : (
-                  <div className="p-8 text-center text-xs text-ink-secondary">
-                    No site expenses recorded yet for this project.
-                  </div>
-                )}
-              </div>
-            </div>
-          </div>
-        )}
+        {activeTab === 'expenses' && isFounder && <ProjectExpenseLedger projectId={id} userId={user?.id} onRefreshTotals={expenseTotals.refresh} />}
 
         {/* TAB 4: TOOLS */}
         {activeTab === 'tools' && (
