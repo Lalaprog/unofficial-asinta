@@ -455,6 +455,10 @@
   [data-print-document] table { width: 100%; table-layout: fixed; }
   [data-print-document] th, [data-print-document] td { overflow-wrap: anywhere; }
   [data-print-document] tr { break-inside: avoid; }
+  /* Tailwind's vertical spacing on the print document and between pages adds
+     enough height to push the third row onto another physical sheet. */
+  [data-print-document="payslip-batch"],
+  .payslip-batch-page { margin: 0 !important; }
   .payslip-batch-page {
     display: grid !important;
     grid-template-columns: repeat(3, minmax(0, 1fr));
