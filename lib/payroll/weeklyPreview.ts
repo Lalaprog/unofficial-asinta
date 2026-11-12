@@ -89,3 +89,20 @@ export function summarizeWeekly(rows:WeeklyRow[]):{count:number;excluded:number;
  const included=rows.filter(row=>row.net!==null&&row.gross!==null);
  return {count:included.length,excluded:rows.length-included.length,gross:centsText(included.reduce((sum,row)=>sum+cents(row.gross!),0n)),net:centsText(included.reduce((sum,row)=>sum+cents(row.net!),0n))};
 }
+
+/** Hours are hundredths; display equivalent eight-hour days rounded to 0.01. */
+export function regularDayEquivalent(hours: string): string {
+ return centsText(roundDivide(cents(hours), 8n));
+}
+
+/** Only rows with an illustrative net are counted; excluded rows are not zero. */
+export function summarizeWeeklyColumns(rows: WeeklyRow[]): {
+ count:number; excluded:number; regularHours:string; otHours:string; wage:string;
+ allowance:string; bale:string; gross:string; net:string;
+} {
+ const included=rows.filter(row=>row.net!==null&&row.gross!==null&&row.wage!==null);
+ const sum=(get:(row:WeeklyRow)=>string)=>centsText(included.reduce((total,row)=>total+cents(get(row)),0n));
+ return {count:included.length,excluded:rows.length-included.length,
+  regularHours:sum(row=>row.regularHours),otHours:sum(row=>row.otHours),wage:sum(row=>row.wage!),
+  allowance:sum(row=>row.allowance),bale:sum(row=>row.bale),gross:sum(row=>row.gross!),net:sum(row=>row.net!)};
+}

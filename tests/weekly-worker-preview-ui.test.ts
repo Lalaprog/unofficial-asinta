@@ -16,6 +16,9 @@ describe('weekly planning preview',()=>{
   mock.rpc.mockResolvedValue({data:snapshot,error:null});render(React.createElement(WeeklyWorkerPreview));expect(mock.rpc).not.toHaveBeenCalled();
   fireEvent.click(screen.getByRole('button',{name:/Weekly worker planning preview/}));fireEvent.click(screen.getByRole('button',{name:'Load preview'}));
   await screen.findByText('Ada');expect(mock.rpc).toHaveBeenCalledWith('weekly_worker_preview_inputs',{p_start:'2026-11-15'});expect(screen.getByText(/gross with allowances ₱655.55/)).toBeTruthy();expect(screen.getByText(/Past unmarked day/)).toBeTruthy();expect(screen.getByText(/Other deductions are excluded/)).toBeTruthy();
+  expect(screen.getAllByRole('columnheader')).toHaveLength(11);expect(screen.getByRole('columnheader',{name:/Sun.*2026-11-15/})).toBeTruthy();expect(screen.getByRole('columnheader',{name:/Sat.*2026-11-21/})).toBeTruthy();
+  expect(screen.getByText(/8.00 regular hrs \(1.00 days at 8 hrs\/day\)/)).toBeTruthy();
+  expect(screen.getByText(/Partial subtotal of 1 row.*8.00 regular hrs.*0.00 OT hrs.*wages ₱655.55.*allowances ₱0.00.*Bale ₱0.00/)).toBeTruthy();
   fireEvent.click(screen.getByText('Illustrative project breakdown'));expect(screen.getByText(/Sample Site: ₱655.55 gross/)).toBeTruthy();expect(screen.getByText(/Not posted or proof of payment/)).toBeTruthy();
  });
  it('withholds the project breakdown when an approved allowance cannot be tied to recorded work',async()=>{

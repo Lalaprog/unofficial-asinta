@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { buildWeeklyPreview, parseWeeklyInput, summarizeWeekly, weekDates } from '@/lib/payroll/weeklyPreview';
+import { buildWeeklyPreview, parseWeeklyInput, regularDayEquivalent, summarizeWeekly, summarizeWeeklyColumns, weekDates } from '@/lib/payroll/weeklyPreview';
 
 const snapshot=()=>({start:'2026-11-15',end:'2026-11-21',workers:[{id:'w',name:'Worker',position:'Mason',active:true,pay_rate:'655.55',pay_rate_type:'daily',linked_supervisor:false,possible_supervisor:false}],attendance:[{id:'a',worker_id:'w',project_id:'p',date:'2026-11-15',status:'present',hours_worked:'8.00',time_detail:null as {regular_hours:string;overtime_hours:string;stale:boolean}|null},{id:'b',worker_id:'w',project_id:'p',date:'2026-11-16',status:'half_day',hours_worked:'4.00',time_detail:null as {regular_hours:string;overtime_hours:string;stale:boolean}|null}],vouchers:[] as {id:string;worker_id:string;status:string;period_start:string;period_end:string}[],allowances:[] as {id:string;worker_id:string;project_id:string;description:string;amount:string;status:string;date:string;stale:boolean}[],advances:[] as {id:string;worker_id:string;project_id:string;date:string;amount:string;deducted:string;status:string;linked_release:boolean}[],older_advances:[] as {id:string;worker_id:string;amount:string;deducted:string;status:string}[]});
 const view=(s:ReturnType<typeof snapshot>)=>buildWeeklyPreview(parseWeeklyInput(s,s.start),'2026-11-18');
@@ -8,6 +8,20 @@ describe('weekly worker planning preview',()=>{
   const v=view(snapshot());expect(weekDates('2026-11-15')).toEqual(['2026-11-15','2026-11-16','2026-11-17','2026-11-18','2026-11-19','2026-11-20','2026-11-21']);
   expect(v.rows[0]).toMatchObject({wage:'983.33',gross:'983.33',net:'983.33',pastUnmarked:true});
   expect(v.rows[0].days.map(d=>d.unmarked)).toEqual([null,null,'past','today','upcoming','upcoming','upcoming']);
+ });
+ it('converts regular hours to eight-hour day equivalents with decimal rounding',()=>{
+  expect(regularDayEquivalent('8.00')).toBe('1.00');expect(regularDayEquivalent('4.00')).toBe('0.50');
+  expect(regularDayEquivalent('0.04')).toBe('0.01');expect(regularDayEquivalent('12.01')).toBe('1.50');
+  expect(()=>regularDayEquivalent('-1')).toThrow();
+ });
+ it('subtotals the same included workers across hours, pay, allowances and Bale',()=>{
+  const s=snapshot();s.attendance[0].time_detail={regular_hours:'8.00',overtime_hours:'2.00',stale:false};
+  s.allowances.push({id:'x',worker_id:'w',project_id:'p',description:'Meals',date:s.start,amount:'50.25',status:'approved',stale:false});
+  s.advances.push({id:'z',worker_id:'w',project_id:'p',date:'2026-11-18',amount:'500.50',deducted:'0',status:'active',linked_release:true});
+  s.workers.push({...s.workers[0],id:'unmarked',name:'Unmarked'});
+  const rows=view(s).rows;
+  expect(summarizeWeeklyColumns(rows)).toEqual({count:1,excluded:1,regularHours:'12.00',otHours:'2.00',wage:'1147.21',allowance:'50.25',bale:'500.50',gross:'1197.46',net:'696.96'});
+  expect(summarizeWeeklyColumns([rows[1]])).toMatchObject({count:0,excluded:1,regularHours:'0.00',bale:'0.00',net:'0.00'});
  });
  it('handles hourly rates and rounds once to centavos',()=>{
   const s=snapshot();s.workers[0].pay_rate_type='hourly';s.workers[0].pay_rate='100.05';s.attendance[0].hours_worked='1.50';s.attendance[1].hours_worked='0.25';expect(view(s).rows[0].wage).toBe('175.09');
