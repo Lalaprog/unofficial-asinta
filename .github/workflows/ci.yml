@@ -79,7 +79,7 @@ jobs:
           set -euo pipefail
           python3 -c "import pathlib, re, textwrap; s=pathlib.Path('.github/workflows/backup.yml').read_text(); m=re.search(r'(?ms)^      - name: Run PostgreSQL 17 pg_dump.*?^        run: \\|\\n(.*?)(?=^      - name:)',s); assert m, 'Export step missing'; pathlib.Path('$RUNNER_TEMP/partial-export.sh').write_text(textwrap.dedent(m.group(1)))"
           cd "$RUNNER_TEMP"
-          bash partial-export.sh || { echo '::error::Synthetic partial export command failed'; exit 1; }
+          bash partial-export.sh 2>"$RUNNER_TEMP/synthetic-export-errors.log" || { echo '::error::Synthetic partial export command failed'; sed -n '1,5s/^/::error::Synthetic test: /p' "$RUNNER_TEMP/synthetic-export-errors.log"; exit 1; }
           test "$(find backup-out -name '*.sql' | wc -l)" -eq 1 || { echo '::error::Expected one synthetic SQL export'; exit 1; }
           grep -q 'CREATE TABLE public.payroll' backup-out/*.sql || { echo '::error::Synthetic export did not contain the payroll table'; exit 1; }
           sha256sum -c backup-out/*.sha256 || { echo '::error::Synthetic export checksum failed'; exit 1; }
