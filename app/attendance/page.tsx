@@ -53,6 +53,7 @@ import type { HistoryRecord, HistorySheet } from '@/lib/attendance/history';
 import { HistorySheetRecords } from '@/components/attendance/HistorySheetRecords';
 import { AttendanceHistoryCalendar } from '@/components/attendance/AttendanceHistoryCalendar';
 import { SupervisorFoundationPanels } from '@/components/attendance/SupervisorFoundationPanels';
+import { WorkerCategoryFoundation } from '@/components/workforce/WorkerCategoryFoundation';
 
 const EMPTY_ROLL_CALL: ProjectRollCallSnapshot = { workerIds: [], records: [] };
 
@@ -2083,6 +2084,7 @@ function AttendancePageInner() {
         {/* TAB 3: WORKFORCE DIRECTORY (COMPACT & GROUPED BY CRAFT) */}
         {activeTab === 'workforce' && (
           <div className="space-y-4">
+            <WorkerCategoryFoundation userId={user?.id} isFounder={isFounder} assurance={assurance} authLoading={authLoading} />
             {/* The header action reveals this single inline registration workflow. */}
             <section
               id="workforce-worker-form"
