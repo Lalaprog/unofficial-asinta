@@ -74,5 +74,6 @@ suite('owned equipment allocation concurrency on isolated PostgreSQL',()=>{
    expect((await admin.query('SELECT count(*)::int n FROM public.owned_equipment_events WHERE id=$1',[id(14)])).rows[0].n).toBe(1);
   }finally{await a.query('ROLLBACK');await b.query('ROLLBACK');}
   await a.query('BEGIN ISOLATION LEVEL REPEATABLE READ');try{await expect(change(a,id(15),'allocate',siteA,1,5,2)).rejects.toMatchObject({code:'P1002'});}finally{await a.query('ROLLBACK');}
+  await a.query('BEGIN ISOLATION LEVEL REPEATABLE READ');try{await expect(a.query('UPDATE public.tools SET quantity=6 WHERE id=$1',[tool])).rejects.toMatchObject({code:'P1002'});}finally{await a.query('ROLLBACK');}
  },15000);
 });

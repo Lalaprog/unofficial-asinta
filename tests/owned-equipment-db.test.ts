@@ -12,6 +12,7 @@ describe('owned equipment allocation draft',()=>{
    await expect(db.exec(`BEGIN; ${sql} COMMIT;`)).rejects.toThrow(/already exists/);await db.exec('ROLLBACK');
    await db.exec(`SET ROLE authenticated; SET test.uid='${supervisor}'; SET test.assurance='yes'`);
    await expect(db.query('SELECT public.owned_equipment_snapshot()')).rejects.toThrow(/Founder access/);
+   await expect(db.query('SELECT public.change_owned_equipment($1,$2,$3,$4,$5,$6,$7)',[id(20),tool,'adopt',null,null,5,null])).rejects.toThrow(/Founder access/);
    await expect(db.query('SELECT * FROM public.owned_equipment_allocations')).rejects.toThrow(/permission denied/);
    await db.exec(`SET test.uid='${founder}'`);
    const change=(request:string,action:string,project:string|null,quantity:number|null,stock:number,prior:number|null)=>db.query<{v:{replayed:boolean;allocated:number;depot:number}}>('SELECT public.change_owned_equipment($1,$2,$3,$4,$5,$6,$7) v',[request,tool,action,project,quantity,stock,prior]);
