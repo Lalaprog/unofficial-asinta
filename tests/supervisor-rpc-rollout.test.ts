@@ -30,6 +30,18 @@ describe('Supervisor functions rollout candidate', () => {
     } finally { await db.close(); }
   }, 30000);
 
+  it('rejects incompatible referenced column types before installing functions', async () => {
+    const db = new PGlite();
+    try {
+      await db.exec(baseFixture);
+      await db.exec(`BEGIN; ${tables} COMMIT;`);
+      await db.exec('ALTER TABLE public.payroll ALTER COLUMN status TYPE boolean USING true');
+      await expect(db.exec(`BEGIN; ${sql} COMMIT;`)).rejects.toThrow(/prerequisite columns missing or different: payroll.status/);
+      await db.exec('ROLLBACK');
+      expect((await db.query<{missing:boolean}>("SELECT to_regprocedure('public.submit_supervisor_day(uuid,date,text)') IS NULL missing")).rows[0].missing).toBe(true);
+    } finally { await db.close(); }
+  }, 30000);
+
   it('fails before installing anything when either table has drifted', async () => {
     const db = new PGlite();
     try {

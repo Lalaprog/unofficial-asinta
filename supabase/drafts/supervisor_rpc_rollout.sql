@@ -1,13 +1,27 @@
 -- Guarded Supervisor functions for the already-installed locked tables.
 -- NOT APPROVED FOR HOSTED DEPLOYMENT: see docs/PR103_SCHEMA_REHEARSAL.md.
 -- Not a complete payroll feature; review the target and recovery plan first.
+-- This candidate requires ONE surrounding transaction for all statements.
 SET LOCAL lock_timeout = '3s';
 SET LOCAL statement_timeout = '30s';
 SET LOCAL search_path = public, pg_catalog;
 DO $preflight$
-DECLARE v_name text; v_expected text; v_hash text; v_signature text;
+DECLARE v_name text; v_expected text; v_hash text; v_signature text; v_missing text;
 BEGIN
  IF to_regprocedure('auth.uid()') IS NULL OR to_regprocedure('public.is_founder()') IS NULL OR to_regprocedure('public.session_assurance_satisfied()') IS NULL OR to_regclass('public.users') IS NULL OR to_regclass('public.attendance') IS NULL OR to_regclass('public.projects') IS NULL OR to_regclass('public.project_supervisors') IS NULL OR to_regclass('public.workers') IS NULL OR to_regclass('public.payroll') IS NULL THEN RAISE EXCEPTION 'Supervisor prerequisite missing'; END IF;
+ -- Block writes to both tables until the surrounding transaction ends, so the
+ -- empty-table and trigger checks cannot race a privileged business write.
+ LOCK TABLE public.supervisor_daily_attendance, public.supervisor_leave_requests IN SHARE MODE;
+ SELECT string_agg(required.rel || '.' || required.col, ', ' ORDER BY required.rel, required.col) INTO v_missing
+ FROM (VALUES ('users','id','uuid'),('users','name','text'),('users','role','text'),
+   ('workers','id','uuid'),('workers','name','text'),('projects','id','uuid'),('projects','name','text'),
+   ('project_supervisors','project_id','uuid'),('project_supervisors','supervisor_id','uuid'),
+   ('attendance','worker_id','uuid'),('attendance','project_id','uuid'),('attendance','date','date'),
+   ('payroll','worker_id','uuid'),('payroll','status','text'),('payroll','period_start','date'),('payroll','period_end','date')) AS required(rel,col,typ)
+ LEFT JOIN pg_catalog.pg_attribute a ON a.attrelid=pg_catalog.to_regclass('public.'||required.rel)
+   AND a.attname=required.col AND a.attnum>0 AND NOT a.attisdropped
+ WHERE a.attname IS NULL OR pg_catalog.format_type(a.atttypid,a.atttypmod) IS DISTINCT FROM required.typ;
+ IF v_missing IS NOT NULL THEN RAISE EXCEPTION 'Supervisor prerequisite columns missing or different: %',v_missing; END IF;
  FOREACH v_signature IN ARRAY ARRAY['app_private.normal_leave_notice_allowed(date,timestamptz)','public.submit_supervisor_leave(uuid,date,date,text,text)','public.review_supervisor_leave(uuid,text)','public.supervisor_leave_list(integer)','public.submit_supervisor_day(uuid,date,text)','public.review_supervisor_day(uuid,text)','public.guard_leave_against_approved_supervisor_day()','public.supervisor_day_list(integer)'] LOOP
   IF to_regprocedure(v_signature) IS NOT NULL THEN RAISE EXCEPTION 'Supervisor function already exists: %',v_signature; END IF;
  END LOOP;

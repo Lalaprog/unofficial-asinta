@@ -35,7 +35,17 @@ suite('PR 103 rollback rehearsal on disposable PostgreSQL',()=>{
    await expect(db.query(rehearsal)).rejects.toThrow(/Locked Supervisor table missing or different/);await db.query('ROLLBACK');
    await db.query(readFileSync('supabase/drafts/supervisor_table_foundation.sql','utf8'));
    const supervisorRollout=readFileSync('supabase/drafts/supervisor_rpc_rollout.sql','utf8');
-   await db.query(`BEGIN; ${supervisorRollout} ROLLBACK;`);
+   await db.query(`BEGIN; ${supervisorRollout}`);
+   const writer=new Client({connectionString:url});await writer.connect();
+   try{
+    // A concurrent privileged writer cannot race the empty-table preflight.
+    await writer.query('BEGIN');
+    for(const table of ['supervisor_daily_attendance','supervisor_leave_requests']){
+     await expect(writer.query(`LOCK TABLE public.${table} IN ROW EXCLUSIVE MODE NOWAIT`)).rejects.toMatchObject({code:'55P03'});
+     await writer.query('ROLLBACK');await writer.query('BEGIN');
+    }
+    await writer.query('ROLLBACK');
+   }finally{await writer.end();await db.query('ROLLBACK');}
    expect((await db.query("SELECT to_regprocedure('public.submit_supervisor_day(uuid,date,text)') IS NULL AS missing")).rows[0].missing).toBe(true);
    await db.query(`CREATE FUNCTION public.attendance_time_detail_latest(uuid) RETURNS jsonb LANGUAGE sql AS $$SELECT '{}'::jsonb$$;`);
    await expect(db.query(rehearsal)).rejects.toThrow(/already exists/);await db.query('ROLLBACK');
