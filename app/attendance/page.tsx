@@ -53,6 +53,7 @@ import type { HistoryRecord, HistorySheet } from '@/lib/attendance/history';
 import { HistorySheetRecords } from '@/components/attendance/HistorySheetRecords';
 import { AttendanceHistoryCalendar } from '@/components/attendance/AttendanceHistoryCalendar';
 import { SupervisorLeavePanel } from '@/components/attendance/SupervisorLeavePanel';
+import { SupervisorDayPanel } from '@/components/attendance/SupervisorDayPanel';
 
 const EMPTY_ROLL_CALL: ProjectRollCallSnapshot = { workerIds: [], records: [] };
 
@@ -1074,7 +1075,7 @@ function AttendancePageInner() {
           )}
         </div>
 
-        {activeTab === 'terminal' && assurance === 'ready' && !authLoading && (isFounder || isSupervisor) && <SupervisorLeavePanel />}
+        {activeTab === 'terminal' && assurance === 'ready' && !authLoading && (isFounder || isSupervisor) && <><SupervisorDayPanel /><SupervisorLeavePanel /></>}
 
         {/* Founder Review Banner: Supervisor Attendance Submitted with Crew Report */}
         {isFounder && (pendingApprovals.loading || pendingApprovals.error || (pendingApprovals.total ?? 0) > 0) && (

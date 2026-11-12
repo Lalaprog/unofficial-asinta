@@ -1,0 +1,57 @@
+import {PGlite} from '@electric-sql/pglite';
+import {readFileSync} from 'node:fs';
+import {describe,expect,it} from 'vitest';
+const id=(n:number)=>`00000000-0000-0000-0000-${String(n).padStart(12,'0')}`;
+const [founder,sup,other,siteA,siteB,worker,pay,day1,day2,day3,leave1,leave2]=Array.from({length:12},(_,i)=>id(i+1));
+describe('single daily Supervisor attendance',()=>{
+ it('scopes requests, preserves legacy history, exposes truthful site indicators, and prevents opposing leave decisions',async()=>{
+  const db=new PGlite();try{
+   await db.exec(`CREATE ROLE anon; CREATE ROLE authenticated; CREATE SCHEMA auth; CREATE SCHEMA app_private;
+    CREATE FUNCTION auth.uid() RETURNS uuid LANGUAGE sql STABLE AS $$SELECT nullif(current_setting('test.uid',true),'')::uuid$$;
+    CREATE FUNCTION public.session_assurance_satisfied() RETURNS boolean LANGUAGE sql STABLE AS $$SELECT current_setting('test.assurance',true)='yes'$$;
+    CREATE TABLE public.users(id uuid primary key,name text,role text); CREATE TABLE public.workers(id uuid primary key,name text);
+    CREATE TABLE public.projects(id uuid primary key,name text); CREATE TABLE public.project_supervisors(project_id uuid,supervisor_id uuid,unique(project_id,supervisor_id));
+    CREATE TABLE public.attendance(id uuid primary key,worker_id uuid,project_id uuid,date date);
+    CREATE TABLE public.payroll(id uuid primary key,worker_id uuid,period_start date,period_end date,status text);
+    CREATE FUNCTION public.is_founder() RETURNS boolean LANGUAGE sql STABLE SECURITY DEFINER AS $$SELECT public.session_assurance_satisfied() AND EXISTS(SELECT 1 FROM public.users WHERE id=auth.uid() AND role='founder')$$;
+    INSERT INTO public.users VALUES ('${founder}','Founder','founder'),('${sup}','Supervisor A','supervisor'),('${other}','Supervisor B','supervisor');
+    INSERT INTO public.workers VALUES ('${sup}','Supervisor A'),('${worker}','Worker'); INSERT INTO public.projects VALUES ('${siteA}','Site A'),('${siteB}','Site B');
+    INSERT INTO public.project_supervisors VALUES ('${siteA}','${sup}'),('${siteB}','${sup}');
+    INSERT INTO public.attendance VALUES ('${id(20)}','${sup}','${siteA}','2020-01-05');
+    INSERT INTO public.payroll VALUES ('${pay}','${sup}','2020-01-01','2020-01-15','paid');
+    GRANT USAGE ON SCHEMA public,auth TO authenticated,anon;`);
+   await db.exec(readFileSync('supabase/migrations/20261113000005_supervisor_leave.sql','utf8'));
+   await db.exec(readFileSync('supabase/migrations/20261113000006_supervisor_daily_attendance.sql','utf8'));
+   await db.exec(`SET test.uid='${sup}'; SET test.assurance='yes'; SET ROLE authenticated;`);
+   const submit=(key:string,date:string,work='present')=>db.query<{data:{id:string;status:string;replayed:boolean}}>('SELECT public.submit_supervisor_day($1,$2,$3) data',[key,date,work]);
+   const review=(key:string,decision:string)=>db.query<{data:{id:string;status:string;replayed:boolean}}>('SELECT public.review_supervisor_day($1,$2) data',[key,decision]);
+   const leave=(key:string,date:string)=>db.query('SELECT public.submit_supervisor_leave($1,$2,$2,$3,$4)',[key,date,'emergency','']);
+   const reviewLeave=(key:string,decision:string)=>db.query('SELECT public.review_supervisor_leave($1,$2)',[key,decision]);
+   await expect(submit(day1,'9998-01-01')).rejects.toThrow(/future Manila date/);
+   expect((await submit(day1,'2020-01-05')).rows[0].data).toEqual({id:day1,status:'pending',replayed:false});
+   expect((await submit(day1,'2020-01-05')).rows[0].data.replayed).toBe(true);
+   await expect(submit(day1,'2020-01-05','half_day')).rejects.toThrow(/different attendance/);
+   await expect(submit(day2,'2020-01-05')).rejects.toThrow(/already exists/);
+   await leave(leave1,'2020-01-05');
+   let list=(await db.query<{data:{total:number;items:Array<Record<string,unknown>>}}>('SELECT public.supervisor_day_list() data')).rows[0].data;
+   expect(list.total).toBe(1);expect(list.items[0]).toMatchObject({supervisor_name:'Supervisor A',pending_leave:true,approved_leave:false,legacy_self_records:null,possible_paid_overlap:null,identity_needs_review:null,sites:[{id:siteA,name:'Site A',has_entries:true},{id:siteB,name:'Site B',has_entries:false}]});
+   await expect(review(day1,'approved')).rejects.toThrow(/Founder/);await expect(db.query('SELECT * FROM public.supervisor_daily_attendance')).rejects.toThrow(/permission denied/);
+   await db.exec(`SET test.uid='${other}';`);expect((await db.query<{data:{total:number}}>('SELECT public.supervisor_day_list() data')).rows[0].data.total).toBe(0);
+   await db.exec(`SET test.uid='${founder}';`);
+   list=(await db.query<{data:{total:number;items:Array<Record<string,unknown>>}}>('SELECT public.supervisor_day_list() data')).rows[0].data;
+   expect(list.items[0]).toMatchObject({legacy_self_records:1,possible_paid_overlap:true,identity_needs_review:false});
+   expect((await review(day1,'approved')).rows[0].data.status).toBe('approved');expect((await review(day1,'approved')).rows[0].data.replayed).toBe(true);
+   await expect(reviewLeave(leave1,'approved')).rejects.toThrow(/Approved daily attendance/);
+   await reviewLeave(leave1,'rejected');
+   await db.exec(`SET test.uid='${sup}'`);expect((await submit(day1,'2020-01-05')).rows[0].data.status).toBe('approved');
+   await submit(day2,'2020-01-06','half_day');await leave(leave2,'2020-01-06');
+   await db.exec(`SET test.uid='${founder}'`);await reviewLeave(leave2,'approved');await expect(review(day2,'approved')).rejects.toThrow(/Approved leave/);expect((await review(day2,'rejected')).rows[0].data.status).toBe('rejected');
+   await db.exec(`SET test.uid='${sup}'`);expect((await submit(day3,'2020-01-06')).rows[0].data.status).toBe('pending');
+   await submit(id(30),'2020-01-07');await db.exec(`RESET ROLE; DELETE FROM public.project_supervisors; SET test.uid='${founder}'; SET ROLE authenticated;`);
+   list=(await db.query<{data:{total:number;items:Array<Record<string,unknown>>}}>('SELECT public.supervisor_day_list() data')).rows[0].data;
+   expect(list.items.find(x=>x.id===id(30))).toMatchObject({sites:[]});expect((await review(id(30),'approved')).rows[0].data.status).toBe('approved');
+   await db.exec(`SET test.assurance='no'`);await expect(db.query('SELECT public.supervisor_day_list()')).rejects.toThrow(/Attendance access/);
+   await db.exec('RESET ROLE');expect((await db.query<{n:number}>('SELECT count(*)::int n FROM public.attendance')).rows[0].n).toBe(1);expect((await db.query<{status:string}>('SELECT status FROM public.payroll')).rows[0].status).toBe('paid');
+  }finally{await db.close();}
+ },30000);
+});
