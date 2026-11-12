@@ -4,6 +4,7 @@ import {act,cleanup,fireEvent,render,screen} from '@testing-library/react';
 import {afterEach,beforeEach,describe,expect,it,vi} from 'vitest';
 const mock=vi.hoisted(()=>({rpc:vi.fn(),user:'founder'}));
 vi.mock('@/lib/auth/authContext',()=>({useAuth:()=>({user:{id:mock.user},isFounder:true})}));
+vi.mock('@/lib/data/store',()=>({useDataStore:()=>({projects:[{id:'p',name:'Sample Site'}]})}));
 vi.mock('@/lib/supabase/client',()=>({createClient:()=>({rpc:mock.rpc})}));
 vi.mock('@/lib/reminders/scheduler',()=>({getManilaClock:()=>({dateIso:'2026-11-18'})}));
 import {WeeklyWorkerPreview} from '@/components/payroll/WeeklyWorkerPreview';
@@ -15,6 +16,19 @@ describe('weekly planning preview',()=>{
   mock.rpc.mockResolvedValue({data:snapshot,error:null});render(React.createElement(WeeklyWorkerPreview));expect(mock.rpc).not.toHaveBeenCalled();
   fireEvent.click(screen.getByRole('button',{name:/Weekly worker planning preview/}));fireEvent.click(screen.getByRole('button',{name:'Load preview'}));
   await screen.findByText('Ada');expect(mock.rpc).toHaveBeenCalledWith('weekly_worker_preview_inputs',{p_start:'2026-11-15'});expect(screen.getByText(/gross with allowances ₱655.55/)).toBeTruthy();expect(screen.getByText(/Past unmarked day/)).toBeTruthy();expect(screen.getByText(/Other deductions are excluded/)).toBeTruthy();
+  fireEvent.click(screen.getByText('Illustrative project breakdown'));expect(screen.getByText(/Sample Site: ₱655.55 gross/)).toBeTruthy();expect(screen.getByText(/Not posted or proof of payment/)).toBeTruthy();
+ });
+ it('withholds the project breakdown when an approved allowance cannot be tied to recorded work',async()=>{
+  mock.rpc.mockResolvedValue({data:{...snapshot,allowances:[{id:'x',worker_id:'w',project_id:'p',description:'Meals',date:'2026-11-16',amount:'10.00',status:'approved',stale:false}]},error:null});
+  render(React.createElement(WeeklyWorkerPreview));fireEvent.click(screen.getByRole('button',{name:/Weekly worker planning preview/}));fireEvent.click(screen.getByRole('button',{name:'Load preview'}));
+  await screen.findByText('Ada');fireEvent.click(screen.getByText('Illustrative project breakdown'));
+  expect(screen.getByText(/Unavailable: review the worker/)).toBeTruthy();expect(screen.queryByText(/Sample Site:.*gross/)).toBeNull();
+ });
+ it('identifies sites by ID if their current name is unavailable',async()=>{
+  mock.rpc.mockResolvedValue({data:{...snapshot,attendance:[{...snapshot.attendance[0],project_id:'other-site'}]},error:null});
+  render(React.createElement(WeeklyWorkerPreview));fireEvent.click(screen.getByRole('button',{name:/Weekly worker planning preview/}));fireEvent.click(screen.getByRole('button',{name:'Load preview'}));
+  await screen.findByText('Ada');fireEvent.click(screen.getByText('Illustrative project breakdown'));
+  expect(screen.getByText(/Site ID other-site: ₱655.55 gross/)).toBeTruthy();
  });
  it('discards stale responses when the week changes and surfaces failures',async()=>{
   const old=deferred();mock.rpc.mockReturnValueOnce(old.promise).mockResolvedValueOnce({data:null,error:{message:'Unavailable'}});

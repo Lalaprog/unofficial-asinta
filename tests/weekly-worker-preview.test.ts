@@ -20,6 +20,18 @@ describe('weekly worker planning preview',()=>{
   expect(summarizeWeekly(view(s).rows)).toEqual({count:1,excluded:0,gross:'1197.46',net:'696.96'});
   s.allowances.push({...s.allowances[0]});expect(()=>parseWeeklyInput(s,s.start)).toThrow();
  });
+ it('illustrates moved-worker gross by recorded site without adding Bale twice or posting a cost',()=>{
+  const s=snapshot();s.attendance[1].project_id='p2';
+  s.allowances.push({id:'x',worker_id:'w',project_id:'p2',description:'Meals',date:'2026-11-16',amount:'25.05',status:'approved',stale:false});
+  s.advances.push({id:'z',worker_id:'w',project_id:'p',date:'2026-11-18',amount:'500.00',deducted:'0',status:'active',linked_release:true});
+  expect(view(s).rows[0]).toMatchObject({gross:'1008.38',net:'508.38',projectEstimates:[{projectId:'p',wage:'655.55',allowance:'0.00',gross:'655.55'},{projectId:'p2',wage:'327.78',allowance:'25.05',gross:'352.83'}]});
+  s.vouchers.push({id:'v',worker_id:'w',status:'paid',period_start:s.start,period_end:s.end});expect(view(s).rows[0].projectEstimates).toBeNull();
+  s.vouchers=[];s.advances[0].linked_release=false;expect(view(s).rows[0].projectEstimates).toBeNull();
+ });
+ it('withholds site attribution if an allowance cannot be matched to recorded work',()=>{
+  const s=snapshot();s.allowances.push({id:'x',worker_id:'w',project_id:'p',description:'Meals',date:'2026-11-17',amount:'25.05',status:'approved',stale:false});
+  expect(view(s).rows[0].projectEstimates).toBeNull();
+ });
  it('flags potentially duplicated independently submitted entries without silently dropping them',()=>{
   const s=snapshot();s.allowances.push({id:'x',worker_id:'w',project_id:'p',description:'Meals',date:s.start,amount:'20.00',status:'approved',stale:false},{id:'y',worker_id:'w',project_id:'p',description:' meals ',date:s.start,amount:'20.0',status:'approved',stale:false});
   expect(view(s).rows[0]).toMatchObject({net:null,allowance:'40.00',review:true});
