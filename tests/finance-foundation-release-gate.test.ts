@@ -7,6 +7,7 @@ const mock = vi.hoisted(() => ({ mounts: vi.fn(), records: [] as object[] }));
 vi.mock('@/components/payroll/WorkerAllowanceQueue', () => ({ WorkerAllowanceQueue: () => { mock.mounts('allowance'); return React.createElement('div', null, 'Allowance queue'); } }));
 vi.mock('@/components/payroll/WeeklyWorkerPreview', () => ({ WeeklyWorkerPreview: () => { mock.mounts('weekly'); return React.createElement('div', null, 'Weekly preview'); } }));
 vi.mock('@/components/payroll/PaidHistoryReview', () => ({ PaidHistoryReview: () => { mock.mounts('review'); return React.createElement('div', null, 'Paid review'); } }));
+vi.mock('@/components/payroll/SupervisorPayrollPreview', () => ({ SupervisorPayrollPreview: () => { mock.mounts('supervisor-payroll'); return React.createElement('div', null, 'Supervisor payroll preview'); } }));
 vi.mock('@/components/attendance/SupervisorDayPanel', () => ({ SupervisorDayPanel: () => { mock.mounts('day'); return React.createElement('div', null, 'Supervisor day'); } }));
 vi.mock('@/components/attendance/SupervisorLeavePanel', () => ({ SupervisorLeavePanel: () => { mock.mounts('leave'); return React.createElement('div', null, 'Supervisor leave'); } }));
 vi.mock('@/components/attendance/TimeDetailDialog', () => ({ TimeDetailDialog: () => React.createElement('div', null, 'Time dialog') }));
@@ -35,6 +36,12 @@ describe('unfinished finance foundation UI release gate', () => {
     vi.stubEnv('NEXT_PUBLIC_FINANCE_FOUNDATION_PREVIEW','true');
     render(React.createElement(React.Fragment, null, React.createElement(PayrollFoundationPanels), React.createElement(SupervisorFoundationPanels)));
     expect(mock.mounts.mock.calls.map(([name]) => name)).toEqual(['allowance','weekly','review','day','leave']);
+  });
+  it('requires both switches for the Supervisor payroll preview', () => {
+    vi.stubEnv('NEXT_PUBLIC_FINANCE_FOUNDATION_PREVIEW','true');vi.stubEnv('NEXT_PUBLIC_SUPERVISOR_PAYROLL_PREVIEW','false');
+    const view=render(React.createElement(PayrollFoundationPanels));expect(screen.queryByText('Supervisor payroll preview')).toBeNull();
+    vi.stubEnv('NEXT_PUBLIC_SUPERVISOR_PAYROLL_PREVIEW','true');view.rerender(React.createElement(PayrollFoundationPanels));expect(screen.getByText('Supervisor payroll preview')).toBeTruthy();
+    vi.stubEnv('NEXT_PUBLIC_FINANCE_FOUNDATION_PREVIEW','false');view.rerender(React.createElement(PayrollFoundationPanels));expect(screen.queryByText('Supervisor payroll preview')).toBeNull();
   });
   it('hides missing-schema controls but preserves Founder edit and approval actions', () => {
     vi.stubEnv('NEXT_PUBLIC_FINANCE_FOUNDATION_PREVIEW','false'); mock.records = [worker, supervisor];

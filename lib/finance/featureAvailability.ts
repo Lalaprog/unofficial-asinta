@@ -8,6 +8,11 @@ export function financeFoundationEnabled(): boolean {
   return process.env.NEXT_PUBLIC_FINANCE_FOUNDATION_PREVIEW === 'true';
 }
 
+/** Independent gate for the uninstalled Supervisor payroll planning RPCs. */
+export function supervisorPayrollPreviewEnabled(): boolean {
+  return financeFoundationEnabled() && process.env.NEXT_PUBLIC_SUPERVISOR_PAYROLL_PREVIEW === 'true';
+}
+
 /** Independent gate for the uninstalled leave-summary RPC and its UI. */
 export function supervisorLeaveNotificationsPreviewEnabled(): boolean {
   return financeFoundationEnabled() && process.env.NEXT_PUBLIC_SUPERVISOR_LEAVE_NOTIFICATIONS_PREVIEW === 'true';
