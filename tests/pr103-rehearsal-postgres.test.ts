@@ -34,6 +34,9 @@ suite('PR 103 rollback rehearsal on disposable PostgreSQL',()=>{
    await db.query(sql('20261113000000_weekly_worker_preview.sql'));
    await expect(db.query(rehearsal)).rejects.toThrow(/Locked Supervisor table missing or different/);await db.query('ROLLBACK');
    await db.query(readFileSync('supabase/drafts/supervisor_table_foundation.sql','utf8'));
+   const supervisorRollout=readFileSync('supabase/drafts/supervisor_rpc_rollout.sql','utf8');
+   await db.query(`BEGIN; ${supervisorRollout} ROLLBACK;`);
+   expect((await db.query("SELECT to_regprocedure('public.submit_supervisor_day(uuid,date,text)') IS NULL AS missing")).rows[0].missing).toBe(true);
    await db.query(`CREATE FUNCTION public.attendance_time_detail_latest(uuid) RETURNS jsonb LANGUAGE sql AS $$SELECT '{}'::jsonb$$;`);
    await expect(db.query(rehearsal)).rejects.toThrow(/already exists/);await db.query('ROLLBACK');
    expect((await db.query("SELECT to_regclass('public.attendance_time_details') IS NULL AS absent, to_regprocedure('public.weekly_worker_preview_inputs(date)') IS NOT NULL AS function_present")).rows[0]).toEqual({absent:true,function_present:true});
