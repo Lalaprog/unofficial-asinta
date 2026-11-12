@@ -2,8 +2,8 @@ name: Automated database backup
 
 # PARTIAL database export, not a verified full-project backup. The job requires
 # a configured GitHub Actions secret and has failed before dumping in this repo.
-# It exports only public schema and rows, without owner or grants. app_private,
-# auth, Storage objects/configuration, platform settings and other dependencies
+# It exports public and app_private schemas and rows, without owner or grants.
+# Auth, Storage objects/configuration, platform settings and other dependencies
 # are excluded. A successful job or checksum does not prove restorability.
 # The output contains sensitive personal and financial records: restrict GitHub
 # artifact access, retention and downloads. See docs/SECURITY.md §10.
@@ -52,7 +52,7 @@ concurrency:
 
 jobs:
   pg-dump:
-    name: pg_dump public schema
+    name: pg_dump application schemas
     runs-on: ubuntu-latest
     env:
       EXPECTED_REF: mchkdkjntnbwrgmyobpd
@@ -86,7 +86,7 @@ jobs:
       # The connected server is PostgreSQL 17. Ubuntu 24.04's default client is
       # version 16, which cannot dump a 17 server. A newer server major needs a
       # corresponding client update; pg_dump must fail rather than emit a partial file.
-      - name: Run PostgreSQL 17 pg_dump (public schema and data only)
+      - name: Run PostgreSQL 17 pg_dump (public and app_private schema and data only)
         env:
           SUPABASE_DB_URL: ${{ secrets.SUPABASE_DB_URL }}
         run: |
@@ -99,10 +99,10 @@ jobs:
           # Forward the URI via environment, not the docker command line, and
           # do not print it. pg_dump expands it inside the isolated container;
           # processes with runner/container access may still see credentials.
-          # This export excludes app_private, Auth, Storage, owners and ACLs.
+          # This export excludes Auth, Storage, owners and ACLs.
           export PGDATABASE="$SUPABASE_DB_URL"
           docker run --rm --network host --env PGDATABASE --entrypoint sh postgres:17.6 \
-            -c 'exec pg_dump --dbname="$PGDATABASE" --schema=public --clean --if-exists --no-owner --no-privileges' > "$DUMP_FILE"
+            -c 'exec pg_dump --dbname="$PGDATABASE" --schema=public --schema=app_private --clean --if-exists --no-owner --no-privileges' > "$DUMP_FILE"
 
           if [ ! -s "$DUMP_FILE" ]; then
             echo "::error::pg_dump produced an empty file."
@@ -133,8 +133,8 @@ jobs:
             echo "### Backup artifact uploaded"
             echo ""
             echo "- **Artifact:** \`bale-pg-dump-${{ github.run_id }}\`"
-            echo "- **Scope:** partial export of \`public\` schema and rows. Owners and grants are excluded."
-            echo "- **Not included:** \`app_private\`, Auth, Storage files/configuration and other project settings. It is not a full project backup."
+            echo "- **Scope:** partial export of \`public\` and \`app_private\` schemas and rows. Owners and grants are excluded."
+            echo "- **Not included:** Auth, Storage files/configuration and other project settings. It is not a full project backup."
             echo "- **Sensitive:** artifact contains personal and financial data; restrict access and retention."
             echo "- **Recovery plan required:** Test restoration in an isolated equivalent environment, account for dependencies and privileges, and separately protect Auth and Storage. A checksum does not prove restorability."
           } >> "$GITHUB_STEP_SUMMARY"

@@ -84,9 +84,18 @@ jobs:
         run: |
           set -euo pipefail
           python3 -c "import pathlib, re, textwrap; s=pathlib.Path('.github/workflows/backup.yml').read_text(); m=re.search(r'(?ms)^      - name: Run PostgreSQL 17 pg_dump.*?^        run: \\|\\n(.*?)(?=^      - name:)',s); assert m, 'Export step missing'; pathlib.Path('$RUNNER_TEMP/partial-export.sh').write_text(textwrap.dedent(m.group(1)))"
+          node tests/helpers/synthetic-partial-restore.mjs prepare-source
+          node tests/helpers/synthetic-partial-restore.mjs prepare-target
           cd "$RUNNER_TEMP"
           bash partial-export.sh 2>"$RUNNER_TEMP/synthetic-export-errors.log" || { echo '::error::Synthetic partial export command failed'; sed -n '1,5s/^/::error::Synthetic test: /p' "$RUNNER_TEMP/synthetic-export-errors.log"; exit 1; }
           test "$(find backup-out -name '*.sql' | wc -l)" -eq 1 || { echo '::error::Expected one synthetic SQL export'; exit 1; }
           grep -q 'CREATE TABLE public.payroll' backup-out/*.sql || { echo '::error::Synthetic export did not contain the payroll table'; exit 1; }
+          grep -q 'CREATE TABLE app_private.synthetic_backup_fixture' backup-out/*.sql || { echo '::error::Synthetic export did not contain private fixture'; exit 1; }
           sha256sum -c backup-out/*.sha256 || { echo '::error::Synthetic export checksum failed'; exit 1; }
-          rm -rf backup-out partial-export.sh
+          # This target is a newly created synthetic database in the CI service,
+          # never the connected project. --clean output can destroy target data.
+          export PGDATABASE=postgresql://postgres@127.0.0.1:5433/asinta_test_partial_restore
+          docker run --rm -i --network host --env PGDATABASE --entrypoint sh postgres:17.6 -c 'exec psql --dbname="$PGDATABASE" -X --set ON_ERROR_STOP=1' < backup-out/*.sql > "$RUNNER_TEMP/synthetic-restore.log" 2>&1 || { echo '::error::Synthetic isolated restore failed'; tail -15 "$RUNNER_TEMP/synthetic-restore.log"; exit 1; }
+          cd "$GITHUB_WORKSPACE"
+          node tests/helpers/synthetic-partial-restore.mjs verify
+          rm -rf "$RUNNER_TEMP/backup-out" "$RUNNER_TEMP/partial-export.sh"
