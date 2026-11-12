@@ -14,7 +14,7 @@ describe('matrix and payroll period controls',()=>{
   it('uses Manila defaults and shares selected period and site with the existing generation dialog',()=>{
     vi.useFakeTimers();vi.setSystemTime(new Date('2026-11-02T16:30:00Z'));
     render(React.createElement(PayrollPage));fireEvent.click(screen.getByRole('button',{name:/Payroll-period attendance matrix/}));
-    expect((screen.getByLabelText('Matrix period end') as HTMLInputElement).value).toBe('2026-11-03');expect((screen.getByLabelText('Matrix period start') as HTMLInputElement).value).toBe('2026-10-28');
+    expect((screen.getByLabelText('Matrix period end') as HTMLInputElement).value).toBe('2026-11-07');expect((screen.getByLabelText('Matrix period start') as HTMLInputElement).value).toBe('2026-11-01');
     fireEvent.change(screen.getByLabelText('Matrix period start'),{target:{value:'2026-10-20'}});fireEvent.change(screen.getByLabelText('Matrix project site'),{target:{value:'s'}});
     fireEvent.click(screen.getByRole('button',{name:'New Payroll Run'}));expect((screen.getByLabelText('Period Start Date') as HTMLInputElement).value).toBe('2026-10-20');expect((screen.getByLabelText('Project Site Scope') as HTMLSelectElement).value).toBe('s');
     fireEvent.change(screen.getByLabelText('Period End Date'),{target:{value:'2026-11-02'}});expect((screen.getByLabelText('Matrix period end',{selector:'input'}) as HTMLInputElement).value).toBe('2026-11-02');expect(mock.create).not.toHaveBeenCalled();

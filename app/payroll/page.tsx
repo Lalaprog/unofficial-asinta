@@ -28,6 +28,7 @@ import { formatRecordedWork } from '@/lib/payroll/display';
 import { AttendanceMatrix } from '@/components/payroll/AttendanceMatrix';
 import { PayrollFoundationPanels } from '@/components/payroll/PayrollFoundationPanels';
 import { getManilaClock } from '@/lib/reminders/scheduler';
+import { workerPayrollPeriod } from '@/lib/payroll/periods';
 
 export default function PayrollPage() {
   const { showToast } = useToast();
@@ -55,11 +56,12 @@ export default function PayrollPage() {
   const [isBatchPayslipOpen, setIsBatchPayslipOpen] = useState(false);
   const [selectedPayroll, setSelectedPayroll] = useState<Payroll | null>(null);
 
-  // Generate run state (defaults to the past 7 days through today)
+  // Default to the current Philippine Sunday–Saturday worker period. The
+  // Founder can still select historical dates; this does not alter the legacy calculation.
   const todayStr = getManilaClock().dateIso;
-  const weekAgoStr = new Date(Date.parse(`${todayStr}T00:00:00Z`) - 6 * 24 * 60 * 60 * 1000).toISOString().slice(0, 10);
-  const [periodStart, setPeriodStart] = useState(weekAgoStr);
-  const [periodEnd, setPeriodEnd] = useState(todayStr);
+  const initialWorkerWeek = workerPayrollPeriod(todayStr);
+  const [periodStart, setPeriodStart] = useState(initialWorkerWeek.start);
+  const [periodEnd, setPeriodEnd] = useState(initialWorkerWeek.end);
   const [generateProjectId, setGenerateProjectId] = useState<string>('all');
   const [isGenerating, setIsGenerating] = useState(false);
 
@@ -395,6 +397,7 @@ export default function PayrollPage() {
       >
         <form onSubmit={handleGenerateSubmit} className="space-y-4 text-xs">
           <p className="rounded-xl border border-status-warning/25 bg-status-warning-bg p-3 leading-relaxed text-ink-secondary">This is the legacy generator, not the requested weekly payroll workflow: it uses attendance statuses rather than separate regular/OT hours, rounds gross to whole pesos and suggests limited Bale from outstanding balances, including older periods. Allowance approvals and reliable project allocations are not included. Independently reconcile before generating or approving; the planning preview does not change this behavior.</p>
+          {periodEnd > todayStr && <p className="text-status-warning text-xs">This period is still in progress. Future and unmarked days are not absences; review missing attendance before payment.</p>}
           <SearchableSelect
             label="Project Site Scope"
             searchLabel="Search payroll run sites"
