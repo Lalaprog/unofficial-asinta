@@ -8,6 +8,7 @@ import {Modal} from '@/components/ui/Modal';
 import {useAuth} from '@/lib/auth/authContext';
 import {createClient} from '@/lib/supabase/client';
 import {parseSupervisorLeaveList,type LeaveStatus,type SupervisorLeave,type SupervisorLeaveList} from '@/lib/attendance/supervisorLeave';
+import {SUPERVISOR_LEAVE_CHANGED} from '@/lib/attendance/usePendingSupervisorLeave';
 
 export function SupervisorLeavePanel(){
  const [open,setOpen]=useState(false);
@@ -51,7 +52,7 @@ function Contents(){
    if(error)throw new Error(error.message);
    if(!data||data.id!==decision.item.id||data.status!==decision.status||typeof data.replayed!=='boolean')throw new Error('Response could not be verified');
    if(seq!==token.current||active.current!==key)return;
-   setDecision(null);setMessage('Decision recorded. Refresh the list. Existing attendance and payroll were not changed.');setState({key,list:null,error:'',loading:false});
+   setDecision(null);setMessage('Decision recorded. Refresh the list. Existing attendance and payroll were not changed.');setState({key,list:null,error:'',loading:false});window.dispatchEvent(new Event(SUPERVISOR_LEAVE_CHANGED));
   }catch(e){if(seq===token.current&&active.current===key){setDecision(null);setMessage(`Decision not confirmed: ${e instanceof Error?e.message:'Unknown error'}. Refresh the list and check before retrying.`);setState({key,list:null,error:'',loading:false});}}
   finally{if(seq===token.current){busy.current=false;setSaving(false);}}
  }

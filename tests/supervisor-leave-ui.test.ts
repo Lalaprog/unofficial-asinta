@@ -23,9 +23,10 @@ describe('Supervisor leave UI',()=>{
  });
  it('shows possible paid overlap to Founder and requires explicit confirmation',async()=>{
   mock.founder=true;mock.rpc.mockResolvedValueOnce({data:{total:1,offset:0,items:[item]},error:null}).mockResolvedValueOnce({data:{id:'request',status:'approved',replayed:false},error:null});
+  const changed=vi.fn();window.addEventListener('asinta:supervisor-leave-changed',changed);
   render(React.createElement(SupervisorLeavePanel));fireEvent.click(screen.getByRole('button',{name:/Supervisor leave requests/}));fireEvent.click(screen.getByRole('button',{name:'Load leave list'}));await screen.findByText(/Possible paid payroll overlap: review/);
   expect(screen.getByText(/identity may not match/)).toBeTruthy();fireEvent.click(screen.getByRole('button',{name:'Approve'}));const dialog=screen.getByRole('dialog');expect(within(dialog).getByText(/does not change attendance or payroll/)).toBeTruthy();expect(mock.rpc).toHaveBeenCalledTimes(1);
-  fireEvent.click(within(dialog).getByRole('button',{name:'Confirm approval'}));await screen.findByText(/Decision recorded/);expect(mock.rpc).toHaveBeenLastCalledWith('review_supervisor_leave',{p_id:'request',p_decision:'approved'});
+  fireEvent.click(within(dialog).getByRole('button',{name:'Confirm approval'}));await screen.findByText(/Decision recorded/);expect(mock.rpc).toHaveBeenLastCalledWith('review_supervisor_leave',{p_id:'request',p_decision:'approved'});expect(changed).toHaveBeenCalledTimes(1);window.removeEventListener('asinta:supervisor-leave-changed',changed);
  });
  it('loads subsequent pages rather than hiding requests beyond the first hundred',async()=>{
   const first=Array.from({length:100},(_,i)=>({...item,id:`row-${i}`}));

@@ -41,6 +41,8 @@ import { NotificationsPanel, type ActionNotification } from './NotificationsPane
 import { formatPesoCompact } from '@/lib/email/format';
 import { useManilaToday } from '@/lib/dates/useManilaToday';
 import { getNewestNotificationTimestamp } from '@/lib/notifications/time';
+import { supervisorLeaveNotificationsPreviewEnabled } from '@/lib/finance/featureAvailability';
+import { usePendingSupervisorLeave } from '@/lib/attendance/usePendingSupervisorLeave';
 
 interface NavbarProps {
   onToggleMobileMenu?: () => void;
@@ -179,7 +181,8 @@ const SUPERVISOR_TOP_LINKS = [
 ];
 
 export const Navbar: React.FC<NavbarProps> = ({ showDesktopNavigation = true }) => {
-  const { user, logout, isFounder, isSupervisor } = useAuth();
+  const { user, logout, isFounder, isSupervisor, assurance } = useAuth();
+  const pendingSupervisorLeave = usePendingSupervisorLeave(supervisorLeaveNotificationsPreviewEnabled() && isFounder && assurance === 'ready', user?.id);
   const {
     invoices,
     attendance,
@@ -309,6 +312,7 @@ export const Navbar: React.FC<NavbarProps> = ({ showDesktopNavigation = true }) 
   };
 
   const dismissNotification = (item: ActionNotification) => {
+    if (item.dismissible === false) return;
     if (item.notificationIds?.length) {
       void markUserNotificationsRead(item.notificationIds);
       return;
@@ -406,6 +410,15 @@ export const Navbar: React.FC<NavbarProps> = ({ showDesktopNavigation = true }) 
   const allNotifications: ActionNotification[] = [];
 
   if (isFounder) {
+    if (pendingSupervisorLeave.status === 'error' || (pendingSupervisorLeave.status === 'ready' && (pendingSupervisorLeave.count ?? 0) > 0)) {
+      const unavailable = pendingSupervisorLeave.status === 'error';
+      allNotifications.push({
+        id: 'founder-supervisor-leave', signature: 'founder-supervisor-leave-live',
+        title: unavailable ? 'Supervisor leave status unavailable' : `${pendingSupervisorLeave.count} Supervisor leave request${pendingSupervisorLeave.count === 1 ? '' : 's'} pending`,
+        description: unavailable ? 'The leave queue could not be checked. Open Attendance and load the leave list; refresh or try again later.' : 'Review the pending requests in Supervisor leave requests on Attendance. The indicator refreshes periodically while this page is visible.',
+        actionLabel: 'Open Attendance', href: '/attendance?tab=terminal', variant: 'warning', actionable: true, priority: 1, dismissible: false,
+      });
+    }
     const pendingRequestsBySite = new Map<string, typeof userNotifications>();
     userNotifications
       .filter(
@@ -661,7 +674,7 @@ export const Navbar: React.FC<NavbarProps> = ({ showDesktopNavigation = true }) 
     (notification.variant === 'danger' || notification.variant === 'warning');
   const visibleNotifications = [...allNotifications]
     .sort((a, b) => (a.priority ?? 10) - (b.priority ?? 10))
-    .filter((notification) => !dismissedSignatures.includes(notification.signature));
+    .filter((notification) => notification.dismissible === false || !dismissedSignatures.includes(notification.signature));
   const actionableNotificationCount = visibleNotifications.filter(isActionableNotification).length;
   const dismissedCount = allNotifications.length - visibleNotifications.length;
 
@@ -674,7 +687,7 @@ export const Navbar: React.FC<NavbarProps> = ({ showDesktopNavigation = true }) 
     }
 
     const localSignatures = allNotifications
-      .filter((notification) => !notification.notificationIds?.length)
+      .filter((notification) => notification.dismissible !== false && !notification.notificationIds?.length)
       .map((notification) => notification.signature);
     const merged = Array.from(new Set([...dismissedSignatures, ...localSignatures]));
     persistDismissed(merged);
