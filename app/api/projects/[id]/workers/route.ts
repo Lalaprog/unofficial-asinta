@@ -40,31 +40,37 @@ export async function GET(req: NextRequest, { params }: Context) {
       })) return fail('Could not load available workers.', 503);
       return NextResponse.json({ availableWorkers: available.data }, { headers });
     }
-    // RLS checks the project scope again during this read; no service-role read.
+    // RLS checks project scope again; never use the service role for this read.
+    if (req.nextUrl.searchParams.get('view') === 'bale') {
+      // One left-embedded query gives assignments and their visible worker
+      // details the same database snapshot. A null worker may be hidden by RLS.
+      const { data, error, count } = await auth.db.from('project_worker_assignments')
+        .select('worker_id,worker:workers!project_worker_assignments_worker_id_fkey(id,name,position,active)', { count: 'exact' })
+        .eq('project_id', params.id).eq('active', true);
+      if (error || !Array.isArray(data) || count === null || count !== data.length || data.length > 1000) return fail('Could not load the complete project team.', 503);
+      const seen = new Set<string>();
+      const team: { id: string; name: string; position: string }[] = [];
+      let someDetailsUnavailable = false;
+      for (const value of data as unknown[]) {
+        if (!value || typeof value !== 'object') return fail('Could not load worker details for the site.', 503);
+        const row = value as Record<string, unknown>;
+        if (typeof row.worker_id !== 'string' || !uuid.test(row.worker_id) || seen.has(row.worker_id)) return fail('Could not load the complete project team.', 503);
+        seen.add(row.worker_id);
+        if (row.worker === null) { someDetailsUnavailable = true; continue; }
+        if (!row.worker || typeof row.worker !== 'object' || Array.isArray(row.worker)) return fail('Could not load worker details for the site.', 503);
+        const worker = row.worker as Record<string, unknown>;
+        if (worker.id !== row.worker_id || typeof worker.active !== 'boolean' || typeof worker.name !== 'string' || typeof worker.position !== 'string') return fail('Could not load worker details for the site.', 503);
+        if (!worker.active) { someDetailsUnavailable = true; continue; }
+        team.push({ id: row.worker_id, name: worker.name, position: worker.position });
+      }
+      return NextResponse.json({ workers: team, someDetailsUnavailable }, { headers });
+    }
     const { data, error, count } = await auth.db.from('project_worker_assignments')
       .select('worker_id', { count: 'exact' }).eq('project_id', params.id).eq('active', true);
     // PostgREST may truncate a successful select at its configured row limit.
     if (error || !Array.isArray(data) || count === null || count !== data.length) return fail('Could not load the complete project team.', 503);
     const workerIds: string[] = data.map((row: {worker_id:string}) => row.worker_id);
     if (workerIds.some((id) => typeof id !== 'string' || !uuid.test(id)) || new Set(workerIds).size !== workerIds.length) return fail('Could not load the complete project team.', 503);
-    if (req.nextUrl.searchParams.get('view') === 'bale') {
-      // Read only fields needed for the picker under the caller's RLS. A bounded
-      // batch avoids URL size limits and silently truncated PostgREST responses.
-      if (workerIds.length > 1000) return fail('This site team is too large to load safely.', 503);
-      const team: { id: string; name: string; position: string }[] = [];
-      for (let offset = 0; offset < workerIds.length; offset += 100) {
-        const batch = workerIds.slice(offset, offset + 100);
-        const result = await auth.db.from('workers').select('id,name,position', { count: 'exact' }).in('id', batch).eq('active', true);
-        if (result.error || !Array.isArray(result.data) || result.count === null || result.count !== result.data.length) return fail('Could not load worker details for the site.', 503);
-        for (const worker of result.data) {
-          if (!worker || typeof worker.id !== 'string' || !batch.includes(worker.id) || typeof worker.name !== 'string' || typeof worker.position !== 'string') return fail('Could not load worker details for the site.', 503);
-          team.push({ id: worker.id, name: worker.name, position: worker.position });
-        }
-      }
-      if (new Set(team.map((worker) => worker.id)).size !== team.length) return fail('Could not load worker details for the site.', 503);
-      // An invisible ID may be inactive or hidden by RLS; do not infer why.
-      return NextResponse.json({ workers: team, someDetailsUnavailable: team.length !== workerIds.length }, { headers });
-    }
     return NextResponse.json({ workerIds }, { headers });
   } catch { return fail('Could not load the project team.', 503); }
 }
