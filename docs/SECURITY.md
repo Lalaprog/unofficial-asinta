@@ -240,7 +240,7 @@ where email = 'junel@asinta.ph';
 
 > The project owner reports that Supabase Dashboard backups require a paid plan and are unavailable on the current plan.
 
-> **Current blocker:** the inspected GitHub backup runs failed before creating a dump because `SUPABASE_DB_URL` was not set. No successful run was found in the inspected workflow history. This does not establish whether another backup exists. Do not assume this project has a usable restore point.
+> **Current blocker:** the inspected GitHub backup runs failed before creating a dump because `SUPABASE_DB_URL` was not set. The historical backup and migration workflows are now manually disabled at repository level; no scheduled export is running. No successful run was found in the inspected workflow history. This does not establish whether another backup exists. Do not assume this project has a usable restore point.
 
 `.github/workflows/backup.yml` is a **partial application-schema export** of `public` and `app_private`, not a complete or verified project backup. The branch updates it to use a PostgreSQL 17 client compatible with the currently connected server. A reviewed alternative would require the authorized administrator to configure credentials privately, never in chat. The repository is currently public. The draft workflow refuses to run for a public repository because the unencrypted artifact contains sensitive records. The historical default-branch workflow does not have this guard; do not configure its database secret or manually dispatch it to export real data. Even on a private repository, review access, retention and encryption before any real run. This branch's workflow changes reach the default branch only after merge; no backup was run as part of this change.
 
