@@ -1,12 +1,12 @@
 name: Automated database backup
 
-# PRIMARY BACKUP STRATEGY (Supabase Free tier has no PITR and no automated
-# project backups).
-#
-# Keep the two mechanisms distinct:
-#   - BACKUP (this workflow) = restorable `pg_dump` SQL archive of `public.*`.
-#   - EXPORT (`/api/export`) = human-readable CSV for opening in Excel. A manual
-#     button is never a backup strategy because people forget to press it.
+# PARTIAL database export, not a verified full-project backup. The job requires
+# a configured GitHub Actions secret and has failed before dumping in this repo.
+# It exports only public schema and rows, without owner or grants. app_private,
+# auth, Storage objects/configuration, platform settings and other dependencies
+# are excluded. A successful job or checksum does not prove restorability.
+# The output contains sensitive personal and financial records: restrict GitHub
+# artifact access, retention and downloads. See docs/SECURITY.md §10.
 #
 # STORAGE GAP (important)
 # -----------------------
@@ -21,14 +21,9 @@ name: Automated database backup
 #   Repository → Settings → Secrets and variables → Actions → `SUPABASE_DB_URL`
 #   (pooled connection string for project `mchkdkjntnbwrgmyobpd`).
 #
-# RESTORE TEST (required — an untested dump is not a backup)
-# ----------------------------------------------------------
-# 1. Run this workflow (Actions → "Automated database backup" → Run workflow).
-# 2. Download the `bale-pg-dump-<run_id>` artifact and verify its `.sha256`.
-# 3. Restore into a throwaway Supabase project:
-#      psql "$THROWAWAY_DB_URL" -v ON_ERROR_STOP=1 -f bale-backup-*.sql
-# 4. Verify row counts on `invoices`, `expenses`, `payroll`, and `audit_log`,
-#    then record the date and result in `docs/SECURITY.md` §10.
+# RECOVERY: a complete plan requires an isolated restore test with dependencies,
+# roles/ACLs, Auth and Storage addressed separately. Row counts or checksums
+# alone do not prove the project can be recovered. See docs/SECURITY.md §10.
 
 on:
   schedule:
@@ -64,9 +59,11 @@ jobs:
     steps:
       - name: Confirm the target project (manual runs)
         if: ${{ github.event_name == 'workflow_dispatch' }}
+        env:
+          CONFIRM_PROJECT_REF: ${{ inputs.confirm_project_ref }}
         run: |
-          if [ "${{ inputs.confirm_project_ref }}" != "$EXPECTED_REF" ]; then
-            echo "::error::Confirmation '${{ inputs.confirm_project_ref }}' does not match this workflow's project ($EXPECTED_REF). Refusing to run."
+          if [ "$CONFIRM_PROJECT_REF" != "$EXPECTED_REF" ]; then
+            echo "::error::Confirmation does not match this workflow's configured project. Refusing to run."
             exit 1
           fi
 
@@ -86,10 +83,10 @@ jobs:
             *) echo "::error::SUPABASE_DB_URL does not contain $EXPECTED_REF — refusing to back up an unknown database."; exit 1 ;;
           esac
 
-      - name: Install PostgreSQL client
-        run: sudo apt-get update -qq && sudo apt-get install -y -qq postgresql-client
-
-      - name: Run pg_dump (public schema + data, restorable SQL)
+      # The connected server is PostgreSQL 17. Ubuntu 24.04's default client is
+      # version 16, which cannot dump a 17 server. A newer server major needs a
+      # corresponding client update; pg_dump must fail rather than emit a partial file.
+      - name: Run PostgreSQL 17 pg_dump (public schema and data only)
         env:
           SUPABASE_DB_URL: ${{ secrets.SUPABASE_DB_URL }}
         run: |
@@ -99,19 +96,16 @@ jobs:
           TIMESTAMP="$(date -u +%Y%m%dT%H%M%SZ)"
           DUMP_FILE="backup-out/bale-backup-${EXPECTED_REF}-${TIMESTAMP}.sql"
 
-          # --schema=public: dumps all BALE tables, constraints, functions, RLS
-          # policies, and audit_log rows without touching `auth.*` password
-          # hashes or Supabase-managed internal schemas that cannot be restored
-          # by a non-superuser on a throwaway project.
-          # --no-owner --no-privileges --clean --if-exists: makes the SQL file
-          # restorable into a fresh throwaway project via `psql -v ON_ERROR_STOP=1`.
-          pg_dump "$SUPABASE_DB_URL" \
+          # Forward the connection via the environment, not process arguments;
+          # never print it. Docker runs on this ephemeral Actions runner only.
+          # This export excludes app_private, Auth, Storage, owners and ACLs.
+          export PGDATABASE="$SUPABASE_DB_URL"
+          docker run --rm --network host --env PGDATABASE postgres:17.6 pg_dump \
             --schema=public \
             --clean \
             --if-exists \
             --no-owner \
-            --no-privileges \
-            --file="$DUMP_FILE"
+            --no-privileges > "$DUMP_FILE"
 
           if [ ! -s "$DUMP_FILE" ]; then
             echo "::error::pg_dump produced an empty file."
@@ -142,7 +136,8 @@ jobs:
             echo "### Backup artifact uploaded"
             echo ""
             echo "- **Artifact:** \`bale-pg-dump-${{ github.run_id }}\`"
-            echo "- **Scope:** \`public\` schema (tables, rows, functions, RLS policies, \`audit_log\`)."
-            echo "- **Not included (Storage gap):** Receipt photos in the \`receipts\` Supabase Storage bucket live in object storage, not PostgreSQL. Copy them separately from Supabase Storage."
-            echo "- **Restore verification (required):** Download the artifact, verify the \`.sha256\` checksum, and restore into a throwaway Supabase project with \`psql \"\$THROWAWAY_DB_URL\" -v ON_ERROR_STOP=1 -f bale-backup-*.sql\`. Record the result in \`docs/SECURITY.md\` §10."
+            echo "- **Scope:** partial export of \`public\` schema and rows. Owners and grants are excluded."
+            echo "- **Not included:** \`app_private\`, Auth, Storage files/configuration and other project settings. It is not a full project backup."
+            echo "- **Sensitive:** artifact contains personal and financial data; restrict access and retention."
+            echo "- **Recovery plan required:** Test restoration in an isolated equivalent environment, account for dependencies and privileges, and separately protect Auth and Storage. A checksum does not prove restorability."
           } >> "$GITHUB_STEP_SUMMARY"

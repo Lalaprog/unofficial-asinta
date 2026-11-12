@@ -236,39 +236,15 @@ where email = 'junel@asinta.ph';
 
 ---
 
-## 10. Backups vs. Ad-hoc Exports (finding #11) — **RESTORE TEST REQUIRED**
+## 10. Recovery and ad-hoc exports — **NOT YET VERIFIED**
 
-The live project is on **Supabase Free**, which does **not** include PITR or
-automated platform backups. Keep backup and ad-hoc table exports strictly
-distinct:
+> **Current blocker:** the inspected GitHub backup runs failed before creating a dump because `SUPABASE_DB_URL` was not set. No successful run was found in the inspected workflow history. This does not establish whether another backup exists. Do not assume this project has a usable restore point.
 
-- **Backup** = restorable `pg_dump` SQL archive (`.github/workflows/backup.yml`).
-- **Ad-hoc export** = exporting a table from the **Supabase Dashboard (Table
-  Editor → Export to CSV)** when needed for external inspection. A manual CSV
-  button inside the app is never a backup strategy because people forget to
-  press it and a flat CSV is not a restorable database archive.
+`.github/workflows/backup.yml` is a **partial public-schema export**, not a complete or verified project backup. The branch updates it to use a PostgreSQL 17 client compatible with the currently connected server. It still requires the authorized administrator to configure the existing GitHub Actions database connection secret privately in GitHub, not in chat. A successful run produces a sensitive GitHub artifact, so review access and retention before enabling it. This branch's workflow changes reach the default branch only after merge; no backup was run as part of this change.
 
-### 10a. Automated database backup (primary)
+The export excludes `app_private` (which currently has tables and functions), Auth, Storage files and configuration, owners, grants, and project settings. It can also depend on Supabase-managed schemas. A checksum or row-count comparison alone cannot establish a successful restore. A complete recovery plan requires a securely stored, independently tested restore to an isolated equivalent environment, a review of schema dependencies and privileges, an appropriate plan for Auth, and separate copies of Storage objects/configuration. Recovery must also account for new writes after a backup; never overwrite newer records blindly. Do not apply the six missing migrations until a suitable recovery path and staged rollout have been verified.
 
-`.github/workflows/backup.yml` runs weekly (`cron: '0 22 * * 6'`, Sunday 06:00
-Asia/Manila) and on manual `workflow_dispatch`:
-
-- Reuses the `SUPABASE_DB_URL` repository secret and the exact project-ref guard
-  from `.github/workflows/apply-migrations.yml` (refuses to run unless the URL
-  contains `mchkdkjntnbwrgmyobpd`).
-- Runs `pg_dump --schema=public --clean --if-exists --no-owner --no-privileges`,
-  verifies the dump completed (`PostgreSQL database dump complete`), writes a
-  `.sha256` checksum, and uploads both as a GitHub Actions artifact.
-
-**Restore test runbook (an untested dump is not a backup):**
-
-1. Trigger **Actions → Automated database backup → Run workflow**.
-2. Download the `bale-pg-dump-<run_id>` artifact and verify its `.sha256`.
-3. Create a throwaway Supabase project (or local Postgres instance) and restore:
-   `psql "$THROWAWAY_DB_URL" -v ON_ERROR_STOP=1 -f bale-backup-*.sql`
-4. Verify (a) row counts for `invoices`, `expenses`, `payroll`, and `workers`,
-   and (b) that `audit_log` rows are present through the backup timestamp.
-5. Record the date and result below.
+The public export uses a generated Actions artifact containing personal and financial data. Limit who can read/download it and set an appropriate retention period. GitHub Actions' project-ref substring check is a limited guard, not independent proof of target identity. Table CSV exports are useful for inspection but are not a replacement for a complete database backup.
 
 ### 10b. Why manual in-app CSV export was deliberately omitted
 
@@ -277,7 +253,7 @@ Settings or a data-export API route:
 
 1. **Keeps backup (`pg_dump`) distinct from ad-hoc exports.** A download button
    inside Settings invites treating a flat CSV as a backup; `.github/workflows/backup.yml`
-   (`pg_dump`) is the real restorable backup. When an ad-hoc spreadsheet is
+   (`pg_dump`) is only a partial database export until a full recovery plan is verified. When an ad-hoc spreadsheet is
     genuinely needed, Founders can export directly from the **Supabase Dashboard
    (Table Editor → Export to CSV)**.
 2. **RA 10173 local-file exposure.** One-click dumps of `workers`, `clients`,

@@ -71,3 +71,16 @@ jobs:
         env:
           PR103_REHEARSAL_TEST_DATABASE_URL: postgresql://postgres@127.0.0.1:5433/asinta_test_pr103
         run: npx vitest run tests/pr103-rehearsal-postgres.test.ts
+      - name: Test partial export against synthetic PostgreSQL 17 data
+        env:
+          SUPABASE_DB_URL: postgresql://postgres@127.0.0.1:5433/asinta_test_pr103
+          EXPECTED_REF: synthetic_test
+        run: |
+          set -euo pipefail
+          python3 -c "import pathlib, re, textwrap; s=pathlib.Path('.github/workflows/backup.yml').read_text(); m=re.search(r'(?ms)^      - name: Run PostgreSQL 17 pg_dump.*?^        run: \\|\\n(.*?)(?=^      - name:)',s); assert m, 'Export step missing'; pathlib.Path('$RUNNER_TEMP/partial-export.sh').write_text(textwrap.dedent(m.group(1)))"
+          cd "$RUNNER_TEMP"
+          bash partial-export.sh
+          test "$(find backup-out -name '*.sql' | wc -l)" -eq 1
+          grep -q 'CREATE TABLE public.payroll' backup-out/*.sql
+          sha256sum -c backup-out/*.sha256
+          rm -rf backup-out partial-export.sh
