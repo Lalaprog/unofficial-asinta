@@ -1,4 +1,5 @@
 -- Guarded Supervisor functions for the already-installed locked tables.
+-- NOT APPROVED FOR HOSTED DEPLOYMENT: see docs/PR103_SCHEMA_REHEARSAL.md.
 -- Not a complete payroll feature; review the target and recovery plan first.
 SET LOCAL lock_timeout = '3s';
 SET LOCAL statement_timeout = '30s';
