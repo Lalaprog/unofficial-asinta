@@ -10,17 +10,18 @@ vi.mock('@/components/ui/Modal',()=>({Modal:({isOpen,title,children}:{isOpen:boo
 const projects=[{id:'a',name:'Site A'},{id:'b',name:'Site B'}];
 vi.mock('@/lib/data/store',()=>({useDataStore:()=>({advanceRequests:[],projects,workers:[{id:'w1',name:'Ada',position:'Mason',active:true},{id:'w2',name:'Ben',position:'Carpenter',active:true}],users:[],getProjectsForSupervisor:()=>projects,createAdvanceRequest:mock.submit,reviewAdvanceRequest:vi.fn(),approveAdvanceRequests:vi.fn(),issueAdvanceRequest:vi.fn()})}));
 import {AdvanceRequestsPanel} from '@/components/advances/AdvanceRequestsPanel';
-const response=(ids:string[],ok=true)=>({ok,json:async()=>({workerIds:ids})});
+const names:Record<string,{id:string;name:string;position:string}>={w1:{id:'w1',name:'Ada',position:'Mason'},w2:{id:'w2',name:'Ben',position:'Carpenter'},w3:{id:'w3',name:'Cora',position:'Welder'}};
+const response=(ids:string[],ok=true,someDetailsUnavailable=false)=>({ok,json:async()=>({workers:ids.map(id=>names[id]),someDetailsUnavailable})});
 function deferred<T>(){let resolve!:(value:T)=>void;const promise=new Promise<T>(r=>{resolve=r;});return {promise,resolve};}
 beforeEach(()=>{mock.submit.mockReset().mockResolvedValue({id:'synthetic'});});
 afterEach(()=>{cleanup();vi.unstubAllGlobals();});
 function open(){render(React.createElement(AdvanceRequestsPanel));fireEvent.click(screen.getByRole('button',{name:'New Bale Request'}));return screen.getByRole('dialog',{name:'New Bale Request'});}
-describe('default-off candidate Bale form with real scoped-team hook',()=>{
+describe('candidate Bale form with real site-worker hook',()=>{
  it('fetches the selected site, ignores stale responses, and only submits the current site worker',async()=>{
   const a=deferred<ReturnType<typeof response>>(),b=deferred<ReturnType<typeof response>>();const fetchMock=vi.fn().mockReturnValueOnce(a.promise).mockReturnValueOnce(b.promise);vi.stubGlobal('fetch',fetchMock);
   const form=open();fireEvent.change(within(form).getByLabelText('Project site'),{target:{value:'a'}});await waitFor(()=>expect(fetchMock).toHaveBeenCalledTimes(1));
   fireEvent.change(within(form).getByLabelText('Project site'),{target:{value:'b'}});await waitFor(()=>expect(fetchMock).toHaveBeenCalledTimes(2));
-  expect(fetchMock.mock.calls.map(c=>c[0])).toEqual(['/api/projects/a/workers','/api/projects/b/workers']);
+  expect(fetchMock.mock.calls.map(c=>c[0])).toEqual(['/api/projects/a/workers?view=bale','/api/projects/b/workers?view=bale']);
   expect((within(form).getByRole('button',{name:'Send to Founder'}) as HTMLButtonElement).disabled).toBe(true);
   await act(async()=>b.resolve(response(['w2'])));await waitFor(()=>expect(within(form).getByRole('option',{name:'Ben · Carpenter'})).toBeTruthy());
   await act(async()=>a.resolve(response(['w1'])));expect(within(form).queryByRole('option',{name:'Ada · Mason'})).toBeNull();
@@ -28,11 +29,20 @@ describe('default-off candidate Bale form with real scoped-team hook',()=>{
   await waitFor(()=>expect(mock.submit).toHaveBeenCalledWith({worker_id:'w2',project_id:'b',requested_amount:125.5}));
  });
  it('warns when only some assigned workers have loaded details instead of presenting the list as complete',async()=>{
-  const fetchMock=vi.fn().mockResolvedValue(response(['w1','missing-worker']));vi.stubGlobal('fetch',fetchMock);
+  const fetchMock=vi.fn().mockResolvedValue(response(['w1'],true,true));vi.stubGlobal('fetch',fetchMock);
   const form=open();fireEvent.change(within(form).getByLabelText('Project site'),{target:{value:'a'}});
   await within(form).findByRole('option',{name:'Ada · Mason'});
-  expect(within(form).getByText(/Some assigned worker details are not in the loaded list/)).toBeTruthy();
+  expect(within(form).getByText(/Some assigned worker details are unavailable/)).toBeTruthy();
   expect(mock.submit).not.toHaveBeenCalled();
+ });
+ it('offers an assigned site worker even when absent from the separate shared worker store',async()=>{
+  vi.stubGlobal('fetch',vi.fn().mockResolvedValue(response(['w3'])));
+  const form=open();fireEvent.change(within(form).getByLabelText('Project site'),{target:{value:'a'}});
+  await within(form).findByRole('option',{name:'Cora · Welder'});
+  fireEvent.change(within(form).getByLabelText('Worker'),{target:{value:'w3'}});
+  fireEvent.change(within(form).getByLabelText('Requested amount (₱)'),{target:{value:'125.50'}});
+  fireEvent.click(within(form).getByRole('button',{name:'Send to Founder'}));
+  await waitFor(()=>expect(mock.submit).toHaveBeenCalledWith({worker_id:'w3',project_id:'a',requested_amount:125.5}));
  });
  it('fails closed on a duplicate, incomplete, or failed team response and can retry',async()=>{
   const fetchMock=vi.fn().mockResolvedValueOnce(response(['w1','w1'])).mockResolvedValueOnce(response([],false)).mockResolvedValueOnce(response(['w1']));vi.stubGlobal('fetch',fetchMock);

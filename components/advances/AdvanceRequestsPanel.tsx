@@ -4,7 +4,7 @@ import React, { useEffect, useMemo, useState } from 'react';
 import { useRouter, useSearchParams } from 'next/navigation';
 import { useAuth } from '@/lib/auth/authContext';
 import { useDataStore } from '@/lib/data/store';
-import { useProjectTeam } from '@/lib/attendance/useProjectTeam';
+import { useBaleProjectWorkers } from '@/lib/attendance/useBaleProjectWorkers';
 import type { AdvanceRequest, AdvanceRequestStatus } from '@/types';
 import { formatDatePH, formatPeso, formatPesoCompact } from '@/lib/email/format';
 import { useToast } from '@/components/ui/Toast';
@@ -109,11 +109,9 @@ export function AdvanceRequestsPanel() {
     () => (isFounder ? projects : user ? getProjectsForSupervisor(user.id) : []),
     [isFounder, projects, user, getProjectsForSupervisor]
   );
-  const team = useProjectTeam(user?.id, selectedProjectId, isSupervisor && requestModalOpen);
-  const teamIds = new Set(team.ids);
-  const loadedWorkerIds = new Set(workers.map((worker) => worker.id));
-  const missingWorkerDetails = team.status === 'ready' && team.ids.some((id) => !loadedWorkerIds.has(id));
-  const activeWorkers = workers.filter((worker) => worker.active && team.status === 'ready' && teamIds.has(worker.id));
+  const team = useBaleProjectWorkers(user?.id, selectedProjectId, isSupervisor && requestModalOpen);
+  const activeWorkers = team.status === 'ready' ? team.workers : [];
+  const missingWorkerDetails = team.status === 'ready' && team.someDetailsUnavailable;
   const pendingApprovalRequests = advanceRequests.filter(
     (request) => request.status === 'pending_approval'
   );
@@ -948,8 +946,8 @@ export function AdvanceRequestsPanel() {
           {selectedProjectId && team.status === 'error' && (
             <p role="alert">Could not load the site team. <button type="button" className="font-semibold text-brand underline" onClick={team.reload}>Try again</button></p>
           )}
-          {selectedProjectId && missingWorkerDetails && <p role="status">Some assigned worker details are not in the loaded list. Refresh or ask the Founder to check the site team if someone is missing.</p>}
-          {selectedProjectId && team.status === 'ready' && !missingWorkerDetails && activeWorkers.length === 0 && <p>No assigned active workers are in the loaded worker list. Refresh or ask the Founder to check the site team if someone is missing.</p>}
+          {selectedProjectId && missingWorkerDetails && <p role="status">Some assigned worker details are unavailable. They may be inactive or not visible to this account. Ask the Founder to check the site team if someone is missing.</p>}
+          {selectedProjectId && team.status === 'ready' && !missingWorkerDetails && activeWorkers.length === 0 && <p>No active workers are assigned to this site. Ask the Founder to check the site team if someone is missing.</p>}
 
           <Input
             label="Requested amount (₱)"
