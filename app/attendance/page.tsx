@@ -52,6 +52,8 @@ import { RollCallWalkthrough } from '@/components/dashboard/RollCallWalkthrough'
 import type { HistoryRecord, HistorySheet } from '@/lib/attendance/history';
 import { HistorySheetRecords } from '@/components/attendance/HistorySheetRecords';
 import { AttendanceHistoryCalendar } from '@/components/attendance/AttendanceHistoryCalendar';
+import { SupervisorLeavePanel } from '@/components/attendance/SupervisorLeavePanel';
+import { SupervisorDayPanel } from '@/components/attendance/SupervisorDayPanel';
 
 const EMPTY_ROLL_CALL: ProjectRollCallSnapshot = { workerIds: [], records: [] };
 
@@ -1072,6 +1074,8 @@ function AttendancePageInner() {
             </div>
           )}
         </div>
+
+        {activeTab === 'terminal' && assurance === 'ready' && !authLoading && (isFounder || isSupervisor) && <><SupervisorDayPanel /><SupervisorLeavePanel /></>}
 
         {/* Founder Review Banner: Supervisor Attendance Submitted with Crew Report */}
         {isFounder && (pendingApprovals.loading || pendingApprovals.error || (pendingApprovals.total ?? 0) > 0) && (
@@ -2425,6 +2429,7 @@ function AttendancePageInner() {
       >
         {selectedRecordForOverride && (
           <form onSubmit={handleFounderOverrideSubmit} className="space-y-4 text-xs">
+            <p className="rounded-xl border border-status-warning/25 bg-status-warning-bg p-3 leading-relaxed text-ink-secondary">If this date is covered by approved or paid payroll, review and settle any correction separately. This legacy status edit does not change the saved voucher or automatically record an adjustment. It can also make saved regular/OT details stale.</p>
             <div className="p-3 rounded-xl bg-surface-inset border border-surface-border space-y-1">
               <div className="font-bold text-navy">
                 Worker: {(selectedRecordForOverride as HistoryRecord).worker_name || workers.find((w) => w.id === selectedRecordForOverride.worker_id)?.name || 'Worker'}

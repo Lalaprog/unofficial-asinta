@@ -1,11 +1,12 @@
 import {PGlite} from '@electric-sql/pglite';
 import {readFileSync} from 'node:fs';
 import {describe,expect,it} from 'vitest';
+import {parseWeeklyInput,buildWeeklyPreview} from '@/lib/payroll/weeklyPreview';
 
 // Simplified isolated schemas, not a live Supabase or hosted-schema clone.
 const founder='00000000-0000-0000-0000-000000000001',supervisor='00000000-0000-0000-0000-000000000002',worker='00000000-0000-0000-0000-000000000003',site='00000000-0000-0000-0000-000000000004',other='00000000-0000-0000-0000-000000000005';
 const inbox='aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa',object=`${founder}/inbox/${inbox}.jpg`;
-const names=['advance_requests','advances','audit_log','clients','email_logs','email_templates','expense_drafts','invoices','reminder_dispatches','sms_logs','tools','vendor_memory'];
+const names=['audit_log','clients','email_logs','email_templates','expense_drafts','invoices','reminder_dispatches','sms_logs','tools','vendor_memory'];
 const migrations=['20261112000000_guarded_single_project_worker.sql','20261112000001_payslip_batch_snapshot.sql','20261112000002_project_attendance_calendar.sql','20261112000003_project_expense_ledger.sql','20261112000004_receipt_photo_inbox.sql','20261112000005_attendance_history_calendar.sql','20261112000006_revoke_client_truncate.sql'];
 const sql=(path:string)=>readFileSync(`supabase/migrations/${path}`,'utf8');
 
@@ -22,6 +23,8 @@ describe('PR 102 migration sequence',()=>{
     CREATE TABLE public.project_supervisors(project_id uuid,supervisor_id uuid,unique(project_id,supervisor_id));
     CREATE TABLE public.attendance(id uuid primary key,worker_id uuid,project_id uuid,date date,status text,hours_worked numeric,notes text,recorded_by uuid,is_founder_override boolean,submitted_at timestamptz,created_at timestamptz);
     CREATE TABLE public.payroll(id uuid primary key,worker_id uuid,period_start date,period_end date,status text,days_worked numeric,hours_worked numeric,gross_pay numeric,bale_deduction numeric,other_deductions numeric,net_pay numeric);
+    CREATE TABLE public.advances(id uuid primary key,worker_id uuid,project_id uuid,date date,amount numeric(10,2),amount_deducted numeric(10,2),status text);
+    CREATE TABLE public.advance_requests(id uuid primary key,worker_id uuid,project_id uuid,requested_amount numeric(10,2),status text,issued_at timestamptz,issued_advance_id uuid unique);
     CREATE TABLE public.expenses(id uuid primary key,project_id uuid,description text,category text,amount numeric(12,2),expense_date date,notes text);
     ${names.map(n=>`CREATE TABLE public.${n}(id uuid primary key); INSERT INTO public.${n} VALUES ('${worker}');`).join('\n')}
     CREATE FUNCTION public.is_founder() RETURNS boolean LANGUAGE sql STABLE SECURITY DEFINER AS $$SELECT public.session_assurance_satisfied() AND EXISTS(SELECT 1 FROM public.users WHERE id=auth.uid() AND role='founder')$$;
@@ -35,7 +38,9 @@ describe('PR 102 migration sequence',()=>{
     INSERT INTO public.expenses VALUES ('${worker}','${site}','Fixture','materials',12.35,'2026-10-25',null);
     CREATE TABLE storage.objects(bucket_id text,name text); ALTER TABLE storage.objects ENABLE ROW LEVEL SECURITY;
     CREATE POLICY founder_storage ON storage.objects FOR SELECT TO authenticated USING (bucket_id='receipts' AND public.is_founder());
-    ALTER TABLE public.users ENABLE ROW LEVEL SECURITY; ALTER TABLE public.projects ENABLE ROW LEVEL SECURITY; ALTER TABLE public.workers ENABLE ROW LEVEL SECURITY; ALTER TABLE public.attendance ENABLE ROW LEVEL SECURITY; ALTER TABLE public.expenses ENABLE ROW LEVEL SECURITY; ALTER TABLE public.payroll ENABLE ROW LEVEL SECURITY;
+    ALTER TABLE public.advances ENABLE ROW LEVEL SECURITY; ALTER TABLE public.advance_requests ENABLE ROW LEVEL SECURITY; ALTER TABLE public.users ENABLE ROW LEVEL SECURITY; ALTER TABLE public.projects ENABLE ROW LEVEL SECURITY; ALTER TABLE public.workers ENABLE ROW LEVEL SECURITY; ALTER TABLE public.attendance ENABLE ROW LEVEL SECURITY; ALTER TABLE public.expenses ENABLE ROW LEVEL SECURITY; ALTER TABLE public.payroll ENABLE ROW LEVEL SECURITY;
+    CREATE POLICY advances_read ON public.advances FOR SELECT TO authenticated USING(public.is_founder());
+    CREATE POLICY requests_read ON public.advance_requests FOR SELECT TO authenticated USING(public.is_founder());
     CREATE POLICY users_read ON public.users FOR SELECT TO authenticated USING (id=auth.uid() OR public.is_founder());
     CREATE POLICY projects_read ON public.projects FOR SELECT TO authenticated USING(public.is_founder() OR public.is_supervisor_assigned(id));
     CREATE POLICY workers_read ON public.workers FOR SELECT TO authenticated USING(public.is_founder() OR (auth.uid() IS NOT NULL AND active));
@@ -48,6 +53,10 @@ describe('PR 102 migration sequence',()=>{
    await db.exec(sql('20261103000001_attendance_history.sql'));
    await db.exec(sql('20261107000002_project_worker_lists.sql'));
    for(const migration of migrations) await db.exec(sql(migration));
+   await db.exec(sql('20261113000000_weekly_worker_preview.sql'));
+   await db.exec(sql('20261113000001_attendance_time_detail.sql'));
+   await db.exec(sql('20261113000002_worker_allowances.sql'));
+   await db.exec(sql('20261113000003_weekly_payroll_context.sql'));
    expect((await db.query<{n:number}>('SELECT count(*)::int AS n FROM public.attendance')).rows[0].n).toBe(1);
    expect((await db.query<{n:number}>('SELECT count(*)::int AS n FROM public.expenses')).rows[0].n).toBe(1);
    expect((await db.query<{n:number}>('SELECT count(*)::int AS n FROM public.payroll')).rows[0].n).toBe(1);
@@ -55,17 +64,50 @@ describe('PR 102 migration sequence',()=>{
    expect(grants.rows[0]).toEqual({auth:false,anon:false,service:true});
    await db.exec(`SET ROLE service_role; SELECT public.set_project_worker_guarded('${founder}','${site}','${worker}',true); RESET ROLE; SET test.uid='${founder}'; SET test.assurance='yes'; SET ROLE authenticated;`);
    const value=async(query:string)=>(await db.query<{data:unknown}>(query)).rows[0].data;
+   expect(await value("SELECT public.weekly_worker_preview_inputs('2026-10-25') AS data")).toMatchObject({start:'2026-10-25',end:'2026-10-31',workers:[{id:worker,pay_rate:'600',linked_supervisor:false}],attendance:[{worker_id:worker,hours_worked:'8',time_detail:null}],vouchers:[{worker_id:worker,status:'paid'}]});
+   await expect(value("SELECT public.weekly_worker_preview_inputs('2026-10-26') AS data")).rejects.toThrow(/Sunday/);
+   await db.exec(`RESET ROLE; INSERT INTO public.attendance(id,worker_id,project_id,date,status,hours_worked,submitted_at) VALUES ('${other}','${worker}','${site}','2026-11-01','present',8,'2026-11-01T08:00:00Z'); SET ROLE authenticated;`);
+   await value(`SELECT public.record_attendance_time_detail('${inbox}','${other}','2026-11-01T08:00:00Z',8,2,'Fixture') AS data`);
+   expect(await value("SELECT public.weekly_worker_preview_inputs('2026-11-01') AS data")).toMatchObject({attendance:[{id:other,time_detail:{regular_hours:'8.00',overtime_hours:'2.00',stale:false}}]});
+   await db.exec(`RESET ROLE; UPDATE public.attendance SET submitted_at='2026-11-02T08:00:00Z' WHERE id='${other}'; SET ROLE authenticated;`);
+   expect(await value("SELECT public.weekly_worker_preview_inputs('2026-11-01') AS data")).toMatchObject({attendance:[{id:other,time_detail:{stale:true}}]});
+   expect(await value(`SELECT public.submit_worker_allowance('${worker}','${other}','2026-11-02T08:00:00Z',50.25,'Fixture') AS data`)).toMatchObject({status:'approved',replayed:false});
+   await db.exec(`SET test.uid='${supervisor}';`);
+   expect(await value(`SELECT public.submit_worker_allowance('${founder}','${other}','2026-11-02T08:00:00Z',75.50,'Fixture pending') AS data`)).toMatchObject({status:'pending',replayed:false});
+   await db.exec(`SET test.uid='${founder}';`);
+   expect(await value('SELECT public.worker_allowance_pending_queue() AS data')).toMatchObject([{id:founder,amount:'75.50',stale:false,finalized:false}]);
+   expect(await value(`SELECT public.review_worker_allowance('${founder}','approved') AS data`)).toMatchObject({status:'approved',replayed:false});
+   await db.exec(`RESET ROLE;
+    INSERT INTO public.advances VALUES ('${inbox}','${worker}','${site}','2026-11-04',100.25,0,'active'),('${other}','${worker}','${site}','2026-10-30',25.50,5.25,'partially_deducted');
+    INSERT INTO public.advance_requests VALUES ('${worker}','${worker}','${site}',100.25,'issued','2026-11-03T16:30:00Z','${inbox}'); SET ROLE authenticated;`);
+   expect(await value("SELECT public.weekly_worker_preview_inputs('2026-11-01') AS data")).toMatchObject({allowances:[{worker_id:worker,amount:'75.50',status:'approved',stale:false},{worker_id:worker,amount:'50.25',status:'approved',stale:false}],advances:[{id:inbox,amount:'100.25',linked_release:true}],older_advances:[{id:other,amount:'25.50',deducted:'5.25'}]});
+   await db.exec(`RESET ROLE; UPDATE public.attendance SET submitted_at='2026-11-03T08:00:00Z' WHERE id='${other}'; SET ROLE authenticated;`);
+   expect(await value("SELECT public.weekly_worker_preview_inputs('2026-11-01') AS data")).toMatchObject({allowances:[{stale:true},{stale:true}]});
+   const inactive='bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb';
+   await db.exec(`RESET ROLE;
+    INSERT INTO public.workers VALUES ('${inactive}','Inactive worker','Mason','none',600,'daily',false);
+    INSERT INTO public.advances VALUES ('${inactive}','${inactive}','${site}','2026-11-04',5.25,0,'active');
+    INSERT INTO public.payroll VALUES ('${inactive}','${inactive}','2026-10-30','2026-11-03','paid',1,8,600,0,0,600); SET ROLE authenticated;`);
+   const complete=await value("SELECT public.weekly_worker_preview_inputs('2026-11-01') AS data");
+   expect(complete).toMatchObject({workers:expect.arrayContaining([expect.objectContaining({id:inactive,active:false})]),advances:expect.arrayContaining([expect.objectContaining({id:inactive,linked_release:false})]),vouchers:expect.arrayContaining([expect.objectContaining({worker_id:inactive,status:'paid'})])});
+   expect(buildWeeklyPreview(parseWeeklyInput(complete,'2026-11-01'),'2026-11-04').rows.find(r=>r.worker.id===inactive)).toMatchObject({net:null,review:true});
+   await db.exec(`RESET ROLE; UPDATE public.attendance SET recorded_by='${worker}' WHERE id='${other}'; SET ROLE authenticated;`);
+   expect(await value("SELECT public.weekly_worker_preview_inputs('2026-11-01') AS data")).toMatchObject({workers:expect.arrayContaining([expect.objectContaining({id:worker,possible_supervisor:true})])});
+   await db.exec(`RESET ROLE; UPDATE public.attendance SET recorded_by=NULL WHERE id='${other}'; SET ROLE authenticated;`);
    expect(await value("SELECT public.payslip_batch_snapshot('2026-10-25','2026-10-31') AS data")).toMatchObject([{worker_id:worker,gross_pay:600}]);
-   expect(await value(`SELECT public.project_attendance_calendar('${site}','2026-10-01') AS data`)).toEqual([{date:'2026-10-25',count:1}]);
-   expect(await value("SELECT public.attendance_history_calendar('2026-10-01',NULL,NULL,NULL) AS data")).toEqual([{date:'2026-10-25',count:1}]);
+   expect(await value(`SELECT public.project_attendance_calendar('${site}','2026-10-01') AS data`)).toEqual([{date:'2026-10-25',count:1},{date:'2026-11-01',count:1}]);
+   expect(await value("SELECT public.attendance_history_calendar('2026-10-01',NULL,NULL,NULL) AS data")).toEqual([{date:'2026-10-25',count:1},{date:'2026-11-01',count:1}]);
    expect(await value(`SELECT public.project_expense_totals(ARRAY['${site}'::uuid]) AS data`)).toEqual([{project_id:site,expense_count:1,total:'12.35'}]);
    await db.query('INSERT INTO public.receipt_photo_inbox(id,saved_by,object_path,file_name,mime_type,file_size,sha256) VALUES($1,$2,$3,$4,$5,$6,$7)',[inbox,founder,object,'fixture.jpg','image/jpeg',10,'a'.repeat(64)]);
    await db.exec(`RESET ROLE; INSERT INTO storage.objects VALUES ('receipts','${object}'); SET ROLE authenticated; UPDATE public.receipt_photo_inbox SET status='ready' WHERE id='${inbox}';`);
    expect(await value('SELECT public.receipt_photo_inbox_page() AS data')).toMatchObject({items:[{id:inbox,status:'ready'}]});
-   await db.exec(`SET test.uid='${supervisor}';`);
+   await db.exec(`SET test.assurance='no';`);
+   await expect(value("SELECT public.weekly_worker_preview_inputs('2026-10-25') AS data")).rejects.toThrow(/Founder/);
+   await db.exec(`SET test.assurance='yes'; SET test.uid='${supervisor}';`);
+   await expect(value("SELECT public.weekly_worker_preview_inputs('2026-10-25') AS data")).rejects.toThrow(/Founder/);
    await expect(value(`SELECT public.project_expense_totals(ARRAY['${site}'::uuid]) AS data`)).rejects.toThrow(/Founder/);
    await expect(value(`SELECT public.project_attendance_calendar('${other}','2026-10-01') AS data`)).rejects.toThrow(/Project access/);
-   expect(await value('SELECT public.attendance_history_calendar(\'2026-10-01\',NULL,NULL,NULL) AS data')).toEqual([{date:'2026-10-25',count:1}]);
+   expect(await value('SELECT public.attendance_history_calendar(\'2026-10-01\',NULL,NULL,NULL) AS data')).toEqual([{date:'2026-10-25',count:1},{date:'2026-11-01',count:1}]);
    await expect(value('SELECT public.receipt_photo_inbox_page() AS data')).rejects.toThrow(/Founder/);
   }finally{await db.close();}
  },30000);

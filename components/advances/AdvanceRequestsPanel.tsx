@@ -4,6 +4,7 @@ import React, { useEffect, useMemo, useState } from 'react';
 import { useRouter, useSearchParams } from 'next/navigation';
 import { useAuth } from '@/lib/auth/authContext';
 import { useDataStore } from '@/lib/data/store';
+import { useProjectTeam } from '@/lib/attendance/useProjectTeam';
 import type { AdvanceRequest, AdvanceRequestStatus } from '@/types';
 import { formatDatePH, formatPeso, formatPesoCompact } from '@/lib/email/format';
 import { useToast } from '@/components/ui/Toast';
@@ -108,7 +109,9 @@ export function AdvanceRequestsPanel() {
     () => (isFounder ? projects : user ? getProjectsForSupervisor(user.id) : []),
     [isFounder, projects, user, getProjectsForSupervisor]
   );
-  const activeWorkers = workers.filter((worker) => worker.active);
+  const team = useProjectTeam(user?.id, selectedProjectId, isSupervisor && requestModalOpen);
+  const teamIds = new Set(team.ids);
+  const activeWorkers = workers.filter((worker) => worker.active && team.status === 'ready' && teamIds.has(worker.id));
   const pendingApprovalRequests = advanceRequests.filter(
     (request) => request.status === 'pending_approval'
   );
@@ -312,7 +315,7 @@ export function AdvanceRequestsPanel() {
   const handleSubmitRequest = async (event: React.FormEvent) => {
     event.preventDefault();
     const amount = Number(requestedAmount);
-    if (submitLock.current || !selectedWorkerId || !selectedProjectId || !Number.isFinite(amount) || amount <= 0) return;
+    if (submitLock.current || team.status !== 'ready' || !activeWorkers.some((worker) => worker.id === selectedWorkerId) || !selectedProjectId || !Number.isFinite(amount) || amount <= 0) return;
     submitLock.current = true;
     setIsSubmitting(true);
     try {
@@ -506,7 +509,7 @@ export function AdvanceRequestsPanel() {
             size="sm"
             className="w-full shrink-0 sm:w-auto"
             onClick={openRequestModal}
-            disabled={accessibleProjects.length === 0 || activeWorkers.length === 0}
+            disabled={accessibleProjects.length === 0}
           >
             New Bale Request
           </Button>
@@ -554,11 +557,9 @@ export function AdvanceRequestsPanel() {
         </div>
       )}
 
-      {isSupervisor && (accessibleProjects.length === 0 || activeWorkers.length === 0) && (
+      {isSupervisor && accessibleProjects.length === 0 && (
         <p className="rounded-lg border border-status-warning/20 bg-status-warning-bg/50 px-3 py-2 text-xs leading-relaxed text-ink-secondary">
-          {accessibleProjects.length === 0
-            ? 'No assigned project is available for this account yet. Ask the Founder to assign a project before submitting a request.'
-            : 'No active workers are available. Ask the Founder to add or activate a worker first.'}
+          No assigned project is available for this account yet. Ask the Founder to assign a project before submitting a request.
         </p>
       )}
 
@@ -676,9 +677,7 @@ export function AdvanceRequestsPanel() {
                   : 'Try another site or request status.'
                 : accessibleProjects.length === 0
                   ? 'Ask the Founder to assign a project before submitting a request.'
-                  : activeWorkers.length === 0
-                    ? 'Ask the Founder to add or activate a worker first.'
-                    : 'Use “New Bale Request” to submit a worker’s requested amount.'}
+                  : 'Use “New Bale Request” to choose a site and its assigned worker.'}
           </p>
         </Card>
       ) : isFounder ? (
@@ -901,12 +900,36 @@ export function AdvanceRequestsPanel() {
         dismissOnEscape={!isSubmitting}
         showCloseButton={!isSubmitting}
         title="New Bale Request"
-        description="Choose the worker and amount requested. Your assigned project is attached automatically when there is one, or select a site if you supervise multiple projects."
+        description="Choose an assigned site and one of its active workers, then enter the amount requested."
         maxWidth="md"
       >
         <form onSubmit={handleSubmitRequest} className="space-y-4 text-xs">
+          {accessibleProjects.length === 1 ? (
+            <div className="rounded-lg border border-surface-border bg-surface-inset px-3 py-2.5">
+              <p className="text-[11px] font-medium text-ink-secondary">Assigned project</p>
+              <p className="mt-0.5 break-words text-sm font-semibold text-navy">
+                {accessibleProjects[0].name}
+              </p>
+            </div>
+          ) : (
+            <Select
+              label="Project site"
+              value={selectedProjectId}
+              onChange={(event) => { setSelectedWorkerId(''); setSelectedProjectId(event.target.value); }}
+              required
+            >
+              <option value="">Select an assigned project</option>
+              {accessibleProjects.map((project) => (
+                <option key={project.id} value={project.id}>
+                  {project.name}
+                </option>
+              ))}
+            </Select>
+          )}
+
           <Select
             label="Worker"
+            disabled={team.status !== 'ready'}
             value={selectedWorkerId}
             onChange={(event) => setSelectedWorkerId(event.target.value)}
             required
@@ -919,28 +942,11 @@ export function AdvanceRequestsPanel() {
             ))}
           </Select>
 
-          {accessibleProjects.length === 1 ? (
-            <div className="rounded-lg border border-surface-border bg-surface-inset px-3 py-2.5">
-              <p className="text-[11px] font-medium text-ink-secondary">Assigned project</p>
-              <p className="mt-0.5 break-words text-sm font-semibold text-navy">
-                {accessibleProjects[0].name}
-              </p>
-            </div>
-          ) : (
-            <Select
-              label="Project site"
-              value={selectedProjectId}
-              onChange={(event) => setSelectedProjectId(event.target.value)}
-              required
-            >
-              <option value="">Select an assigned project</option>
-              {accessibleProjects.map((project) => (
-                <option key={project.id} value={project.id}>
-                  {project.name}
-                </option>
-              ))}
-            </Select>
+          {selectedProjectId && team.status === 'loading' && <p role="status">Loading workers for the selected site…</p>}
+          {selectedProjectId && team.status === 'error' && (
+            <p role="alert">Could not load the site team. <button type="button" className="font-semibold text-brand underline" onClick={team.reload}>Try again</button></p>
           )}
+          {selectedProjectId && team.status === 'ready' && activeWorkers.length === 0 && <p>No assigned active workers are in the loaded worker list. Refresh or ask the Founder to check the site team if someone is missing.</p>}
 
           <Input
             label="Requested amount (₱)"
@@ -961,7 +967,7 @@ export function AdvanceRequestsPanel() {
             <Button type="button" variant="secondary" onClick={() => setRequestModalOpen(false)} disabled={isSubmitting}>
               Cancel
             </Button>
-            <Button type="submit" variant="primary" isLoading={isSubmitting}>
+            <Button type="submit" variant="primary" isLoading={isSubmitting} disabled={team.status !== 'ready' || !activeWorkers.some((worker) => worker.id === selectedWorkerId)}>
               {isSubmitting ? 'Sending request…' : 'Send to Founder'}
             </Button>
           </div>
