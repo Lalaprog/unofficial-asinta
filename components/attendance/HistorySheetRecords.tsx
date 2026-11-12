@@ -1,5 +1,6 @@
 'use client';
-import React from 'react';
+import React, { useState } from 'react';
+import { TimeDetailDialog } from './TimeDetailDialog';
 import { Badge } from '@/components/ui/Badge';
 import { Button } from '@/components/ui/Button';
 import { formatDatePH } from '@/lib/email/format';
@@ -20,6 +21,7 @@ export function HistorySheetRecords({sheet, filters, userId, revision, isFounder
   onReview: (record: HistoryRecord, status: 'present'|'half_day'|'absent') => void;
   onEdit: (record: HistoryRecord) => void;
 }) {
+  const [timeRecord, setTimeRecord] = useState<HistoryRecord | null>(null);
   const records = useAttendanceHistory<HistoryRecord>('records', true, userId, {...filters,projectId:sheet.project_id,date:sheet.date}, revision);
   return (
     <div className="divide-y divide-surface-border/60 border-t border-surface-border/60">
@@ -45,11 +47,13 @@ export function HistorySheetRecords({sheet, filters, userId, revision, isFounder
                 <Button type="button" variant="secondary" size="sm" disabled={reviewing || records.loading || Boolean(records.error)} onClick={() => onReview(rec,'half_day')}>Half Day</Button>
                 <Button type="button" variant="danger" size="sm" disabled={reviewing || records.loading || Boolean(records.error)} onClick={() => onReview(rec,'absent')}>Absent</Button>
               </>}
+              {!rec.is_supervisor && (rec.status === 'present' || rec.status === 'half_day') && <Button type="button" variant="secondary" size="sm" disabled={records.loading || Boolean(records.error)} onClick={() => setTimeRecord(rec)}>Regular / OT</Button>}
               {isFounder && <Button type="button" variant="secondary" size="sm" disabled={reviewing || records.loading || Boolean(records.error)} onClick={() => onEdit(rec)}>Edit</Button>}
             </div>
           </div>
         );
       })}
+      {timeRecord && <TimeDetailDialog record={timeRecord} onClose={() => setTimeRecord(null)} />}
       {records.loading && <p role="status" className="px-4 py-3 text-xs text-ink-secondary">Loading attendance records…</p>}
       {records.error && <div className="space-y-2 px-4 py-3 text-xs"><p role="alert" className="text-status-danger">Unable to load attendance records. Please retry.</p><Button type="button" variant="secondary" size="sm" onClick={records.retry}>Retry records</Button></div>}
       {!records.loading && !records.error && records.items.length === 0 && <p className="px-4 py-3 text-xs text-ink-secondary">No records match this sheet now. Refresh history to update its count.</p>}

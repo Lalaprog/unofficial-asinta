@@ -14,6 +14,14 @@ describe('weekly worker planning preview',()=>{
   const s=snapshot();s.workers[0].pay_rate_type='hourly';s.workers[0].pay_rate='100.05';s.attendance[0].hours_worked='1.50';s.attendance[1].hours_worked='0.25';
   expect(buildWeeklyPreview(parseWeeklyInput(s,s.start),'2026-11-15').rows[0].estimate).toBe('175.09');
  });
+ it('uses explicitly recorded OT without inferring it from legacy totals and flags stale details',()=>{
+  const s=snapshot();const attendance=s.attendance as Array<(typeof s.attendance)[number] & {time_detail?:{regular_hours:string;overtime_hours:string;stale:boolean}}>;
+  attendance[0].time_detail={regular_hours:'8.00',overtime_hours:'2.00',stale:false};
+  let row=buildWeeklyPreview(parseWeeklyInput(s,s.start),s.start).rows[0];
+  expect(row).toMatchObject({regularHours:'12.00',otHours:'2.00',estimate:'1147.21',review:false});
+  attendance[0].time_detail.stale=true;row=buildWeeklyPreview(parseWeeklyInput(s,s.start),s.start).rows[0];expect(row).toMatchObject({review:true,estimate:null});
+  attendance[0].time_detail={regular_hours:'9.00',overtime_hours:'0.00',stale:false};expect(()=>parseWeeklyInput(s,s.start)).toThrow();
+ });
  it('does not calculate over-eight hours or duplicate site days',()=>{
   const s=snapshot();s.attendance[0].hours_worked='9.00';
   expect(buildWeeklyPreview(parseWeeklyInput(s,s.start),s.start).rows[0]).toMatchObject({review:true,estimate:null});

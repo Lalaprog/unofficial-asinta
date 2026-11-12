@@ -49,6 +49,7 @@ describe('PR 102 migration sequence',()=>{
    await db.exec(sql('20261107000002_project_worker_lists.sql'));
    for(const migration of migrations) await db.exec(sql(migration));
    await db.exec(sql('20261113000000_weekly_worker_preview.sql'));
+   await db.exec(sql('20261113000001_attendance_time_detail.sql'));
    expect((await db.query<{n:number}>('SELECT count(*)::int AS n FROM public.attendance')).rows[0].n).toBe(1);
    expect((await db.query<{n:number}>('SELECT count(*)::int AS n FROM public.expenses')).rows[0].n).toBe(1);
    expect((await db.query<{n:number}>('SELECT count(*)::int AS n FROM public.payroll')).rows[0].n).toBe(1);
@@ -56,11 +57,16 @@ describe('PR 102 migration sequence',()=>{
    expect(grants.rows[0]).toEqual({auth:false,anon:false,service:true});
    await db.exec(`SET ROLE service_role; SELECT public.set_project_worker_guarded('${founder}','${site}','${worker}',true); RESET ROLE; SET test.uid='${founder}'; SET test.assurance='yes'; SET ROLE authenticated;`);
    const value=async(query:string)=>(await db.query<{data:unknown}>(query)).rows[0].data;
-   expect(await value("SELECT public.weekly_worker_preview_inputs('2026-10-25') AS data")).toMatchObject({start:'2026-10-25',end:'2026-10-31',workers:[{id:worker,pay_rate:'600',linked_supervisor:false}],attendance:[{worker_id:worker,hours_worked:'8'}],vouchers:[{worker_id:worker,status:'paid'}]});
+   expect(await value("SELECT public.weekly_worker_preview_inputs('2026-10-25') AS data")).toMatchObject({start:'2026-10-25',end:'2026-10-31',workers:[{id:worker,pay_rate:'600',linked_supervisor:false}],attendance:[{worker_id:worker,hours_worked:'8',time_detail:null}],vouchers:[{worker_id:worker,status:'paid'}]});
    await expect(value("SELECT public.weekly_worker_preview_inputs('2026-10-26') AS data")).rejects.toThrow(/Sunday/);
+   await db.exec(`RESET ROLE; INSERT INTO public.attendance(id,worker_id,project_id,date,status,hours_worked,submitted_at) VALUES ('${other}','${worker}','${site}','2026-11-01','present',8,'2026-11-01T08:00:00Z'); SET ROLE authenticated;`);
+   await value(`SELECT public.record_attendance_time_detail('${inbox}','${other}','2026-11-01T08:00:00Z',8,2,'Fixture') AS data`);
+   expect(await value("SELECT public.weekly_worker_preview_inputs('2026-11-01') AS data")).toMatchObject({attendance:[{id:other,time_detail:{regular_hours:'8.00',overtime_hours:'2.00',stale:false}}]});
+   await db.exec(`RESET ROLE; UPDATE public.attendance SET submitted_at='2026-11-02T08:00:00Z' WHERE id='${other}'; SET ROLE authenticated;`);
+   expect(await value("SELECT public.weekly_worker_preview_inputs('2026-11-01') AS data")).toMatchObject({attendance:[{id:other,time_detail:{stale:true}}]});
    expect(await value("SELECT public.payslip_batch_snapshot('2026-10-25','2026-10-31') AS data")).toMatchObject([{worker_id:worker,gross_pay:600}]);
-   expect(await value(`SELECT public.project_attendance_calendar('${site}','2026-10-01') AS data`)).toEqual([{date:'2026-10-25',count:1}]);
-   expect(await value("SELECT public.attendance_history_calendar('2026-10-01',NULL,NULL,NULL) AS data")).toEqual([{date:'2026-10-25',count:1}]);
+   expect(await value(`SELECT public.project_attendance_calendar('${site}','2026-10-01') AS data`)).toEqual([{date:'2026-10-25',count:1},{date:'2026-11-01',count:1}]);
+   expect(await value("SELECT public.attendance_history_calendar('2026-10-01',NULL,NULL,NULL) AS data")).toEqual([{date:'2026-10-25',count:1},{date:'2026-11-01',count:1}]);
    expect(await value(`SELECT public.project_expense_totals(ARRAY['${site}'::uuid]) AS data`)).toEqual([{project_id:site,expense_count:1,total:'12.35'}]);
    await db.query('INSERT INTO public.receipt_photo_inbox(id,saved_by,object_path,file_name,mime_type,file_size,sha256) VALUES($1,$2,$3,$4,$5,$6,$7)',[inbox,founder,object,'fixture.jpg','image/jpeg',10,'a'.repeat(64)]);
    await db.exec(`RESET ROLE; INSERT INTO storage.objects VALUES ('receipts','${object}'); SET ROLE authenticated; UPDATE public.receipt_photo_inbox SET status='ready' WHERE id='${inbox}';`);
@@ -71,7 +77,7 @@ describe('PR 102 migration sequence',()=>{
    await expect(value("SELECT public.weekly_worker_preview_inputs('2026-10-25') AS data")).rejects.toThrow(/Founder/);
    await expect(value(`SELECT public.project_expense_totals(ARRAY['${site}'::uuid]) AS data`)).rejects.toThrow(/Founder/);
    await expect(value(`SELECT public.project_attendance_calendar('${other}','2026-10-01') AS data`)).rejects.toThrow(/Project access/);
-   expect(await value('SELECT public.attendance_history_calendar(\'2026-10-01\',NULL,NULL,NULL) AS data')).toEqual([{date:'2026-10-25',count:1}]);
+   expect(await value('SELECT public.attendance_history_calendar(\'2026-10-01\',NULL,NULL,NULL) AS data')).toEqual([{date:'2026-10-25',count:1},{date:'2026-11-01',count:1}]);
    await expect(value('SELECT public.receipt_photo_inbox_page() AS data')).rejects.toThrow(/Founder/);
   }finally{await db.close();}
  },30000);
