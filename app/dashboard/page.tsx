@@ -17,6 +17,7 @@ import { Textarea } from '@/components/ui/Input';
 import { buildReminderSMS, estimateSMSSegments } from '@/lib/sms/templates';
 import { loadSMSTemplate } from '@/lib/sms/loadTemplate';
 import { formatDatePH, formatPeso } from '@/lib/email/format';
+import { ownedEquipmentPreviewEnabled } from '@/lib/tools/ownedEquipment';
 
 const TOOL_CONDITION_LABELS: Record<ToolCondition, string> = {
   excellent: 'Excellent',
@@ -409,6 +410,7 @@ function TrendUpGlyph({ className = 'h-3.5 w-3.5' }: { className?: string }) {
 // ---------------------------------------------------------------------------
 
 function renderToolConditionSummary(project: ProjectFinancialSummary) {
+  if (ownedEquipmentPreviewEnabled()) return <span className="text-ink-muted">See site equipment for current recorded allocations.</span>;
   if (project.toolUnits === 0) {
     return <span className="text-ink-muted">No tools assigned</span>;
   }
@@ -652,7 +654,7 @@ export default function FounderDashboard() {
     Number(pendingAdvanceRequestCount > 0) +
     Number(approvedAdvanceRequestCount > 0) +
     Number(metrics.projectsOverEstimate.length > 0) +
-    Number(metrics.tools.attentionUnits > 0);
+    Number(!ownedEquipmentPreviewEnabled() && metrics.tools.attentionUnits > 0);
 
   // Receivables split percentages for the health bar in Card 1
   const overdueSharePercent =
@@ -1472,7 +1474,7 @@ export default function FounderDashboard() {
               )}
 
               {/* Tools needing attention integrated into Needs Attention board */}
-              {metrics.tools.attentionUnits > 0 && (
+              {!ownedEquipmentPreviewEnabled() && metrics.tools.attentionUnits > 0 && (
                 <Link
                   href="/tools"
                   className="group/link flex min-h-14 items-center justify-between gap-3 py-3 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand"
@@ -1516,10 +1518,10 @@ export default function FounderDashboard() {
                       className="mt-1 h-2 w-2 shrink-0 rounded-full bg-status-success"
                     />
                     <div>
-                      <p className="text-sm font-semibold text-navy">All clear for now</p>
+                      <p className="text-sm font-semibold text-navy">{ownedEquipmentPreviewEnabled() ? 'No other tasks identified' : 'All clear for now'}</p>
                       <p className="mt-1 text-xs leading-relaxed text-ink-secondary">
-                        No overdue invoices, payroll reviews, open Bale requests, over-estimate
-                        projects, or tool-service items.
+                        No overdue invoices, payroll reviews, open Bale requests or over-estimate
+                        projects{ownedEquipmentPreviewEnabled() ? '. Tool-service status is not summarized here.' : ', or tool-service items.'}
                       </p>
                     </div>
                   </div>
@@ -1529,8 +1531,7 @@ export default function FounderDashboard() {
               {/* Quiet Tools & Inventory Footer so inventory remains accessible even when 0 need repair */}
               <div className="flex items-center justify-between gap-2 py-3 text-xs text-ink-secondary">
                 <span>
-                  Tools &amp; inventory: <strong className="text-navy">{metrics.tools.totalUnits}</strong>{' '}
-                  units ({metrics.tools.depotUnits} in central depot)
+                  {ownedEquipmentPreviewEnabled() ? 'Tools & inventory: allocations are not summarized here.' : <>Tools &amp; inventory: <strong className="text-navy">{metrics.tools.totalUnits}</strong>{' '}units ({metrics.tools.depotUnits} in central depot)</>}
                 </span>
                 <Link
                   href="/tools"
@@ -1658,9 +1659,9 @@ export default function FounderDashboard() {
                               </div>
                             </td>
                             <td className="px-3 py-3.5">
-                              <div className="mb-1 text-[11px] text-ink-secondary">
+                              {!ownedEquipmentPreviewEnabled() && <div className="mb-1 text-[11px] text-ink-secondary">
                                 {project.toolUnits} total · {project.toolUnitsNeedingAttention} need service
-                              </div>
+                              </div>}
                               {renderToolConditionSummary(project)}
                             </td>
                           </tr>
@@ -1730,7 +1731,7 @@ export default function FounderDashboard() {
                           <div className="min-w-0">
                             <p className="text-[11px] text-ink-secondary">Tools</p>
                             <p className="mt-0.5 text-sm font-semibold tabular-nums text-navy">
-                              {project.toolUnits} units · {project.toolUnitsNeedingAttention} need service
+                              {ownedEquipmentPreviewEnabled() ? 'See site equipment' : `${project.toolUnits} units · ${project.toolUnitsNeedingAttention} need service`}
                             </p>
                           </div>
                         </div>

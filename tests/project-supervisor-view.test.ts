@@ -10,6 +10,7 @@ vi.mock('next/link', () => ({ default: ({ children, href, prefetch: _prefetch, .
 vi.mock('@/components/layout/AppShell', () => ({ AppShell: ({ children }: { children: React.ReactNode }) => React.createElement('main', null, children) }));
 vi.mock('@/lib/auth/authContext', () => ({ useAuth: () => ({ isFounder: mocks.founder, isSupervisor: !mocks.founder, user: { id: 'supervisor' } }) }));
 vi.mock('@/components/ui/Toast', () => ({ useToast: () => ({ showToast: vi.fn() }) }));
+vi.mock('@/components/projects/ProjectSiteEquipment', () => ({ ProjectSiteEquipment: () => React.createElement('div', null, 'Scoped equipment snapshot') }));
 vi.mock('@/lib/data/store', () => {
   const projects = [
     { id: 'site-1', name: 'Sample Site', client_id: 'client-1', location: 'Batangas', budget_estimate: 90000, status: 'active', start_date: '2026-01-01', target_completion_date: '2027-01-01' },
@@ -28,7 +29,7 @@ import ProjectDetailPage from '@/app/projects/[id]/page';
 import ProjectsPage from '@/app/projects/page';
 
 beforeEach(() => { mocks.founder = false; mocks.rpc.mockResolvedValue({ data: [], error: null }); });
-afterEach(() => cleanup());
+afterEach(() => { cleanup(); vi.unstubAllEnvs(); });
 
 describe('project roles and workforce logs', () => {
   it('hides client details from Supervisor project list and detail while keeping site tools and logs', () => {
@@ -54,6 +55,11 @@ describe('project roles and workforce logs', () => {
     expect(screen.queryByText('December 31, 2026')).toBeNull();
   });
 
+  it('uses the scoped snapshot, not the legacy count or legacy records, when the equipment preview is enabled', () => {
+    vi.stubEnv('NEXT_PUBLIC_OWNED_EQUIPMENT_PREVIEW','true');render(React.createElement(ProjectDetailPage));
+    const tab=screen.getByRole('button',{name:'Site Tools'});fireEvent.click(tab);
+    expect(screen.getByText('Scoped equipment snapshot')).toBeTruthy();expect(screen.queryByText('Site Drill')).toBeNull();expect(screen.queryByText('Other Drill')).toBeNull();
+  });
   it('keeps Founder client information and financial tools', () => {
     mocks.founder = true;
     render(React.createElement(ProjectDetailPage));

@@ -2,7 +2,7 @@
 import {readFileSync} from 'node:fs';
 import {Client} from 'pg';
 import {afterAll,beforeAll,describe,expect,it} from 'vitest';
-import {fixture,roles,founder,tool,siteA,siteB} from './helpers/owned-equipment-fixture';
+import {fixture,roles,founder,supervisor,tool,siteA,siteB} from './helpers/owned-equipment-fixture';
 const url=process.env.OWNED_EQUIPMENT_TEST_DATABASE_URL;
 const suite=url?describe:describe.skip;
 const id=(n:number)=>`00000000-0000-0000-0000-${String(n).padStart(12,'0')}`;
@@ -21,6 +21,18 @@ suite('owned equipment allocation concurrency on isolated PostgreSQL',()=>{
   await change(a,id(10),'adopt',null,null,5,null);
  },30000);
  afterAll(async()=>{await Promise.all([admin?.end(),a?.end(),b?.end()]);});
+ it('restricts the site snapshot to an assigned Supervisor without exposing other site stock',async()=>{
+  await admin.query("INSERT INTO public.tools VALUES ($1,'Legacy drill',3,'fair',$2)",[id(80),siteA]);
+  await change(a,id(81),'allocate',siteA,2,5,0);
+  try {
+   await b.query(`SET test.uid='${supervisor}'`);
+   const view=(await b.query('SELECT public.project_equipment_snapshot($1) v',[siteA])).rows[0].v;
+   expect(view.items.map((item:{name:string;quantity:number})=>[item.name,item.quantity])).toEqual([['Drill',2],['Legacy drill',3]]);
+   await expect(b.query('SELECT public.project_equipment_snapshot($1)',[siteB])).rejects.toMatchObject({code:'42501'});
+  } finally {
+   await b.query(`SET test.uid='${founder}'`);await change(a,id(82),'allocate',siteA,0,5,2);await admin.query('DELETE FROM public.tools WHERE id=$1',[id(80)]);
+  }
+ });
  it('serializes simultaneous allocations to distinct sites and rejects over-allocation',async()=>{
   await a.query('BEGIN');await b.query('BEGIN');try{
    await change(a,id(11),'allocate',siteA,3,5,0);

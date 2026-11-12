@@ -10,9 +10,12 @@ export const fixture=`${roles}
  CREATE TABLE public.users(id uuid primary key,role text);
  CREATE FUNCTION public.is_founder() RETURNS boolean LANGUAGE sql STABLE SECURITY DEFINER AS $$SELECT EXISTS(SELECT 1 FROM public.users WHERE id=auth.uid() AND role='founder')$$;
  CREATE TABLE public.projects(id uuid primary key,name text NOT NULL);
+ CREATE TABLE public.project_supervisors(project_id uuid,supervisor_id uuid,primary key(project_id,supervisor_id));
+ CREATE FUNCTION public.is_supervisor_assigned(p uuid) RETURNS boolean LANGUAGE sql STABLE SECURITY DEFINER AS $$SELECT EXISTS(SELECT 1 FROM public.project_supervisors WHERE project_id=p AND supervisor_id=auth.uid())$$;
  CREATE TABLE public.tools(id uuid primary key,name text NOT NULL,quantity integer NOT NULL CHECK(quantity>=0),condition text NOT NULL,project_id uuid REFERENCES public.projects(id) ON DELETE SET NULL);
  INSERT INTO public.users VALUES('${founder}','founder'),('${supervisor}','supervisor');
  INSERT INTO public.projects VALUES('${siteA}','Site A'),('${siteB}','Site B');
+ INSERT INTO public.project_supervisors VALUES('${siteA}','${supervisor}');
  INSERT INTO public.tools VALUES('${tool}','Drill',5,'good',NULL);
  ALTER TABLE public.tools ENABLE ROW LEVEL SECURITY;
  CREATE POLICY founder_tools ON public.tools FOR ALL TO authenticated USING (public.is_founder() AND public.session_assurance_satisfied()) WITH CHECK (public.is_founder() AND public.session_assurance_satisfied());

@@ -1,13 +1,14 @@
 -- UNINSTALLED DRAFT. Execute only as a reviewed single transaction, after
 -- compatibility, permissions, legacy clients, history and recovery checks.
--- Opt-in only for legacy tools already at the depot (project_id IS NULL).
+-- Opt-in only for legacy tools with project_id IS NULL after physical confirmation.
+-- A NULL legacy project may also mean an unassigned item, not necessarily depot stock.
 -- No existing records are converted or updated by installation.
 SET LOCAL lock_timeout='3s';
 SET LOCAL statement_timeout='30s';
 DO $preflight$
 DECLARE v_missing text; n text;
 BEGIN
- IF to_regclass('public.tools') IS NULL OR to_regclass('public.projects') IS NULL OR to_regclass('public.users') IS NULL OR to_regprocedure('auth.uid()') IS NULL OR to_regprocedure('public.is_founder()') IS NULL OR to_regprocedure('public.session_assurance_satisfied()') IS NULL THEN RAISE EXCEPTION 'Equipment prerequisites missing'; END IF;
+ IF to_regclass('public.tools') IS NULL OR to_regclass('public.projects') IS NULL OR to_regclass('public.users') IS NULL OR to_regprocedure('auth.uid()') IS NULL OR to_regprocedure('public.is_founder()') IS NULL OR to_regprocedure('public.is_supervisor_assigned(uuid)') IS NULL OR to_regprocedure('public.session_assurance_satisfied()') IS NULL THEN RAISE EXCEPTION 'Equipment prerequisites missing'; END IF;
  LOCK TABLE public.tools IN SHARE MODE;
  SELECT string_agg(r.rel||'.'||r.col,', ' ORDER BY r.rel,r.col) INTO v_missing FROM
  (VALUES ('tools','id','uuid'),('tools','name','text'),('tools','quantity','integer'),('tools','condition','text'),('tools','project_id','uuid'),('projects','id','uuid'),('projects','name','text'),('users','id','uuid'),('users','role','text')) r(rel,col,typ)
@@ -17,7 +18,7 @@ BEGIN
  FOREACH n IN ARRAY ARRAY['public.managed_owned_equipment','public.owned_equipment_allocations','public.owned_equipment_events'] LOOP
   IF to_regclass(n) IS NOT NULL THEN RAISE EXCEPTION 'Equipment relation already exists: %',n; END IF;
  END LOOP;
- FOREACH n IN ARRAY ARRAY['public.guard_managed_equipment()','public.change_owned_equipment(uuid,uuid,text,uuid,integer,integer,integer)','public.owned_equipment_snapshot()','public.owned_equipment_operation_status(uuid)'] LOOP
+ FOREACH n IN ARRAY ARRAY['public.guard_managed_equipment()','public.change_owned_equipment(uuid,uuid,text,uuid,integer,integer,integer)','public.owned_equipment_snapshot()','public.owned_equipment_operation_status(uuid)','public.project_equipment_snapshot(uuid)'] LOOP
   IF to_regprocedure(n) IS NOT NULL THEN RAISE EXCEPTION 'Equipment function already exists: %',n; END IF;
  END LOOP;
  IF EXISTS(SELECT 1 FROM pg_trigger WHERE tgrelid='public.tools'::regclass AND NOT tgisinternal) THEN RAISE EXCEPTION 'Existing equipment triggers require separate review'; END IF;
@@ -155,13 +156,39 @@ END;
 $$;
 REVOKE ALL ON FUNCTION public.owned_equipment_operation_status(uuid) FROM PUBLIC,anon,authenticated;
 GRANT EXECUTE ON FUNCTION public.owned_equipment_operation_status(uuid) TO authenticated;
+-- Only the requested authorized site is visible. Legacy single-site records
+-- and managed allocations are separate; neither proves current physical stock.
+CREATE FUNCTION public.project_equipment_snapshot(p_project uuid) RETURNS jsonb
+LANGUAGE plpgsql STABLE SECURITY DEFINER SET search_path='' AS $$
+DECLARE v_items jsonb; v_total bigint;
+BEGIN
+ IF auth.uid() IS NULL OR p_project IS NULL OR NOT coalesce(public.session_assurance_satisfied(),false) OR NOT (
+  coalesce(public.is_founder(),false) OR (EXISTS(SELECT 1 FROM public.users WHERE id=auth.uid() AND role='supervisor') AND coalesce(public.is_supervisor_assigned(p_project),false))
+ ) THEN RAISE EXCEPTION 'Project equipment access required' USING ERRCODE='42501'; END IF;
+ IF NOT EXISTS(SELECT 1 FROM public.projects WHERE id=p_project) THEN RAISE EXCEPTION 'Project unavailable' USING ERRCODE='P0002'; END IF;
+ IF EXISTS(SELECT 1 FROM public.tools t JOIN public.managed_owned_equipment m ON m.tool_id=t.id WHERE t.project_id=p_project) THEN RAISE EXCEPTION 'Equipment location requires reconciliation' USING ERRCODE='23514'; END IF;
+ SELECT count(*) INTO v_total FROM (
+  SELECT t.id FROM public.tools t WHERE t.project_id=p_project AND NOT EXISTS(SELECT 1 FROM public.managed_owned_equipment m WHERE m.tool_id=t.id)
+  UNION ALL SELECT a.tool_id FROM public.owned_equipment_allocations a WHERE a.project_id=p_project
+ ) q;
+ IF v_total>2000 THEN RAISE EXCEPTION 'Project equipment exceeds snapshot limit' USING ERRCODE='54000'; END IF;
+ SELECT coalesce(jsonb_agg(jsonb_build_object('id',q.id,'name',q.name,'condition',q.condition,'quantity',q.quantity,'source',q.source) ORDER BY q.name,q.id),'[]'::jsonb) INTO v_items FROM (
+  SELECT t.id,t.name,t.condition,t.quantity,'legacy'::text AS source FROM public.tools t WHERE t.project_id=p_project AND NOT EXISTS(SELECT 1 FROM public.managed_owned_equipment m WHERE m.tool_id=t.id)
+  UNION ALL SELECT t.id,t.name,t.condition,a.quantity,'allocated'::text AS source FROM public.owned_equipment_allocations a JOIN public.tools t ON t.id=a.tool_id WHERE a.project_id=p_project
+ ) q;
+ RETURN jsonb_build_object('project_id',p_project,'items',v_items);
+END;
+$$;
+REVOKE ALL ON FUNCTION public.project_equipment_snapshot(uuid) FROM PUBLIC,anon,authenticated;
+GRANT EXECUTE ON FUNCTION public.project_equipment_snapshot(uuid) TO authenticated;
+
 DO $postflight$
 DECLARE n text;
 BEGIN
  FOREACH n IN ARRAY ARRAY['public.managed_owned_equipment','public.owned_equipment_allocations','public.owned_equipment_events'] LOOP
   IF has_table_privilege('anon',n,'SELECT,INSERT,UPDATE,DELETE,TRUNCATE,REFERENCES,TRIGGER') OR has_table_privilege('authenticated',n,'SELECT,INSERT,UPDATE,DELETE,TRUNCATE,REFERENCES,TRIGGER') THEN RAISE EXCEPTION 'Unexpected equipment table privileges'; END IF;
  END LOOP;
- FOREACH n IN ARRAY ARRAY['public.change_owned_equipment(uuid,uuid,text,uuid,integer,integer,integer)','public.owned_equipment_snapshot()','public.owned_equipment_operation_status(uuid)'] LOOP
+ FOREACH n IN ARRAY ARRAY['public.change_owned_equipment(uuid,uuid,text,uuid,integer,integer,integer)','public.owned_equipment_snapshot()','public.owned_equipment_operation_status(uuid)','public.project_equipment_snapshot(uuid)'] LOOP
   IF has_function_privilege('anon',n,'EXECUTE') OR NOT has_function_privilege('authenticated',n,'EXECUTE') THEN RAISE EXCEPTION 'Unexpected equipment function privileges'; END IF;
  END LOOP;
 END;

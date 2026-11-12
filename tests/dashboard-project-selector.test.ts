@@ -22,12 +22,21 @@ beforeEach(() => {
   };
   vi.stubGlobal('matchMedia', vi.fn().mockReturnValue({ matches: true, addEventListener: vi.fn(), removeEventListener: vi.fn() }));
 });
-afterEach(() => { cleanup(); vi.unstubAllGlobals(); });
+afterEach(() => { cleanup(); vi.unstubAllGlobals(); vi.unstubAllEnvs(); });
 
 function scopeGroup() { return screen.getByRole('group', { name: 'Filter dashboard by project' }); }
 function balancesCard() { return screen.getByRole('heading', { name: 'Client balances due' }).closest('.group') as HTMLElement; }
 
 describe('dashboard project scope selector', () => {
+  it('withholds legacy tool/depot totals when split equipment preview is enabled', () => {
+    vi.stubEnv('NEXT_PUBLIC_OWNED_EQUIPMENT_PREVIEW','true');
+    mocks.store.tools=[{id:'t',name:'Drill',quantity:5,condition:'damaged',project_id:null}];
+    render(React.createElement(FounderDashboard));
+    expect(screen.getByText('Tools & inventory: allocations are not summarized here.')).toBeTruthy();
+    expect(screen.queryByText(/5 in central depot/)).toBeNull();expect(screen.queryByText(/5 tool units need service/)).toBeNull();
+    expect(screen.getByText(/Tool-service status is not summarized here/)).toBeTruthy();
+    expect(screen.getAllByText('See site equipment for current recorded allocations.').length).toBeGreaterThan(0);
+  });
   it('removes the static dashboard guide while retaining mobile context and walkthrough targets', () => {
     const view = render(React.createElement(FounderDashboard));
     expect(screen.queryByRole('complementary', { name: 'How to read the dashboard figures' })).toBeNull();
