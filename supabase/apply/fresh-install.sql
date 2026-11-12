@@ -42,6 +42,10 @@
 
 begin;
 
+-- SAFETY HOLD: this historical bundle is unverified and must not be applied.
+-- The exception aborts this transaction before any bundled migration executes.
+DO $$ BEGIN RAISE EXCEPTION 'Historical SQL bundle disabled: see supabase/apply/README.md'; END; $$;
+
 -- @@ source: 20260913000000_bale_schema.sql
 
 -- BALE (Billing & Advance Ledger Engine)
