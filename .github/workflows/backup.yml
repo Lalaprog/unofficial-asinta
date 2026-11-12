@@ -27,8 +27,8 @@ name: Automated database backup
 
 on:
   schedule:
-    # Weekly: Sunday 06:00 Asia/Manila (Saturday 22:00 UTC), after the Mon–Sat
-    # site week closes.
+    # Weekly: Sunday 06:00 Asia/Manila (Saturday 22:00 UTC), after the Sunday–Saturday
+    # worker payroll week closes.
     - cron: '0 22 * * 6'
   workflow_dispatch:
     inputs:

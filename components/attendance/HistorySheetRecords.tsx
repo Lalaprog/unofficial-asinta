@@ -6,6 +6,7 @@ import { Badge } from '@/components/ui/Badge';
 import { Button } from '@/components/ui/Button';
 import { formatDatePH } from '@/lib/email/format';
 import { useAttendanceHistory } from '@/lib/attendance/useAttendanceHistory';
+import { financeFoundationEnabled } from '@/lib/finance/featureAvailability';
 import type { HistoryFilters, HistoryRecord, HistorySheet } from '@/lib/attendance/history';
 import type { AttendanceStatus } from '@/types';
 
@@ -49,15 +50,15 @@ export function HistorySheetRecords({sheet, filters, userId, revision, isFounder
                 <Button type="button" variant="secondary" size="sm" disabled={reviewing || records.loading || Boolean(records.error)} onClick={() => onReview(rec,'half_day')}>Half Day</Button>
                 <Button type="button" variant="danger" size="sm" disabled={reviewing || records.loading || Boolean(records.error)} onClick={() => onReview(rec,'absent')}>Absent</Button>
               </>}
-              {!rec.is_supervisor && (rec.status === 'present' || rec.status === 'half_day') && <Button type="button" variant="secondary" size="sm" disabled={records.loading || Boolean(records.error)} onClick={() => setTimeRecord(rec)}>Regular / OT</Button>}
-              {!rec.is_supervisor && (rec.status === 'present' || rec.status === 'half_day') && <Button type="button" variant="secondary" size="sm" disabled={records.loading || Boolean(records.error)} onClick={() => setAllowanceRecord(rec)}>Allowances</Button>}
+              {financeFoundationEnabled() && !rec.is_supervisor && (rec.status === 'present' || rec.status === 'half_day') && <Button type="button" variant="secondary" size="sm" disabled={records.loading || Boolean(records.error)} onClick={() => setTimeRecord(rec)}>Regular / OT</Button>}
+              {financeFoundationEnabled() && !rec.is_supervisor && (rec.status === 'present' || rec.status === 'half_day') && <Button type="button" variant="secondary" size="sm" disabled={records.loading || Boolean(records.error)} onClick={() => setAllowanceRecord(rec)}>Allowances</Button>}
               {isFounder && <Button type="button" variant="secondary" size="sm" disabled={reviewing || records.loading || Boolean(records.error)} onClick={() => onEdit(rec)}>Edit</Button>}
             </div>
           </div>
         );
       })}
-      {allowanceRecord && <AllowanceDialog record={allowanceRecord} isFounder={isFounder} onClose={() => setAllowanceRecord(null)} />}
-      {timeRecord && <TimeDetailDialog record={timeRecord} onClose={() => setTimeRecord(null)} />}
+      {financeFoundationEnabled() && allowanceRecord && <AllowanceDialog record={allowanceRecord} isFounder={isFounder} onClose={() => setAllowanceRecord(null)} />}
+      {financeFoundationEnabled() && timeRecord && <TimeDetailDialog record={timeRecord} onClose={() => setTimeRecord(null)} />}
       {records.loading && <p role="status" className="px-4 py-3 text-xs text-ink-secondary">Loading attendance records…</p>}
       {records.error && <div className="space-y-2 px-4 py-3 text-xs"><p role="alert" className="text-status-danger">Unable to load attendance records. Please retry.</p><Button type="button" variant="secondary" size="sm" onClick={records.retry}>Retry records</Button></div>}
       {!records.loading && !records.error && records.items.length === 0 && <p className="px-4 py-3 text-xs text-ink-secondary">No records match this sheet now. Refresh history to update its count.</p>}

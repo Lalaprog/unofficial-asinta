@@ -26,9 +26,7 @@ import { PayslipBatch } from '@/components/payroll/PayslipBatch';
 import { formatPeso, formatPesoCompact } from '@/lib/email/format';
 import { formatRecordedWork } from '@/lib/payroll/display';
 import { AttendanceMatrix } from '@/components/payroll/AttendanceMatrix';
-import { WeeklyWorkerPreview } from '@/components/payroll/WeeklyWorkerPreview';
-import { WorkerAllowanceQueue } from '@/components/payroll/WorkerAllowanceQueue';
-import { PaidHistoryReview } from '@/components/payroll/PaidHistoryReview';
+import { PayrollFoundationPanels } from '@/components/payroll/PayrollFoundationPanels';
 import { getManilaClock } from '@/lib/reminders/scheduler';
 
 export default function PayrollPage() {
@@ -193,11 +191,11 @@ export default function PayrollPage() {
           action={<div className="flex flex-wrap gap-2"><Button variant="secondary" size="md" onClick={() => setIsBatchPayslipOpen(true)} leftIcon={<Printer className="w-4 h-4" />}>Print worker payslips</Button><Button variant="primary" size="md" onClick={() => setIsGenerateModalOpen(true)} leftIcon={<Plus className="w-4 h-4" />}>New Payroll Run</Button></div>}
         />
 
-        <WorkerAllowanceQueue />
+        <div className="rounded-xl border border-status-warning/25 bg-status-warning-bg p-3 text-xs leading-relaxed text-ink-secondary" role="note">
+          The current payroll generator uses the existing legacy rules. The requested weekly payroll and Bale rules are not yet implemented. Verify amounts against your records before approving or recording a payment.
+        </div>
 
-        <WeeklyWorkerPreview />
-
-        <PaidHistoryReview />
+        <PayrollFoundationPanels />
 
         <AttendanceMatrix start={periodStart} end={periodEnd} site={generateProjectId} setStart={setPeriodStart} setEnd={setPeriodEnd} setSite={setGenerateProjectId} projects={projects} />
 
