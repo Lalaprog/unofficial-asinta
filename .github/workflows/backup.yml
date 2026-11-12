@@ -96,16 +96,13 @@ jobs:
           TIMESTAMP="$(date -u +%Y%m%dT%H%M%SZ)"
           DUMP_FILE="backup-out/bale-backup-${EXPECTED_REF}-${TIMESTAMP}.sql"
 
-          # Forward the connection via the environment, not process arguments;
-          # never print it. Docker runs on this ephemeral Actions runner only.
+          # Forward the URI via environment, not the docker command line, and
+          # do not print it. pg_dump expands it inside the isolated container;
+          # processes with runner/container access may still see credentials.
           # This export excludes app_private, Auth, Storage, owners and ACLs.
           export PGDATABASE="$SUPABASE_DB_URL"
-          docker run --rm --network host --env PGDATABASE postgres:17.6 pg_dump \
-            --schema=public \
-            --clean \
-            --if-exists \
-            --no-owner \
-            --no-privileges > "$DUMP_FILE"
+          docker run --rm --network host --env PGDATABASE --entrypoint sh postgres:17.6 \
+            -c 'exec pg_dump --dbname="$PGDATABASE" --schema=public --clean --if-exists --no-owner --no-privileges' > "$DUMP_FILE"
 
           if [ ! -s "$DUMP_FILE" ]; then
             echo "::error::pg_dump produced an empty file."
