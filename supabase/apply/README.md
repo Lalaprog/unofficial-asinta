@@ -1,4 +1,6 @@
-# Paste-ready SQL bundles (generated)
+# SQL bundles (historical; not currently paste-ready)
+
+> **Do not apply these bundles.** The checked-in files are stale, and regenerating them has not been verified as a safe upgrade or a clean client installation. Hosted migration history differs from the repository and includes combined migrations; do not blindly use `supabase db push`. The older instructions below are retained for review only, not a current deployment procedure. See `docs/CLIENT_CHANGE_PLAN.md` for current status and required rehearsal.
 
 | File | Use it when | Apply with |
 | --- | --- | --- |
