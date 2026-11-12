@@ -106,6 +106,8 @@ BEGIN
  IF NOT FOUND OR v_pay.worker_id<>v_worker THEN RAISE EXCEPTION 'Voucher changed; refresh' USING ERRCODE='40001'; END IF;
  SELECT * INTO v_case FROM public.paid_payroll_adjustment_cases WHERE id=p_id FOR UPDATE;
  IF NOT FOUND OR v_case.payroll_id<>v_payroll OR v_case.worker_id<>v_worker THEN RAISE EXCEPTION 'Adjustment changed; refresh' USING ERRCODE='40001'; END IF;
+ IF p_resolution='settled_external' AND p_settled_on<v_pay.period_start THEN
+  RAISE EXCEPTION 'Settlement date cannot precede the original payroll period' USING ERRCODE='22023'; END IF;
  IF v_case.status<>'pending' THEN
   IF (v_case.status,v_case.resolved_by,v_case.settled_on,v_case.resolution_note) IS NOT DISTINCT FROM (p_resolution,auth.uid(),p_settled_on,v_note) THEN
    RETURN jsonb_build_object('id',v_case.id,'status',v_case.status,'replayed',true); END IF;

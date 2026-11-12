@@ -7,3 +7,8 @@
 export function financeFoundationEnabled(): boolean {
   return process.env.NEXT_PUBLIC_FINANCE_FOUNDATION_PREVIEW === 'true';
 }
+
+/** A second independent display gate; the experimental adjustment RPCs must exist first. */
+export function paidAdjustmentsPreviewEnabled(): boolean {
+  return financeFoundationEnabled() && process.env.NEXT_PUBLIC_PAID_ADJUSTMENTS_PREVIEW === 'true';
+}

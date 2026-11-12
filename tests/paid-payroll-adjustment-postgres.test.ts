@@ -22,6 +22,7 @@ suite('paid adjustment concurrent actions on PostgreSQL 17',()=>{
   await admin.query(`DO $$BEGIN IF NOT EXISTS(SELECT 1 FROM pg_roles WHERE rolname='anon') THEN CREATE ROLE anon; END IF; IF NOT EXISTS(SELECT 1 FROM pg_roles WHERE rolname='authenticated') THEN CREATE ROLE authenticated; END IF; IF NOT EXISTS(SELECT 1 FROM pg_roles WHERE rolname='service_role') THEN CREATE ROLE service_role; END IF; END$$;`);
   const roles='CREATE ROLE anon; CREATE ROLE authenticated; CREATE ROLE service_role; ';if(!baseFixture.startsWith(roles))throw new Error('Fixture role bootstrap changed');
   await admin.query(baseFixture.slice(roles.length));
+  await admin.query("UPDATE public.payroll SET period_start='2019-12-30',period_end='2020-01-05' WHERE id=$1",[voucher]);
   await admin.query(readFileSync('supabase/drafts/paid_payroll_adjustments.sql','utf8'));
   expected=(await admin.query('SELECT app_private.paid_adjustment_voucher_snapshot(p) snapshot FROM public.payroll p WHERE id=$1',[voucher])).rows[0].snapshot;
   await Promise.all([first.query(`SET ROLE authenticated; SET test.uid='${founder}'; SET test.assurance='yes'; SET lock_timeout='4s'`),second.query(`SET ROLE authenticated; SET test.uid='${founder}'; SET test.assurance='yes'; SET lock_timeout='4s'`)]);
