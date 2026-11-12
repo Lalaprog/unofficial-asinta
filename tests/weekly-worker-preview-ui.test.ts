@@ -7,14 +7,14 @@ vi.mock('@/lib/auth/authContext',()=>({useAuth:()=>({user:{id:mock.user},isFound
 vi.mock('@/lib/supabase/client',()=>({createClient:()=>({rpc:mock.rpc})}));
 vi.mock('@/lib/reminders/scheduler',()=>({getManilaClock:()=>({dateIso:'2026-11-18'})}));
 import {WeeklyWorkerPreview} from '@/components/payroll/WeeklyWorkerPreview';
-const snapshot={start:'2026-11-15',end:'2026-11-21',workers:[{id:'w',name:'Ada',position:'Mason',active:true,pay_rate:'655.55',pay_rate_type:'daily',linked_supervisor:false,possible_supervisor:false}],attendance:[{id:'a',worker_id:'w',project_id:'p',date:'2026-11-15',status:'present',hours_worked:'8.00'}],vouchers:[]};
+const snapshot={start:'2026-11-15',end:'2026-11-21',workers:[{id:'w',name:'Ada',position:'Mason',active:true,pay_rate:'655.55',pay_rate_type:'daily',linked_supervisor:false,possible_supervisor:false}],attendance:[{id:'a',worker_id:'w',project_id:'p',date:'2026-11-15',status:'present',hours_worked:'8.00',time_detail:null}],vouchers:[],allowances:[],advances:[],older_advances:[]};
 const deferred=()=>{let resolve!:(value:unknown)=>void;const promise=new Promise(r=>resolve=r);return {promise,resolve};};
 beforeEach(()=>{mock.rpc.mockReset();mock.user='founder';});afterEach(cleanup);
 describe('weekly planning preview',()=>{
  it('loads on request and clearly labels unmarked days and limited estimate',async()=>{
   mock.rpc.mockResolvedValue({data:snapshot,error:null});render(React.createElement(WeeklyWorkerPreview));expect(mock.rpc).not.toHaveBeenCalled();
   fireEvent.click(screen.getByRole('button',{name:/Weekly worker planning preview/}));fireEvent.click(screen.getByRole('button',{name:'Load preview'}));
-  await screen.findByText('Ada');expect(mock.rpc).toHaveBeenCalledWith('weekly_worker_preview_inputs',{p_start:'2026-11-15'});expect(screen.getByText(/estimated gross: ₱655.55/)).toBeTruthy();expect(screen.getByText(/Past unmarked day/)).toBeTruthy();expect(screen.getByText(/excludes allowances, Bale/)).toBeTruthy();
+  await screen.findByText('Ada');expect(mock.rpc).toHaveBeenCalledWith('weekly_worker_preview_inputs',{p_start:'2026-11-15'});expect(screen.getByText(/gross with allowances ₱655.55/)).toBeTruthy();expect(screen.getByText(/Past unmarked day/)).toBeTruthy();expect(screen.getByText(/Other deductions are excluded/)).toBeTruthy();
  });
  it('discards stale responses when the week changes and surfaces failures',async()=>{
   const old=deferred();mock.rpc.mockReturnValueOnce(old.promise).mockResolvedValueOnce({data:null,error:{message:'Unavailable'}});

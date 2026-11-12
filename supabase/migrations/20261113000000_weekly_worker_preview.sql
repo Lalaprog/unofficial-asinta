@@ -23,7 +23,8 @@ BEGIN
       EXISTS(SELECT 1 FROM public.users u WHERE u.id=w.id AND u.role='supervisor') AS linked_supervisor,
       (strpos(lower(coalesce(w.position,'')),'supervisor')>0 OR EXISTS(
         SELECT 1 FROM public.users u WHERE u.role='supervisor' AND lower(btrim(u.name))=lower(btrim(w.name))
-      )) AS possible_supervisor
+      ) OR EXISTS(SELECT 1 FROM public.attendance a WHERE a.worker_id=w.id AND a.date BETWEEN p_start AND p_start+6 AND
+        (a.worker_id=a.recorded_by OR strpos(coalesce(a.notes,''),'Pending Founder Review')>0 OR strpos(coalesce(a.notes,''),'Founder Review:')>0))) AS possible_supervisor
     FROM public.workers w WHERE w.active OR EXISTS(SELECT 1 FROM entries a WHERE a.worker_id=w.id)
   ), vouchers AS MATERIALIZED (
     SELECT p.id,p.worker_id,p.status FROM public.payroll p
