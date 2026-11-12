@@ -30,15 +30,17 @@ suite('PR 103 rollback rehearsal on disposable PostgreSQL',()=>{
    await db.query('ALTER TABLE public.advance_requests DISABLE TRIGGER guard_advance_request_site');
    await expect(db.query(rehearsal)).rejects.toThrow(/site guard trigger is missing or different/);await db.query('ROLLBACK');
    await db.query('ALTER TABLE public.advance_requests ENABLE TRIGGER guard_advance_request_site');
+   await expect(db.query(rehearsal)).rejects.toThrow(/weekly base function is missing/);await db.query('ROLLBACK');
+   await db.query(sql('20261113000000_weekly_worker_preview.sql'));
    await db.query(`CREATE FUNCTION public.attendance_time_detail_latest(uuid) RETURNS jsonb LANGUAGE sql AS $$SELECT '{}'::jsonb$$;`);
    await expect(db.query(rehearsal)).rejects.toThrow(/already exists/);await db.query('ROLLBACK');
-   expect((await db.query("SELECT to_regclass('public.attendance_time_details') IS NULL AS absent, to_regprocedure('public.weekly_worker_preview_inputs(date)') IS NULL AS function_absent")).rows[0]).toEqual({absent:true,function_absent:true});
+   expect((await db.query("SELECT to_regclass('public.attendance_time_details') IS NULL AS absent, to_regprocedure('public.weekly_worker_preview_inputs(date)') IS NOT NULL AS function_present")).rows[0]).toEqual({absent:true,function_present:true});
    await db.query('DROP FUNCTION public.attendance_time_detail_latest(uuid)');
    const snapshot=async()=> (await db.query(`SELECT (SELECT md5(coalesce(string_agg(row_to_json(p)::text,',' ORDER BY id),'')) FROM public.payroll p) AS payroll, (SELECT md5(coalesce(string_agg(row_to_json(a)::text,',' ORDER BY id),'')) FROM public.advances a) AS advances, (SELECT md5(coalesce(string_agg(row_to_json(a)::text,',' ORDER BY id),'')) FROM public.attendance a) AS attendance`)).rows[0];
    const before=await snapshot();
    await db.query(rehearsal);
    expect(await snapshot()).toEqual(before);
-   expect((await db.query("SELECT to_regclass('public.attendance_time_details') IS NULL AS absent, to_regprocedure('public.weekly_worker_preview_inputs(date)') IS NULL AS function_absent")).rows[0]).toEqual({absent:true,function_absent:true});
+   expect((await db.query("SELECT to_regclass('public.attendance_time_details') IS NULL AS absent, to_regprocedure('public.weekly_worker_preview_inputs(date)') IS NOT NULL AS function_present")).rows[0]).toEqual({absent:true,function_present:true});
    // Test post-commit read behavior only in this synthetic disposable database.
    if(!rehearsal.endsWith('ROLLBACK;\n\n'))throw new Error('Unexpected rehearsal transaction ending');
    await db.query(rehearsal.slice(0,-'ROLLBACK;\n\n'.length)+'COMMIT;');

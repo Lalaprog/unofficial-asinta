@@ -31,10 +31,18 @@ describe('PR 102 and PR 103 migration sequence',()=>{
    await db.exec('ALTER TABLE public.advance_requests DISABLE TRIGGER guard_advance_request_site');
    await expect(db.exec(rehearsal)).rejects.toThrow(/site guard trigger is missing or different/);await db.exec('ROLLBACK');
    await db.exec('ALTER TABLE public.advance_requests ENABLE TRIGGER guard_advance_request_site');
+   await expect(db.exec(rehearsal)).rejects.toThrow(/weekly base function is missing/);await db.exec('ROLLBACK');
+   await db.exec(`CREATE FUNCTION public.weekly_worker_preview_inputs(date) RETURNS jsonb LANGUAGE sql STABLE AS $$SELECT '{}'::jsonb$$;`);
+   await expect(db.exec(rehearsal)).rejects.toThrow(/weekly base function is missing/);await db.exec('ROLLBACK');
+   await db.exec('DROP FUNCTION public.weekly_worker_preview_inputs(date)');
+   await db.exec(sql('20261113000000_weekly_worker_preview.sql'));
+   await db.exec('GRANT EXECUTE ON FUNCTION public.weekly_worker_preview_inputs(date) TO anon');
+   await expect(db.exec(rehearsal)).rejects.toThrow(/weekly base function is missing/);await db.exec('ROLLBACK');
+   await db.exec('REVOKE EXECUTE ON FUNCTION public.weekly_worker_preview_inputs(date) FROM anon');
    // A late migration collision must roll back earlier DDL, not leave a partial install.
    await db.exec(`CREATE FUNCTION public.attendance_time_detail_latest(uuid) RETURNS jsonb LANGUAGE sql AS $$SELECT '{}'::jsonb$$;`);
    await expect(db.exec(rehearsal)).rejects.toThrow(/already exists/);await db.exec('ROLLBACK');
-   expect((await db.query<{r:string|null}>("SELECT to_regprocedure('public.weekly_worker_preview_inputs(date)')::text r")).rows[0].r).toBeNull();
+   expect((await db.query<{r:string|null}>("SELECT to_regprocedure('public.weekly_worker_preview_inputs(date)')::text r")).rows[0].r).not.toBeNull();
    expect((await db.query<{r:string|null}>("SELECT to_regclass('public.attendance_time_details')::text r")).rows[0].r).toBeNull();
    expect((await db.query<{r:string|null}>("SELECT to_regprocedure('public.attendance_time_detail_latest(uuid)')::text r")).rows[0].r).not.toBeNull();
    await db.exec('DROP FUNCTION public.attendance_time_detail_latest(uuid)');
@@ -44,7 +52,6 @@ describe('PR 102 and PR 103 migration sequence',()=>{
    expect((await db.query<{r:string|null}>("SELECT to_regclass('public.attendance_time_details')::text r")).rows[0].r).toBeNull();
    expect((await db.query<{n:number}>('SELECT count(*)::int n FROM public.payroll')).rows[0].n).toBe(1);
    expect((await db.query<{n:number}>('SELECT count(*)::int n FROM public.advance_requests')).rows[0].n).toBe(1);
-   await db.exec(sql('20261113000000_weekly_worker_preview.sql'));
    await db.exec(sql('20261113000001_attendance_time_detail.sql'));
    await db.exec(sql('20261113000002_worker_allowances.sql'));
    await db.exec(sql('20261113000003_weekly_payroll_context.sql'));

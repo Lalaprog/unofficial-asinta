@@ -1,3 +1,5 @@
+> **Current incremental status:** The PR #103 Bale guard and base-only weekly read RPC are installed; five PR #103 migrations and the time-detail sequence safeguard remain absent. The base response is incomplete for the current UI and cannot be used for payroll. See `PR103_SCHEMA_REHEARSAL.md` for the exact hosted migration and checks. Older rollout observations below are point-in-time historical notes.
+
 # Client change plan and deferred items
 
 This is a working plan, not a statement that all features below have been delivered. The draft PR only includes the items explicitly described in its summary and must not be treated as a completed payroll, attendance, privacy or database rollout.
