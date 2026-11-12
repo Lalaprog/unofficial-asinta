@@ -4,11 +4,11 @@ import {describe,expect,it} from 'vitest';
 import {baseFixture} from './helpers/pr103-fixture';
 import {buildWeeklyPreview,parseWeeklyInput} from '@/lib/payroll/weeklyPreview';
 const id=(n:number)=>`10000000-0000-0000-0000-${String(n).padStart(12,'0')}`;
-const founder='00000000-0000-0000-0000-000000000001',supervisor='00000000-0000-0000-0000-000000000002',worker='00000000-0000-0000-0000-000000000003',site='00000000-0000-0000-0000-000000000004';
+const founder='00000000-0000-0000-0000-000000000001',supervisor='00000000-0000-0000-0000-000000000002',worker='00000000-0000-0000-0000-000000000003',site='00000000-0000-0000-0000-000000000004',other='00000000-0000-0000-0000-000000000005';
 const [att1,att2,detail,allowance,advance,request,voucher]=[1,2,3,4,5,6,7].map(id);
 const start='2024-11-03';
 const sql=(path:string)=>readFileSync(path,'utf8');
-async function fixture(withApproval=false){
+async function fixture(withApproval=false,withPayment=false){
  const db=new PGlite();
  await db.exec(baseFixture);
  await db.exec(`ALTER TABLE public.users ADD COLUMN email text;
@@ -30,8 +30,13 @@ async function fixture(withApproval=false){
   INSERT INTO public.advance_requests(id,worker_id,project_id,requested_amount,status,issued_at,issued_advance_id,submitted_by) VALUES ('${request}','${worker}','${site}',500.50,'issued','2024-11-06T04:00:00Z','${advance}','${supervisor}');`);
  // This synthetic fixture models the relevant audit columns, not a hosted clone.
  await db.exec('DROP TABLE public.audit_log; CREATE TABLE public.audit_log(actor_id uuid,actor_email text,action text,table_name text,record_id uuid,before_row jsonb,after_row jsonb); CREATE POLICY test_founder_payroll_write ON public.payroll FOR ALL TO authenticated USING (public.is_founder()) WITH CHECK (public.is_founder());');
+ if(withPayment){
+  await db.exec(sql('supabase/drafts/guard_legacy_bale_payment.sql'));
+  await db.exec(sql('supabase/drafts/weekly_payment_date.sql'));
+ }
  await db.exec(sql('supabase/drafts/weekly_worker_generator.sql'));
- if(withApproval) await db.exec(sql('supabase/drafts/weekly_worker_approval.sql'));
+ if(withApproval||withPayment) await db.exec(sql('supabase/drafts/weekly_worker_approval.sql'));
+ if(withPayment) await db.exec(sql('supabase/drafts/weekly_worker_paid_allocation.sql'));
  await db.exec(`SET test.uid='${founder}'; SET test.assurance='yes'; SET ROLE authenticated;`);
  return db;
 }
@@ -184,6 +189,83 @@ describe('server-calculated weekly source-bound draft (not payable)',()=>{
    await expect(generate(db)).rejects.toThrow(/audit failed/);
    expect((await db.query<{n:number}>('SELECT count(*)::int n FROM public.payroll WHERE id=$1',[voucher])).rows[0].n).toBe(0);
    expect((await db.query<{n:number}>('SELECT count(*)::int n FROM public.weekly_worker_draft_sources WHERE payroll_id=$1',[voucher])).rows[0].n).toBe(0);
+  }finally{await db.close();}
+ },30000);
+});
+
+const approve=(db:PGlite)=>db.query('SELECT public.approve_weekly_worker_draft($1)',[voucher]);
+const pay=(db:PGlite,date='2024-11-09')=>db.query<{result:{outcome:string;payment_date:string}}>('SELECT public.record_weekly_worker_payment($1,$2) result',[voucher,date]);
+describe('integrated weekly payment and gross site allocations (draft)',()=>{
+ it('atomically records one external payment, same-week Bale and centavo-exact moved-worker allocations',async()=>{
+  const db=await fixture(true,true);try{
+   await db.exec('RESET ROLE');await db.query('UPDATE public.attendance SET project_id=$2 WHERE id=$1',[att2,other]);await db.exec('SET ROLE authenticated');
+   const expensesBefore=(await db.query('SELECT * FROM public.expenses ORDER BY id')).rows;
+   const raw=(await db.query<{data:unknown}>('SELECT public.weekly_worker_preview_inputs($1) data',[start])).rows[0].data;
+   const expected=buildWeeklyPreview(parseWeeklyInput(raw,start),'2024-11-05').rows.find(r=>r.worker.id===worker)!.projectEstimates;
+   await generate(db);await approve(db);expect((await pay(db)).rows[0].result).toMatchObject({outcome:'updated',payment_date:'2024-11-09'});
+   expect((await db.query('SELECT project_id,hours::text,wage::text,allowance::text,gross::text FROM public.weekly_worker_paid_allocations ORDER BY project_id')).rows).toEqual([
+    {project_id:site,hours:'10.00',wage:'819.44',allowance:'50.25',gross:'869.69'},
+    {project_id:other,hours:'4.00',wage:'327.77',allowance:'0.00',gross:'327.77'}]);
+   const costs=(await db.query<{project_id:string;wage:string;allowance:string;gross:string}>('SELECT project_id,wage::text,allowance::text,gross::text FROM public.weekly_worker_paid_allocations ORDER BY project_id')).rows;
+   expect(costs.map(c=>({projectId:c.project_id,wage:c.wage,allowance:c.allowance,gross:c.gross}))).toEqual(expected);
+   expect((await db.query('SELECT status,amount_deducted::text FROM public.advances WHERE id=$1',[advance])).rows).toEqual([{status:'fully_deducted',amount_deducted:'500.50'}]);
+   expect((await db.query('SELECT payment_date::text,recorded_by FROM public.payroll_payment_dates WHERE payroll_id=$1',[voucher])).rows).toEqual([{payment_date:'2024-11-09',recorded_by:founder}]);
+   expect((await pay(db)).rows[0].result.outcome).toBe('already_recorded');await expect(pay(db,'2024-11-08')).rejects.toThrow(/differs/);
+   expect((await db.query('SELECT * FROM public.expenses ORDER BY id')).rows).toEqual(expensesBefore);
+   await db.exec(`SET test.uid='${supervisor}'`);expect((await db.query('SELECT * FROM public.weekly_worker_paid_allocations')).rows).toEqual([]);
+   await db.exec(`SET test.uid='${founder}'; SET test.assurance='no'`);expect((await db.query('SELECT * FROM public.weekly_worker_paid_allocations')).rows).toEqual([]);
+   await db.exec('RESET ROLE');expect((await db.query<{n:number}>('SELECT count(*)::int n FROM public.weekly_worker_paid_allocations WHERE payroll_id=$1',[voucher])).rows[0].n).toBe(2);
+   expect((await db.query('SELECT payment_actor,payment_xid FROM public.weekly_worker_draft_sources WHERE payroll_id=$1',[voucher])).rows).toEqual([{payment_actor:founder,payment_xid:null}]);
+   await expect(db.query('UPDATE public.weekly_worker_paid_allocations SET gross=0 WHERE payroll_id=$1',[voucher])).rejects.toThrow(/immutable/);
+  }finally{await db.close();}
+ },30000);
+ it('refuses old-client payment, direct allocation writes, future dates and unauthorized payment',async()=>{
+  const db=await fixture(true,true);try{
+   await generate(db);await approve(db);
+   await expect(db.query("SELECT public.set_payroll_status_atomic($1,'paid')",[voucher])).rejects.toThrow(/actual date/);
+   await expect(db.query('SELECT public.weekly_payment_date_internal($1,$2)',[voucher,'2024-11-09'])).rejects.toThrow(/permission denied/);
+   await expect(db.query('INSERT INTO public.weekly_worker_paid_allocations(payroll_id,project_id,hours,wage,allowance,gross) VALUES($1,$2,1,1,0,1)',[voucher,site])).rejects.toThrow(/permission denied/);
+   await expect(pay(db,'9998-12-31')).rejects.toThrow(/future date/);
+   await expect(pay(db,'2024-11-05')).rejects.toThrow(/precedes a recorded Bale/);
+   await db.exec(`SET test.uid='${supervisor}'`);await expect(pay(db)).rejects.toThrow(/Founder access/);
+   await db.exec(`SET test.uid='${founder}'; SET test.assurance='no'`);await expect(pay(db)).rejects.toThrow(/Founder access/);
+   await db.exec(`SET test.assurance='yes'`);expect((await db.query<{n:number}>('SELECT count(*)::int n FROM public.weekly_worker_paid_allocations WHERE payroll_id=$1',[voucher])).rows[0].n).toBe(0);
+  }finally{await db.close();}
+ },30000);
+ it('blocks payment if source data changed after approval without mutating Bale or costs',async()=>{
+  const db=await fixture(true,true);try{
+   await generate(db);await approve(db);await db.exec('RESET ROLE');await db.query('UPDATE public.attendance SET hours_worked=7 WHERE id=$1',[att1]);await db.exec('SET ROLE authenticated');
+   await expect(pay(db)).rejects.toThrow(/source data changed since approval/);
+   expect((await db.query('SELECT status FROM public.payroll WHERE id=$1',[voucher])).rows).toEqual([{status:'approved'}]);
+   expect((await db.query('SELECT status,amount_deducted::text FROM public.advances WHERE id=$1',[advance])).rows).toEqual([{status:'active',amount_deducted:'0.00'}]);
+   expect((await db.query<{n:number}>('SELECT count(*)::int n FROM public.weekly_worker_paid_allocations WHERE payroll_id=$1',[voucher])).rows[0].n).toBe(0);
+  }finally{await db.close();}
+ },30000);
+ it('rolls back allocations, payment and Bale when the date insert fails',async()=>{
+  const db=await fixture(true,true);try{
+   await generate(db);await approve(db);
+   await db.exec("RESET ROLE; CREATE FUNCTION public.reject_date() RETURNS trigger LANGUAGE plpgsql AS $$BEGIN RAISE EXCEPTION 'date storage failure'; END$$; CREATE TRIGGER reject_date BEFORE INSERT ON public.payroll_payment_dates FOR EACH ROW EXECUTE FUNCTION public.reject_date(); SET ROLE authenticated;");
+   await expect(pay(db)).rejects.toThrow(/date storage failure/);
+   expect((await db.query('SELECT status FROM public.payroll WHERE id=$1',[voucher])).rows).toEqual([{status:'approved'}]);
+   expect((await db.query('SELECT status,amount_deducted::text FROM public.advances WHERE id=$1',[advance])).rows).toEqual([{status:'active',amount_deducted:'0.00'}]);
+   expect((await db.query<{n:number}>('SELECT count(*)::int n FROM public.weekly_worker_paid_allocations WHERE payroll_id=$1',[voucher])).rows[0].n).toBe(0);
+   await db.exec('RESET ROLE');expect((await db.query('SELECT payment_actor,payment_xid FROM public.weekly_worker_draft_sources WHERE payroll_id=$1',[voucher])).rows).toEqual([{payment_actor:null,payment_xid:null}]);
+  }finally{await db.close();}
+ },30000);
+ it('allocates an indivisible centavo deterministically to the lower site ID',async()=>{
+  const db=await fixture(true,true);try{
+   await db.exec('RESET ROLE');await db.exec(`DELETE FROM public.attendance_time_details; DELETE FROM public.worker_allowances; DELETE FROM public.advance_requests WHERE id='${request}'; DELETE FROM public.advances WHERE id='${advance}'; UPDATE public.workers SET pay_rate=0.04 WHERE id='${worker}'; UPDATE public.attendance SET hours_worked=1 WHERE id IN ('${att1}','${att2}'); UPDATE public.attendance SET project_id='${other}' WHERE id='${att2}'; SET ROLE authenticated;`);
+   await generate(db);await approve(db);await pay(db);
+   expect((await db.query('SELECT project_id,wage::text,gross::text FROM public.weekly_worker_paid_allocations WHERE payroll_id=$1 ORDER BY project_id',[voucher])).rows).toEqual([
+    {project_id:site,wage:'0.01',gross:'0.01'},{project_id:other,wage:'0.00',gross:'0.00'}]);
+  }finally{await db.close();}
+ },30000);
+ it('records a zero-work zero-pay week without inventing a project allocation',async()=>{
+  const db=await fixture(true,true);try{
+   await db.exec('RESET ROLE');await db.exec(`DELETE FROM public.attendance_time_details; DELETE FROM public.worker_allowances; DELETE FROM public.advance_requests WHERE id='${request}'; DELETE FROM public.advances WHERE id='${advance}'; UPDATE public.attendance SET status='absent',hours_worked=0 WHERE id IN ('${att1}','${att2}'); SET ROLE authenticated;`);
+   await generate(db);await approve(db);expect((await pay(db)).rows[0].result.outcome).toBe('updated');
+   expect((await db.query<{n:number}>('SELECT count(*)::int n FROM public.weekly_worker_paid_allocations WHERE payroll_id=$1',[voucher])).rows[0].n).toBe(0);
+   expect((await pay(db)).rows[0].result.outcome).toBe('already_recorded');
   }finally{await db.close();}
  },30000);
 });
