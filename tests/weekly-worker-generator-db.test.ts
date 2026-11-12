@@ -8,7 +8,7 @@ const founder='00000000-0000-0000-0000-000000000001',supervisor='00000000-0000-0
 const [att1,att2,detail,allowance,advance,request,voucher]=[1,2,3,4,5,6,7].map(id);
 const start='2024-11-03';
 const sql=(path:string)=>readFileSync(path,'utf8');
-async function fixture(){
+async function fixture(withApproval=false){
  const db=new PGlite();
  await db.exec(baseFixture);
  await db.exec(`ALTER TABLE public.users ADD COLUMN email text;
@@ -31,6 +31,7 @@ async function fixture(){
  // This synthetic fixture models the relevant audit columns, not a hosted clone.
  await db.exec('DROP TABLE public.audit_log; CREATE TABLE public.audit_log(actor_id uuid,actor_email text,action text,table_name text,record_id uuid,before_row jsonb,after_row jsonb); CREATE POLICY test_founder_payroll_write ON public.payroll FOR ALL TO authenticated USING (public.is_founder()) WITH CHECK (public.is_founder());');
  await db.exec(sql('supabase/drafts/weekly_worker_generator.sql'));
+ if(withApproval) await db.exec(sql('supabase/drafts/weekly_worker_approval.sql'));
  await db.exec(`SET test.uid='${founder}'; SET test.assurance='yes'; SET ROLE authenticated;`);
  return db;
 }
@@ -116,6 +117,65 @@ describe('server-calculated weekly source-bound draft (not payable)',()=>{
    await db.query("INSERT INTO public.advances(id,worker_id,project_id,date,amount,amount_deducted,status,reason) SELECT $1,worker_id,project_id,date,amount,amount_deducted,status,reason FROM public.advances WHERE id=$2",[id(8),advance]);
    await db.query("INSERT INTO public.advance_requests(id,worker_id,project_id,requested_amount,status,issued_at,issued_advance_id,submitted_by) SELECT $1,worker_id,project_id,requested_amount,status,issued_at,$2,submitted_by FROM public.advance_requests WHERE id=$3",[id(9),id(8),request]);await db.exec('SET ROLE authenticated');
    await expect(generate(db)).rejects.toThrow(/duplicate Bale/);
+  }finally{await db.close();}
+ },30000);
+ it('approves an unchanged source-bound draft only through the new guarded action, without paying',async()=>{
+  const db=await fixture(true);try{
+   await generate(db);await expect(db.query("SELECT public.set_payroll_status_atomic($1,'approved')",[voucher])).rejects.toThrow(/frozen/);
+   const result=await db.query<{result:{outcome:string}}>('SELECT public.approve_weekly_worker_draft($1) result',[voucher]);expect(result.rows[0].result.outcome).toBe('updated');
+   expect((await db.query<{result:{outcome:string}}>('SELECT public.approve_weekly_worker_draft($1) result',[voucher])).rows[0].result.outcome).toBe('already_approved');
+   await expect(db.query("SELECT public.set_payroll_status_atomic($1,'paid')",[voucher])).rejects.toThrow(/frozen/);
+   expect((await db.query('SELECT status FROM public.payroll WHERE id=$1',[voucher])).rows).toEqual([{status:'approved'}]);
+   await db.exec('RESET ROLE');expect((await db.query('SELECT approved_by,approval_xid FROM public.weekly_worker_draft_sources WHERE payroll_id=$1',[voucher])).rows).toEqual([{approved_by:founder,approval_xid:null}]);
+   expect((await db.query('SELECT status,amount_deducted::text FROM public.advances WHERE id=$1',[advance])).rows).toEqual([{status:'active',amount_deducted:'0.00'}]);
+  }finally{await db.close();}
+ },30000);
+ it('refuses approval when legacy attendance or the worker rate changes after generation',async()=>{
+  let db=await fixture(true);try{
+   await generate(db);await db.exec('RESET ROLE');await db.query('UPDATE public.attendance SET hours_worked=7 WHERE id=$1',[att1]);await db.exec('SET ROLE authenticated');
+   await expect(db.query('SELECT public.approve_weekly_worker_draft($1)',[voucher])).rejects.toThrow(/source data changed/);
+   expect((await db.query('SELECT status FROM public.payroll WHERE id=$1',[voucher])).rows).toEqual([{status:'draft'}]);
+  }finally{await db.close();}
+  db=await fixture(true);try{
+   await generate(db);await db.exec('RESET ROLE');await db.query('UPDATE public.workers SET pay_rate=700 WHERE id=$1',[worker]);await db.exec('SET ROLE authenticated');
+   await expect(db.query('SELECT public.approve_weekly_worker_draft($1)',[voucher])).rejects.toThrow(/source data changed/);
+  }finally{await db.close();}
+ },30000);
+ it('refuses approval after a newly marked day or an altered allowance',async()=>{
+  let db=await fixture(true);try{
+   await generate(db);await db.exec('RESET ROLE');await db.query("INSERT INTO public.attendance(id,worker_id,project_id,date,status,hours_worked,submitted_at) VALUES($1,$2,$3,'2024-11-05','present',8,now())",[id(9),worker,site]);await db.exec('SET ROLE authenticated');
+   await expect(db.query('SELECT public.approve_weekly_worker_draft($1)',[voucher])).rejects.toThrow(/source data changed/);
+  }finally{await db.close();}
+  db=await fixture(true);try{
+   await generate(db);await db.exec('RESET ROLE');await db.query('UPDATE public.worker_allowances SET amount=51 WHERE id=$1',[allowance]);await db.exec('SET ROLE authenticated');
+   await expect(db.query('SELECT public.approve_weekly_worker_draft($1)',[voucher])).rejects.toThrow(/source data changed/);
+  }finally{await db.close();}
+ },30000);
+ it('denies approval to Supervisors and sessions without assurance',async()=>{
+  const db=await fixture(true);try{
+   await generate(db);await db.exec(`SET test.uid='${supervisor}'`);await expect(db.query('SELECT public.approve_weekly_worker_draft($1)',[voucher])).rejects.toThrow(/Founder access/);
+   await db.exec(`SET test.uid='${founder}'; SET test.assurance='no'`);await expect(db.query('SELECT public.approve_weekly_worker_draft($1)',[voucher])).rejects.toThrow(/Founder access/);
+  }finally{await db.close();}
+ },30000);
+ it('blocks overlapping vouchers and new out-of-period Bale before approval',async()=>{
+  let db=await fixture(true);try{
+   await generate(db);await db.exec('RESET ROLE');await db.exec("SET test.uid=''");
+   await db.query("INSERT INTO public.payroll(id,worker_id,period_start,period_end,status,gross_pay,bale_deduction,other_deductions,net_pay) VALUES($1,$2,'2024-11-01','2024-11-04','paid',1,0,0,1)",[id(9),worker]);await db.exec(`SET test.uid='${founder}'; SET ROLE authenticated`);
+   await expect(db.query('SELECT public.approve_weekly_worker_draft($1)',[voucher])).rejects.toThrow(/overlapping voucher/);
+  }finally{await db.close();}
+  db=await fixture(true);try{
+   await generate(db);await db.exec('RESET ROLE');await db.query("INSERT INTO public.advances(id,worker_id,project_id,date,amount,amount_deducted,status,reason) VALUES($1,$2,$3,'2024-10-30',10,0,'active','Old')",[id(9),worker,site]);await db.exec('SET ROLE authenticated');
+   await expect(db.query('SELECT public.approve_weekly_worker_draft($1)',[voucher])).rejects.toThrow(/outside the period/);
+  }finally{await db.close();}
+ },30000);
+ it('does not allow clients to forge approval markers or leave them behind when approval audit fails',async()=>{
+  const db=await fixture(true);try{
+   await generate(db);
+   await expect(db.query('UPDATE public.weekly_worker_draft_sources SET approval_xid=txid_current(),approved_by=$1,approved_at=now() WHERE payroll_id=$2',[founder,voucher])).rejects.toThrow(/permission denied/);
+   await db.exec('RESET ROLE');await db.exec("CREATE FUNCTION public.reject_approval_audit() RETURNS trigger LANGUAGE plpgsql AS $$BEGIN RAISE EXCEPTION 'approval audit failed'; END$$; CREATE TRIGGER reject_approval_audit BEFORE INSERT ON public.audit_log FOR EACH ROW EXECUTE FUNCTION public.reject_approval_audit(); SET ROLE authenticated;");
+   await expect(db.query('SELECT public.approve_weekly_worker_draft($1)',[voucher])).rejects.toThrow(/approval audit failed/);
+   expect((await db.query('SELECT status FROM public.payroll WHERE id=$1',[voucher])).rows).toEqual([{status:'draft'}]);
+   await db.exec('RESET ROLE');expect((await db.query('SELECT approved_by,approval_xid FROM public.weekly_worker_draft_sources WHERE payroll_id=$1',[voucher])).rows).toEqual([{approved_by:null,approval_xid:null}]);
   }finally{await db.close();}
  },30000);
  it('rolls back both the draft and source evidence if audit storage fails',async()=>{

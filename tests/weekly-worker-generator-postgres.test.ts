@@ -26,8 +26,10 @@ suite('weekly generator concurrency on disposable PostgreSQL',()=>{
    CREATE POLICY test_founder_attendance_write ON public.attendance FOR ALL TO authenticated USING (public.is_founder()) WITH CHECK (public.is_founder());
    INSERT INTO public.attendance(id,worker_id,project_id,date,status,hours_worked,submitted_at) VALUES
     ('${id(10)}','${worker}','${site}','2024-11-03','present',8,'2024-11-03T08:00:00Z'),
-    ('${id(11)}','${worker}','${site}','2024-11-10','present',8,'2024-11-10T08:00:00Z');`);
-  for(const path of ['supabase/migrations/20261102000000_atomic_payroll_payments.sql','supabase/migrations/20261113000000_weekly_worker_preview.sql','supabase/migrations/20261113000001_attendance_time_detail.sql','supabase/migrations/20261113000002_worker_allowances.sql','supabase/migrations/20261113000003_weekly_payroll_context.sql','supabase/drafts/weekly_worker_generator.sql'])await admin.query(readFileSync(path,'utf8'));
+    ('${id(11)}','${worker}','${site}','2024-11-10','present',8,'2024-11-10T08:00:00Z'),
+    ('${id(12)}','${worker}','${site}','2024-11-17','present',8,'2024-11-17T08:00:00Z'),
+    ('${id(13)}','${worker}','${site}','2024-11-24','present',8,'2024-11-24T08:00:00Z');`);
+  for(const path of ['supabase/migrations/20261102000000_atomic_payroll_payments.sql','supabase/migrations/20261113000000_weekly_worker_preview.sql','supabase/migrations/20261113000001_attendance_time_detail.sql','supabase/migrations/20261113000002_worker_allowances.sql','supabase/migrations/20261113000003_weekly_payroll_context.sql','supabase/drafts/weekly_worker_generator.sql','supabase/drafts/weekly_worker_approval.sql'])await admin.query(readFileSync(path,'utf8'));
   await Promise.all([first.query(`SET ROLE authenticated; SET test.uid='${founder}'; SET test.assurance='yes'; SET lock_timeout='4s'`),second.query(`SET ROLE authenticated; SET test.uid='${founder}'; SET test.assurance='yes'; SET lock_timeout='4s'`)]);
  },30000);
  afterAll(async()=>{await Promise.all([admin?.end(),first?.end(),second?.end()]);});
@@ -38,6 +40,23 @@ suite('weekly generator concurrency on disposable PostgreSQL',()=>{
    await pause();expect(finished).toBe(false);await first.query('COMMIT');expect((await retry).rows[0].result.replayed).toBe(true);await second.query('COMMIT');
    await expect(generate(second,id(2),'2024-11-03')).rejects.toThrow(/existing voucher|overlapping voucher/);
    expect((await admin.query<{n:number}>('SELECT count(*)::int n FROM public.weekly_worker_draft_sources WHERE worker_id=$1 AND period_start=$2',[worker,'2024-11-03'])).rows[0].n).toBe(1);
+  }finally{await first.query('ROLLBACK');await second.query('ROLLBACK');}
+ },15000);
+ it('waits for an in-flight legacy attendance edit and then refuses the stale draft',async()=>{
+  await generate(first,id(4),'2024-11-17');await first.query('BEGIN');await second.query('BEGIN');try{
+   await first.query('UPDATE public.attendance SET hours_worked=4 WHERE id=$1',[id(12)]);
+   let finished=false;const approval=second.query('SELECT public.approve_weekly_worker_draft($1)',[id(4)]).then(()=>({code:'success'}),(e:{code:string})=>({code:e.code})).finally(()=>{finished=true});
+   await pause();expect(finished).toBe(false);await first.query('COMMIT');expect((await approval).code).toBe('40001');await second.query('ROLLBACK');
+   expect((await admin.query('SELECT status FROM public.payroll WHERE id=$1',[id(4)])).rows).toEqual([{status:'draft'}]);
+  }finally{await first.query('ROLLBACK');await second.query('ROLLBACK');}
+ },15000);
+ it('serializes matching approval retries without allowing payment',async()=>{
+  await generate(first,id(5),'2024-11-24');await first.query('BEGIN');await second.query('BEGIN');try{
+   expect((await first.query('SELECT public.approve_weekly_worker_draft($1) result',[id(5)])).rows[0].result.outcome).toBe('updated');
+   let finished=false;const retry=second.query('SELECT public.approve_weekly_worker_draft($1) result',[id(5)]).finally(()=>{finished=true});
+   await pause();expect(finished).toBe(false);await first.query('COMMIT');expect((await retry).rows[0].result.outcome).toBe('already_approved');await second.query('COMMIT');
+   expect((await admin.query<{n:number}>("SELECT count(*)::int n FROM public.audit_log WHERE table_name='payroll' AND record_id=$1 AND action='update'",[id(5)])).rows[0].n).toBe(1);
+   await expect(first.query("SELECT public.set_payroll_status_atomic($1,'paid')",[id(5)])).rejects.toThrow(/frozen/);
   }finally{await first.query('ROLLBACK');await second.query('ROLLBACK');}
  },15000);
  it('takes a consistent snapshot while legacy attendance edits wait; the stale draft cannot be approved',async()=>{
