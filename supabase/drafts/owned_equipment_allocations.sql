@@ -17,7 +17,7 @@ BEGIN
  FOREACH n IN ARRAY ARRAY['public.managed_owned_equipment','public.owned_equipment_allocations','public.owned_equipment_events'] LOOP
   IF to_regclass(n) IS NOT NULL THEN RAISE EXCEPTION 'Equipment relation already exists: %',n; END IF;
  END LOOP;
- FOREACH n IN ARRAY ARRAY['public.guard_managed_equipment()','public.change_owned_equipment(uuid,uuid,text,uuid,integer,integer,integer)','public.owned_equipment_snapshot()'] LOOP
+ FOREACH n IN ARRAY ARRAY['public.guard_managed_equipment()','public.change_owned_equipment(uuid,uuid,text,uuid,integer,integer,integer)','public.owned_equipment_snapshot()','public.owned_equipment_operation_status(uuid)'] LOOP
   IF to_regprocedure(n) IS NOT NULL THEN RAISE EXCEPTION 'Equipment function already exists: %',n; END IF;
  END LOOP;
  IF EXISTS(SELECT 1 FROM pg_trigger WHERE tgrelid='public.tools'::regclass AND NOT tgisinternal) THEN RAISE EXCEPTION 'Existing equipment triggers require separate review'; END IF;
@@ -125,26 +125,43 @@ GRANT EXECUTE ON FUNCTION public.change_owned_equipment(uuid,uuid,text,uuid,inte
 
 CREATE FUNCTION public.owned_equipment_snapshot() RETURNS jsonb
 LANGUAGE plpgsql STABLE SECURITY DEFINER SET search_path='' AS $$
-DECLARE v_items jsonb;
+DECLARE v_items jsonb; v_projects jsonb;
 BEGIN
  IF auth.uid() IS NULL OR NOT coalesce(public.is_founder(),false) OR NOT coalesce(public.session_assurance_satisfied(),false) THEN RAISE EXCEPTION 'Founder access required' USING ERRCODE='42501'; END IF;
- IF (SELECT count(*) FROM public.tools)>2000 OR (SELECT count(*) FROM public.owned_equipment_allocations)>10000 THEN RAISE EXCEPTION 'Equipment snapshot exceeds limit' USING ERRCODE='54000'; END IF;
+ IF (SELECT count(*) FROM public.tools)>2000 OR (SELECT count(*) FROM public.projects)>2000 OR (SELECT count(*) FROM public.owned_equipment_allocations)>10000 THEN RAISE EXCEPTION 'Equipment snapshot exceeds limit' USING ERRCODE='54000'; END IF;
  IF EXISTS(SELECT 1 FROM public.managed_owned_equipment m JOIN public.tools t ON t.id=m.tool_id WHERE t.project_id IS NOT NULL OR t.quantity<(SELECT coalesce(sum(a.quantity),0) FROM public.owned_equipment_allocations a WHERE a.tool_id=t.id)) THEN RAISE EXCEPTION 'Equipment stock requires reconciliation' USING ERRCODE='23514'; END IF;
  SELECT coalesce(jsonb_agg(jsonb_build_object('id',t.id,'name',t.name,'stock',t.quantity,'condition',t.condition,'legacy_project_id',t.project_id,'managed',m.tool_id IS NOT NULL,
  'sites',coalesce((SELECT jsonb_agg(jsonb_build_object('project_id',a.project_id,'name',p.name,'quantity',a.quantity) ORDER BY p.name,p.id) FROM public.owned_equipment_allocations a JOIN public.projects p ON p.id=a.project_id WHERE a.tool_id=t.id),'[]'::jsonb)) ORDER BY t.name,t.id),'[]'::jsonb) INTO v_items
  FROM public.tools t LEFT JOIN public.managed_owned_equipment m ON m.tool_id=t.id;
- RETURN jsonb_build_object('items',v_items);
+ SELECT coalesce(jsonb_agg(jsonb_build_object('id',id,'name',name) ORDER BY name,id),'[]'::jsonb) INTO v_projects FROM public.projects;
+ RETURN jsonb_build_object('items',v_items,'projects',v_projects);
 END;
 $$;
 REVOKE ALL ON FUNCTION public.owned_equipment_snapshot() FROM PUBLIC,anon,authenticated;
 GRANT EXECUTE ON FUNCTION public.owned_equipment_snapshot() TO authenticated;
+
+-- Lookup is restricted to the original actor. A missing event does not establish
+-- that an in-flight request has failed; retrying the same ID remains safest.
+CREATE FUNCTION public.owned_equipment_operation_status(p_id uuid) RETURNS jsonb
+LANGUAGE plpgsql STABLE SECURITY DEFINER SET search_path='' AS $$
+DECLARE v_event public.owned_equipment_events%ROWTYPE;
+BEGIN
+ IF auth.uid() IS NULL OR NOT coalesce(public.is_founder(),false) OR NOT coalesce(public.session_assurance_satisfied(),false) THEN RAISE EXCEPTION 'Founder access required' USING ERRCODE='42501'; END IF;
+ IF p_id IS NULL THEN RAISE EXCEPTION 'Operation ID required' USING ERRCODE='22023'; END IF;
+ SELECT * INTO v_event FROM public.owned_equipment_events WHERE id=p_id AND actor_id=auth.uid();
+ IF NOT FOUND THEN RETURN jsonb_build_object('found',false); END IF;
+ RETURN jsonb_build_object('found',true,'attempt',jsonb_build_object('id',v_event.id,'tool',v_event.tool_id,'action',v_event.action,'project',v_event.project_id,'quantity',v_event.quantity,'expectedStock',v_event.expected_stock,'expectedSite',v_event.expected_site),'result',v_event.result);
+END;
+$$;
+REVOKE ALL ON FUNCTION public.owned_equipment_operation_status(uuid) FROM PUBLIC,anon,authenticated;
+GRANT EXECUTE ON FUNCTION public.owned_equipment_operation_status(uuid) TO authenticated;
 DO $postflight$
 DECLARE n text;
 BEGIN
  FOREACH n IN ARRAY ARRAY['public.managed_owned_equipment','public.owned_equipment_allocations','public.owned_equipment_events'] LOOP
   IF has_table_privilege('anon',n,'SELECT,INSERT,UPDATE,DELETE,TRUNCATE,REFERENCES,TRIGGER') OR has_table_privilege('authenticated',n,'SELECT,INSERT,UPDATE,DELETE,TRUNCATE,REFERENCES,TRIGGER') THEN RAISE EXCEPTION 'Unexpected equipment table privileges'; END IF;
  END LOOP;
- FOREACH n IN ARRAY ARRAY['public.change_owned_equipment(uuid,uuid,text,uuid,integer,integer,integer)','public.owned_equipment_snapshot()'] LOOP
+ FOREACH n IN ARRAY ARRAY['public.change_owned_equipment(uuid,uuid,text,uuid,integer,integer,integer)','public.owned_equipment_snapshot()','public.owned_equipment_operation_status(uuid)'] LOOP
   IF has_function_privilege('anon',n,'EXECUTE') OR NOT has_function_privilege('authenticated',n,'EXECUTE') THEN RAISE EXCEPTION 'Unexpected equipment function privileges'; END IF;
  END LOOP;
 END;

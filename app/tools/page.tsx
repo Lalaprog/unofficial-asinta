@@ -23,8 +23,12 @@ import { WorkspaceHeader } from '@/components/ui/WorkspaceHeader';
 import { WorkspaceFilters } from '@/components/ui/WorkspaceFilters';
 import { useToast } from '@/components/ui/Toast';
 import { parseToolQuantity } from '@/lib/tools/validation';
+import { ownedEquipmentPreviewEnabled } from '@/lib/tools/ownedEquipment';
+import { OwnedEquipmentFoundation } from '@/components/tools/OwnedEquipmentFoundation';
+import { useAuth } from '@/lib/auth/authContext';
 
 export default function ToolsPage() {
+  const { user, isFounder, assurance, isLoading: authLoading } = useAuth();
   const { tools, projects, createTool, updateTool, deleteTool, refresh } = useDataStore();
   const { showToast } = useToast();
   const [isSaving, setIsSaving] = useState(false);
@@ -119,6 +123,8 @@ export default function ToolsPage() {
             setIsAddModalOpen(true);
           }} leftIcon={<Plus className="w-4 h-4" />}>Add Tool</Button>}
         />
+        <OwnedEquipmentFoundation userId={user?.id} isFounder={isFounder} assurance={assurance} authLoading={authLoading} />
+        {ownedEquipmentPreviewEnabled() && <p className="rounded-xl border border-status-warning/25 bg-status-warning-bg p-3 text-xs text-ink-secondary">The cards below are the older single-site view. They cannot show split locations. Use the allocation workspace above for recorded allocations; legacy edits or deletes on managed items may be rejected.</p>}
         <WorkspaceFilters title="Find equipment" summary={<FilterSummary count={filteredTools.length} itemName="tool" active={Boolean(searchQuery) || conditionFilter !== 'all'} onClear={() => { setSearchQuery(''); setConditionFilter('all'); }} />}>
           <div className="flex flex-col sm:flex-row sm:items-end gap-3">
             <div className="w-full sm:w-80">
@@ -200,10 +206,10 @@ export default function ToolsPage() {
                   {/* Allocation */}
                   <div className="p-3 rounded-xl bg-surface-inset/60 border border-surface-border text-xs">
                     <div className="text-[11px] font-medium text-ink-secondary">
-                      Current Site Deployment
+                      {ownedEquipmentPreviewEnabled() ? 'Legacy single-site view' : 'Current Site Deployment'}
                     </div>
                     <div className="font-semibold text-navy mt-0.5">
-                      {proj ? proj.name : tool.project_id ? 'Assigned project unavailable' : 'Asinta Studio Central Depot'}
+                      {ownedEquipmentPreviewEnabled() && !tool.project_id ? 'Unassigned in legacy view; check allocation workspace' : proj ? proj.name : tool.project_id ? 'Assigned project unavailable' : 'Asinta Studio Central Depot'}
                     </div>
                   </div>
                 </div>
