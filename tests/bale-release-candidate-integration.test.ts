@@ -27,6 +27,13 @@ describe('default-off candidate Bale form with real scoped-team hook',()=>{
   fireEvent.change(within(form).getByLabelText('Worker'),{target:{value:'w2'}});fireEvent.change(within(form).getByLabelText('Requested amount (₱)'),{target:{value:'125.50'}});fireEvent.click(within(form).getByRole('button',{name:'Send to Founder'}));
   await waitFor(()=>expect(mock.submit).toHaveBeenCalledWith({worker_id:'w2',project_id:'b',requested_amount:125.5}));
  });
+ it('warns when only some assigned workers have loaded details instead of presenting the list as complete',async()=>{
+  const fetchMock=vi.fn().mockResolvedValue(response(['w1','missing-worker']));vi.stubGlobal('fetch',fetchMock);
+  const form=open();fireEvent.change(within(form).getByLabelText('Project site'),{target:{value:'a'}});
+  await within(form).findByRole('option',{name:'Ada · Mason'});
+  expect(within(form).getByText(/Some assigned worker details are not in the loaded list/)).toBeTruthy();
+  expect(mock.submit).not.toHaveBeenCalled();
+ });
  it('fails closed on a duplicate, incomplete, or failed team response and can retry',async()=>{
   const fetchMock=vi.fn().mockResolvedValueOnce(response(['w1','w1'])).mockResolvedValueOnce(response([],false)).mockResolvedValueOnce(response(['w1']));vi.stubGlobal('fetch',fetchMock);
   const form=open();fireEvent.change(within(form).getByLabelText('Project site'),{target:{value:'a'}});await within(form).findByRole('alert');
