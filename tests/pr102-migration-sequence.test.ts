@@ -70,6 +70,7 @@ describe('PR 102 and PR 103 migration sequence',()=>{
    const sequence='public.attendance_time_details_revision_id_seq';
    expect((await db.query<{anon:boolean;auth:boolean;service:boolean}>("SELECT has_sequence_privilege('anon',$1,'USAGE') anon,has_sequence_privilege('authenticated',$1,'USAGE') auth,has_sequence_privilege('service_role',$1,'USAGE') service",[sequence])).rows[0]).toEqual({anon:true,auth:true,service:true});
    await db.exec(sql('20261114000001_protect_time_detail_sequence.sql'));
+   await db.exec(sql('20261114000002_paid_payroll_review.sql'));
    const after=(await db.query<{readiness:{existing_new_relations:string[];existing_new_functions:string[];advance_request_explicit_column_acls:unknown[]}}>(preflight)).rows[0].readiness;
    expect(after.existing_new_relations).toHaveLength(4);
    expect(after.existing_new_functions).toHaveLength(18);
@@ -90,6 +91,7 @@ describe('PR 102 and PR 103 migration sequence',()=>{
    expect(grants.rows[0]).toEqual({auth:false,anon:false,service:true});
    await db.exec(`SET ROLE service_role; SELECT public.set_project_worker_guarded('${founder}','${site}','${worker}',true); RESET ROLE; SET test.uid='${founder}'; SET test.assurance='yes'; SET ROLE authenticated;`);
    const value=async(query:string)=>(await db.query<{data:unknown}>(query)).rows[0].data;
+   expect(await value("SELECT public.paid_payroll_review('2026-10-25','2026-10-31') AS data")).toMatchObject({vouchers:[{id:worker,period_bale_total:'0',overlapping_paid:false}]});
    expect(await value("SELECT public.weekly_worker_preview_inputs('2026-10-25') AS data")).toMatchObject({start:'2026-10-25',end:'2026-10-31',workers:[{id:worker,pay_rate:'600',linked_supervisor:false}],attendance:[{worker_id:worker,hours_worked:'8',time_detail:null}],vouchers:[{worker_id:worker,status:'paid'}]});
    await expect(value("SELECT public.weekly_worker_preview_inputs('2026-10-26') AS data")).rejects.toThrow(/Sunday/);
    await db.exec(`RESET ROLE; INSERT INTO public.attendance(id,worker_id,project_id,date,status,hours_worked,submitted_at) VALUES ('${other}','${worker}','${site}','2026-11-01','present',8,'2026-11-01T08:00:00Z'); SET ROLE authenticated;`);

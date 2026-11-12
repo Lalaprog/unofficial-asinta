@@ -28,6 +28,7 @@ import { formatRecordedWork } from '@/lib/payroll/display';
 import { AttendanceMatrix } from '@/components/payroll/AttendanceMatrix';
 import { WeeklyWorkerPreview } from '@/components/payroll/WeeklyWorkerPreview';
 import { WorkerAllowanceQueue } from '@/components/payroll/WorkerAllowanceQueue';
+import { PaidHistoryReview } from '@/components/payroll/PaidHistoryReview';
 import { getManilaClock } from '@/lib/reminders/scheduler';
 
 export default function PayrollPage() {
@@ -195,6 +196,8 @@ export default function PayrollPage() {
         <WorkerAllowanceQueue />
 
         <WeeklyWorkerPreview />
+
+        <PaidHistoryReview />
 
         <AttendanceMatrix start={periodStart} end={periodEnd} site={generateProjectId} setStart={setPeriodStart} setEnd={setPeriodEnd} setSite={setGenerateProjectId} projects={projects} />
 
