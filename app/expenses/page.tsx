@@ -47,6 +47,7 @@ import {
   validateReceiptFile,
 } from '@/lib/supabase/receipts';
 import { formatPeso, formatPesoCompact } from '@/lib/email/format';
+import { manilaDateISO } from '@/lib/dates/manila';
 import type { ExpenseDraft } from '@/lib/ai/draft';
 import {
   buildExpenseWarnings,
@@ -104,6 +105,9 @@ export default function ExpensesPage() {
   const [selectedExpense, setSelectedExpense] = useState<Expense | null>(null);
   const [itemRows, setItemRows] = useState<ItemInput[]>([]);
 
+  // A fixed baseline protects draft detection across midnight; it is refreshed
+  // only when starting/resetting a truly empty entry, never while editing.
+  const initialExpenseDate = React.useRef(manilaDateISO());
   // Form State
   const [formData, setFormData] = useState({
     project_id: '',
@@ -111,7 +115,7 @@ export default function ExpensesPage() {
     details: '',
     amount: '',
     category: 'materials' as ExpenseCategory | '',
-    expense_date: new Date().toISOString().split('T')[0],
+    expense_date: initialExpenseDate.current,
     notes: '',
     receipt_url: '' as string | null,
     vendor: '',
@@ -179,10 +183,10 @@ export default function ExpensesPage() {
   React.useEffect(() => {
     if (!draft) return;
     const amount = Number(formData.amount);
-    setDraftWarnings(buildExpenseWarnings({amount:Number.isFinite(amount) ? amount : 0, expenseDate:formData.expense_date || new Date().toISOString().slice(0, 10), vendor:formData.vendor || null, projectId:formData.project_id, category:formData.category || 'other'}, expenses));
+    setDraftWarnings(buildExpenseWarnings({amount:Number.isFinite(amount) ? amount : 0, expenseDate:formData.expense_date || manilaDateISO(), vendor:formData.vendor || null, projectId:formData.project_id, category:formData.category || 'other'}, expenses));
   }, [draft, formData.amount, formData.expense_date, formData.vendor, formData.project_id, formData.category, expenses]);
 
-  const hasUnfinishedEntry = Boolean(formData.project_id || formData.description || formData.details || itemRows.length || formData.amount || formData.vendor || formData.notes || formData.receipt_url || pendingReceiptFile || draft || formData.category !== 'materials' || formData.expense_date !== new Date().toISOString().split('T')[0]);
+  const hasUnfinishedEntry = Boolean(formData.project_id || formData.description || formData.details || itemRows.length || formData.amount || formData.vendor || formData.notes || formData.receipt_url || pendingReceiptFile || draft || formData.category !== 'materials' || formData.expense_date !== initialExpenseDate.current);
   const snapshot = (receiptPath = formData.receipt_url): SavedDraftPayload => ({ version:1, form:{...formData, receipt_url:receiptPath}, rows:itemRows, receiptFileName, draft, draftInputKind, draftModel, draftExtractedText, aiResult, aiAccepted, contextWarnings });
   const unchangedSavedDraft = savedDraft && activeDraftId === savedDraft.draft_id && !pendingReceiptFile && stableDraftJson(snapshot()) === stableDraftJson(savedDraft.payload);
 
@@ -194,7 +198,8 @@ export default function ExpensesPage() {
   }, [hasUnfinishedEntry, unchangedSavedDraft]);
 
   const resetEntry = () => {
-    setFormData({ project_id:'', description:'', details:'', amount:'', category:'materials', expense_date:new Date().toISOString().split('T')[0], notes:'', receipt_url:null, vendor:'' });
+    initialExpenseDate.current = manilaDateISO();
+    setFormData({ project_id:'', description:'', details:'', amount:'', category:'materials', expense_date:initialExpenseDate.current, notes:'', receipt_url:null, vendor:'' });
     setItemRows([]); setReceiptFileName(null); setAiResult(null); setAiAccepted(false);
     setDraft(null); setDraftWarnings(null); setDraftInputKind(null); setDraftModel(null); setDraftExtractedText(null); setContextWarnings([]);
     setPendingReceiptFile(null); setPendingReceiptPreview(previous => { if (previous?.startsWith('blob:')) URL.revokeObjectURL(previous); return null; });
@@ -263,7 +268,13 @@ export default function ExpensesPage() {
   };
   const openEntry = () => {
     if (savedDraft && !hasUnfinishedEntry) void resumeDraft();
-    else setIsAddModalOpen(true);
+    else {
+      if (!hasUnfinishedEntry) {
+        initialExpenseDate.current = manilaDateISO();
+        setFormData(previous => ({ ...previous, expense_date: initialExpenseDate.current }));
+      }
+      setIsAddModalOpen(true);
+    }
   };
 
   useQuickAction('/expenses', ['expense-manual', 'expense-scan', 'expense-describe'], isFounder && assurance === 'ready' && !authLoading && isLoaded && draftLoadState !== 'loading', (action) => {
@@ -492,13 +503,14 @@ export default function ExpensesPage() {
         }
 
         setIsAddModalOpen(false);
+        initialExpenseDate.current = manilaDateISO();
         setFormData({
           project_id: '',
           description: '',
           details: '',
           amount: '',
           category: 'materials',
-          expense_date: new Date().toISOString().split('T')[0],
+          expense_date: initialExpenseDate.current,
           notes: '',
           receipt_url: null,
           vendor: '',
@@ -748,7 +760,7 @@ export default function ExpensesPage() {
         buildExpenseWarnings(
           {
             amount: nextDraft.amount ?? 0,
-            expenseDate: nextDraft.expenseDate ?? new Date().toISOString().slice(0, 10),
+            expenseDate: nextDraft.expenseDate ?? manilaDateISO(),
             vendor: nextDraft.vendor,
             projectId: nextDraft.projectId ?? '',
             category: nextDraft.category ?? 'other',
@@ -846,7 +858,7 @@ export default function ExpensesPage() {
         buildExpenseWarnings(
           {
             amount: nextDraft.amount ?? 0,
-            expenseDate: nextDraft.expenseDate ?? new Date().toISOString().slice(0, 10),
+            expenseDate: nextDraft.expenseDate ?? manilaDateISO(),
             vendor: nextDraft.vendor,
             projectId: nextDraft.projectId ?? '',
             category: nextDraft.category ?? 'other',

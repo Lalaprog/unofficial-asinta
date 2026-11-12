@@ -13,10 +13,50 @@ import ExpensesPage from '@/app/expenses/page';
 const reading='JMC Hardware\nCEMENT\nITEM 4800';
 const draft={description:'CEMENT',amount:null,expenseDate:null,projectId:null,projectLabel:null,category:null,categorySource:'none',vendor:null,vendorToken:null,isBaleHint:false,noteEvidence:null,evidence:[],unresolved:['The receipt date needs your input.'],source:'llm',verification:'model-reported'};
 beforeEach(()=>{sessionStorage.clear(); HTMLElement.prototype.scrollIntoView=vi.fn(); window.matchMedia=vi.fn().mockReturnValue({matches:false}); mock.load.mockReset().mockResolvedValue({ok:true,value:null});mock.save.mockReset().mockImplementation(async (_client,owner,previous,id,payload)=>({ok:true,value:{owner_id:owner,draft_id:id,revision:(previous?.revision||0)+1,payload,updated_at:'2026-11-06'}}));mock.remove.mockReset().mockResolvedValue({ok:true,value:true});mock.create.mockReset();mock.toast.mockReset();mock.upload.mockReset().mockResolvedValue({error:null});vi.stubGlobal('fetch',vi.fn().mockResolvedValue({ok:true,json:async()=>({ok:true,draft,read:{model:'mock',extractedText:reading}})}));URL.createObjectURL=vi.fn().mockReturnValue('blob:receipt');URL.revokeObjectURL=vi.fn()});
-afterEach(()=>{cleanup();vi.unstubAllGlobals()});
+afterEach(()=>{cleanup();vi.useRealTimers();vi.unstubAllGlobals()});
 async function saveAndClose(dialog:HTMLElement){fireEvent.click(within(dialog).getByRole('button',{name:'Cancel'}));const confirmation=screen.getByRole('alertdialog',{name:'Unfinished expense'});await waitFor(()=>expect((within(confirmation).getByRole('button',{name:'Save draft'}) as HTMLButtonElement).disabled).toBe(false));await act(async()=>{fireEvent.click(within(confirmation).getByRole('button',{name:'Save draft'}))});await waitFor(()=>expect(screen.queryByRole('alertdialog',{name:'Unfinished expense'})).toBeNull());}
 async function scan(){const file=new File(['photo'],'receipt.jpg',{type:'image/jpeg'});fireEvent.change(screen.getByLabelText('Scan a receipt photo'),{target:{files:[file]}});const confirm=screen.queryByRole('alertdialog');if(confirm)fireEvent.click(within(confirm).getByRole('button',{name:'Scan new receipt'}));await screen.findByText('Read from the receipt photo')}
 describe('expense receipt review',()=>{
+  it('refreshes an empty manual entry after Manila midnight without marking it unfinished', async()=>{
+    vi.useFakeTimers({toFake:['Date']}); vi.setSystemTime(new Date('2026-12-31T15:59:00Z'));
+    render(React.createElement(ExpensesPage)); await waitFor(()=>expect(mock.load).toHaveBeenCalled());
+    vi.setSystemTime(new Date('2026-12-31T16:01:00Z'));
+    fireEvent.click(screen.getAllByRole('button',{name:'Record Expense'})[0]);
+    let dialog=screen.getByRole('dialog',{name:'Record Site Expense'});
+    expect((within(dialog).getByLabelText('Expense Date') as HTMLInputElement).value).toBe('2027-01-01');
+    fireEvent.click(within(dialog).getByRole('button',{name:'Cancel'}));
+    expect(screen.queryByRole('alertdialog',{name:'Unfinished expense'})).toBeNull();
+    act(()=>window.dispatchEvent(new CustomEvent('asinta:mobile-quick-action',{detail:'expense-manual'})));
+    dialog=screen.getByRole('dialog',{name:'Record Site Expense'});
+    fireEvent.change(within(dialog).getByLabelText('Expense Date'),{target:{value:'2026-12-01'}});
+    fireEvent.change(within(dialog).getByLabelText('Expense title'),{target:{value:'Preserved'}});
+    await saveAndClose(dialog);
+    vi.setSystemTime(new Date('2027-01-01T16:01:00Z'));
+    act(()=>window.dispatchEvent(new CustomEvent('asinta:mobile-quick-action',{detail:'expense-manual'})));
+    dialog=screen.getByRole('dialog',{name:'Record Site Expense'});
+    expect((within(dialog).getByLabelText('Expense Date') as HTMLInputElement).value).toBe('2026-12-01');
+    expect((within(dialog).getByLabelText('Expense title') as HTMLInputElement).value).toBe('Preserved');
+    expect(mock.create).not.toHaveBeenCalled();
+  });
+  it('resets the date baseline after a mocked expense save', async()=>{
+    vi.useFakeTimers({toFake:['Date']}); vi.setSystemTime(new Date('2026-12-31T16:01:00Z'));
+    mock.create.mockImplementation(async x=>({...x,id:'mock-expense'}));
+    render(React.createElement(ExpensesPage)); await waitFor(()=>expect(mock.load).toHaveBeenCalled());
+    fireEvent.click(screen.getAllByRole('button',{name:'Record Expense'})[0]);
+    const dialog=screen.getByRole('dialog',{name:'Record Site Expense'});
+    fireEvent.change(within(dialog).getByLabelText('Associated Project Site'),{target:{value:'p'}});
+    fireEvent.change(within(dialog).getByLabelText('Expense title'),{target:{value:'Mock expense'}});
+    fireEvent.change(within(dialog).getByLabelText('Amount (PHP ₱)'),{target:{value:'100'}});
+    fireEvent.change(within(dialog).getByLabelText('Expense Date'),{target:{value:'2026-12-01'}});
+    await act(async()=>{fireEvent.click(within(dialog).getByRole('button',{name:'Confirm & Save Expense'}))});
+    expect(mock.create).toHaveBeenCalledOnce();
+    vi.setSystemTime(new Date('2027-01-01T16:01:00Z'));
+    fireEvent.click(screen.getAllByRole('button',{name:'Record Expense'})[0]);
+    const next=screen.getByRole('dialog',{name:'Record Site Expense'});
+    expect((within(next).getByLabelText('Expense Date') as HTMLInputElement).value).toBe('2027-01-02');
+    fireEvent.click(within(next).getByRole('button',{name:'Cancel'}));
+    expect(screen.queryByRole('alertdialog',{name:'Unfinished expense'})).toBeNull();
+  });
   it('shows a typed calculation for review without recording an expense', async()=>{
     vi.mocked(fetch).mockResolvedValueOnce({ok:true,json:async()=>({draft:{...draft,description:'5 bags cement @ 200 each',amount:1000,verification:'text',evidence:['Calculated from “5 bags cement @ 200 each”. Check quantities, prices and any fees before saving.'],unresolved:[]},contextWarnings:[]})} as Response);
     render(React.createElement(ExpensesPage));await waitFor(()=>expect(mock.load).toHaveBeenCalled());
