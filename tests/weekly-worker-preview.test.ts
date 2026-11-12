@@ -42,9 +42,20 @@ describe('weekly worker planning preview',()=>{
   s.vouchers.push({id:'v',worker_id:'w',status:'paid',period_start:s.start,period_end:s.end});expect(view(s).rows[0].projectEstimates).toBeNull();
   s.vouchers=[];s.advances[0].linked_release=false;expect(view(s).rows[0].projectEstimates).toBeNull();
  });
- it('withholds site attribution if an allowance cannot be matched to recorded work',()=>{
+ it('withholds earnings, net and site attribution when an approved allowance cannot be matched to worked attendance',()=>{
   const s=snapshot();s.allowances.push({id:'x',worker_id:'w',project_id:'p',description:'Meals',date:'2026-11-17',amount:'25.05',status:'approved',stale:false});
-  expect(view(s).rows[0].projectEstimates).toBeNull();
+  let row=view(s).rows[0];expect(row).toMatchObject({wage:null,gross:null,net:null,projectEstimates:null});expect(row.reviewReasons).toContain('Approved allowance has no matching worked attendance');
+  expect(summarizeWeeklyColumns([row])).toMatchObject({count:0,excluded:1,allowance:'0.00'});
+  s.allowances[0].date=s.start;s.allowances[0].project_id='other';row=view(s).rows[0];expect(row.net).toBeNull();
+  s.allowances[0].project_id='p';s.attendance[0].status='absent';s.attendance[0].hours_worked='0';row=view(s).rows[0];expect(row.net).toBeNull();
+  s.allowances[0].status='rejected';row=view(s).rows[0];expect(row.net).toBe('327.78');
+ });
+ it('distinguishes explicitly recorded zero-work days from a fully unmarked week',()=>{
+  const s=snapshot();s.attendance=s.attendance.map(a=>({...a,status:'absent',hours_worked:'0'}));
+  expect(view(s).rows[0]).toMatchObject({wage:'0.00',gross:'0.00',net:'0.00',pastUnmarked:true,projectEstimates:null});
+  s.advances.push({id:'z',worker_id:'w',project_id:'p',date:'2026-11-18',amount:'1.00',deducted:'0',status:'active',linked_release:true});
+  expect(view(s).rows[0]).toMatchObject({wage:'0.00',gross:'0.00',net:null,excess:true});
+  s.advances=[];s.attendance=[];expect(view(s).rows[0]).toMatchObject({wage:null,gross:null,net:null,pastUnmarked:true});
  });
  it('flags potentially duplicated independently submitted entries without silently dropping them',()=>{
   const s=snapshot();s.allowances.push({id:'x',worker_id:'w',project_id:'p',description:'Meals',date:s.start,amount:'20.00',status:'approved',stale:false},{id:'y',worker_id:'w',project_id:'p',description:' meals ',date:s.start,amount:'20.0',status:'approved',stale:false});

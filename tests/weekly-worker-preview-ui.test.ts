@@ -26,6 +26,8 @@ describe('weekly planning preview',()=>{
   render(React.createElement(WeeklyWorkerPreview));fireEvent.click(screen.getByRole('button',{name:/Weekly worker planning preview/}));fireEvent.click(screen.getByRole('button',{name:'Load preview'}));
   await screen.findByText('Ada');fireEvent.click(screen.getByText('Illustrative project breakdown'));
   expect(screen.getByText(/Unavailable: review the worker/)).toBeTruthy();expect(screen.queryByText(/Sample Site:.*gross/)).toBeNull();
+  expect(screen.getByText('Approved allowance has no matching worked attendance')).toBeTruthy();expect(screen.getByText(/Net withheld/)).toBeTruthy();
+  expect(screen.getByText(/Partial subtotal of 0 row.*Excludes 1 worker/)).toBeTruthy();
  });
  it('identifies sites by ID if their current name is unavailable',async()=>{
   mock.rpc.mockResolvedValue({data:{...snapshot,attendance:[{...snapshot.attendance[0],project_id:'other-site'}]},error:null});

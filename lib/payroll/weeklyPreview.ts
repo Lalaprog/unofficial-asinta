@@ -57,6 +57,9 @@ export function buildWeeklyPreview(input:WeeklyInput,today:string):{rows:WeeklyR
   if(pays.length>1 || pays.some(p=>p.period_start!==input.start||p.period_end!==input.end))reasons.push('Multiple or overlapping vouchers');
   if(days.some(d=>d.entries.length>1 || d.entries.some(a=>a.time_detail?.stale || ((a.status==='present'||a.status==='half_day') ? (a.time_detail ? cents(a.time_detail.regular_hours)+cents(a.time_detail.overtime_hours)===0n : (cents(a.hours_worked)>800n || cents(a.hours_worked)===0n)) : (cents(a.hours_worked)!==0n || Boolean(a.time_detail))))))reasons.push('Attendance conflicts, unusual hours or stale time details');
   if(allow.some(a=>a.status!=='rejected'&&a.stale))reasons.push('Allowance attendance changed');
+  // A non-stale flag alone does not prove that the preview also contains the
+  // corresponding worked day/site. Never use such an allowance in a net.
+  if(allow.some(a=>a.status==='approved'&&!a.stale&&!att.some(entry=>entry.project_id===a.project_id&&entry.date===a.date&&(entry.status==='present'||entry.status==='half_day'))))reasons.push('Approved allowance has no matching worked attendance');
   const repeated=(keys:string[])=>new Set(keys).size!==keys.length;
   if(repeated(allow.filter(a=>a.status!=='rejected').map(a=>JSON.stringify([a.date,a.project_id,cents(a.amount).toString(),a.description.trim().toLowerCase()]))))reasons.push('Possible duplicate allowance entries');
   const pendingAllowances=allow.filter(a=>a.status==='pending').length;
@@ -70,7 +73,9 @@ export function buildWeeklyPreview(input:WeeklyInput,today:string):{rows:WeeklyR
   const worked=att.filter(a=>a.status==='present'||a.status==='half_day');
   const regular=worked.reduce((sum,a)=>sum+cents(a.time_detail?.regular_hours ?? a.hours_worked),0n),overtime=worked.reduce((sum,a)=>sum+cents(a.time_detail?.overtime_hours ?? '0'),0n);
   const finalized=pays.some(p=>p.status==='paid'||p.status==='approved');
-  const wage=!reasons.length&&!finalized&&worked.length?roundDivide(cents(worker.pay_rate)*(regular+overtime),worker.pay_rate_type==='daily'?800n:100n):null;
+  // Recorded absence/leave can yield zero earnings; a completely unmarked
+  // week is still unknown, not proof of zero attendance or a zero payout.
+  const wage=!reasons.length&&!finalized&&att.length?roundDivide(cents(worker.pay_rate)*(regular+overtime),worker.pay_rate_type==='daily'?800n:100n):null;
   const excess=wage!==null && bale>wage+includedAllow;
   if(excess)reasons.push('Recorded Bale exceeds estimated earnings');
   const net=wage!==null&&!excess?centsText(wage+includedAllow-bale):null;
