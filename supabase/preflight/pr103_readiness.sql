@@ -23,7 +23,6 @@ WITH expected_relations(name) AS (VALUES
   ('public.submit_worker_allowance(uuid,uuid,timestamp with time zone,numeric,text)'),
   ('public.review_worker_allowance(uuid,text)'),
   ('public.worker_allowance_pending_queue()'),
-  ('public.guard_advance_request_site()'),
   ('app_private.normal_leave_notice_allowed(date,timestamp with time zone)'),
   ('public.submit_supervisor_leave(uuid,date,date,text,text)'),
   ('public.review_supervisor_leave(uuid,text)'),('public.supervisor_leave_list(integer)'),
@@ -36,6 +35,9 @@ SELECT jsonb_build_object(
   'missing_helpers',(SELECT coalesce(jsonb_agg(signature ORDER BY signature),'[]'::jsonb) FROM expected_helpers WHERE pg_catalog.to_regprocedure(signature) IS NULL),
   'existing_new_relations',(SELECT coalesce(jsonb_agg(name ORDER BY name),'[]'::jsonb) FROM new_relations WHERE pg_catalog.to_regclass(name) IS NOT NULL),
   'existing_new_functions',(SELECT coalesce(jsonb_agg(signature ORDER BY signature),'[]'::jsonb) FROM new_functions WHERE pg_catalog.to_regprocedure(signature) IS NOT NULL),
+  'site_guard_function_exists',pg_catalog.to_regprocedure('public.guard_advance_request_site()') IS NOT NULL,
+  'site_guard_function_body_md5',(SELECT md5(p.prosrc) FROM pg_catalog.pg_proc p WHERE p.oid=pg_catalog.to_regprocedure('public.guard_advance_request_site()')),
+  'site_guard_trigger_enabled',(SELECT t.tgenabled FROM pg_catalog.pg_trigger t WHERE t.tgrelid=pg_catalog.to_regclass('public.advance_requests') AND t.tgname='guard_advance_request_site' AND NOT t.tgisinternal),
   'advance_request_explicit_column_acls',(SELECT coalesce(jsonb_agg(jsonb_build_object('column',a.attname,'acl',a.attacl::text) ORDER BY a.attnum),'[]'::jsonb)
     FROM pg_catalog.pg_attribute a WHERE a.attrelid=pg_catalog.to_regclass('public.advance_requests') AND a.attnum>0 AND NOT a.attisdropped AND a.attacl IS NOT NULL)
 ) AS readiness;

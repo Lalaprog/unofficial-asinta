@@ -56,8 +56,8 @@ describe('PR 102 and PR 103 migration sequence',()=>{
    await db.exec(sql('20261107000002_project_worker_lists.sql'));
    for(const migration of migrations) await db.exec(sql(migration));
    const preflight=readFileSync('supabase/preflight/pr103_readiness.sql','utf8');
-   const before=(await db.query<{readiness:{missing_relations:string[];missing_helpers:string[];existing_new_relations:string[];existing_new_functions:string[];app_private_schema_exists:boolean}}>(preflight)).rows[0].readiness;
-   expect(before).toMatchObject({missing_relations:[],missing_helpers:[],existing_new_relations:[],existing_new_functions:[],app_private_schema_exists:true});
+   const before=(await db.query<{readiness:{missing_relations:string[];missing_helpers:string[];existing_new_relations:string[];existing_new_functions:string[];app_private_schema_exists:boolean;site_guard_function_exists:boolean;site_guard_trigger_enabled:string|null}}>(preflight)).rows[0].readiness;
+   expect(before).toMatchObject({missing_relations:[],missing_helpers:[],existing_new_relations:[],existing_new_functions:[],app_private_schema_exists:true,site_guard_function_exists:false,site_guard_trigger_enabled:null});
    await db.exec(sql('20261113000000_weekly_worker_preview.sql'));
    await db.exec(sql('20261113000001_attendance_time_detail.sql'));
    await db.exec(sql('20261113000002_worker_allowances.sql'));
@@ -71,9 +71,15 @@ describe('PR 102 and PR 103 migration sequence',()=>{
    expect((await db.query<{anon:boolean;auth:boolean;service:boolean}>("SELECT has_sequence_privilege('anon',$1,'USAGE') anon,has_sequence_privilege('authenticated',$1,'USAGE') auth,has_sequence_privilege('service_role',$1,'USAGE') service",[sequence])).rows[0]).toEqual({anon:true,auth:true,service:true});
    await db.exec(sql('20261114000001_protect_time_detail_sequence.sql'));
    await db.exec(sql('20261114000002_paid_payroll_review.sql'));
-   const after=(await db.query<{readiness:{existing_new_relations:string[];existing_new_functions:string[];advance_request_explicit_column_acls:unknown[]}}>(preflight)).rows[0].readiness;
+   const after=(await db.query<{readiness:{existing_new_relations:string[];existing_new_functions:string[];advance_request_explicit_column_acls:unknown[];site_guard_function_exists:boolean;site_guard_trigger_enabled:string|null;site_guard_function_body_md5:string|null}}>(preflight)).rows[0].readiness;
    expect(after.existing_new_relations).toHaveLength(4);
-   expect(after.existing_new_functions).toHaveLength(18);
+   expect(after.existing_new_functions).toHaveLength(17);
+   expect(after.site_guard_function_exists).toBe(true);
+   expect(after.site_guard_trigger_enabled).toBe('O');
+   expect(after.site_guard_function_body_md5).toBe('5df27c07b98136257e129c7bcaf8feb5');
+   await db.exec('ALTER TABLE public.advance_requests DISABLE TRIGGER guard_advance_request_site');
+   expect((await db.query<{readiness:{site_guard_trigger_enabled:string|null}}>(preflight)).rows[0].readiness.site_guard_trigger_enabled).toBe('D');
+   await db.exec('ALTER TABLE public.advance_requests ENABLE TRIGGER guard_advance_request_site');
    expect(after.advance_request_explicit_column_acls).toHaveLength(4);
    for(const table of ['attendance_time_details','worker_allowances','supervisor_leave_requests','supervisor_daily_attendance']){
     const privileges=await db.query<{anon:boolean;auth_write:boolean;service:boolean}>("SELECT has_table_privilege('anon',$1,'SELECT,INSERT,UPDATE,DELETE,TRUNCATE') anon,has_table_privilege('authenticated',$1,'INSERT,UPDATE,DELETE,TRUNCATE') auth_write,has_table_privilege('service_role',$1,'SELECT,INSERT,UPDATE,DELETE,TRUNCATE') service",[`public.${table}`]);
