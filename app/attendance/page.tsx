@@ -52,6 +52,7 @@ import { RollCallWalkthrough } from '@/components/dashboard/RollCallWalkthrough'
 import type { HistoryRecord, HistorySheet } from '@/lib/attendance/history';
 import { HistorySheetRecords } from '@/components/attendance/HistorySheetRecords';
 import { AttendanceHistoryCalendar } from '@/components/attendance/AttendanceHistoryCalendar';
+import { SupervisorLeavePanel } from '@/components/attendance/SupervisorLeavePanel';
 
 const EMPTY_ROLL_CALL: ProjectRollCallSnapshot = { workerIds: [], records: [] };
 
@@ -1072,6 +1073,8 @@ function AttendancePageInner() {
             </div>
           )}
         </div>
+
+        {activeTab === 'terminal' && assurance === 'ready' && !authLoading && (isFounder || isSupervisor) && <SupervisorLeavePanel />}
 
         {/* Founder Review Banner: Supervisor Attendance Submitted with Crew Report */}
         {isFounder && (pendingApprovals.loading || pendingApprovals.error || (pendingApprovals.total ?? 0) > 0) && (
