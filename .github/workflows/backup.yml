@@ -1,12 +1,13 @@
-name: Automated database backup
+name: Partial application export (not a full backup)
 
 # PARTIAL database export, not a verified full-project backup. The job requires
 # a configured GitHub Actions secret and has failed before dumping in this repo.
 # It exports public and app_private schemas and rows, without owner or grants.
 # Auth, Storage objects/configuration, platform settings and other dependencies
 # are excluded. A successful job or checksum does not prove restorability.
-# The output contains sensitive personal and financial records: restrict GitHub
-# artifact access, retention and downloads. See docs/SECURITY.md §10.
+# The output contains sensitive personal and financial records. This draft refuses
+# to run on public repositories; private repository artifact access, retention
+# and downloads still require review. See docs/SECURITY.md §10.
 #
 # STORAGE GAP (important)
 # -----------------------
@@ -17,9 +18,9 @@ name: Automated database backup
 #
 # SETUP
 # -----
-# Reuses the `SUPABASE_DB_URL` repository secret from `apply-migrations.yml`:
-#   Repository → Settings → Secrets and variables → Actions → `SUPABASE_DB_URL`
-#   (pooled connection string for project `mchkdkjntnbwrgmyobpd`).
+# A secure, reviewed process would require a database connection secret. Do
+# not configure or run this repository's historical workflow with real data:
+# the repository is public and its default-branch workflow lacks this guard.
 #
 # RECOVERY: a complete plan requires an isolated restore test with dependencies,
 # roles/ACLs, Auth and Storage addressed separately. Row counts or checksums
@@ -57,6 +58,19 @@ jobs:
     env:
       EXPECTED_REF: mchkdkjntnbwrgmyobpd
     steps:
+      # Unencrypted Actions artifacts may be readable to everyone with repository
+      # read access. Public repositories are not an appropriate export target.
+      # This guard exists only on this branch until it is merged. It does not
+      # protect the historical default-branch workflow or other workflows.
+      - name: Refuse unencrypted exports from public repositories
+        env:
+          REPOSITORY_PRIVATE: ${{ github.event.repository.private }}
+        run: |
+          if [ "$REPOSITORY_PRIVATE" != "true" ]; then
+            echo "::error::This export contains sensitive data and must not be uploaded from a public repository. Use a reviewed private, access-controlled recovery process instead."
+            exit 1
+          fi
+
       - name: Confirm the target project (manual runs)
         if: ${{ github.event_name == 'workflow_dispatch' }}
         env:

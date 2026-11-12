@@ -329,7 +329,7 @@ app if skipped:
 | Vercel → Environment Variables | `NEXT_PUBLIC_SESSION_*` (`20`, `8`, `120`) | **Rebuild** | `NEXT_PUBLIC_*` is inlined at build time; redeploying without rebuilding keeps old values |
 | Authentication → Rate Limits | `sign_in_sign_ups` | `30 → 10` per 5 min per IP | Per-IP only (no account lockout). `/api/auth/login` also enforces 10/5m per IP in the app (docs/SECURITY.md §7) |
 | Authentication → Attack Protection | CAPTCHA | hCaptcha / Turnstile | Defends sign-in against distributed IPs |
-| GitHub Actions | `.github/workflows/backup.yml` | Weekly `pg_dump` + restore test | Supabase Free has no PITR; receipt photos in Storage still need a separate copy (docs/SECURITY.md §10) |
+| Recovery | Current export workflow | **Do not run with real data** | This public repository could expose its unencrypted artifact; the old default-branch workflow lacks the draft public-repo guard. A complete, verified private recovery process is still needed (docs/SECURITY.md §10). |
 
 `supabase/config.toml` only configures the local stack; the managed project is
 configured in the dashboard. When you change one, change the other.
