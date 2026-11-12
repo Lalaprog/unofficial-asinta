@@ -39,6 +39,11 @@ describe('PR 102 and PR 103 migration sequence',()=>{
    await db.exec('GRANT EXECUTE ON FUNCTION public.weekly_worker_preview_inputs(date) TO anon');
    await expect(db.exec(rehearsal)).rejects.toThrow(/weekly base function is missing/);await db.exec('ROLLBACK');
    await db.exec('REVOKE EXECUTE ON FUNCTION public.weekly_worker_preview_inputs(date) FROM anon');
+   await expect(db.exec(rehearsal)).rejects.toThrow(/Locked Supervisor table missing or different/);await db.exec('ROLLBACK');
+   await db.exec(readFileSync('supabase/drafts/supervisor_table_foundation.sql','utf8'));
+   await db.exec('ALTER TABLE public.supervisor_leave_requests ADD COLUMN unexpected text');
+   await expect(db.exec(rehearsal)).rejects.toThrow(/Locked Supervisor table missing or different/);await db.exec('ROLLBACK');
+   await db.exec('ALTER TABLE public.supervisor_leave_requests DROP COLUMN unexpected');
    // A late migration collision must roll back earlier DDL, not leave a partial install.
    await db.exec(`CREATE FUNCTION public.attendance_time_detail_latest(uuid) RETURNS jsonb LANGUAGE sql AS $$SELECT '{}'::jsonb$$;`);
    await expect(db.exec(rehearsal)).rejects.toThrow(/already exists/);await db.exec('ROLLBACK');
@@ -55,8 +60,10 @@ describe('PR 102 and PR 103 migration sequence',()=>{
    await db.exec(sql('20261113000001_attendance_time_detail.sql'));
    await db.exec(sql('20261113000002_worker_allowances.sql'));
    await db.exec(sql('20261113000003_weekly_payroll_context.sql'));
-   await db.exec(sql('20261113000005_supervisor_leave.sql'));
-   await db.exec(sql('20261113000006_supervisor_daily_attendance.sql'));
+   for(const [file,table] of [['20261113000005_supervisor_leave.sql','supervisor_leave_requests'],['20261113000006_supervisor_daily_attendance.sql','supervisor_daily_attendance']]){
+    const source=sql(file), marker=`REVOKE ALL ON public.${table} FROM PUBLIC,anon,authenticated;`;
+    await db.exec(source.slice(source.indexOf(marker)+marker.length));
+   }
    const sequence='public.attendance_time_details_revision_id_seq';
    expect((await db.query<{anon:boolean;auth:boolean;service:boolean}>("SELECT has_sequence_privilege('anon',$1,'USAGE') anon,has_sequence_privilege('authenticated',$1,'USAGE') auth,has_sequence_privilege('service_role',$1,'USAGE') service",[sequence])).rows[0]).toEqual({anon:true,auth:true,service:true});
    await db.exec(sql('20261114000001_protect_time_detail_sequence.sql'));
