@@ -15,6 +15,12 @@ The database gives `anon`, `authenticated` and `service_role` broad default priv
 - `tests/bale-guard-legacy-triggers.test.ts` combines the actual repository legacy request, audit and in-app notification triggers with the new site guard in a simplified isolated schema. A synthetic request and approval produced expected audit/in-app notification records and no advance. No hosted request or message was created.
 - Existing isolated PostgreSQL multi-connection tests cover several feature-specific races. They do not establish every possible cross-feature lock order or hosted compatibility. PGlite is not a clone of the connected database.
 
+## Rollback-only local rehearsal helper
+
+`scripts/build-pr103-rehearsal.mjs` generates an ordered **rollback-only** SQL script for an isolated disposable database that has the installed site guard. It checks the guard body, enabled trigger and selected INSERT ACLs; excludes the already-installed guard and paid-review RPC; runs the remaining six migrations with the time-detail sequence safeguard in the same transaction; checks selected RLS/grants; and ends in `ROLLBACK`. Inputs carry SHA-256 comments and a conservative transaction-control tripwire. `tests/pr102-migration-sequence.test.ts` exercises this exact generated SQL in PGlite, including a missing/disabled guard, a late function-name collision and rollback, preserved fixture records and a successful rollback. This helper is **not** a deployment script, a comprehensive ACL/catalog check, or a substitute for an isolated hosted-equivalent PostgreSQL rehearsal. Even rolled-back DDL can lock tables: **never run it against a shared database**. A fresh generated script needs manual review, including transaction boundaries, before use.
+
+The manual GitHub migration workflow on this branch has been disabled and fails before accessing secrets or a database because its bundles and migration history are stale. This does not disable older revisions or direct/manual database access.
+
 ## Before any hosted change
 
 1. Verify a usable, independently restorable backup and an operational recovery plan that preserves new records if any writes occur after deployment. Never assume reverting the application, dropping new tables, or transaction rollback after commit will preserve those records.

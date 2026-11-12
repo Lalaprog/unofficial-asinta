@@ -1,6 +1,6 @@
 # Applying the BALE migrations to a live Supabase project
 
-> **STOP — historical runbook, not a current deployment procedure.** The checked-in SQL bundles are stale and regenerating them has not been validated as a safe clean install or upgrade. Hosted migration history uses different versions and combined migrations; never blindly run these bundles or `supabase db push` against the connected database. PR #103's seven schema migrations are not yet installed there. The old instructions below must be reviewed and replaced after an isolated schema rehearsal, catalog/ACL comparison and recovery plan. See `CLIENT_CHANGE_PLAN.md` for the current status. In particular, the old statement below that a committed change is reversible by the bundle transaction is not a recovery plan.
+> **STOP — historical runbook, not a current deployment procedure.** The checked-in SQL bundles are stale and regenerating them has not been validated as a safe clean install or upgrade. Hosted migration history uses different versions and combined migrations; never blindly run these bundles or `supabase db push` against the connected database. The PR #103 Bale site guard is installed under a different hosted version; its other six schema migrations are not installed there. The old instructions below must be reviewed and replaced after an isolated schema rehearsal, catalog/ACL comparison and recovery plan. See `CLIENT_CHANGE_PLAN.md` for the current status. In particular, the old statement below that a committed change is reversible by the bundle transaction is not a recovery plan.
 
 > **Team accounts:** the current bundles also include the Founder guard. Follow [TEAM_ACCOUNT_OPERATIONS.md](TEAM_ACCOUNT_OPERATIONS.md) for maintenance, deployment order, staging and recovery.
 
@@ -336,7 +336,9 @@ configured in the dashboard. When you change one, change the other.
 
 ---
 
-## 8. Path C — GitHub Actions (no local setup)
+## 8. Path C — GitHub Actions (historical; disabled)
+
+> **Disabled:** the workflow on this branch fails closed before accessing secrets or a database. The following instructions are historical and must not be used. Older workflow revisions may still exist, so do not dispatch them either.
 
 `.github/workflows/apply-migrations.yml` is already in the repository. It is
 **manual only** (`workflow_dispatch`) — nothing migrates a database on a push.

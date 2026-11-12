@@ -1,5 +1,6 @@
 import {PGlite} from '@electric-sql/pglite';
 import {readFileSync} from 'node:fs';
+import {execFileSync} from 'node:child_process';
 import {describe,expect,it} from 'vitest';
 import {parseWeeklyInput,buildWeeklyPreview} from '@/lib/payroll/weeklyPreview';
 
@@ -58,13 +59,32 @@ describe('PR 102 and PR 103 migration sequence',()=>{
    const preflight=readFileSync('supabase/preflight/pr103_readiness.sql','utf8');
    const before=(await db.query<{readiness:{missing_relations:string[];missing_helpers:string[];existing_new_relations:string[];existing_new_functions:string[];app_private_schema_exists:boolean;site_guard_function_exists:boolean;site_guard_trigger_enabled:string|null}}>(preflight)).rows[0].readiness;
    expect(before).toMatchObject({missing_relations:[],missing_helpers:[],existing_new_relations:[],existing_new_functions:[],app_private_schema_exists:true,site_guard_function_exists:false,site_guard_trigger_enabled:null});
+   const rehearsal=execFileSync('node',['scripts/build-pr103-rehearsal.mjs'],{encoding:'utf8'});
+   // An omitted or disabled existing guard must abort the whole rehearsal.
+   await expect(db.exec(rehearsal)).rejects.toThrow(/site guard is missing or different/);await db.exec('ROLLBACK');
+   // Existing issued request predates the site guard, just as on the hosted target.
+   await db.exec(`INSERT INTO public.advance_requests(id,worker_id,project_id,requested_amount,status,issued_at,issued_advance_id) VALUES ('${worker}','${worker}','${site}',100.25,'issued','2026-11-03T16:30:00Z','${inbox}');`);
+   await db.exec(sql('20261113000004_bale_request_site_guard.sql'));
+   await db.exec('ALTER TABLE public.advance_requests DISABLE TRIGGER guard_advance_request_site');
+   await expect(db.exec(rehearsal)).rejects.toThrow(/site guard trigger is missing or different/);await db.exec('ROLLBACK');
+   await db.exec('ALTER TABLE public.advance_requests ENABLE TRIGGER guard_advance_request_site');
+   // A late migration collision must roll back earlier DDL, not leave a partial install.
+   await db.exec(`CREATE FUNCTION public.attendance_time_detail_latest(uuid) RETURNS jsonb LANGUAGE sql AS $$SELECT '{}'::jsonb$$;`);
+   await expect(db.exec(rehearsal)).rejects.toThrow(/already exists/);await db.exec('ROLLBACK');
+   expect((await db.query<{r:string|null}>("SELECT to_regprocedure('public.weekly_worker_preview_inputs(date)')::text r")).rows[0].r).toBeNull();
+   expect((await db.query<{r:string|null}>("SELECT to_regclass('public.attendance_time_details')::text r")).rows[0].r).toBeNull();
+   expect((await db.query<{r:string|null}>("SELECT to_regprocedure('public.attendance_time_detail_latest(uuid)')::text r")).rows[0].r).not.toBeNull();
+   await db.exec('DROP FUNCTION public.attendance_time_detail_latest(uuid)');
+   // The exact remaining migration sequence completes in one local transaction,
+   // then rolls back deliberately. A rollback never proves hosted safety.
+   await db.exec(rehearsal);
+   expect((await db.query<{r:string|null}>("SELECT to_regclass('public.attendance_time_details')::text r")).rows[0].r).toBeNull();
+   expect((await db.query<{n:number}>('SELECT count(*)::int n FROM public.payroll')).rows[0].n).toBe(1);
+   expect((await db.query<{n:number}>('SELECT count(*)::int n FROM public.advance_requests')).rows[0].n).toBe(1);
    await db.exec(sql('20261113000000_weekly_worker_preview.sql'));
    await db.exec(sql('20261113000001_attendance_time_detail.sql'));
    await db.exec(sql('20261113000002_worker_allowances.sql'));
    await db.exec(sql('20261113000003_weekly_payroll_context.sql'));
-   // Existing issued request predates the insert guard; it must remain unchanged.
-   await db.exec(`INSERT INTO public.advance_requests(id,worker_id,project_id,requested_amount,status,issued_at,issued_advance_id) VALUES ('${worker}','${worker}','${site}',100.25,'issued','2026-11-03T16:30:00Z','${inbox}');`);
-   await db.exec(sql('20261113000004_bale_request_site_guard.sql'));
    await db.exec(sql('20261113000005_supervisor_leave.sql'));
    await db.exec(sql('20261113000006_supervisor_daily_attendance.sql'));
    const sequence='public.attendance_time_details_revision_id_seq';
