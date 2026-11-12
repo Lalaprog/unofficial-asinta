@@ -26,6 +26,7 @@ import { PayslipBatch } from '@/components/payroll/PayslipBatch';
 import { formatPeso, formatPesoCompact } from '@/lib/email/format';
 import { formatRecordedWork } from '@/lib/payroll/display';
 import { AttendanceMatrix } from '@/components/payroll/AttendanceMatrix';
+import { WeeklyWorkerPreview } from '@/components/payroll/WeeklyWorkerPreview';
 import { getManilaClock } from '@/lib/reminders/scheduler';
 
 export default function PayrollPage() {
@@ -189,6 +190,8 @@ export default function PayrollPage() {
           description="Review attendance-based vouchers, Bale deductions and worker payslips."
           action={<div className="flex flex-wrap gap-2"><Button variant="secondary" size="md" onClick={() => setIsBatchPayslipOpen(true)} leftIcon={<Printer className="w-4 h-4" />}>Print worker payslips</Button><Button variant="primary" size="md" onClick={() => setIsGenerateModalOpen(true)} leftIcon={<Plus className="w-4 h-4" />}>New Payroll Run</Button></div>}
         />
+
+        <WeeklyWorkerPreview />
 
         <AttendanceMatrix start={periodStart} end={periodEnd} site={generateProjectId} setStart={setPeriodStart} setEnd={setPeriodEnd} setSite={setGenerateProjectId} projects={projects} />
 
@@ -387,6 +390,7 @@ export default function PayrollPage() {
         description="Calculate gross pay from attendance and suggest Bale deductions. Deductions are attempted when the voucher is marked paid."
       >
         <form onSubmit={handleGenerateSubmit} className="space-y-4 text-xs">
+          <p className="rounded-xl border border-status-warning/25 bg-status-warning-bg p-3 leading-relaxed text-ink-secondary">This is the legacy generator, not the requested weekly payroll workflow: it uses attendance statuses rather than separate regular/OT hours, rounds gross to whole pesos and suggests limited Bale from outstanding balances, including older periods. Allowance approvals and reliable project allocations are not included. Independently reconcile before generating or approving; the planning preview does not change this behavior.</p>
           <SearchableSelect
             label="Project Site Scope"
             searchLabel="Search payroll run sites"
@@ -479,7 +483,7 @@ export default function PayrollPage() {
             </div>
             {pendingPayAction.status === 'paid' && pendingPayAction.pay.bale_deduction > 0 && (
               <p className="rounded-xl border border-status-warning/25 bg-status-warning-bg px-3 py-2.5 leading-relaxed text-ink-secondary">
-                Payment status and Bale deductions are recorded together. If the current active Bale balance is insufficient, the payment cannot be recorded. If the result is unconfirmed, refresh and check both ledgers before retrying; historical payments may still need reconciliation.
+                This legacy action may deduct older outstanding Bale, not just amounts released in this period. Reconcile the voucher and advance ledger before proceeding. Payment status and Bale deductions are recorded together. If the current active Bale balance is insufficient, the payment cannot be recorded. If the result is unconfirmed, refresh and check both ledgers before retrying; historical payments may still need reconciliation.
               </p>
             )}
             <div className="flex flex-col-reverse gap-2 sm:flex-row sm:justify-end">
