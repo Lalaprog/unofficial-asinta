@@ -1,0 +1,55 @@
+import {PGlite} from '@electric-sql/pglite';
+import {readFileSync} from 'node:fs';
+import {describe,expect,it} from 'vitest';
+const f='00000000-0000-0000-0000-000000000001',s='00000000-0000-0000-0000-000000000002',w='00000000-0000-0000-0000-000000000003',p='00000000-0000-0000-0000-000000000004',a='00000000-0000-0000-0000-000000000005',id='00000000-0000-0000-0000-000000000006',id2='00000000-0000-0000-0000-000000000007',other='00000000-0000-0000-0000-000000000008',pay='00000000-0000-0000-0000-000000000009';
+const stamp='2026-11-01T08:00:00Z';
+describe('attendance-linked worker allowance',()=>{
+ it('enforces role/site scope, approval, staleness, retry and finalized-period protections',async()=>{
+  const db=new PGlite();try{
+   await db.exec(`CREATE ROLE anon; CREATE ROLE authenticated; CREATE SCHEMA auth;
+    CREATE FUNCTION auth.uid() RETURNS uuid LANGUAGE sql STABLE AS $$SELECT nullif(current_setting('test.uid',true),'')::uuid$$;
+    CREATE FUNCTION public.session_assurance_satisfied() RETURNS boolean LANGUAGE sql STABLE AS $$SELECT current_setting('test.assurance',true)='yes'$$;
+    CREATE TABLE public.users(id uuid primary key,name text,role text); CREATE TABLE public.workers(id uuid primary key,name text,position text);
+    CREATE TABLE public.projects(id uuid primary key,name text); CREATE TABLE public.project_supervisors(project_id uuid,supervisor_id uuid,unique(project_id,supervisor_id));
+    CREATE TABLE public.attendance(id uuid primary key,worker_id uuid,project_id uuid,date date,status text,hours_worked numeric,submitted_at timestamptz,recorded_by uuid,notes text);
+    CREATE TABLE public.payroll(id uuid primary key,worker_id uuid,period_start date,period_end date,status text);
+    CREATE FUNCTION public.is_founder() RETURNS boolean LANGUAGE sql STABLE SECURITY DEFINER AS $$SELECT public.session_assurance_satisfied() AND EXISTS(SELECT 1 FROM public.users WHERE id=auth.uid() AND role='founder')$$;
+    CREATE FUNCTION public.is_supervisor_assigned(p uuid) RETURNS boolean LANGUAGE sql STABLE SECURITY DEFINER AS $$SELECT public.session_assurance_satisfied() AND EXISTS(SELECT 1 FROM public.project_supervisors WHERE supervisor_id=auth.uid() AND project_id=p)$$;
+    INSERT INTO public.users VALUES ('${f}','Founder','founder'),('${s}','Supervisor','supervisor'),('${other}','Other','supervisor');
+    INSERT INTO public.workers VALUES ('${w}','Worker','Mason'); INSERT INTO public.projects VALUES ('${p}','Site'); INSERT INTO public.project_supervisors VALUES ('${p}','${s}');
+    INSERT INTO public.attendance VALUES ('${a}','${w}','${p}','2026-11-01','present',8,'${stamp}',NULL,NULL);
+    ALTER TABLE public.attendance ENABLE ROW LEVEL SECURITY; ALTER TABLE public.users ENABLE ROW LEVEL SECURITY; ALTER TABLE public.workers ENABLE ROW LEVEL SECURITY; ALTER TABLE public.projects ENABLE ROW LEVEL SECURITY; ALTER TABLE public.payroll ENABLE ROW LEVEL SECURITY;
+    CREATE POLICY a_read ON public.attendance FOR SELECT TO authenticated USING(public.is_founder() OR public.is_supervisor_assigned(project_id));
+    CREATE POLICY u_read ON public.users FOR SELECT TO authenticated USING(public.is_founder() OR id=auth.uid());
+    CREATE POLICY w_read ON public.workers FOR SELECT TO authenticated USING(public.is_founder() OR true);
+    CREATE POLICY p_read ON public.projects FOR SELECT TO authenticated USING(public.is_founder() OR public.is_supervisor_assigned(id));
+    CREATE POLICY pay_read ON public.payroll FOR SELECT TO authenticated USING(public.is_founder());
+    GRANT USAGE ON SCHEMA public,auth TO authenticated,anon; GRANT SELECT ON public.attendance,public.users,public.workers,public.projects,public.payroll TO authenticated;`);
+   await db.exec(readFileSync('supabase/migrations/20261113000002_worker_allowances.sql','utf8'));
+   await db.exec(`SET test.uid='${s}'; SET test.assurance='yes'; SET ROLE authenticated;`);
+   const submit=(ident:string,amount='100.25')=>db.query<{data:{status:string;replayed:boolean}}>('SELECT public.submit_worker_allowance($1,$2,$3,$4,$5) AS data',[ident,a,stamp,amount,'Meals']);
+   const review=(ident:string,decision:string)=>db.query<{data:{status:string;replayed:boolean}}>('SELECT public.review_worker_allowance($1,$2) AS data',[ident,decision]);
+   expect((await submit(id)).rows[0].data).toEqual({id,status:'pending',replayed:false});
+   expect((await submit(id)).rows[0].data.replayed).toBe(true);
+   await expect(submit(id,'101')).rejects.toThrow(/different allowance/);await expect(submit(id2,'1.001')).rejects.toThrow(/valid amount/);
+   await expect(review(id,'approved')).rejects.toThrow(/Founder/);
+   await expect(db.query('UPDATE public.worker_allowances SET status=\'approved\'')).rejects.toThrow(/permission denied/);
+   await db.exec(`SET test.uid='${other}';`);await expect(submit(id2)).rejects.toThrow(/Project access/);
+   await db.exec(`SET test.uid='${f}';`);
+   const queue=await db.query<{data:unknown}>('SELECT public.worker_allowance_pending_queue() data');expect(queue.rows[0].data).toMatchObject([{id,worker_name:'Worker',amount:'100.25',stale:false,finalized:false}]);
+   await db.exec(`RESET ROLE; UPDATE public.attendance SET submitted_at='2026-11-02T08:00:00Z' WHERE id='${a}'; SET ROLE authenticated;`);
+   await expect(review(id,'approved')).rejects.toThrow(/Attendance changed/);
+   expect((await review(id,'rejected')).rows[0].data).toMatchObject({status:'rejected',replayed:false});
+   expect((await review(id,'rejected')).rows[0].data.replayed).toBe(true);
+   await db.exec(`RESET ROLE; UPDATE public.attendance SET submitted_at='${stamp}' WHERE id='${a}'; SET ROLE authenticated;`);
+   expect((await submit(id2)).rows[0].data).toMatchObject({status:'approved'});
+   await db.exec(`RESET ROLE; INSERT INTO public.payroll VALUES ('${pay}','${w}','2026-11-01','2026-11-07','paid'); SET ROLE authenticated;`);
+   await expect(submit('00000000-0000-0000-0000-000000000010')).rejects.toThrow(/Approved or paid/);
+   expect((await submit(id2)).rows[0].data.replayed).toBe(true);
+   await db.exec(`RESET ROLE; DELETE FROM public.payroll; UPDATE public.attendance SET recorded_by='${w}' WHERE id='${a}'; SET ROLE authenticated;`);
+   await expect(submit('00000000-0000-0000-0000-000000000011')).rejects.toThrow(/Supervisor profile/);
+   await db.exec(`SET test.assurance='no';`);await expect(submit(id2)).rejects.toThrow(/Attendance access/);
+   await db.exec('RESET ROLE');expect((await db.query<{n:number}>('SELECT count(*)::int n FROM public.worker_allowances')).rows[0].n).toBe(2);
+  }finally{await db.close();}
+ },30000);
+});

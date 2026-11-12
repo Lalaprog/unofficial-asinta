@@ -14,14 +14,14 @@ describe('supplemental time details migration',()=>{
     CREATE TABLE public.workers(id uuid primary key,name text,position text);
     CREATE TABLE public.projects(id uuid primary key);
     CREATE TABLE public.project_supervisors(project_id uuid,supervisor_id uuid,unique(project_id,supervisor_id));
-    CREATE TABLE public.attendance(id uuid primary key,worker_id uuid,project_id uuid,date date,status text,hours_worked numeric,submitted_at timestamptz);
+    CREATE TABLE public.attendance(id uuid primary key,worker_id uuid,project_id uuid,date date,status text,hours_worked numeric,submitted_at timestamptz,recorded_by uuid,notes text);
     CREATE TABLE public.payroll(id uuid primary key,worker_id uuid,period_start date,period_end date,status text);
     CREATE FUNCTION public.is_founder() RETURNS boolean LANGUAGE sql STABLE SECURITY DEFINER AS $$SELECT public.session_assurance_satisfied() AND EXISTS(SELECT 1 FROM public.users WHERE id=auth.uid() AND role='founder')$$;
     CREATE FUNCTION public.is_supervisor_assigned(p uuid) RETURNS boolean LANGUAGE sql STABLE SECURITY DEFINER AS $$SELECT public.session_assurance_satisfied() AND EXISTS(SELECT 1 FROM public.project_supervisors WHERE supervisor_id=auth.uid() AND project_id=p)$$;
     INSERT INTO public.users VALUES ('${founder}','Founder','founder'),('${supervisor}','Supervisor','supervisor'),('${other}','Other','supervisor');
     INSERT INTO public.workers VALUES ('${worker}','Worker','Mason'); INSERT INTO public.projects VALUES ('${site}');
     INSERT INTO public.project_supervisors VALUES ('${site}','${supervisor}');
-    INSERT INTO public.attendance VALUES ('${att}','${worker}','${site}','2026-10-25','present',8,'${stamp}');
+    INSERT INTO public.attendance VALUES ('${att}','${worker}','${site}','2026-10-25','present',8,'${stamp}',NULL,NULL);
     ALTER TABLE public.attendance ENABLE ROW LEVEL SECURITY;
     CREATE POLICY attendance_read ON public.attendance FOR SELECT TO authenticated USING(public.is_founder() OR public.is_supervisor_assigned(project_id));
     CREATE FUNCTION public.weekly_worker_preview_inputs(p_start date) RETURNS jsonb LANGUAGE sql STABLE AS $$SELECT jsonb_build_object('attendance','[]'::jsonb)$$;
@@ -48,6 +48,8 @@ describe('supplemental time details migration',()=>{
    await db.exec(`SET test.uid='${other}';`);
    await expect(save(req2)).rejects.toThrow(/Project access/);
    await expect(latest()).rejects.toThrow(/Attendance unavailable/);
+   await db.exec(`RESET ROLE; UPDATE public.payroll SET period_start='2026-11-01',period_end='2026-11-07'; UPDATE public.attendance SET notes='Pending Founder Review' WHERE id='${att}'; SET ROLE authenticated; SET test.uid='${founder}';`);
+   await expect(save(req2)).rejects.toThrow(/Supervisor profile/);
    await db.exec(`SET test.uid='${founder}'; SET test.assurance='no';`);
    await expect(save(req2)).rejects.toThrow(/Attendance access/);
    await db.exec(`RESET ROLE;`);

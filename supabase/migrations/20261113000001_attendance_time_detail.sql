@@ -83,7 +83,7 @@ BEGIN
   END IF;
   IF v_att.submitted_at IS DISTINCT FROM p_expected_submitted_at THEN RAISE EXCEPTION 'Attendance changed; refresh before recording hours' USING ERRCODE='40001'; END IF;
   IF v_att.status NOT IN ('present','half_day') OR p_regular+p_overtime <= 0 THEN RAISE EXCEPTION 'Time details require a worked attendance record' USING ERRCODE='22023'; END IF;
-  IF EXISTS (SELECT 1 FROM public.workers w WHERE w.id=v_worker AND
+  IF coalesce(v_att.worker_id=v_att.recorded_by,false) OR strpos(coalesce(v_att.notes,''),'Pending Founder Review')>0 OR strpos(coalesce(v_att.notes,''),'Founder Review:')>0 OR EXISTS (SELECT 1 FROM public.workers w WHERE w.id=v_worker AND
     (strpos(lower(w.position),'supervisor')>0 OR EXISTS(SELECT 1 FROM public.users u WHERE u.role='supervisor' AND (u.id=w.id OR lower(btrim(u.name))=lower(btrim(w.name)))))) THEN
     RAISE EXCEPTION 'Possible Supervisor profile requires separate review' USING ERRCODE='22023';
   END IF;

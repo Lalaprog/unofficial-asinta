@@ -27,6 +27,7 @@ import { formatPeso, formatPesoCompact } from '@/lib/email/format';
 import { formatRecordedWork } from '@/lib/payroll/display';
 import { AttendanceMatrix } from '@/components/payroll/AttendanceMatrix';
 import { WeeklyWorkerPreview } from '@/components/payroll/WeeklyWorkerPreview';
+import { WorkerAllowanceQueue } from '@/components/payroll/WorkerAllowanceQueue';
 import { getManilaClock } from '@/lib/reminders/scheduler';
 
 export default function PayrollPage() {
@@ -190,6 +191,8 @@ export default function PayrollPage() {
           description="Review attendance-based vouchers, Bale deductions and worker payslips."
           action={<div className="flex flex-wrap gap-2"><Button variant="secondary" size="md" onClick={() => setIsBatchPayslipOpen(true)} leftIcon={<Printer className="w-4 h-4" />}>Print worker payslips</Button><Button variant="primary" size="md" onClick={() => setIsGenerateModalOpen(true)} leftIcon={<Plus className="w-4 h-4" />}>New Payroll Run</Button></div>}
         />
+
+        <WorkerAllowanceQueue />
 
         <WeeklyWorkerPreview />
 

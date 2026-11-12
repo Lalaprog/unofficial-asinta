@@ -50,6 +50,7 @@ describe('PR 102 migration sequence',()=>{
    for(const migration of migrations) await db.exec(sql(migration));
    await db.exec(sql('20261113000000_weekly_worker_preview.sql'));
    await db.exec(sql('20261113000001_attendance_time_detail.sql'));
+   await db.exec(sql('20261113000002_worker_allowances.sql'));
    expect((await db.query<{n:number}>('SELECT count(*)::int AS n FROM public.attendance')).rows[0].n).toBe(1);
    expect((await db.query<{n:number}>('SELECT count(*)::int AS n FROM public.expenses')).rows[0].n).toBe(1);
    expect((await db.query<{n:number}>('SELECT count(*)::int AS n FROM public.payroll')).rows[0].n).toBe(1);
@@ -64,6 +65,12 @@ describe('PR 102 migration sequence',()=>{
    expect(await value("SELECT public.weekly_worker_preview_inputs('2026-11-01') AS data")).toMatchObject({attendance:[{id:other,time_detail:{regular_hours:'8.00',overtime_hours:'2.00',stale:false}}]});
    await db.exec(`RESET ROLE; UPDATE public.attendance SET submitted_at='2026-11-02T08:00:00Z' WHERE id='${other}'; SET ROLE authenticated;`);
    expect(await value("SELECT public.weekly_worker_preview_inputs('2026-11-01') AS data")).toMatchObject({attendance:[{id:other,time_detail:{stale:true}}]});
+   expect(await value(`SELECT public.submit_worker_allowance('${worker}','${other}','2026-11-02T08:00:00Z',50.25,'Fixture') AS data`)).toMatchObject({status:'approved',replayed:false});
+   await db.exec(`SET test.uid='${supervisor}';`);
+   expect(await value(`SELECT public.submit_worker_allowance('${founder}','${other}','2026-11-02T08:00:00Z',75.50,'Fixture pending') AS data`)).toMatchObject({status:'pending',replayed:false});
+   await db.exec(`SET test.uid='${founder}';`);
+   expect(await value('SELECT public.worker_allowance_pending_queue() AS data')).toMatchObject([{id:founder,amount:'75.50',stale:false,finalized:false}]);
+   expect(await value(`SELECT public.review_worker_allowance('${founder}','approved') AS data`)).toMatchObject({status:'approved',replayed:false});
    expect(await value("SELECT public.payslip_batch_snapshot('2026-10-25','2026-10-31') AS data")).toMatchObject([{worker_id:worker,gross_pay:600}]);
    expect(await value(`SELECT public.project_attendance_calendar('${site}','2026-10-01') AS data`)).toEqual([{date:'2026-10-25',count:1},{date:'2026-11-01',count:1}]);
    expect(await value("SELECT public.attendance_history_calendar('2026-10-01',NULL,NULL,NULL) AS data")).toEqual([{date:'2026-10-25',count:1},{date:'2026-11-01',count:1}]);
