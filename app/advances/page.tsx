@@ -24,6 +24,7 @@ import { Input } from '@/components/ui/Input';
 import { Select } from '@/components/ui/Select';
 import { Modal } from '@/components/ui/Modal';
 import { formatPeso, formatPesoCompact } from '@/lib/email/format';
+import { manilaDateISO } from '@/lib/dates/manila';
 
 export default function AdvancesPage() {
   return (
@@ -137,19 +138,26 @@ function IssuedAdvancesPanel({ openQuick, onQuickOpened }: { openQuick: boolean;
 
   // Modals
   const [isAddModalOpen, setIsAddModalOpen] = useState(false);
-  React.useEffect(() => { if (openQuick) { setIsAddModalOpen(true); onQuickOpened(); } }, [openQuick, onQuickOpened]);
+  const dateEdited = React.useRef(false);
   const [isDeductModalOpen, setIsDeductModalOpen] = useState(false);
   const [selectedAdvance, setSelectedAdvance] = useState<Advance | null>(null);
   const [deductionAmount, setDeductionAmount] = useState('');
 
   // Form State
-  const [formData, setFormData] = useState({
+  const [formData, setFormData] = useState(() => ({
     worker_id: '',
     project_id: '',
     amount: '',
     reason: '',
-    date: new Date().toISOString().split('T')[0],
-  });
+    date: manilaDateISO(),
+  }));
+  const openAddModal = React.useCallback(() => {
+    // Refresh an untouched default when opening after midnight. A deliberately
+    // edited historical date remains part of the unsaved draft.
+    if (!dateEdited.current) setFormData((previous) => ({ ...previous, date: manilaDateISO() }));
+    setIsAddModalOpen(true);
+  }, []);
+  React.useEffect(() => { if (openQuick) { openAddModal(); onQuickOpened(); } }, [openQuick, onQuickOpened, openAddModal]);
 
   const formatPHP = formatPesoCompact;
 
@@ -192,12 +200,13 @@ function IssuedAdvancesPanel({ openQuick, onQuickOpened }: { openQuick: boolean;
       if (created) {
         showToast('success', 'Advance recorded.');
         setIsAddModalOpen(false);
+        dateEdited.current = false;
         setFormData({
           worker_id: '',
           project_id: '',
           amount: '',
           reason: '',
-          date: new Date().toISOString().split('T')[0],
+          date: manilaDateISO(),
         });
       } else {
         showToast('error', 'Advance not confirmed. Check the ledger before trying again.');
@@ -248,7 +257,7 @@ function IssuedAdvancesPanel({ openQuick, onQuickOpened }: { openQuick: boolean;
           <Button
             variant="primary"
             size="sm"
-            onClick={() => setIsAddModalOpen(true)}
+            onClick={openAddModal}
             leftIcon={<Plus className="w-4 h-4" />}
           >
             Record Bale
@@ -468,7 +477,7 @@ function IssuedAdvancesPanel({ openQuick, onQuickOpened }: { openQuick: boolean;
               label="Disbursement Date"
               type="date"
               value={formData.date}
-              onChange={(e) => setFormData({ ...formData, date: e.target.value })}
+              onChange={(e) => { dateEdited.current = true; setFormData({ ...formData, date: e.target.value }); }}
               required
             />
           </div>
