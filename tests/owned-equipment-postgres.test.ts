@@ -21,13 +21,42 @@ suite('owned equipment allocation concurrency on isolated PostgreSQL',()=>{
   await change(a,id(10),'adopt',null,null,5,null);
  },30000);
  afterAll(async()=>{await Promise.all([admin?.end(),a?.end(),b?.end()]);});
+ it('serializes legacy site adoption with old-client assignment writes and preserves the site allocation',async()=>{
+  const other=id(90);await admin.query("INSERT INTO public.tools VALUES ($1,'Site saw',4,'good',$2)",[other,siteA]);
+  await a.query('BEGIN');await b.query('BEGIN');try{
+   const adopt=(client:Client,request:string)=>client.query('SELECT public.change_owned_equipment($1,$2,$3,$4,$5,$6,$7) v',[request,other,'adopt_site',siteA,4,4,null]);
+   await adopt(a,id(91));
+   let settled=false;const pending=b.query('UPDATE public.tools SET project_id=$1 WHERE id=$2',[siteB,other]).then(()=>({code:'success'}),(e:{code:string})=>({code:e.code})).finally(()=>{settled=true;});
+   await delay();expect(settled).toBe(false);await a.query('COMMIT');expect((await pending).code).toBe('23514');await b.query('ROLLBACK');
+   expect((await adopt(b,id(91))).rows[0].v.replayed).toBe(true);
+   expect((await admin.query('SELECT t.project_id,a.project_id site,a.quantity FROM public.tools t JOIN public.owned_equipment_allocations a ON a.tool_id=t.id WHERE t.id=$1',[other])).rows[0]).toEqual({project_id:null,site:siteA,quantity:4});
+  }finally{await a.query('ROLLBACK');await b.query('ROLLBACK');}
+ },15000);
+ it('site adoption waits for legacy moves and rejects a stale original site',async()=>{
+  const other=id(94);await admin.query("INSERT INTO public.tools VALUES ($1,'Move race',4,'good',$2)",[other,siteA]);
+  await a.query('BEGIN');await b.query('BEGIN');try{
+   await a.query('UPDATE public.tools SET project_id=$1 WHERE id=$2',[siteB,other]);
+   let settled=false;const pending=b.query('SELECT public.change_owned_equipment($1,$2,$3,$4,$5,$6,$7)',[id(95),other,'adopt_site',siteA,4,4,null]).then(()=>({code:'success'}),(e:{code:string})=>({code:e.code})).finally(()=>{settled=true;});
+   await delay();expect(settled).toBe(false);await a.query('COMMIT');expect((await pending).code).toBe('40001');await b.query('ROLLBACK');
+   expect((await admin.query('SELECT project_id FROM public.tools WHERE id=$1',[other])).rows[0].project_id).toBe(siteB);
+   expect((await admin.query('SELECT count(*)::int n FROM public.managed_owned_equipment WHERE tool_id=$1',[other])).rows[0].n).toBe(0);
+  }finally{await a.query('ROLLBACK');await b.query('ROLLBACK');}
+ },15000);
+ it('a stale repeatable-read legacy writer cannot overwrite a site adoption',async()=>{
+  const other=id(92);await admin.query("INSERT INTO public.tools VALUES ($1,'Old site saw',4,'good',$2)",[other,siteA]);
+  await b.query('BEGIN ISOLATION LEVEL REPEATABLE READ');try{
+   await b.query('SELECT project_id FROM public.tools WHERE id=$1',[other]);
+   await a.query('SELECT public.change_owned_equipment($1,$2,$3,$4,$5,$6,$7)',[id(93),other,'adopt_site',siteA,4,4,null]);
+   await expect(b.query('UPDATE public.tools SET project_id=$1 WHERE id=$2',[siteB,other])).rejects.toMatchObject({code:'40001'});
+  }finally{await b.query('ROLLBACK');}
+ },15000);
  it('restricts the site snapshot to an assigned Supervisor without exposing other site stock',async()=>{
   await admin.query("INSERT INTO public.tools VALUES ($1,'Legacy drill',3,'fair',$2)",[id(80),siteA]);
   await change(a,id(81),'allocate',siteA,2,5,0);
   try {
    await b.query(`SET test.uid='${supervisor}'`);
    const view=(await b.query('SELECT public.project_equipment_snapshot($1) v',[siteA])).rows[0].v;
-   expect(view.items.map((item:{name:string;quantity:number})=>[item.name,item.quantity])).toEqual([['Drill',2],['Legacy drill',3]]);
+   expect(view.items.filter((item:{id:string})=>[tool,id(80)].includes(item.id)).map((item:{name:string;quantity:number})=>[item.name,item.quantity])).toEqual([['Drill',2],['Legacy drill',3]]);
    await expect(b.query('SELECT public.project_equipment_snapshot($1)',[siteB])).rejects.toMatchObject({code:'42501'});
   } finally {
    await b.query(`SET test.uid='${founder}'`);await change(a,id(82),'allocate',siteA,0,5,2);await admin.query('DELETE FROM public.tools WHERE id=$1',[id(80)]);
@@ -38,7 +67,7 @@ suite('owned equipment allocation concurrency on isolated PostgreSQL',()=>{
    await change(a,id(11),'allocate',siteA,3,5,0);
    let settled=false;const pending=change(b,id(12),'allocate',siteB,3,5,0).then(()=>({code:'success'}),(e:{code:string})=>({code:e.code})).finally(()=>{settled=true;});
    await delay();expect(settled).toBe(false);await a.query('COMMIT');expect((await pending).code).toBe('23514');await b.query('ROLLBACK');
-   expect((await admin.query<{n:number}>('SELECT coalesce(sum(quantity),0)::int n FROM public.owned_equipment_allocations')).rows[0].n).toBe(3);
+   expect((await admin.query<{n:number}>('SELECT coalesce(sum(quantity),0)::int n FROM public.owned_equipment_allocations WHERE tool_id=$1',[tool])).rows[0].n).toBe(3);
   }finally{await a.query('ROLLBACK');await b.query('ROLLBACK');}
  },15000);
  it('legacy stock reduction waits for allocations and cannot make them exceed stock',async()=>{

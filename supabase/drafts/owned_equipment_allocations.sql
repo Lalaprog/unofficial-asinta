@@ -1,7 +1,8 @@
 -- UNINSTALLED DRAFT. Execute only as a reviewed single transaction, after
 -- compatibility, permissions, legacy clients, history and recovery checks.
--- Opt-in only for legacy tools with project_id IS NULL after physical confirmation.
--- A NULL legacy project may also mean an unassigned item, not necessarily depot stock.
+-- Opt-in adoption requires explicit physical confirmation by a Founder.
+-- A NULL legacy project may mean unassigned, not necessarily depot stock.
+-- Site adoption preserves the entire recorded stock at the original site.
 -- No existing records are converted or updated by installation.
 SET LOCAL lock_timeout='3s';
 SET LOCAL statement_timeout='30s';
@@ -40,14 +41,14 @@ CREATE TABLE public.owned_equipment_events (
  id uuid PRIMARY KEY,
  actor_id uuid NOT NULL REFERENCES public.users(id) ON DELETE RESTRICT,
  tool_id uuid NOT NULL REFERENCES public.managed_owned_equipment(tool_id) ON DELETE RESTRICT,
- action text NOT NULL CHECK(action IN ('adopt','allocate')),
+ action text NOT NULL CHECK(action IN ('adopt','adopt_site','allocate')),
  project_id uuid REFERENCES public.projects(id) ON DELETE RESTRICT,
  quantity integer,
  expected_stock integer NOT NULL,
  expected_site integer,
  result jsonb NOT NULL,
  created_at timestamptz NOT NULL DEFAULT clock_timestamp(),
- CHECK((action='adopt' AND project_id IS NULL AND quantity IS NULL AND expected_site IS NULL) OR (action='allocate' AND project_id IS NOT NULL AND quantity>=0 AND expected_site>=0))
+ CHECK((action='adopt' AND project_id IS NULL AND quantity IS NULL AND expected_site IS NULL) OR (action='adopt_site' AND project_id IS NOT NULL AND quantity IS NOT NULL AND quantity>0 AND quantity=expected_stock AND expected_site IS NULL) OR (action='allocate' AND project_id IS NOT NULL AND quantity IS NOT NULL AND quantity>=0 AND expected_site IS NOT NULL AND expected_site>=0))
 );
 ALTER TABLE public.managed_owned_equipment ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.owned_equipment_allocations ENABLE ROW LEVEL SECURITY;
@@ -82,7 +83,7 @@ BEGIN
  IF auth.uid() IS NULL OR NOT coalesce(public.is_founder(),false) OR NOT coalesce(public.session_assurance_satisfied(),false) THEN RAISE EXCEPTION 'Founder access required' USING ERRCODE='42501'; END IF;
  IF current_setting('transaction_isolation')<>'read committed' THEN RAISE EXCEPTION 'Equipment changes require read committed isolation' USING ERRCODE='P1002'; END IF;
  IF p_id IS NULL OR p_tool IS NULL OR p_action IS NULL OR p_expected_stock IS NULL OR p_expected_stock<0 OR
-  NOT ((p_action='adopt' AND p_project IS NULL AND p_quantity IS NULL AND p_expected_site IS NULL) OR (p_action='allocate' AND p_project IS NOT NULL AND p_quantity IS NOT NULL AND p_quantity>=0 AND p_expected_site IS NOT NULL AND p_expected_site>=0)) THEN RAISE EXCEPTION 'Invalid equipment operation' USING ERRCODE='22023'; END IF;
+  NOT ((p_action='adopt' AND p_project IS NULL AND p_quantity IS NULL AND p_expected_site IS NULL) OR (p_action='adopt_site' AND p_project IS NOT NULL AND p_quantity IS NOT NULL AND p_quantity>0 AND p_quantity=p_expected_stock AND p_expected_site IS NULL) OR (p_action='allocate' AND p_project IS NOT NULL AND p_quantity IS NOT NULL AND p_quantity>=0 AND p_expected_site IS NOT NULL AND p_expected_site>=0)) THEN RAISE EXCEPTION 'Invalid equipment operation' USING ERRCODE='22023'; END IF;
  PERFORM 1 FROM public.users WHERE id=auth.uid() AND role='founder' FOR SHARE;
  IF NOT FOUND OR NOT coalesce(public.is_founder(),false) OR NOT coalesce(public.session_assurance_satisfied(),false) THEN RAISE EXCEPTION 'Founder access required' USING ERRCODE='42501'; END IF;
  PERFORM pg_catalog.pg_advisory_xact_lock(pg_catalog.hashtextextended('equipment-operation:'||p_id::text,0));
@@ -102,6 +103,17 @@ BEGIN
   UPDATE public.tools SET quantity=quantity WHERE id=p_tool;
   INSERT INTO public.managed_owned_equipment(tool_id,adopted_by) VALUES(p_tool,auth.uid());
   v_site:=0;v_allocated:=0;
+ ELSIF p_action='adopt_site' THEN
+  IF EXISTS(SELECT 1 FROM public.managed_owned_equipment WHERE tool_id=p_tool) THEN RAISE EXCEPTION 'Equipment already managed; refresh' USING ERRCODE='40001'; END IF;
+  IF v_tool.project_id IS DISTINCT FROM p_project THEN RAISE EXCEPTION 'Legacy site changed; refresh inventory' USING ERRCODE='40001'; END IF;
+  PERFORM 1 FROM public.projects WHERE id=p_project FOR KEY SHARE;
+  IF NOT FOUND THEN RAISE EXCEPTION 'Project unavailable' USING ERRCODE='P0002'; END IF;
+  -- Update the parent first, while it is not yet managed. One transaction
+  -- atomically replaces the old site pointer with an equal allocation.
+  UPDATE public.tools SET project_id=NULL WHERE id=p_tool;
+  INSERT INTO public.managed_owned_equipment(tool_id,adopted_by) VALUES(p_tool,auth.uid());
+  IF p_quantity>0 THEN INSERT INTO public.owned_equipment_allocations(tool_id,project_id,quantity) VALUES(p_tool,p_project,p_quantity); END IF;
+  v_site:=p_quantity;v_allocated:=p_quantity;
  ELSE
   IF NOT EXISTS(SELECT 1 FROM public.managed_owned_equipment WHERE tool_id=p_tool) OR v_tool.project_id IS NOT NULL THEN RAISE EXCEPTION 'Equipment is not ready for allocations' USING ERRCODE='22023'; END IF;
   IF NOT EXISTS(SELECT 1 FROM public.projects WHERE id=p_project) THEN RAISE EXCEPTION 'Project unavailable' USING ERRCODE='P0002'; END IF;

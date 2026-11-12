@@ -39,9 +39,17 @@ describe('owned equipment workspace',()=>{
   fireEvent.click(screen.getByRole('button',{name:'Review adoption'}));expect(within(screen.getByRole('dialog')).getByText(/Confirm these are owned units physically at the depot/)).toBeTruthy();expect(mock.rpc).toHaveBeenCalledTimes(1);
   fireEvent.click(within(screen.getByRole('dialog')).getByRole('button',{name:'Confirm operation'}));await screen.findByText(/Operation recorded/);expect(mock.rpc).toHaveBeenLastCalledWith('change_owned_equipment',{p_id:id,p_tool:tool,p_action:'adopt',p_project:null,p_quantity:null,p_expected_stock:5,p_expected_site:null});
  });
- it('does not offer adoption for legacy assigned stock',async()=>{
-  mock.rpc.mockResolvedValueOnce({data:{...snapshot,items:[{...snapshot.items[0],managed:false,sites:[],legacy_project_id:siteA}]},error:null});
-  render(React.createElement(OwnedEquipmentManager,{userId:'founder'}));fireEvent.click(screen.getByRole('button',{name:/Owned equipment allocation workspace/}));fireEvent.click(screen.getByRole('button',{name:'Load inventory'}));await screen.findByText(/Legacy site-assigned stock/);expect(screen.queryByRole('button',{name:'Review adoption'})).toBeNull();
+ it('requires site, ownership and physical quantity confirmation before site adoption and supports uncertain retry',async()=>{
+  const attemptSite={id,tool,action:'adopt_site',project:siteA,quantity:5,expectedStock:5,expectedSite:null};
+  const resultSite={id,tool_id:tool,stock:5,allocated:5,depot:0,site_quantity:5,replayed:false};
+  mock.rpc.mockResolvedValueOnce({data:{...snapshot,items:[{...snapshot.items[0],managed:false,sites:[],legacy_project_id:siteA}]},error:null}).mockResolvedValueOnce({data:null,error:{message:'connection lost'}}).mockResolvedValueOnce({data:{found:true,attempt:attemptSite,result:resultSite},error:null});
+  render(React.createElement(OwnedEquipmentManager,{userId:'founder'}));fireEvent.click(screen.getByRole('button',{name:/Owned equipment allocation workspace/}));fireEvent.click(screen.getByRole('button',{name:'Load inventory'}));await screen.findByText(/Legacy site record/);
+  fireEvent.click(screen.getByRole('button',{name:'Review site adoption'}));const dialog=screen.getByRole('dialog');expect(within(dialog).getByText(/Confirm all 5 owned units are physically at Site A/)).toBeTruthy();expect(mock.rpc).toHaveBeenCalledTimes(1);
+  fireEvent.click(within(dialog).getByRole('button',{name:'Confirm operation'}));await screen.findByText(/Operation not confirmed/);expect(JSON.parse(sessionStorage.getItem('owned-equipment-attempt:founder')!)).toEqual(attemptSite);
+  fireEvent.click(screen.getByRole('button',{name:'Check operation'}));await screen.findByText(/Operation recorded/);expect(sessionStorage.getItem('owned-equipment-attempt:founder')).toBeNull();
+ });
+ it('does not offer site adoption for zero-stock records',async()=>{
+  mock.rpc.mockResolvedValueOnce({data:{...snapshot,items:[{...snapshot.items[0],stock:0,managed:false,sites:[],legacy_project_id:siteA}]},error:null});render(React.createElement(OwnedEquipmentManager,{userId:'founder'}));fireEvent.click(screen.getByRole('button',{name:/Owned equipment allocation workspace/}));fireEvent.click(screen.getByRole('button',{name:'Load inventory'}));await screen.findByText(/Zero-stock site records require separate reconciliation/);expect(screen.queryByRole('button',{name:'Review site adoption'})).toBeNull();
  });
  it('is hidden unless the explicit preview flag and Founder assurance are ready',()=>{
   const props={userId:'founder',isFounder:true,assurance:'ready',authLoading:false};vi.stubEnv('NEXT_PUBLIC_OWNED_EQUIPMENT_PREVIEW','false');const view=render(React.createElement(OwnedEquipmentFoundation,props));expect(screen.queryByText(/Owned equipment allocation workspace/)).toBeNull();

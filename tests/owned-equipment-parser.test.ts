@@ -12,7 +12,14 @@ describe('equipment snapshot and retry validation',()=>{
    expect(verifyEquipmentStatus({found:true,attempt:a,result},a).found).toBe(true);expect(verifyEquipmentStatus({found:false},a).found).toBe(false);
    expect(()=>verifyEquipmentStatus({found:true,attempt:{...a,project:siteA},result},a)).toThrow(/differ/);
    expect(()=>verifyEquipmentResult({...result,depot:2},a)).toThrow();expect(()=>equipmentAttempt(item,siteB,3)).toThrow(/exceeds/);
-   expect(()=>equipmentAttempt({...item,managed:false,legacy_project_id:siteA,sites:[]},null,null)).toThrow(/reconciliation/);
+   const legacy={...item,managed:false,legacy_project_id:siteA,sites:[]};
+   expect(()=>equipmentAttempt(legacy,null,null)).toThrow(/Confirm all recorded stock/);
+   const adoption=equipmentAttempt(legacy,siteA,5);expect(adoption).toEqual({id:request,tool,action:'adopt_site',project:siteA,quantity:5,expectedStock:5,expectedSite:null});
+   expect(parseEquipmentAttempt(adoption)).toEqual(adoption);
+   expect(verifyEquipmentResult({...result,allocated:5,depot:0,site_quantity:5},adoption)).toEqual({replayed:false});
+   expect(()=>verifyEquipmentResult({...result,site_quantity:5},adoption)).toThrow();
+   expect(()=>parseEquipmentAttempt({...adoption,quantity:4})).toThrow();
+   expect(()=>equipmentAttempt({...legacy,stock:0},siteA,0)).toThrow(/zero-stock/);
    expect(parseEquipmentAttempt(a)).toEqual(a);
   }finally{vi.unstubAllGlobals();}
  });

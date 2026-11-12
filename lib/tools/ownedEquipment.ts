@@ -2,7 +2,7 @@ export type EquipmentProject={id:string;name:string};
 export type EquipmentSite={project_id:string;name:string;quantity:number};
 export type EquipmentItem={id:string;name:string;stock:number;condition:'excellent'|'good'|'fair'|'needs_repair'|'damaged';legacy_project_id:string|null;managed:boolean;sites:EquipmentSite[]};
 export type EquipmentSnapshot={items:EquipmentItem[];projects:EquipmentProject[]};
-export type EquipmentAttempt={id:string;tool:string;action:'adopt'|'allocate';project:string|null;quantity:number|null;expectedStock:number;expectedSite:number|null};
+export type EquipmentAttempt={id:string;tool:string;action:'adopt'|'adopt_site'|'allocate';project:string|null;quantity:number|null;expectedStock:number;expectedSite:number|null};
 const uuid=/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const isId=(v:unknown):v is string=>typeof v==='string'&&uuid.test(v);
 const str=(v:unknown):v is string=>typeof v==='string'&&!!v.trim();
@@ -26,8 +26,8 @@ export function parseEquipmentSnapshot(raw:unknown):EquipmentSnapshot{
  return {items,projects};
 }
 export function parseEquipmentAttempt(raw:unknown):EquipmentAttempt{
- if(!obj(raw)||!isId(raw.id)||!isId(raw.tool)||!['adopt','allocate'].includes(String(raw.action))||!integer(raw.expectedStock))throw new Error('Invalid equipment retry record');
- if(raw.action==='adopt'?raw.project!==null||raw.quantity!==null||raw.expectedSite!==null:!isId(raw.project)||!integer(raw.quantity)||!integer(raw.expectedSite))throw new Error('Invalid equipment retry details');
+ if(!obj(raw)||!isId(raw.id)||!isId(raw.tool)||!['adopt','adopt_site','allocate'].includes(String(raw.action))||!integer(raw.expectedStock))throw new Error('Invalid equipment retry record');
+ if(raw.action==='adopt'?raw.project!==null||raw.quantity!==null||raw.expectedSite!==null:raw.action==='adopt_site'?!isId(raw.project)||!integer(raw.quantity)||raw.quantity===0||raw.quantity!==raw.expectedStock||raw.expectedSite!==null:!isId(raw.project)||!integer(raw.quantity)||!integer(raw.expectedSite))throw new Error('Invalid equipment retry details');
  return raw as EquipmentAttempt;
 }
 export function verifyEquipmentStatus(raw:unknown,attempt:EquipmentAttempt):{found:boolean;result?:unknown}{
@@ -39,11 +39,14 @@ export function verifyEquipmentStatus(raw:unknown,attempt:EquipmentAttempt):{fou
  return {found:true,result:raw.result};
 }
 export function verifyEquipmentResult(raw:unknown,attempt:EquipmentAttempt):{replayed:boolean}{
- if(!obj(raw)||raw.id!==attempt.id||raw.tool_id!==attempt.tool||raw.stock!==attempt.expectedStock||!integer(raw.allocated)||!integer(raw.depot)||raw.allocated+raw.depot!==raw.stock||!integer(raw.site_quantity)||typeof raw.replayed!=='boolean'||raw.site_quantity>raw.allocated||(attempt.action==='adopt'?(raw.allocated!==0||raw.site_quantity!==0):raw.site_quantity!==attempt.quantity))throw new Error('Unverified equipment result');
+ if(!obj(raw)||raw.id!==attempt.id||raw.tool_id!==attempt.tool||raw.stock!==attempt.expectedStock||!integer(raw.allocated)||!integer(raw.depot)||raw.allocated+raw.depot!==raw.stock||!integer(raw.site_quantity)||typeof raw.replayed!=='boolean'||raw.site_quantity>raw.allocated||(attempt.action==='adopt'?(raw.allocated!==0||raw.site_quantity!==0):attempt.action==='adopt_site'?(raw.site_quantity!==attempt.quantity||raw.allocated!==attempt.expectedStock||raw.depot!==0):raw.site_quantity!==attempt.quantity))throw new Error('Unverified equipment result');
  return {replayed:raw.replayed};
 }
 export function equipmentAttempt(item:EquipmentItem,project:string|null,quantity:number|null):EquipmentAttempt{
- if(!item.managed){if(item.legacy_project_id!==null||project!==null||quantity!==null)throw new Error('Legacy site-assigned stock requires separate reconciliation');return {id:crypto.randomUUID(),tool:item.id,action:'adopt',project:null,quantity:null,expectedStock:item.stock,expectedSite:null};}
+ if(!item.managed){
+  if(item.legacy_project_id!==null){if(project!==item.legacy_project_id||quantity!==item.stock||item.stock===0)throw new Error('Confirm all recorded stock at the original site; zero-stock records need separate reconciliation');return {id:crypto.randomUUID(),tool:item.id,action:'adopt_site',project,quantity,expectedStock:item.stock,expectedSite:null};}
+  if(project!==null||quantity!==null)throw new Error('Unassigned stock requires depot adoption');return {id:crypto.randomUUID(),tool:item.id,action:'adopt',project:null,quantity:null,expectedStock:item.stock,expectedSite:null};
+ }
  if(!isId(project)||!integer(quantity))throw new Error('Choose a project and a whole-number quantity');
  const prior=item.sites.find(s=>s.project_id===project)?.quantity??0,allocated=item.sites.reduce((n,s)=>n+s.quantity,0);
  if(allocated-prior+quantity>item.stock)throw new Error('Allocation exceeds owned stock');
