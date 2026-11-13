@@ -73,12 +73,55 @@ suite('weekly Bale schedule on disposable PostgreSQL',()=>{
    expect((await admin.query<{n:number}>("SELECT count(*)::int n FROM public.advance_requests WHERE id=$1 AND status='approved_pending_payment'",[request])).rows[0].n).toBe(1);
   }finally{await admin.query('ROLLBACK');await second.query('ROLLBACK');}
  },15000);
+ it('waits for a worker move and denies the old site Supervisor a new release',async()=>{
+  // Remove only the synthetic finalized voucher left by the preceding test.
+  await admin.query('DELETE FROM public.payroll WHERE id=$1',[id(90)]);
+  await first.query(`SET ROLE authenticated; SET test.uid='${supervisor}'; SET test.clock='2026-11-15T04:00:00Z'`);const request=await submit(first);
+  await first.query(`SET test.uid='${founder}'`);await approve(first,request);
+  await admin.query('INSERT INTO public.projects(id,name) VALUES($1,$2)',[id(91),'Other site']);
+  await second.query(`SET ROLE authenticated; SET test.uid='${supervisor}'; SET test.assurance='yes'; SET test.clock='2026-11-18T04:00:00Z'`);
+  await admin.query('BEGIN');await second.query('BEGIN');try{
+   // Model the reviewed assignment writer: lock the worker before changing sites.
+   await admin.query('SELECT id FROM public.workers WHERE id=$1 FOR UPDATE',[worker]);
+   await admin.query('UPDATE public.project_worker_assignments SET active=false WHERE worker_id=$1 AND project_id=$2',[worker,site]);
+   await admin.query('INSERT INTO public.project_worker_assignments VALUES($1,$2,true)',[id(91),worker]);
+   let finished=false;const pending=release(second,request).then(()=>({message:'success'}),(e:Error)=>({message:e.message})).finally(()=>{finished=true});
+   await pause();expect(finished).toBe(false);await admin.query('COMMIT');
+   expect((await pending).message).toMatch(/no longer uniquely assigned/);await second.query('ROLLBACK');
+   expect((await admin.query('SELECT status FROM public.advance_requests WHERE id=$1',[request])).rows).toEqual([{status:'approved_pending_payment'}]);
+   expect((await admin.query('SELECT count(*)::int n FROM public.advances WHERE id=(SELECT issued_advance_id FROM public.advance_requests WHERE id=$1)',[request])).rows[0].n).toBe(0);
+   await first.query(`SET test.uid='${founder}'; SET test.clock='2026-11-18T04:00:00Z'`);
+   expect((await release(first,request)).rows[0].result.outcome).toBe('updated');
+  }finally{
+   await admin.query('ROLLBACK');await second.query('ROLLBACK');
+   await admin.query('UPDATE public.project_worker_assignments SET active=false WHERE worker_id=$1 AND project_id=$2',[worker,id(91)]);
+   await admin.query('UPDATE public.project_worker_assignments SET active=true WHERE worker_id=$1 AND project_id=$2',[worker,site]);
+  }
+ },15000);
  it('does not run two scheduler executions concurrently',async()=>{
   await first.query("RESET ROLE; SET test.uid=''; SET test.clock='2026-11-18T04:00:00Z'");await second.query("RESET ROLE; SET test.uid=''; SET test.clock='2026-11-18T04:00:00Z'");
   await first.query('BEGIN');try{
    expect((await first.query('SELECT public.run_weekly_bale_expiry_job() result')).rows[0].result.outcome).toBe('completed');
    expect((await second.query('SELECT public.run_weekly_bale_expiry_job() result')).rows[0].result).toEqual({outcome:'already_running'});
   }finally{await first.query('COMMIT');}
+ },15000);
+ it('rolls back the whole expiry batch and its heartbeat on failure, then catches up once repaired',async()=>{
+  await first.query(`SET ROLE authenticated; SET test.uid='${supervisor}'; SET test.assurance='yes'; SET test.clock='2026-11-15T04:00:00Z'`);
+  const one=await submit(first),two=await submit(first),[firstId,lastId]=[one,two].sort();
+  await admin.query(`CREATE FUNCTION public.test_fail_expiry() RETURNS trigger LANGUAGE plpgsql AS $$BEGIN IF NEW.id='${lastId}'::uuid AND NEW.auto_expired THEN IF NOT EXISTS(SELECT 1 FROM public.advance_requests WHERE id='${firstId}'::uuid AND auto_expired) THEN RAISE EXCEPTION 'fixture order unexpected'; END IF; RAISE EXCEPTION 'synthetic expiry failure'; END IF; RETURN NEW; END$$;
+   CREATE TRIGGER test_fail_expiry BEFORE UPDATE ON public.advance_requests FOR EACH ROW EXECUTE FUNCTION public.test_fail_expiry();`);
+  const heartbeat=(await admin.query('SELECT last_success,processed,remaining_due FROM public.weekly_bale_expiry_health')).rows;
+  try{
+   await second.query("RESET ROLE; SET test.uid=''; SET test.clock='2026-11-18T04:00:00Z'");
+   await expect(second.query('SELECT public.run_weekly_bale_expiry_job()')).rejects.toThrow(/synthetic expiry failure/);
+   expect((await admin.query('SELECT id,status,auto_expired FROM public.advance_requests WHERE id=ANY($1::uuid[]) ORDER BY id',[[one,two]])).rows.every(r=>r.status==='pending_approval'&&!r.auto_expired)).toBe(true);
+   expect((await admin.query('SELECT last_success,processed,remaining_due FROM public.weekly_bale_expiry_health')).rows).toEqual(heartbeat);
+   expect((await admin.query("SELECT count(*)::int n FROM public.user_notifications WHERE advance_request_id=ANY($1::uuid[]) AND event_type='advance_request_rejected'",[[one,two]])).rows[0].n).toBe(0);
+   await admin.query('DROP TRIGGER test_fail_expiry ON public.advance_requests; DROP FUNCTION public.test_fail_expiry()');
+   expect((await second.query('SELECT public.run_weekly_bale_expiry_job() result')).rows[0].result).toEqual({outcome:'completed',processed:2,remaining_due:0});
+   expect((await second.query('SELECT public.run_weekly_bale_expiry_job() result')).rows[0].result).toEqual({outcome:'completed',processed:0,remaining_due:0});
+   expect((await admin.query("SELECT count(*)::int n FROM public.user_notifications WHERE advance_request_id=ANY($1::uuid[]) AND event_type='advance_request_rejected'",[[one,two]])).rows[0].n).toBe(2);
+  }finally{await admin.query('DROP TRIGGER IF EXISTS test_fail_expiry ON public.advance_requests; DROP FUNCTION IF EXISTS public.test_fail_expiry()');}
  },15000);
  it('skips an in-flight request and materializes it only once after the lock clears',async()=>{
   await first.query(`SET test.uid='${supervisor}'; SET test.clock='2026-11-15T04:00:00Z'`);const request=await submit(first);

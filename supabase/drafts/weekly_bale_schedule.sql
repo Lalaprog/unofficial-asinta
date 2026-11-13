@@ -132,6 +132,17 @@ BEGIN
  END IF;
  v_now:=public.weekly_bale_clock();v_date:=(v_now AT TIME ZONE 'Asia/Manila')::date;
  IF v_request.status<>'approved_pending_payment' OR v_date<>v_rule.period_start+3 THEN RAISE EXCEPTION 'Only an approved same-week Wednesday release can be recorded' USING ERRCODE='22023'; END IF;
+ -- A request can outlive the worker's assignment. Pinning the worker above
+ -- serializes with the reviewed guarded move/removal paths; a site Supervisor
+ -- must not record a NEW release for somebody who has since moved or been
+ -- archived. Founder retains authority to resolve an approved request. The
+ -- already-issued replay above intentionally remains readable after a move.
+ IF NOT coalesce(public.is_founder(),false) AND (
+  NOT EXISTS(SELECT 1 FROM public.workers w WHERE w.id=v_worker AND w.active IS TRUE)
+  OR EXISTS(SELECT 1 FROM public.users u WHERE u.id=v_worker AND u.role='supervisor')
+  OR NOT EXISTS(SELECT 1 FROM public.project_worker_assignments a WHERE a.worker_id=v_worker AND a.project_id=v_request.project_id AND a.active IS TRUE)
+  OR EXISTS(SELECT 1 FROM public.project_worker_assignments a WHERE a.worker_id=v_worker AND a.project_id<>v_request.project_id AND a.active IS TRUE)
+ ) THEN RAISE EXCEPTION 'Worker is unavailable, is a Supervisor, or is no longer uniquely assigned to this site; Founder review required' USING ERRCODE='42501'; END IF;
  IF EXISTS(SELECT 1 FROM public.payroll p WHERE p.worker_id=v_worker AND v_date BETWEEN p.period_start AND p.period_end AND p.status IN ('approved','paid')) THEN RAISE EXCEPTION 'Finalized payroll covers this release; review the original period' USING ERRCODE='22023'; END IF;
  INSERT INTO public.advances(worker_id,project_id,amount,amount_deducted,reason,date,status)
  VALUES(v_worker,v_request.project_id,v_request.requested_amount,0,'Approved Bale request',v_date,'active') RETURNING * INTO v_advance;

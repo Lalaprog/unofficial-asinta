@@ -12,10 +12,12 @@ BEGIN
  -- Use a single snapshot and reject rather than silently truncate at the cap.
  SELECT count(*)::integer,coalesce(jsonb_agg(jsonb_build_object('request_id',q.id,'worker_id',q.worker_id,'worker_name',q.worker_name,
   'project_id',q.project_id,'project_name',q.project_name,'amount',q.requested_amount::numeric(10,2)::text,'status',q.status,
-  'release_date',q.release_date,'issued_advance_id',q.issued_advance_id) ORDER BY q.project_id,q.worker_name,q.id),'[]'::jsonb)
+  'release_date',q.release_date,'issued_advance_id',q.issued_advance_id,'assignment_review_required',q.assignment_review_required) ORDER BY q.project_id,q.worker_name,q.id),'[]'::jsonb)
  INTO v_count,v_items FROM (
   SELECT r.id,r.worker_id,worker.name worker_name,r.project_id,project.name project_name,r.requested_amount,r.status,
-   w.period_start+3 release_date,r.issued_advance_id
+   w.period_start+3 release_date,r.issued_advance_id,
+   (worker.active IS NOT TRUE OR EXISTS(SELECT 1 FROM public.users u WHERE u.id=r.worker_id AND u.role='supervisor') OR NOT EXISTS(SELECT 1 FROM public.project_worker_assignments a WHERE a.worker_id=r.worker_id AND a.project_id=r.project_id AND a.active IS TRUE)
+    OR EXISTS(SELECT 1 FROM public.project_worker_assignments a WHERE a.worker_id=r.worker_id AND a.project_id<>r.project_id AND a.active IS TRUE)) AS assignment_review_required
   FROM public.weekly_bale_requests w JOIN public.advance_requests r ON r.id=w.request_id
   JOIN public.workers worker ON worker.id=r.worker_id JOIN public.projects project ON project.id=r.project_id
   WHERE w.period_start=p_start AND r.status IN ('approved_pending_payment','issued')

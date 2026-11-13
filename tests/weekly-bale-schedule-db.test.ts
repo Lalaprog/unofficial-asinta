@@ -72,6 +72,31 @@ describe('experimental weekly Bale schedule (not deployed)',()=>{
    expect((await db.query<{n:number}>("SELECT count(*)::int n FROM public.user_notifications WHERE advance_request_id=$1 AND event_type='advance_request_issued'",[request])).rows[0].n).toBe(1);
   }finally{await db.close();}
  },30000);
+ it('requires Founder review when a worker moves or is archived after approval, while preserving release replay',async()=>{
+  const db=await fixture(true);try{
+   const request=await submit(db);await role(db,founder);await db.query("SELECT public.review_advance_request($1,'approve')",[request]);
+   await time(db,'2026-11-18T04:00:00Z');await db.exec('RESET ROLE');
+   await db.query('UPDATE public.project_worker_assignments SET active=false WHERE worker_id=$1 AND project_id=$2',[worker,site]);
+   await db.query('INSERT INTO public.project_worker_assignments VALUES($1,$2,true)',[other,worker]);
+   await db.exec(`SET ROLE authenticated; SET test.uid='${supervisor}'`);
+   expect((await db.query<{result:{items:{assignment_review_required:boolean}[]}}>("SELECT public.weekly_bale_release_list('2026-11-15') result")).rows[0].result.items[0].assignment_review_required).toBe(true);
+   await expect(release(db,request)).rejects.toThrow(/no longer uniquely assigned/);
+   await db.exec('RESET ROLE');expect((await db.query<{n:number}>('SELECT count(*)::int n FROM public.advances')).rows[0].n).toBe(0);
+   await db.query('UPDATE public.project_worker_assignments SET active=false WHERE worker_id=$1 AND project_id=$2',[worker,other]);
+   await db.query('UPDATE public.project_worker_assignments SET active=true WHERE worker_id=$1 AND project_id=$2',[worker,site]);
+   await db.query('UPDATE public.workers SET active=false WHERE id=$1',[worker]);
+   await db.exec(`SET ROLE authenticated; SET test.uid='${supervisor}'`);
+   await expect(release(db,request)).rejects.toThrow(/no longer uniquely assigned/);
+   await db.exec('RESET ROLE');await db.query('UPDATE public.workers SET active=true WHERE id=$1',[worker]);
+   await db.query("INSERT INTO public.users(id,name,email,role) VALUES($1,'Linked account','linked@example.invalid','supervisor')",[worker]);
+   await db.exec(`SET ROLE authenticated; SET test.uid='${supervisor}'`);
+   expect((await db.query<{result:{items:{assignment_review_required:boolean}[]}}>("SELECT public.weekly_bale_release_list('2026-11-15') result")).rows[0].result.items[0].assignment_review_required).toBe(true);
+   await expect(release(db,request)).rejects.toThrow(/is a Supervisor/);
+   await role(db,founder);const issued=(await release(db,request)).rows[0].result;expect(issued.outcome).toBe('updated');
+   await role(db,supervisor);expect((await release(db,request)).rows[0].result).toEqual({...issued,outcome:'already_recorded'});
+   await db.exec('RESET ROLE');expect((await db.query<{n:number}>('SELECT count(*)::int n FROM public.advances')).rows[0].n).toBe(1);
+  }finally{await db.close();}
+ },30000);
  it('supports same-site batch approval and Founder release, while hiding status from unrelated sites',async()=>{
   const db=await fixture();try{
    const request=await submit(db);const second=await submit(db);
@@ -121,7 +146,7 @@ describe('experimental weekly Bale schedule (not deployed)',()=>{
   const db=await fixture(true);try{
    const request=await submit(db);await role(db,founder);await db.query("SELECT public.review_advance_request($1,'approve')",[request]);
    const get=()=>db.query<{result:{items:{request_id:string;status:string;amount:string;project_name:string}[]}}>("SELECT public.weekly_bale_release_list('2026-11-15') result");
-   expect((await get()).rows[0].result.items).toEqual([{request_id:request,worker_id:worker,worker_name:'Worker',project_id:site,project_name:'Site',amount:'100.25',status:'approved_pending_payment',release_date:'2026-11-18',issued_advance_id:null}]);
+   expect((await get()).rows[0].result.items).toEqual([{request_id:request,worker_id:worker,worker_name:'Worker',project_id:site,project_name:'Site',amount:'100.25',status:'approved_pending_payment',release_date:'2026-11-18',issued_advance_id:null,assignment_review_required:false}]);
    await role(db,supervisor);expect((await get()).rows[0].result.items).toHaveLength(1);
    await role(db,outsider);expect((await get()).rows[0].result.items).toHaveLength(0);
    await db.exec("SET test.assurance='no'");await expect(get()).rejects.toThrow(/Authorized access/);
