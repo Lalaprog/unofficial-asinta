@@ -71,6 +71,13 @@ BEGIN
   RAISE EXCEPTION 'Unexpected intermediate weekly preview function'; END IF;
  IF pg_catalog.to_regclass('public.attendance_time_details') IS NOT NULL OR pg_catalog.to_regclass('public.worker_allowances') IS NOT NULL THEN
   RAISE EXCEPTION 'Remaining PR 103 tables already exist; reconcile before proceeding'; END IF;
+ -- Even this rollback-only rehearsal needs a stable empty-table check. A
+ -- privileged writer otherwise could insert after the check and before DDL.
+ -- Hold both locks through the transaction, in the same order as the separate
+ -- Supervisor RPC candidate. Never run this rehearsal on a shared database.
+ IF pg_catalog.to_regclass('public.supervisor_daily_attendance') IS NULL OR pg_catalog.to_regclass('public.supervisor_leave_requests') IS NULL THEN
+  RAISE EXCEPTION 'Locked Supervisor table missing or different'; END IF;
+ LOCK TABLE public.supervisor_daily_attendance, public.supervisor_leave_requests IN SHARE MODE;
  FOREACH v_name IN ARRAY ARRAY['supervisor_daily_attendance','supervisor_leave_requests'] LOOP
   v_expected:=CASE v_name WHEN 'supervisor_daily_attendance' THEN '70e3d6ee56b130b897505c5c19843b2d' ELSE '9739b77d0441a9714d982ee4ece68fdd' END;
   SELECT md5((jsonb_build_object('columns',(SELECT jsonb_agg(jsonb_build_array(a.attname,format_type(a.atttypid,a.atttypmod),a.attnotnull,pg_get_expr(d.adbin,d.adrelid)) ORDER BY a.attnum) FROM pg_attribute a LEFT JOIN pg_attrdef d ON d.adrelid=a.attrelid AND d.adnum=a.attnum WHERE a.attrelid=c.oid AND a.attnum>0 AND NOT a.attisdropped),

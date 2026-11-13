@@ -34,6 +34,19 @@ suite('PR 103 rollback rehearsal on disposable PostgreSQL',()=>{
    await db.query(sql('20261113000000_weekly_worker_preview.sql'));
    await expect(db.query(rehearsal)).rejects.toThrow(/Locked Supervisor table missing or different/);await db.query('ROLLBACK');
    await db.query(readFileSync('supabase/drafts/supervisor_table_foundation.sql','utf8'));
+   // Hold the generated preflight open, then verify its empty-table check is
+   // protected from concurrent privileged writers until rollback.
+   const preflightEnd=rehearsal.indexOf('$preflight$;');
+   if(preflightEnd<0)throw new Error('Missing rehearsal preflight boundary');
+   await db.query(rehearsal.slice(0,preflightEnd+'$preflight$;'.length));
+   const rehearsalWriter=new Client({connectionString:url});await rehearsalWriter.connect();
+   try{
+    for(const table of ['supervisor_daily_attendance','supervisor_leave_requests']){
+     await rehearsalWriter.query('BEGIN');
+     await expect(rehearsalWriter.query(`LOCK TABLE public.${table} IN ROW EXCLUSIVE MODE NOWAIT`)).rejects.toMatchObject({code:'55P03'});
+     await rehearsalWriter.query('ROLLBACK');
+    }
+   }finally{await rehearsalWriter.end();await db.query('ROLLBACK');}
    const supervisorRollout=readFileSync('supabase/drafts/supervisor_rpc_rollout.sql','utf8');
    await db.query(`BEGIN; ${supervisorRollout}`);
    const writer=new Client({connectionString:url});await writer.connect();
