@@ -237,6 +237,22 @@ describe('server-calculated weekly source-bound draft (not payable)',()=>{
 const approve=(db:PGlite)=>db.query('SELECT public.approve_weekly_worker_draft($1)',[voucher]);
 const pay=(db:PGlite,date='2024-11-09')=>db.query<{result:{outcome:string;payment_date:string}}>('SELECT public.record_weekly_worker_payment($1,$2) result',[voucher,date]);
 describe('integrated weekly payment and gross site allocations (draft)',()=>{
+ it('fails a paid retry when allocation hours or approval markers are inconsistent',async()=>{
+  const db=await fixture(true,true);try{
+   await generate(db);await approve(db);await pay(db);
+   await db.exec('RESET ROLE; ALTER TABLE public.weekly_worker_paid_allocations DISABLE TRIGGER guard_weekly_paid_allocation_immutable');
+   await db.query('UPDATE public.weekly_worker_paid_allocations SET hours=hours+1 WHERE payroll_id=$1',[voucher]);
+   await db.exec('ALTER TABLE public.weekly_worker_paid_allocations ENABLE TRIGGER guard_weekly_paid_allocation_immutable; SET ROLE authenticated');
+   await expect(pay(db)).rejects.toThrow(/allocation is incomplete/);
+   await db.exec('RESET ROLE; ALTER TABLE public.weekly_worker_paid_allocations DISABLE TRIGGER guard_weekly_paid_allocation_immutable');
+   await db.query('UPDATE public.weekly_worker_paid_allocations SET hours=hours-1 WHERE payroll_id=$1',[voucher]);
+   await db.exec('ALTER TABLE public.weekly_worker_paid_allocations ENABLE TRIGGER guard_weekly_paid_allocation_immutable');
+   await db.query('UPDATE public.weekly_worker_draft_sources SET approval_xid=123 WHERE payroll_id=$1',[voucher]);
+   await db.exec('SET ROLE authenticated');await expect(pay(db)).rejects.toThrow(/allocation is incomplete/);
+   await db.exec('RESET ROLE');await db.query('UPDATE public.weekly_worker_draft_sources SET approval_xid=NULL WHERE payroll_id=$1',[voucher]);await db.exec('SET ROLE authenticated');
+   expect((await pay(db)).rows[0].result.outcome).toBe('already_recorded');
+  }finally{await db.close();}
+ },30000);
  it('atomically records one external payment, same-week Bale and centavo-exact moved-worker allocations',async()=>{
   const db=await fixture(true,true);try{
    await db.exec('RESET ROLE');await db.query('UPDATE public.attendance SET project_id=$2 WHERE id=$1',[att2,other]);await db.exec('SET ROLE authenticated');

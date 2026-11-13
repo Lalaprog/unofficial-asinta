@@ -77,7 +77,7 @@ RETURNS jsonb LANGUAGE plpgsql SECURITY DEFINER SET search_path='' AS $$
 DECLARE
  v_source public.weekly_worker_draft_sources%ROWTYPE; v_pay public.payroll%ROWTYPE;
  v_snapshot jsonb; v_worker jsonb; v_sources jsonb; v_result jsonb;
- v_wage numeric; v_allowance numeric; v_hours numeric; v_alloc_wage numeric; v_alloc_allowance numeric; v_alloc_gross numeric; v_count bigint;
+ v_wage numeric; v_allowance numeric; v_hours numeric; v_alloc_wage numeric; v_alloc_allowance numeric; v_alloc_gross numeric; v_alloc_hours numeric; v_count bigint;
 BEGIN
  IF auth.uid() IS NULL OR NOT coalesce(public.is_founder(),false) OR NOT coalesce(public.session_assurance_satisfied(),false) THEN
   RAISE EXCEPTION 'Founder access with required assurance is required' USING ERRCODE='42501'; END IF;
@@ -106,13 +106,13 @@ BEGIN
   OR v_pay.days_worked IS DISTINCT FROM round((v_source.calculation->>'regular_hours')::numeric/8,2)
   OR v_pay.hours_worked IS DISTINCT FROM v_hours THEN
   RAISE EXCEPTION 'Weekly voucher totals changed; review' USING ERRCODE='40001'; END IF;
- SELECT count(*),coalesce(sum(wage),0),coalesce(sum(allowance),0),coalesce(sum(gross),0)
-  INTO v_count,v_alloc_wage,v_alloc_allowance,v_alloc_gross FROM public.weekly_worker_paid_allocations WHERE payroll_id=p_id;
+ SELECT count(*),coalesce(sum(wage),0),coalesce(sum(allowance),0),coalesce(sum(gross),0),coalesce(sum(hours),0)
+  INTO v_count,v_alloc_wage,v_alloc_allowance,v_alloc_gross,v_alloc_hours FROM public.weekly_worker_paid_allocations WHERE payroll_id=p_id;
  IF v_pay.status='paid' THEN
-  IF v_source.approved_by IS NULL OR v_source.payment_actor IS NULL OR v_source.payment_xid IS NOT NULL
+  IF v_source.approved_by IS NULL OR v_source.approved_at IS NULL OR v_source.approval_xid IS NOT NULL OR v_source.payment_actor IS NULL OR v_source.payment_xid IS NOT NULL
    OR NOT EXISTS(SELECT 1 FROM public.payroll_payment_dates d WHERE d.payroll_id=p_id AND d.recorded_by=v_source.payment_actor)
    OR (v_hours>0 AND v_count=0) OR (v_hours=0 AND v_count<>0)
-   OR (v_alloc_wage,v_alloc_allowance,v_alloc_gross) IS DISTINCT FROM (v_wage,v_allowance,v_pay.gross_pay) THEN
+   OR (v_alloc_wage,v_alloc_allowance,v_alloc_gross,v_alloc_hours) IS DISTINCT FROM (v_wage,v_allowance,v_pay.gross_pay,v_hours) THEN
    RAISE EXCEPTION 'Recorded payment allocation is incomplete; review before retrying' USING ERRCODE='22023'; END IF;
   RETURN public.weekly_payment_date_internal(p_id,p_payment_date);
  END IF;

@@ -4,6 +4,7 @@ import {Client} from 'pg';
 import {afterAll,beforeAll,describe,expect,it} from 'vitest';
 import {baseFixture} from './helpers/pr103-fixture';
 import {estimateProjectCost,parseCostSnapshot} from '@/lib/projects/projectCostReconciliation';
+import {parseWeeklyDraftDetails} from '@/lib/payroll/weeklyDraftDetails';
 const url=process.env.BALE_PAYROLL_CUTOVER_TEST_DATABASE_URL;
 const suite=url?describe:describe.skip;
 const founder='00000000-0000-0000-0000-000000000001',supervisor='00000000-0000-0000-0000-000000000002',site='00000000-0000-0000-0000-000000000004';
@@ -166,5 +167,108 @@ suite('real PostgreSQL combined weekly Bale and payroll candidate races',()=>{
   }
   expect((await first.query("SELECT public.record_weekly_worker_payment($1,'2024-09-21') v",[payroll])).rows[0].v.outcome).toBe('updated');
  },15000);
+
+ it('integrates revision-aware refresh and return with Bale, overtime, allowances, payment and correction evidence',async()=>{
+  // Added only after the unwrapped scenarios above: these candidates revoke the
+  // old approval/payment signatures and are not independently deployable.
+  for(const name of ['weekly_worker_draft_refresh','weekly_worker_return_to_draft'])await admin.query(`BEGIN; ${readFileSync(`supabase/drafts/${name}.sql`,'utf8')} COMMIT;`);
+  const permissions=(await admin.query("SELECT to_regprocedure('public.approve_weekly_worker_draft(uuid)') IS NULL old_approval_absent,to_regprocedure('public.record_weekly_worker_payment(uuid,date)') IS NULL old_payment_absent,has_function_privilege('authenticated','public.weekly_worker_approval_internal(uuid)','EXECUTE') internal_approval,has_function_privilege('authenticated','public.weekly_worker_payment_internal(uuid,date)','EXECUTE') internal_payment")).rows[0];
+  expect(permissions).toEqual({old_approval_absent:true,old_payment_absent:true,internal_approval:false,internal_payment:false});
+  const worker=id(110),attendance=id(210),payroll=id(310),week='2024-08-04';
+  await admin.query("INSERT INTO public.workers(id,name,position,contact_number,pay_rate,pay_rate_type,active) VALUES ($1,'Integrated Worker','Mason','none',600,'daily',true)",[worker]);
+  await admin.query('INSERT INTO public.project_worker_assignments VALUES ($1,$2,true)',[site,worker]);
+  await admin.query("INSERT INTO public.attendance(id,worker_id,project_id,date,status,hours_worked,submitted_at) VALUES ($1,$2,$3,'2024-08-04','present',8,'2024-08-04T08:00:00Z')",[attendance,worker,site]);
+  await first.query(`SET test.uid='${founder}'`);
+  await first.query("SELECT public.record_attendance_time_detail($1,$2,'2024-08-04T08:00:00Z',8,2,'Approved time')",[id(611),attendance]);
+  expect((await first.query("SELECT public.submit_worker_allowance($1,$2,'2024-08-04T08:00:00Z',50.25,'Meals') v",[id(612),attendance])).rows[0].v.status).toBe('approved');
+  const req=await request(worker,week,'2024-08-06','2024-08-07');
+  expect((await generate(first,payroll,worker,week)).rows[0].result.calculation).toMatchObject({gross:'800.25',bale:'0.00',net:'800.25'});
+  const issued=(await release(second,req)).rows[0].result;
+  await expect(first.query('SELECT public.approve_weekly_worker_draft($1,0)',[payroll])).rejects.toThrow(/changed|stale/i);
+  const refreshed=(await first.query('SELECT public.refresh_weekly_worker_draft($1,$2,0) v',[id(613),payroll])).rows[0].v;
+  expect(refreshed).toMatchObject({replayed:false,revision:1,calculation:{gross:'800.25',bale:'100.25',net:'700.00'}});
+  expect((await first.query('SELECT public.refresh_weekly_worker_draft($1,$2,0) v',[id(613),payroll])).rows[0].v.replayed).toBe(true);
+  await expect(first.query('SELECT public.approve_weekly_worker_draft($1,0)',[payroll])).rejects.toThrow(/revision changed/);
+  await first.query('SELECT public.approve_weekly_worker_draft($1,1)',[payroll]);
+  expect((await first.query("SELECT public.return_weekly_worker_to_draft($1,$2,1,'Review') v",[id(614),payroll])).rows[0].v).toMatchObject({revision:2,replayed:false});
+  await expect(first.query("SELECT public.record_weekly_worker_payment($1,'2024-08-10',1)",[payroll])).rejects.toThrow(/revision changed/);
+  await first.query('SELECT public.approve_weekly_worker_draft($1,2)',[payroll]);
+  expect((await first.query("SELECT public.record_weekly_worker_payment($1,'2024-08-10',2) v",[payroll])).rows[0].v.outcome).toBe('updated');
+  expect((await first.query("SELECT public.record_weekly_worker_payment($1,'2024-08-10',2) v",[payroll])).rows[0].v.outcome).toBe('already_recorded');
+  expect((await admin.query('SELECT gross_pay::text,bale_deduction::text,net_pay::text,status FROM public.payroll WHERE id=$1',[payroll])).rows).toEqual([{gross_pay:'800.25',bale_deduction:'100.25',net_pay:'700.00',status:'paid'}]);
+  expect((await admin.query('SELECT status,amount_deducted::text FROM public.advances WHERE id=$1',[issued.advance_id])).rows).toEqual([{status:'fully_deducted',amount_deducted:'100.25'}]);
+  expect((await admin.query('SELECT gross::text FROM public.weekly_worker_paid_allocations WHERE payroll_id=$1',[payroll])).rows).toEqual([{gross:'800.25'}]);
+  // Simulate privileged tampering that bypasses the immutable-allocation guard:
+  // a retry must not assert success when hours no longer reconcile, even if
+  // every monetary amount is unchanged. This does not prevent owner tampering.
+  await admin.query('ALTER TABLE public.weekly_worker_paid_allocations DISABLE TRIGGER guard_weekly_paid_allocation_immutable');
+  try{await admin.query('UPDATE public.weekly_worker_paid_allocations SET hours=11 WHERE payroll_id=$1',[payroll]);}
+  finally{await admin.query('ALTER TABLE public.weekly_worker_paid_allocations ENABLE TRIGGER guard_weekly_paid_allocation_immutable');}
+  await expect(first.query("SELECT public.record_weekly_worker_payment($1,'2024-08-10',2)",[payroll])).rejects.toThrow(/allocation is incomplete/);
+  await expect(first.query('SELECT public.project_cost_reconciliation_preview($1)',[site])).rejects.toThrow(/inconsistent/);
+  await admin.query('ALTER TABLE public.weekly_worker_paid_allocations DISABLE TRIGGER guard_weekly_paid_allocation_immutable');
+  try{await admin.query('UPDATE public.weekly_worker_paid_allocations SET hours=10 WHERE payroll_id=$1',[payroll]);}
+  finally{await admin.query('ALTER TABLE public.weekly_worker_paid_allocations ENABLE TRIGGER guard_weekly_paid_allocation_immutable');}
+  expect((await first.query("SELECT public.record_weekly_worker_payment($1,'2024-08-10',2) v",[payroll])).rows[0].v.outcome).toBe('already_recorded');
+  const details=parseWeeklyDraftDetails((await first.query('SELECT public.weekly_worker_draft_details($1) v',[payroll])).rows[0].v,{id:payroll,worker,start:week},true);
+  expect(details).toMatchObject({status:'paid',draft_revision:2,gross:'800.25',bale:'100.25',net:'700.00',payment_date:'2024-08-10',allocations:[{project_id:site,gross:'800.25'}]});
+  const snapshot=(await admin.query('SELECT app_private.paid_adjustment_voucher_snapshot(p) v FROM public.payroll p WHERE id=$1',[payroll])).rows[0].v;
+  await first.query("SELECT public.open_paid_payroll_adjustment($1,$2,$3,25.50,'Review missed time')",[id(615),payroll,snapshot]);
+  await first.query("SELECT public.resolve_paid_payroll_adjustment($1,'settled_external','2024-08-12','External settlement reviewed')",[id(615)]);
+  expect((await admin.query('SELECT gross_pay::text,net_pay::text,status FROM public.payroll WHERE id=$1',[payroll])).rows).toEqual([{gross_pay:'800.25',net_pay:'700.00',status:'paid'}]);
+  const review=parseCostSnapshot((await first.query('SELECT public.project_cost_reconciliation_preview($1) v',[site])).rows[0].v,site);
+  expect(review.paid.find(p=>p.payrollId===payroll)).toMatchObject({gross:'800.25',voucherBale:'100.25',voucherNet:'700.00'});
+  await admin.query("INSERT INTO public.attendance(id,worker_id,project_id,date,status,hours_worked,submitted_at) VALUES ($1,$2,$3,'2024-08-11','present',8,'2024-08-11T08:00:00Z')",[id(212),worker,site]);
+  const next=(await generate(first,id(312),worker,'2024-08-11')).rows[0].result.calculation;
+  expect(next).toMatchObject({gross:'600.00',bale:'0.00',net:'600.00'});
+ },30000);
+
+ it('serializes a Wednesday release racing revision-aware approval, then requires a refreshed draft',async()=>{
+  const worker=id(112),attendance=id(213),payroll=id(313),week='2024-06-30';
+  await admin.query("INSERT INTO public.workers(id,name,position,contact_number,pay_rate,pay_rate_type,active) VALUES ($1,'Concurrent Worker','Mason','none',600,'daily',true)",[worker]);
+  await admin.query('INSERT INTO public.project_worker_assignments VALUES ($1,$2,true)',[site,worker]);
+  await admin.query("INSERT INTO public.attendance(id,worker_id,project_id,date,status,hours_worked,submitted_at) VALUES ($1,$2,$3,'2024-06-30','present',8,'2024-06-30T08:00:00Z')",[attendance,worker,site]);
+  const req=await request(worker,week,'2024-07-02','2024-07-03');await generate(first,payroll,worker,week);
+  await second.query('BEGIN');await first.query('BEGIN');try{
+   const issued=(await release(second,req)).rows[0].result;let done=false;
+   const approval=first.query('SELECT public.approve_weekly_worker_draft($1,0)',[payroll]).then(()=>({code:'success'}),(e:{code:string})=>({code:e.code})).finally(()=>{done=true;});
+   await pause();expect(done).toBe(false);await second.query('COMMIT');expect((await approval).code).toBe('40001');await first.query('ROLLBACK');
+   expect((await admin.query('SELECT status,bale_deduction::text FROM public.payroll WHERE id=$1',[payroll])).rows).toEqual([{status:'draft',bale_deduction:'0.00'}]);
+   expect((await first.query('SELECT public.refresh_weekly_worker_draft($1,$2,0) v',[id(616),payroll])).rows[0].v.calculation).toMatchObject({gross:'600.00',bale:'100.25',net:'499.75'});
+   await first.query('SELECT public.approve_weekly_worker_draft($1,1)',[payroll]);
+   await first.query("SELECT public.record_weekly_worker_payment($1,'2024-07-06',1)",[payroll]);
+   expect((await admin.query('SELECT amount_deducted::text FROM public.advances WHERE id=$1',[issued.advance_id])).rows).toEqual([{amount_deducted:'100.25'}]);
+  }finally{await first.query('ROLLBACK');await second.query('ROLLBACK');}
+ },15000);
+
+ it('combines the expiry worker with revision-aware payroll without creating or deducting an unreleased Bale',async()=>{
+  // The simplified fixture pre-creates the request table, so model the legacy
+  // rejection constraint that exists on the actual schema before installing.
+  await admin.query("ALTER TABLE public.advance_requests ADD CONSTRAINT advance_request_rejection_fields CHECK (status<>'rejected' OR (rejected_by IS NOT NULL AND rejected_at IS NOT NULL))");
+  for(const name of ['weekly_bale_expiration','weekly_bale_release_list','weekly_bale_status_batch','weekly_bale_scheduler'])await admin.query(`BEGIN; ${readFileSync(`supabase/drafts/${name}.sql`,'utf8')} COMMIT;`);
+  const worker=id(111),attendance=id(211),payroll=id(311);
+  await admin.query("INSERT INTO public.workers(id,name,position,contact_number,pay_rate,pay_rate_type,active) VALUES ($1,'Expiry Worker','Mason','none',600,'daily',true)",[worker]);
+  await admin.query('INSERT INTO public.project_worker_assignments VALUES ($1,$2,true)',[site,worker]);
+  await admin.query("INSERT INTO public.attendance(id,worker_id,project_id,date,status,hours_worked,submitted_at) VALUES ($1,$2,$3,'2024-07-07','present',8,'2024-07-07T08:00:00Z')",[attendance,worker,site]);
+  await second.query(`SET test.uid='${supervisor}'; SET test.clock='2024-07-09T15:59:59Z'`);
+  const req=(await second.query('INSERT INTO public.advance_requests(worker_id,project_id,requested_amount,submitted_by) VALUES($1,$2,100.25,$3) RETURNING id',[worker,site,supervisor])).rows[0].id;
+  await admin.query("SET test.uid=''; SET test.clock='2024-07-09T15:59:59Z'");
+  expect((await admin.query('SELECT public.run_weekly_bale_expiry_job() v')).rows[0].v).toMatchObject({outcome:'completed',processed:0});
+  await admin.query("SET test.clock='2024-07-09T16:00:00Z'");
+  await first.query(`SET test.uid='${founder}'`);
+  await admin.query('BEGIN');try{
+   expect((await admin.query('SELECT public.run_weekly_bale_expiry_job() v')).rows[0].v).toMatchObject({outcome:'completed',processed:1});
+   let done=false;const pending=generate(first,payroll,worker,'2024-07-07').finally(()=>{done=true;});
+   await pause();expect(done).toBe(false);await admin.query('COMMIT');
+   expect((await pending).rows[0].result.calculation).toMatchObject({gross:'600.00',bale:'0.00',net:'600.00'});
+  }finally{await admin.query('ROLLBACK');}
+  expect((await admin.query('SELECT public.run_weekly_bale_expiry_job() v')).rows[0].v).toMatchObject({outcome:'completed',processed:0});
+  expect((await admin.query('SELECT status,auto_expired,rejected_by,issued_advance_id FROM public.advance_requests WHERE id=$1',[req])).rows).toEqual([{status:'rejected',auto_expired:true,rejected_by:null,issued_advance_id:null}]);
+  expect((await admin.query("SELECT actor_id FROM public.audit_log WHERE record_id=$1 AND action='update'",[req])).rows).toEqual([{actor_id:null}]);
+  await first.query('SELECT public.approve_weekly_worker_draft($1,0)',[payroll]);
+  expect((await first.query("SELECT public.record_weekly_worker_payment($1,'2024-07-13',0) v",[payroll])).rows[0].v.outcome).toBe('updated');
+  expect((await admin.query('SELECT count(*)::int n FROM public.advances WHERE worker_id=$1',[worker])).rows[0].n).toBe(0);
+  expect((await admin.query('SELECT gross::text FROM public.weekly_worker_paid_allocations WHERE payroll_id=$1',[payroll])).rows).toEqual([{gross:'600.00'}]);
+ },30000);
 
 });
