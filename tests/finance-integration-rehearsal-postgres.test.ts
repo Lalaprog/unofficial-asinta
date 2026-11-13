@@ -32,7 +32,8 @@ suite('coordinated finance integration rehearsal, synthetic PostgreSQL only',()=
     ALTER TABLE public.advance_requests ADD COLUMN approved_by uuid, ADD COLUMN approved_at timestamptz, ADD COLUMN rejected_by uuid, ADD COLUMN rejected_at timestamptz, ADD COLUMN issued_by uuid, ADD COLUMN updated_at timestamptz DEFAULT now();
     ALTER TABLE public.advance_requests ADD CONSTRAINT advance_request_rejection_fields CHECK(status<>'rejected' OR (rejected_by IS NOT NULL AND rejected_at IS NOT NULL));
     DROP TABLE public.audit_log; CREATE TABLE public.audit_log(actor_id uuid,actor_email text,action text,table_name text,record_id uuid,before_row jsonb,after_row jsonb);
-    CREATE POLICY test_founder_payroll_write ON public.payroll FOR ALL TO authenticated USING(public.is_founder()) WITH CHECK(public.is_founder());`);
+    CREATE POLICY test_founder_payroll_write ON public.payroll FOR ALL TO authenticated USING(public.is_founder()) WITH CHECK(public.is_founder());
+    CREATE POLICY test_supervisor_attendance_insert ON public.attendance FOR INSERT TO authenticated WITH CHECK(public.is_supervisor_assigned(project_id));`);
    // Selected hosted-shaped constraints and types, NOT a complete schema clone.
    // These expose mistakes hidden by the deliberately minimal shared fixture.
    await db.query(readFileSync('tests/helpers/finance-hosted-shape-fixture.sql','utf8'));
@@ -65,6 +66,10 @@ suite('coordinated finance integration rehearsal, synthetic PostgreSQL only',()=
    // voucher, then roll back the DDL and all fixture writes together.
    if(!rehearsal.endsWith('ROLLBACK;\n'))throw Error('Unexpected transaction boundary');
    await db.query(rehearsal.slice(0,-'ROLLBACK;\n'.length));
+   // Additional experimental guard, not included in the generated 26-draft
+   // rehearsal. Install only inside this disposable rollback transaction.
+   await db.query(readFileSync('supabase/drafts/attendance_assignment_guard.sql','utf8'));
+   await db.query(`SET LOCAL test.uid='${founder}'; SET LOCAL test.assurance='yes'`);
    await db.query("INSERT INTO public.attendance(id,worker_id,project_id,date,status,hours_worked,submitted_at) VALUES($1,$2,$3,'2024-08-04','present',8,'2024-08-04T08:00:00Z')",[attendance,worker,site]);
    await db.query('INSERT INTO public.project_worker_assignments(project_id,worker_id,active) VALUES($1,$2,true)',[site,worker]);
    await db.query("INSERT INTO public.project_supervisors(project_id,supervisor_id) VALUES('00000000-0000-0000-0000-000000000005',$1)",[supervisor]);
@@ -151,10 +156,16 @@ suite('coordinated finance integration rehearsal, synthetic PostgreSQL only',()=
    expect((await db.query('SELECT count(*)::int n FROM public.advances WHERE worker_id=$1',[worker])).rows[0].n).toBe(1);
    // The earlier external correction and expired request must not leak into the
    // following week's new draft or create an extra advance.
+   await db.query(`SET LOCAL test.uid='${founder}'`);
    await db.query("INSERT INTO public.attendance(id,worker_id,project_id,date,status,hours_worked,submitted_at) VALUES('70000000-0000-4000-8000-000000000014',$1,$2,'2024-08-11','present',8,'2024-08-11T08:00:00Z')",[worker,site]);
    await db.query(`SET LOCAL ROLE authenticated; SET LOCAL test.uid='${founder}'`);
    expect((await db.query("SELECT public.create_weekly_worker_draft('70000000-0000-4000-8000-000000000015',$1,'2024-08-11') v",[worker])).rows[0].v.calculation).toMatchObject({gross:'600.00',bale:'0.00',net:'600.00'});
    await db.query('RESET ROLE');expect((await db.query('SELECT to_jsonb(p) v FROM public.payroll p WHERE id=$1',[voucher])).rows[0].v).toEqual(original);
+   await db.query(`SET LOCAL ROLE authenticated; SET LOCAL test.uid='${supervisor}'`);
+   await db.query("INSERT INTO public.attendance(id,worker_id,project_id,date,status,hours_worked,submitted_at) VALUES('70000000-0000-4000-8000-000000000016',$1,$2,'2024-08-18','present',8,'2024-08-18T08:00:00Z')",[worker,site]);
+   await db.query('SAVEPOINT wrong_site_worker');
+   await expect(db.query("INSERT INTO public.attendance(id,worker_id,project_id,date,status,hours_worked,submitted_at) VALUES('70000000-0000-4000-8000-000000000017',$1,'00000000-0000-0000-0000-000000000005','2024-08-18','present',8,'2024-08-18T08:00:00Z')",[worker])).rejects.toThrow(/one active assignment/);
+   await db.query('ROLLBACK TO SAVEPOINT wrong_site_worker; RELEASE SAVEPOINT wrong_site_worker; RESET ROLE');
    await db.query('ROLLBACK');expect(await snapshot()).toEqual(before);
    expect((await db.query("SELECT to_regclass('public.weekly_worker_draft_sources') IS NULL absent,to_regprocedure('public.weekly_worker_preview_base_inputs(date)') IS NULL wrapper_absent,to_regprocedure('public.weekly_worker_preview_inputs(date)') IS NOT NULL base_present")).rows[0]).toEqual({absent:true,wrapper_absent:true,base_present:true});
   }finally{await db.query('ROLLBACK').catch(()=>{});await db.end();}

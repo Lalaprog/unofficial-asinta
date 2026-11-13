@@ -187,6 +187,44 @@ describe('roll call usability and safety', () => {
     expect(status('Amy', 'Leave').getAttribute('aria-pressed')).toBe('true');
   });
 
+  it('keeps a moved worker edit as a draft and asks the Supervisor to seek Founder review', async () => {
+    mock.snapshots.set('site-1:2026-11-03', {
+      workerIds: ['amy','cara','dan','eva'],
+      records: [
+        {id:'b',worker_id:'ben',project_id:'site-1',date:'2026-11-03',status:'half_day',notes:'',recorded_by:'founder'},
+        {id:'c',worker_id:'cara',project_id:'site-1',date:'2026-11-03',status:'absent',notes:'',recorded_by:'founder'},
+      ],
+    });
+    render(React.createElement(AttendancePage));
+    fireEvent.click(status('Ben', 'Leave'));
+    fireEvent.click(status('Amy', 'Present'));
+    fireEvent.click(status('Eva', 'Present'));
+    fireEvent.click(screen.getByRole('button', {name:'Save Changes'}));
+    await act(async () => {});
+    expect(mock.record).not.toHaveBeenCalled();
+    expect(mock.toast).toHaveBeenCalledWith('error', expect.stringMatching(/no longer assigned.*draft is kept.*Founder/));
+    expect(status('Ben', 'Leave').getAttribute('aria-pressed')).toBe('true');
+    cleanup();render(React.createElement(AttendancePage));
+    expect(status('Ben', 'Leave').getAttribute('aria-pressed')).toBe('true');
+  });
+
+  it('allows other Supervisor changes when moved-worker history is left unchanged', async () => {
+    mock.snapshots.set('site-1:2026-11-03', {
+      workerIds: ['amy','cara','dan','eva'],
+      records: [
+        {id:'b',worker_id:'ben',project_id:'site-1',date:'2026-11-03',status:'half_day',notes:'',recorded_by:'founder'},
+        {id:'c',worker_id:'cara',project_id:'site-1',date:'2026-11-03',status:'absent',notes:'',recorded_by:'founder'},
+      ],
+    });
+    mock.record.mockResolvedValue(false);
+    render(React.createElement(AttendancePage));
+    fireEvent.click(status('Amy', 'Present'));fireEvent.click(status('Eva', 'Present'));
+    fireEvent.click(screen.getByRole('button', {name:'Save Changes'}));
+    await act(async () => {});
+    expect(mock.record).toHaveBeenCalledTimes(1);
+    expect((mock.record.mock.calls[0][0] as Array<{worker_id:string}>).some(row=>row.worker_id==='ben')).toBe(false);
+  });
+
   it('bulk marks only unmarked crew and locks edits until submission finishes', async () => {
     let finish!: (value: boolean) => void;
     mock.record.mockImplementation(() => new Promise(resolve => { finish = resolve; }));

@@ -695,6 +695,19 @@ function AttendancePageInner() {
       }
     }
 
+    // Historical rows remain visible, but a moved worker's old site record
+    // must not be submitted by a Supervisor as if still assigned here. This is
+    // a UX check only; the database guard is separately required for security.
+    if (isSupervisor) {
+      const assigned = new Set(rollCallSnapshot.workerIds);
+      if (batch.some((row) => row.worker_id !== user.id && !assigned.has(row.worker_id))) {
+        submitLock.current = false;
+        setIsSubmitting(false);
+        showToast('error', 'An edited worker is no longer assigned to this site. Your draft is kept; ask the Founder to review the saved history.');
+        return;
+      }
+    }
+
     if (batch.length === 0) {
       submitLock.current = false;
       setIsSubmitting(false);

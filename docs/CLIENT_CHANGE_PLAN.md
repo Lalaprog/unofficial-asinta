@@ -2,7 +2,7 @@
 
 # Client change plan and deferred items
 
-This is a working plan, not a statement that all features below have been delivered. The draft PR only includes the items explicitly described in its summary and must not be treated as a completed payroll, attendance, privacy or database rollout.
+This is a working plan, not a statement that all features below have been delivered. The draft PR only includes the items explicitly described in its summary and must not be treated as a completed payroll, attendance, privacy or database rollout. For a concise done/drafted/remaining overview, see [CLIENT_TASK_STATUS.md](CLIENT_TASK_STATUS.md).
 
 ## Agreed rules for later implementation
 
@@ -70,7 +70,7 @@ Synthetic PGlite/UI tests cover role and assurance, exact-cent arithmetic, expli
 
 The draft adds a guarded single-project assignment path and available-worker lookup; it does not change existing duplicate assignments. Its migration was applied to the connected development database in the combined rollout described below; actual signed-in app verification remains necessary before deployment. Supervisor exceptions use a worker UUID linked to a Supervisor account; unlinked legacy identities need review. The Supervisor workforce screen filters the selected project and the ordinary Roll Call response no longer includes available workers; the add flow requests those separately. The existing global worker-read policy and other workforce entry points are not yet redesigned, so these UI/API changes do not establish the requested Supervisor privacy boundary. Preserve scoped historical names, Supervisor identity safeguards, duplicate registration checks and existing drafts when changing database policies. Privileged service-role direct writes bypass the guarded assignment function; all app assignment entry points must use the guarded path. Multi-session local PostgreSQL tests cover competing guarded assignments, but do not prove hosted concurrency or privileged direct-write behavior. The hosted migration history differs from the repository; do not blindly push migrations.
 
-A separate read-only policy inspection found that legacy Supervisor attendance INSERT/UPDATE checks project authorization but does not itself require the worker's active site assignment. An isolated policy model reproduces this gap; it is not evidence of actual misuse. UI filtering is not an adequate database boundary. The fix must be coordinated with legacy Supervisor self-attendance, moved-worker history, Founder backfill, saved drafts and assignment races; see `RELEASE_RECONCILIATION.md`. No policy was changed in this batch.
+A separate read-only policy inspection found that legacy Supervisor attendance INSERT/UPDATE checks project authorization but does not itself require the worker's active site assignment. An isolated policy model reproduces this gap; it is not evidence of actual misuse. A new uninstalled guard candidate and tested Roll Call draft-preserving warning address selected paths, but the shared database remains unchanged and UI checks are not an adequate database boundary. The candidate permits legacy Supervisor self-entry and blocks auth-less service writes; its lock order, old clients, maintenance and eventual general-attendance cutover need further work. See `RELEASE_RECONCILIATION.md` for limitations.
 
 ## Worker payslip batch (draft, not deployed)
 

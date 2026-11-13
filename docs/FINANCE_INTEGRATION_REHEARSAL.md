@@ -25,7 +25,7 @@ First the existing PR #103 rehearsal assembles the time/allowance, Supervisor fo
 5. `historical_paid_date_annotation`, `historical_settled_bale_evidence`, `historical_finance_evidence_review`, `historical_external_worker_payroll`, `supervisor_payroll_ledger`, `paid_period_assertion_adjustments`
 6. `confirmed_rental_expense_link`, `project_cost_reconciliation_preview`
 
-The SQL then performs selected function, internal-function privilege and table-grant checks before rollback. Each draft has its own preflight/postflight as well. The transaction-control scanner is a simple tripwire, **not a SQL parser**; changes to source inputs, role inheritance, function definitions and order still require review.
+The SQL then performs selected function, internal-function privilege and table-grant checks before rollback. Each draft has its own preflight/postflight as well. The transaction-control scanner is a simple tripwire, **not a SQL parser**; changes to source inputs, role inheritance, function definitions and order still require review. For the operational synthetic scenario only, the test additionally installs the separate uninstalled `attendance_assignment_guard.sql` candidate after the generated sequence and exercises an assigned and an unassigned-site Supervisor write. That guard is **not** included in the generator; its maintenance, concurrency and cutover limitations are in `RELEASE_RECONCILIATION.md`.
 
 ## What it proves and does not prove
 
