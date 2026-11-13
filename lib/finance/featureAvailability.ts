@@ -8,6 +8,11 @@ export function financeFoundationEnabled(): boolean {
   return process.env.NEXT_PUBLIC_FINANCE_FOUNDATION_PREVIEW === 'true';
 }
 
+/** Experimental source-bound weekly write UI; never enable without its complete reviewed backend and cutover. */
+export function weeklyWorkerActionsPreviewEnabled(): boolean {
+  return financeFoundationEnabled() && process.env.NEXT_PUBLIC_WEEKLY_WORKER_ACTIONS_PREVIEW === 'true';
+}
+
 /** Independent gate for the uninstalled Supervisor payroll planning RPCs. */
 export function supervisorPayrollPreviewEnabled(): boolean {
   return financeFoundationEnabled() && process.env.NEXT_PUBLIC_SUPERVISOR_PAYROLL_PREVIEW === 'true';

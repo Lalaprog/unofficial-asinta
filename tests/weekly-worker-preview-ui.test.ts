@@ -10,8 +10,15 @@ vi.mock('@/lib/reminders/scheduler',()=>({getManilaClock:()=>({dateIso:'2026-11-
 import {WeeklyWorkerPreview} from '@/components/payroll/WeeklyWorkerPreview';
 const snapshot={start:'2026-11-15',end:'2026-11-21',workers:[{id:'w',name:'Ada',position:'Mason',active:true,pay_rate:'655.55',pay_rate_type:'daily',linked_supervisor:false,possible_supervisor:false}],attendance:[{id:'a',worker_id:'w',project_id:'p',date:'2026-11-15',status:'present',hours_worked:'8.00',time_detail:null}],vouchers:[],allowances:[],advances:[],older_advances:[]};
 const deferred=()=>{let resolve!:(value:unknown)=>void;const promise=new Promise(r=>resolve=r);return {promise,resolve};};
-beforeEach(()=>{mock.rpc.mockReset();mock.user='founder';});afterEach(cleanup);
+beforeEach(()=>{mock.rpc.mockReset();mock.user='founder';});afterEach(()=>{cleanup();vi.unstubAllEnvs();});
 describe('weekly planning preview',()=>{
+ it('requires both independent flags before mounting experimental write actions',async()=>{
+  mock.rpc.mockResolvedValue({data:snapshot,error:null});vi.stubEnv('NEXT_PUBLIC_FINANCE_FOUNDATION_PREVIEW','false');vi.stubEnv('NEXT_PUBLIC_WEEKLY_WORKER_ACTIONS_PREVIEW','true');
+  const view=render(React.createElement(WeeklyWorkerPreview));fireEvent.click(screen.getByRole('button',{name:/Weekly worker planning preview/}));fireEvent.click(screen.getByRole('button',{name:'Load preview'}));await screen.findByText('Ada');
+  expect(screen.queryByRole('button',{name:'Review new draft'})).toBeNull();
+  vi.stubEnv('NEXT_PUBLIC_FINANCE_FOUNDATION_PREVIEW','true');view.rerender(React.createElement(WeeklyWorkerPreview));expect(screen.getByRole('button',{name:'Review new draft'})).toBeTruthy();
+  vi.stubEnv('NEXT_PUBLIC_WEEKLY_WORKER_ACTIONS_PREVIEW','false');view.rerender(React.createElement(WeeklyWorkerPreview));expect(screen.queryByRole('button',{name:'Review new draft'})).toBeNull();
+ });
  it('loads on request and clearly labels unmarked days and limited estimate',async()=>{
   mock.rpc.mockResolvedValue({data:snapshot,error:null});render(React.createElement(WeeklyWorkerPreview));expect(mock.rpc).not.toHaveBeenCalled();
   fireEvent.click(screen.getByRole('button',{name:/Weekly worker planning preview/}));fireEvent.click(screen.getByRole('button',{name:'Load preview'}));
