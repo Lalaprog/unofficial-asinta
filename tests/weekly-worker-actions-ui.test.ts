@@ -136,6 +136,56 @@ describe('revision-aware draft refresh UI (independent gate)',()=>{
  });
  it('fails closed on corrupt or unavailable retry storage without sending a refresh',async()=>{
   enable();sessionStorage.setItem(JSON.stringify(['weekly-worker-refresh-v1','founder',worker,start]),'broken');
-  render(React.createElement(WeeklyWorkerActions,{...props,row:existing}));expect(await screen.findByText(/Refresh may have been sent/)).toBeTruthy();expect(screen.queryByRole('button',{name:'Load voucher details'})).toBeNull();expect(mock.rpc).not.toHaveBeenCalled();
+  render(React.createElement(WeeklyWorkerActions,{...props,row:existing}));expect(await screen.findByText(/refresh or return may have been sent/)).toBeTruthy();expect(screen.queryByRole('button',{name:'Load voucher details'})).toBeNull();expect(mock.rpc).not.toHaveBeenCalled();
+ });
+});
+
+
+describe('approved voucher return and revision-bound payment UI',()=>{
+ const existing={...row,vouchers:[{id,worker_id:worker,status:'approved' as const,period_start:start,period_end:end}]};
+ const request='20000000-0000-4000-8000-000000000008';
+ function enable(){vi.stubEnv('NEXT_PUBLIC_FINANCE_FOUNDATION_PREVIEW','true');vi.stubEnv('NEXT_PUBLIC_WEEKLY_WORKER_ACTIONS_PREVIEW','true');vi.stubEnv('NEXT_PUBLIC_WEEKLY_WORKER_REFRESH_PREVIEW','true');vi.stubEnv('NEXT_PUBLIC_WEEKLY_WORKER_RETURN_PREVIEW','true');}
+ it('requires all gates and confirmation of no external payment with a reason',async()=>{
+  const {weeklyWorkerReturnPreviewEnabled}=await import('@/lib/finance/featureAvailability');enable();expect(weeklyWorkerReturnPreviewEnabled()).toBe(true);vi.stubEnv('NEXT_PUBLIC_WEEKLY_WORKER_REFRESH_PREVIEW','false');expect(weeklyWorkerReturnPreviewEnabled()).toBe(false);enable();
+  vi.spyOn(crypto,'randomUUID').mockReturnValue(request);let status:'approved'|'draft'='approved',revision=0;
+  mock.rpc.mockImplementation(async(name:string)=>{
+   if(name==='weekly_worker_draft_details')return {data:{...details(status),draft_revision:revision},error:null};
+   if(name==='return_weekly_worker_to_draft'){status='draft';revision=1;return {data:{payroll_id:id,replayed:false,revision},error:null};}throw Error(name);
+  });
+  render(React.createElement(WeeklyWorkerActions,{...props,row:existing}));fireEvent.click(screen.getByRole('button',{name:'Load voucher details'}));await screen.findByText(/Saved status: approved/);
+  fireEvent.click(screen.getByRole('button',{name:'Review return to draft'}));expect(screen.getByText(/If payment may have happened/)).toBeTruthy();
+  const button=screen.getByRole('button',{name:'Return to draft'}) as HTMLButtonElement;expect(button.disabled).toBe(true);
+  fireEvent.change(screen.getByLabelText('Reason for returning to draft'),{target:{value:'  Saturday attendance  '}});expect(button.disabled).toBe(true);fireEvent.click(screen.getByRole('checkbox',{name:/I verified no external payment/}));expect(button.disabled).toBe(false);fireEvent.click(button);
+  await screen.findByText(/Saved status: draft/);expect(screen.getByText(/saved amount is unchanged/)).toBeTruthy();expect(mock.rpc).toHaveBeenCalledWith('return_weekly_worker_to_draft',{p_request:request,p_id:id,p_expected_revision:0,p_reason:'Saturday attendance'});expect(sessionStorage.length).toBe(0);
+ });
+ it('records payment only for the reviewed revision and never offers return for paid vouchers',async()=>{
+  enable();let status:'approved'|'paid'='approved';mock.rpc.mockImplementation(async(name:string)=>name==='weekly_worker_draft_details'?{data:{...details(status),draft_revision:2},error:null}:(status='paid',{data:{outcome:'updated',payroll:{id,status},payment_date:end},error:null}));
+  render(React.createElement(WeeklyWorkerActions,{...props,row:existing}));fireEvent.click(screen.getByRole('button',{name:'Load voucher details'}));await screen.findByText(/Saved status: approved/);fireEvent.click(screen.getByRole('button',{name:'Review external payment'}));fireEvent.change(screen.getByLabelText('Actual external payment date'),{target:{value:end}});fireEvent.click(screen.getByRole('checkbox',{name:/I verified the external payment/}));fireEvent.click(screen.getByRole('button',{name:'Record payment'}));
+  await screen.findByText(/Saved status: paid/);expect(mock.rpc).toHaveBeenCalledWith('record_weekly_worker_payment',{p_id:id,p_payment_date:end,p_expected_revision:2});expect(screen.queryByRole('button',{name:'Review return to draft'})).toBeNull();
+ });
+ it('retries an uncertain return with the same exact ID, reason and revision across reload',async()=>{
+  enable();vi.spyOn(crypto,'randomUUID').mockReturnValue(request);let first=true;mock.rpc.mockImplementation(async(name:string)=>{
+   if(name==='weekly_worker_draft_details')return {data:{...details(first?'approved':'draft'),draft_revision:first?0:1},error:null};
+   if(name==='return_weekly_worker_to_draft'){if(first){first=false;throw Error('lost');}return {data:{payroll_id:id,replayed:true,revision:1},error:null};}throw Error(name);
+  });
+  const view=render(React.createElement(WeeklyWorkerActions,{...props,row:existing}));fireEvent.click(screen.getByRole('button',{name:'Load voucher details'}));await screen.findByText(/Saved status: approved/);fireEvent.click(screen.getByRole('button',{name:'Review return to draft'}));fireEvent.change(screen.getByLabelText('Reason for returning to draft'),{target:{value:'Attendance changed'}});fireEvent.click(screen.getByRole('checkbox',{name:/I verified no external payment/}));fireEvent.click(screen.getByRole('button',{name:'Return to draft'}));await screen.findByText(/Return outcome not confirmed/);view.unmount();
+  render(React.createElement(WeeklyWorkerActions,{...props,row:existing}));expect(screen.queryByRole('button',{name:'Load voucher details'})).toBeNull();fireEvent.click(screen.getByRole('button',{name:'Retry exact return'}));await screen.findByText(/Saved status: draft/);
+  expect(mock.rpc.mock.calls.filter(c=>c[0]==='return_weekly_worker_to_draft').map(c=>c[1])).toEqual(Array(2).fill({p_request:request,p_id:id,p_expected_revision:0,p_reason:'Attendance changed'}));expect(sessionStorage.length).toBe(0);
+ });
+ it('refuses to send a return if retry storage cannot be preserved',async()=>{
+  enable();vi.spyOn(crypto,'randomUUID').mockReturnValue(request);mock.rpc.mockResolvedValue({data:{...details('approved'),draft_revision:0},error:null});
+  render(React.createElement(WeeklyWorkerActions,{...props,row:existing}));fireEvent.click(screen.getByRole('button',{name:'Load voucher details'}));await screen.findByText(/Saved status: approved/);fireEvent.click(screen.getByRole('button',{name:'Review return to draft'}));fireEvent.change(screen.getByLabelText('Reason for returning to draft'),{target:{value:'Correction'}});fireEvent.click(screen.getByRole('checkbox',{name:/I verified no external payment/}));vi.spyOn(Storage.prototype,'setItem').mockImplementation(()=>{throw Error('unavailable');});fireEvent.click(screen.getByRole('button',{name:'Return to draft'}));
+  await screen.findByText(/Retry storage could not be verified/);expect(mock.rpc.mock.calls.filter(c=>c[0]==='return_weekly_worker_to_draft')).toHaveLength(0);expect(screen.queryByRole('button',{name:'Review external payment'})).toBeNull();
+ });
+ it('rejects a replay for a mismatched worker and blocks a stale payment response',async()=>{
+  enable();sessionStorage.setItem(JSON.stringify(['weekly-worker-return-v1','founder',worker,start]),JSON.stringify({request,payroll:id,revision:0,reason:'Attendance'}));mock.rpc.mockResolvedValue({data:{...details('approved'),worker_id:'other',draft_revision:0},error:null});
+  const view=render(React.createElement(WeeklyWorkerActions,{...props,row:existing}));fireEvent.click(screen.getByRole('button',{name:'Retry exact return'}));await screen.findByText(/Return outcome not confirmed/);expect(mock.rpc.mock.calls.filter(c=>c[0]==='return_weekly_worker_to_draft')).toHaveLength(0);view.unmount();sessionStorage.clear();mock.rpc.mockReset();
+  mock.rpc.mockImplementation(async(name:string)=>name==='weekly_worker_draft_details'?{data:{...details('approved'),draft_revision:2},error:null}:{data:null,error:{message:'Voucher revision changed'}});
+  render(React.createElement(WeeklyWorkerActions,{...props,row:existing}));fireEvent.click(screen.getByRole('button',{name:'Load voucher details'}));await screen.findByText(/Saved status: approved/);fireEvent.click(screen.getByRole('button',{name:'Review external payment'}));fireEvent.change(screen.getByLabelText('Actual external payment date'),{target:{value:end}});fireEvent.click(screen.getByRole('checkbox',{name:/I verified the external payment/}));fireEvent.click(screen.getByRole('button',{name:'Record payment'}));await screen.findByText(/Voucher revision changed/);expect(screen.queryByText(/Saved status: paid/)).toBeNull();
+ });
+ it('fails closed when result is stale or retry storage is corrupted',async()=>{
+  enable();vi.spyOn(crypto,'randomUUID').mockReturnValue(request);let count=0;mock.rpc.mockImplementation(async(name:string)=>name==='weekly_worker_draft_details'?{data:{...details(count++<2?'approved':'draft'),draft_revision:count<=2?0:2},error:null}:{data:{payroll_id:id,replayed:false,revision:1},error:null});
+  const view=render(React.createElement(WeeklyWorkerActions,{...props,row:existing}));fireEvent.click(screen.getByRole('button',{name:'Load voucher details'}));await screen.findByText(/Saved status: approved/);fireEvent.click(screen.getByRole('button',{name:'Review return to draft'}));fireEvent.change(screen.getByLabelText('Reason for returning to draft'),{target:{value:'Correction'}});fireEvent.click(screen.getByRole('checkbox',{name:/I verified no external payment/}));fireEvent.click(screen.getByRole('button',{name:'Return to draft'}));await screen.findByText(/Return outcome not confirmed/);expect(screen.queryByRole('button',{name:'Review approval'})).toBeNull();expect(sessionStorage.length).toBe(1);view.unmount();
+  sessionStorage.clear();sessionStorage.setItem(JSON.stringify(['weekly-worker-return-v1','founder',worker,start]),'{bad');render(React.createElement(WeeklyWorkerActions,{...props,row:existing}));expect(await screen.findByText(/refresh or return may have been sent/)).toBeTruthy();expect(screen.queryByRole('button',{name:'Load voucher details'})).toBeNull();
  });
 });

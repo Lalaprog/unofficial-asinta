@@ -28,6 +28,11 @@ export function weeklyWorkerRefreshPreviewEnabled(): boolean {
   return weeklyWorkerActionsPreviewEnabled() && process.env.NEXT_PUBLIC_WEEKLY_WORKER_REFRESH_PREVIEW === 'true';
 }
 
+/** Experimental return and revision-bound payment UI; requires the complete return backend. */
+export function weeklyWorkerReturnPreviewEnabled(): boolean {
+  return weeklyWorkerRefreshPreviewEnabled() && process.env.NEXT_PUBLIC_WEEKLY_WORKER_RETURN_PREVIEW === 'true';
+}
+
 /** Read-only paid allocation evidence; not a complete project cost or schema check. */
 export function projectPaidWorkerEvidencePreviewEnabled(): boolean {
   return financeFoundationEnabled() && process.env.NEXT_PUBLIC_PROJECT_PAID_WORKER_EVIDENCE_PREVIEW === 'true';

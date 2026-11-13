@@ -12,6 +12,13 @@ export function parseWeeklyRefreshAttempt(value:unknown):WeeklyRefreshAttempt {
  if(typeof a.request!=='string'||!uuid.test(a.request)||typeof a.payroll!=='string'||!uuid.test(a.payroll)||!Number.isSafeInteger(a.revision)||a.revision<0||a.revision>=Number.MAX_SAFE_INTEGER)throw new Error('Invalid refresh retry record');
  return {request:a.request,payroll:a.payroll,revision:a.revision};
 }
+export type WeeklyReturnAttempt=WeeklyRefreshAttempt & {reason:string};
+export function parseWeeklyReturnAttempt(value:unknown):WeeklyReturnAttempt {
+ const a=parseWeeklyRefreshAttempt(value);
+ const reason=(value as {reason?:unknown}).reason;
+ if(typeof reason!=='string'||reason!==reason.trim()||reason.length<1||reason.length>500)throw new Error('Invalid return retry record');
+ return {...a,reason};
+}
 const amount=/^(?:0|[1-9]\d{0,9})\.\d{2}$/;
 const units=(value:unknown):bigint=>{if(typeof value!=='string'||!amount.test(value))throw new Error('Invalid weekly voucher amount');const [a,b]=value.split('.');return BigInt(a)*100n+BigInt(b);};
 const validDate=(value:unknown):value is string=>{try{return typeof value==='string'&&!!workerPayrollPeriod(value);}catch{return false;}};
