@@ -1,4 +1,5 @@
--- DRAFT ONLY: coordinated, reviewed ACL hardening; not a standalone deployment.
+-- GENERIC DRAFT: not a standalone deployment. A separately fingerprint-bound
+-- variant was installed on the development project; see applied_development/.
 -- The three existing legacy RPCs remain authenticated-callable, and their
 -- bodies and triggers are unchanged. PUBLIC and explicit anon EXECUTE are
 -- removed; effective inherited anon access aborts the transaction. PUBLIC

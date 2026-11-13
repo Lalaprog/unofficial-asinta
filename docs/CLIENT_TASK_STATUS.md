@@ -24,7 +24,7 @@ This groups the agreed work into 16 practical areas; it is not a substitute for 
 ## Cross-cutting release blockers
 
 - The production website recovery and connected development schema are not a completed payroll rollout. Do not merge the draft as complete or blindly run `supabase db push`/stale generated bundles.
-- Three legacy Bale request RPCs have explicit anonymous EXECUTE on the connected development database. Their observed Founder/assurance checks reject a missing user; this is not proof of anonymous mutation. A targeted ACL hardening candidate is tested but **not installed**; review integration roles and complete cutover.
+- The connected development database now denies anonymous EXECUTE on three legacy Bale request RPCs while retaining authenticated/service-role grants (hosted migration `20261113223101_legacy_bale_anon_execute_hardening`). The old functions and authenticated legacy actions remain; this narrow hardening is not the weekly cutover. Other roles/integrations and legacy writers still need review.
 - Full target catalog, grants/RLS, Auth/PostgREST, legacy-client and all writer/lock paths are not proven by synthetic tests. The attendance guard is not installed. Privileged writers need separate treatment.
 - A reliable, tested backup and restore plan—including Storage—is required before real client data or handover. No verified backup exists yet. The user's authorization to discard development test data does not replace recovery for real data.
 - No real money or messages may be sent as part of testing. The user handles actual real-world testing, environment variables and SMTP; no additional fictional hosted records are authorized without their approval.
