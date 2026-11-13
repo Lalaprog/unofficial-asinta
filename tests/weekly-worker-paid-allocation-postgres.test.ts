@@ -31,16 +31,19 @@ suite('integrated weekly payment and project attribution concurrency',()=>{
     ('${id(12)}','${worker}','${site}','2024-11-10','present',8,'2024-11-10T08:00:00Z'),
     ('${id(13)}','${worker}','${site}','2024-11-17','present',8,'2024-11-17T08:00:00Z'),
     ('${id(14)}','${worker}','${site}','2024-11-24','present',8,'2024-11-24T08:00:00Z');`);
-  for(const path of ['supabase/migrations/20261102000000_atomic_payroll_payments.sql','supabase/migrations/20261113000000_weekly_worker_preview.sql','supabase/migrations/20261113000001_attendance_time_detail.sql','supabase/migrations/20261113000002_worker_allowances.sql','supabase/migrations/20261113000003_weekly_payroll_context.sql','supabase/drafts/guard_legacy_bale_payment.sql','supabase/drafts/weekly_payment_date.sql','supabase/drafts/weekly_worker_generator.sql','supabase/drafts/weekly_worker_approval.sql','supabase/drafts/weekly_worker_paid_allocation.sql','supabase/drafts/weekly_worker_draft_details.sql'])await admin.query(readFileSync(path,'utf8'));
+  for(const path of ['supabase/migrations/20261102000000_atomic_payroll_payments.sql','supabase/migrations/20261113000000_weekly_worker_preview.sql','supabase/migrations/20261113000001_attendance_time_detail.sql','supabase/migrations/20261113000002_worker_allowances.sql','supabase/migrations/20261113000003_weekly_payroll_context.sql','supabase/drafts/guard_legacy_bale_payment.sql','supabase/drafts/weekly_payment_date.sql','supabase/drafts/weekly_worker_generator.sql','supabase/drafts/weekly_worker_approval.sql','supabase/drafts/weekly_worker_paid_allocation.sql','supabase/drafts/weekly_worker_draft_details.sql','supabase/drafts/project_paid_payroll_evidence.sql'])await admin.query(readFileSync(path,'utf8'));
   await Promise.all([first.query(`SET ROLE authenticated; SET test.uid='${founder}'; SET test.assurance='yes'; SET lock_timeout='4s'`),second.query(`SET ROLE authenticated; SET test.uid='${founder}'; SET test.assurance='yes'; SET lock_timeout='4s'`)]);
  },30000);
  afterAll(async()=>{await Promise.all([admin?.end(),first?.end(),second?.end()]);});
  it('serializes matching retries and posts moved-worker costs once',async()=>{
   await draft(first,id(1),'2024-11-03');await approve(first,id(1));await first.query('BEGIN');await second.query('BEGIN');try{
-   expect((await pay(first,id(1),'2024-11-09')).rows[0].result.outcome).toBe('updated');let finished=false;
+   expect((await pay(first,id(1),'2024-11-09')).rows[0].result.outcome).toBe('updated');
+   expect((await second.query('SELECT public.project_paid_worker_evidence($1) result',[site])).rows[0].result.items).toEqual([]);let finished=false;
    const retry=pay(second,id(1),'2024-11-09').finally(()=>{finished=true});await pause();expect(finished).toBe(false);await first.query('COMMIT');expect((await retry).rows[0].result.outcome).toBe('already_recorded');await second.query('COMMIT');
    expect((await admin.query('SELECT project_id,wage::text FROM public.weekly_worker_paid_allocations WHERE payroll_id=$1 ORDER BY project_id',[id(1)])).rows).toEqual([{project_id:site,wage:'600.00'},{project_id:other,wage:'300.00'}]);
    expect((await first.query('SELECT public.weekly_worker_draft_details($1) result',[id(1)])).rows[0].result).toMatchObject({status:'paid',payment_date:'2024-11-09',allocations:[{project_id:site,gross:'600.00'},{project_id:other,gross:'300.00'}]});
+   expect((await first.query('SELECT public.project_paid_worker_evidence($1) result',[site])).rows[0].result.items).toEqual([expect.objectContaining({payroll_id:id(1),gross:'600.00'})]);
+   expect((await second.query('SELECT public.project_paid_worker_evidence($1) result',[other])).rows[0].result.items).toEqual([expect.objectContaining({payroll_id:id(1),gross:'300.00'})]);
    expect((await admin.query<{n:number}>("SELECT count(*)::int n FROM public.audit_log WHERE table_name='payroll' AND record_id=$1 AND action='update'",[id(1)])).rows[0].n).toBe(2);
   }finally{await first.query('ROLLBACK');await second.query('ROLLBACK');}
  },15000);

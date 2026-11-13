@@ -6,7 +6,8 @@ import { Button } from '@/components/ui/Button';
 import { Badge } from '@/components/ui/Badge';
 import { formatPeso } from '@/lib/email/format';
 import { useExpenseLedger } from '@/lib/projects/useExpenseLedger';
-import { confirmedRentalPreviewEnabled, rentalConfirmationPreviewEnabled } from '@/lib/finance/featureAvailability';
+import { confirmedRentalPreviewEnabled, projectPaidWorkerEvidencePreviewEnabled, rentalConfirmationPreviewEnabled } from '@/lib/finance/featureAvailability';
+import { PaidWorkerEvidence } from '@/components/projects/PaidWorkerEvidence';
 import { ConfirmedRentals } from '@/components/projects/ConfirmedRentals';
 import { RentalConfirmation } from '@/components/projects/RentalConfirmation';
 
@@ -20,6 +21,7 @@ export function ProjectExpenseLedger({projectId,userId,onRefreshTotals}:{project
    <div className="flex flex-wrap gap-2"><Button variant="secondary" size="sm" onClick={()=>{ledger.reload();onRefreshTotals()}}>Refresh ledger</Button><Link href="/expenses"><Button variant="primary" size="sm" leftIcon={<Sparkles className="w-3.5 h-3.5" />}>Record Expense</Button></Link></div>
   </div>
   <p className="text-xs text-ink-secondary">Recorded expense entries only, newest first. Payroll and rentals appear only if already recorded as expenses; their automatic integration is not yet implemented. Pages and totals can change as records are edited; refresh to review the latest data.</p>
+  {projectPaidWorkerEvidencePreviewEnabled() && <PaidWorkerEvidence key={`${projectId}:${userId}`} projectId={projectId} userId={userId} />}
   {confirmedRentalPreviewEnabled() && <ConfirmedRentals key={`${projectId}:${userId}:${rentalRevision}`} projectId={projectId} userId={userId} />}
   {rentalConfirmationPreviewEnabled() && <RentalConfirmation key={`${projectId}:${userId}`} projectId={projectId} userId={userId} expenses={ledger.error||ledger.loading?[]:ledger.items} onRecorded={()=>{ledger.reload();onRefreshTotals();setRentalRevision(n=>n+1);}} />}
   <div className="bg-white rounded-xl border border-surface-border overflow-hidden">

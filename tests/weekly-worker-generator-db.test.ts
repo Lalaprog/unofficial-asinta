@@ -37,7 +37,7 @@ async function fixture(withApproval=false,withPayment=false){
  }
  await db.exec(sql('supabase/drafts/weekly_worker_generator.sql'));
  if(withApproval||withPayment) await db.exec(sql('supabase/drafts/weekly_worker_approval.sql'));
- if(withPayment){await db.exec(sql('supabase/drafts/weekly_worker_paid_allocation.sql'));await db.exec(sql('supabase/drafts/weekly_worker_draft_details.sql'));}
+ if(withPayment){await db.exec(sql('supabase/drafts/weekly_worker_paid_allocation.sql'));await db.exec(sql('supabase/drafts/weekly_worker_draft_details.sql'));await db.exec(sql('supabase/drafts/project_paid_payroll_evidence.sql'));}
  await db.exec(`SET test.uid='${founder}'; SET test.assurance='yes'; SET ROLE authenticated;`);
  return db;
 }
@@ -206,7 +206,10 @@ describe('integrated weekly payment and gross site allocations (draft)',()=>{
    await generate(db);
    const getDetails=async()=>parseWeeklyDraftDetails((await db.query<{result:unknown}>('SELECT public.weekly_worker_draft_details($1) result',[voucher])).rows[0].result,{id:voucher,worker,start});
    expect((await getDetails()).status).toBe('draft');await approve(db);expect((await getDetails()).status).toBe('approved');
+   expect((await db.query<{data:{items:unknown[]}}>('SELECT public.project_paid_worker_evidence($1) data',[site])).rows[0].data.items).toEqual([]);
    expect((await pay(db)).rows[0].result).toMatchObject({outcome:'updated',payment_date:'2024-11-09'});
+   expect((await db.query<{data:{items:unknown[]}}>('SELECT public.project_paid_worker_evidence($1) data',[site])).rows[0].data.items).toEqual([expect.objectContaining({payroll_id:voucher,gross:'869.69',payment_date:'2024-11-09'})]);
+   expect((await db.query<{data:{items:unknown[]}}>('SELECT public.project_paid_worker_evidence($1) data',[other])).rows[0].data.items).toEqual([expect.objectContaining({payroll_id:voucher,gross:'327.77'})]);
    expect(await getDetails()).toMatchObject({status:'paid',payment_date:'2024-11-09',allocations:[{project_id:site,gross:'869.69'},{project_id:other,gross:'327.77'}]});
    expect((await db.query('SELECT project_id,hours::text,wage::text,allowance::text,gross::text FROM public.weekly_worker_paid_allocations ORDER BY project_id')).rows).toEqual([
     {project_id:site,hours:'10.00',wage:'819.44',allowance:'50.25',gross:'869.69'},

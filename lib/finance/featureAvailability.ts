@@ -23,6 +23,11 @@ export function weeklyWorkerActionsPreviewEnabled(): boolean {
   return financeFoundationEnabled() && process.env.NEXT_PUBLIC_WEEKLY_WORKER_ACTIONS_PREVIEW === 'true';
 }
 
+/** Read-only paid allocation evidence; not a complete project cost or schema check. */
+export function projectPaidWorkerEvidencePreviewEnabled(): boolean {
+  return financeFoundationEnabled() && process.env.NEXT_PUBLIC_PROJECT_PAID_WORKER_EVIDENCE_PREVIEW === 'true';
+}
+
 /** Read-only experimental confirmed rental links; not a write UI or schema check. */
 export function confirmedRentalPreviewEnabled(): boolean {
   return financeFoundationEnabled() && process.env.NEXT_PUBLIC_CONFIRMED_RENTAL_PREVIEW === 'true';
