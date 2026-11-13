@@ -4,6 +4,7 @@ import {describe,expect,it} from 'vitest';
 import {baseFixture} from './helpers/pr103-fixture';
 import {buildWeeklyPreview,parseWeeklyInput} from '@/lib/payroll/weeklyPreview';
 import {parseWeeklyDraftDetails} from '@/lib/payroll/weeklyDraftDetails';
+import {historicalArguments,parseHistoricalAttempt,verifyHistoricalResult} from '@/lib/payroll/historicalEntry';
 const id=(n:number)=>`10000000-0000-0000-0000-${String(n).padStart(12,'0')}`;
 const founder='00000000-0000-0000-0000-000000000001',supervisor='00000000-0000-0000-0000-000000000002',worker='00000000-0000-0000-0000-000000000003',site='00000000-0000-0000-0000-000000000004',other='00000000-0000-0000-0000-000000000005';
 const [att1,att2,detail,allowance,advance,request,voucher]=[1,2,3,4,5,6,7].map(id);
@@ -467,9 +468,21 @@ describe('historical settled Bale evidence candidate',()=>{
    await db.exec('RESET ROLE');await expect(db.query('DELETE FROM public.historical_settled_bale_evidence WHERE request_id=$1',[baleRequest])).rejects.toThrow(/immutable/);
   }finally{await db.close();}
  },30000);
+ it('round-trips client date and Bale evidence requests through the real candidates without finance mutations',async()=>{
+  const db=await fixture(true,true,true,true,true,true,true);try{
+   await seed(db,false);const before=(await db.query('SELECT id,status,amount_deducted::text FROM public.advances ORDER BY id')).rows;
+   const r=async()=>(await db.query<{v:{voucher_snapshot:unknown;date_evidence:unknown;bale_evidence:unknown}}>('SELECT public.historical_finance_evidence_review($1) v',[historical])).rows[0].v;
+   const first=await r();const paid={id:historical,worker_id:worker,worker_name:'Worker',period_start:'2024-10-20',period_end:'2024-10-26',gross_pay:'1000.00',bale_deduction:'200.00',other_deductions:'0.00',net_pay:'800.00',overlapping_paid:false,period_bale_total:'0.00',period_bale_count:0,unlinked_period_bale_count:0};
+   const date=parseHistoricalAttempt({kind:'date',request:dateRequest,snapshot:first.voucher_snapshot,date:'2024-10-26',note:'Payroll ledger',project:null},paid);const da=historicalArguments(date);
+   const dateResult=(await db.query<{v:unknown}>('SELECT public.annotate_historical_paid_date($1,$2,$3,$4,$5) v',[da.p_request,da.p_payroll,da.p_expected,'p_date' in da?da.p_date:null,da.p_note])).rows[0].v;verifyHistoricalResult(dateResult,date);expect((await r()).date_evidence).toMatchObject({payment_date:'2024-10-26',matches_voucher:true});
+   const bale=parseHistoricalAttempt({kind:'bale',request:baleRequest,snapshot:first.voucher_snapshot,date:'2024-10-23',note:'Release ledger',project:site},paid);const ba=historicalArguments(bale);
+   const baleResult=(await db.query<{v:unknown}>('SELECT public.record_historical_settled_bale($1,$2,$3,$4,$5,$6,$7) v',[ba.p_request,ba.p_payroll,ba.p_expected,'p_project' in ba?ba.p_project:null,'p_release_date' in ba?ba.p_release_date:null,'p_amount' in ba?ba.p_amount:null,ba.p_note])).rows[0].v;verifyHistoricalResult(baleResult,bale);expect((await r()).bale_evidence).toMatchObject({amount:'200.00',context_changed:false});
+   expect((await db.query('SELECT id,status,amount_deducted::text FROM public.advances ORDER BY id')).rows).toEqual(before);expect((await db.query<{n:number}>('SELECT count(*)::int n FROM public.payroll_payment_dates WHERE payroll_id=$1',[historical])).rows[0].n).toBe(0);
+  }finally{await db.close();}
+ },30000);
  it('reads saved historical assertions and flags later conflicting records without changing them',async()=>{
   const db=await fixture(true,true,true,true,true,true,true);try{
-   const expected=await seed(db);const empty=(await db.query<{v:{date_evidence:object;bale_evidence:unknown}}>('SELECT public.historical_finance_evidence_review($1) v',[historical])).rows[0].v;expect(empty.date_evidence).toMatchObject({payment_date:'2024-10-26',matches_voucher:true});expect(empty.bale_evidence).toBeNull();
+   const expected=await seed(db);const empty=(await db.query<{v:{voucher_snapshot:unknown;date_evidence:object;bale_evidence:unknown}}>('SELECT public.historical_finance_evidence_review($1) v',[historical])).rows[0].v;expect(empty.voucher_snapshot).toEqual(expected);expect(empty.date_evidence).toMatchObject({payment_date:'2024-10-26',matches_voucher:true});expect(empty.bale_evidence).toBeNull();
    await record(db,expected);let v=(await db.query<{v:{payment_conflict:boolean;bale_evidence:{context_changed:boolean;matches_voucher:boolean;amount:string}}}>('SELECT public.historical_finance_evidence_review($1) v',[historical])).rows[0].v;expect(v.payment_conflict).toBe(false);expect(v.bale_evidence).toMatchObject({context_changed:false,matches_voucher:true,amount:'200.00'});
    await db.exec('RESET ROLE');await db.query('INSERT INTO public.payroll_payment_dates(payroll_id,payment_date,recorded_by) VALUES($1,$2,$3)',[historical,'2024-10-25',founder]);await db.exec('SET ROLE authenticated');
    v=(await db.query<{v:typeof v}>('SELECT public.historical_finance_evidence_review($1) v',[historical])).rows[0].v;expect(v.payment_conflict).toBe(true);expect(v.bale_evidence.context_changed).toBe(true);

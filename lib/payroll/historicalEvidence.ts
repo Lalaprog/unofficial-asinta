@@ -2,7 +2,7 @@ import type {PaidReviewVoucher} from './paidReview';
 
 type DateEvidence={request_id:string;payment_date:string;note:string;recorded_at:string;recorded_by:string;matches_voucher:boolean};
 type BaleEvidence=DateEvidence & {project_id:string;release_date:string;amount:string;payment_date_source:'recorded_payment'|'historical_annotation';context_changed:boolean};
-export type HistoricalEvidence={payroll_id:string;worker_id:string;period_start:string;period_end:string;payment_conflict:boolean;recorded_payment_date:string|null;date_evidence:DateEvidence|null;bale_evidence:BaleEvidence|null};
+export type HistoricalEvidence={payroll_id:string;worker_id:string;period_start:string;period_end:string;voucher_snapshot:unknown;payment_conflict:boolean;recorded_payment_date:string|null;date_evidence:DateEvidence|null;bale_evidence:BaleEvidence|null};
 const date=(s:unknown):s is string=>{if(typeof s!=='string'||!/^\d{4}-\d{2}-\d{2}$/.test(s))return false;const d=new Date(`${s}T00:00:00Z`);return Number.isFinite(d.getTime())&&d.toISOString().slice(0,10)===s;};
 const id=(s:unknown):s is string=>typeof s==='string'&&/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(s);
 const evidence=(x:unknown):x is DateEvidence=>{

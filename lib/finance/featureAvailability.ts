@@ -38,6 +38,11 @@ export function historicalFinanceEvidencePreviewEnabled(): boolean {
   return financeFoundationEnabled() && process.env.NEXT_PUBLIC_HISTORICAL_FINANCE_EVIDENCE_PREVIEW === 'true';
 }
 
+/** Historical assertion writes require their own gate and all reviewed evidence candidates. */
+export function historicalFinanceEntryPreviewEnabled(): boolean {
+  return historicalFinanceEvidencePreviewEnabled() && process.env.NEXT_PUBLIC_HISTORICAL_FINANCE_ENTRY_PREVIEW === 'true';
+}
+
 /** Read-only paid allocation evidence; not a complete project cost or schema check. */
 export function projectPaidWorkerEvidencePreviewEnabled(): boolean {
   return financeFoundationEnabled() && process.env.NEXT_PUBLIC_PROJECT_PAID_WORKER_EVIDENCE_PREVIEW === 'true';

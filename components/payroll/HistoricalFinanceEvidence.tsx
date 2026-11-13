@@ -5,6 +5,8 @@ import {useAuth} from '@/lib/auth/authContext';
 import {createClient} from '@/lib/supabase/client';
 import {parseHistoricalEvidence,type HistoricalEvidence} from '@/lib/payroll/historicalEvidence';
 import type {PaidReviewVoucher} from '@/lib/payroll/paidReview';
+import {historicalFinanceEntryPreviewEnabled} from '@/lib/finance/featureAvailability';
+import {HistoricalFinanceEntry} from './HistoricalFinanceEntry';
 
 type State={key:string;data:HistoricalEvidence|null;loading:boolean;error:string};
 const empty=(key:string):State=>({key,data:null,loading:false,error:''});
@@ -31,6 +33,7 @@ export function HistoricalFinanceEvidence({voucher}:{voucher:PaidReviewVoucher})
     {d.date_evidence?<div><p>Historical payment date assertion: {d.date_evidence.payment_date} · recorded by {d.date_evidence.recorded_by} at {d.date_evidence.recorded_at}.</p><p className="break-words">Evidence note: {d.date_evidence.note}</p>{!d.date_evidence.matches_voucher&&<p className="font-semibold text-status-warning">The voucher differs from the reviewed payment-date snapshot. Investigate.</p>}</div>:<p>No historical payment-date annotation was returned; this does not prove no payment occurred.</p>}
     {d.bale_evidence?<div><p>Historical settled Bale assertion: ₱{d.bale_evidence.amount} · release {d.bale_evidence.release_date} · project ID <span className="break-all">{d.bale_evidence.project_id}</span>.</p><p>Linked payment-date assertion: {d.bale_evidence.payment_date} ({d.bale_evidence.payment_date_source==='recorded_payment'?'recorded payment':'historical annotation'}). Recorded by {d.bale_evidence.recorded_by} at {d.bale_evidence.recorded_at}.</p><p className="break-words">Evidence note: {d.bale_evidence.note}</p>{(!d.bale_evidence.matches_voucher||d.bale_evidence.context_changed)&&<p className="font-semibold text-status-warning">The voucher or related records changed since this Bale evidence was saved. Investigate.</p>}</div>:<p>No historical settled Bale evidence was returned; this does not prove no Bale was released.</p>}
    </div>}
+   {historicalFinanceEntryPreviewEnabled()&&user?.id&&isFounder&&assurance==='ready'&&<HistoricalFinanceEntry key={key} userId={user.id} voucher={voucher} evidence={d} onRecorded={()=>setState(empty(key))}/>}
   </div>}
  </section>;
 }

@@ -24,6 +24,7 @@ BEGIN
  SELECT * INTO v_bale FROM public.historical_settled_bale_evidence WHERE payroll_id=p_payroll; v_has_bale:=FOUND;
  SELECT * INTO v_payment FROM public.payroll_payment_dates WHERE payroll_id=p_payroll; v_has_payment:=FOUND;
  v_result:=jsonb_build_object('payroll_id',p_payroll,'worker_id',v_pay.worker_id,'period_start',v_pay.period_start,'period_end',v_pay.period_end,
+  'voucher_snapshot',v_snapshot,
   'payment_conflict',v_has_date AND v_has_payment,
   'recorded_payment_date',CASE WHEN v_has_payment THEN v_payment.payment_date ELSE NULL END,
   'date_evidence',CASE WHEN v_has_date THEN jsonb_build_object('request_id',v_date.request_id,'payment_date',v_date.payment_date,'note',v_date.evidence_note,
