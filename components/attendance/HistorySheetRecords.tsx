@@ -2,6 +2,7 @@
 import React, { useState } from 'react';
 import { TimeDetailDialog } from './TimeDetailDialog';
 import { AllowanceDialog } from './AllowanceDialog';
+import {AttendanceTimeDetails,AttendanceTimeLabel} from './AttendanceTimeDetails';
 import { Badge } from '@/components/ui/Badge';
 import { Button } from '@/components/ui/Button';
 import { formatDatePH } from '@/lib/email/format';
@@ -25,9 +26,11 @@ export function HistorySheetRecords({sheet, filters, userId, revision, isFounder
 }) {
   const [timeRecord, setTimeRecord] = useState<HistoryRecord | null>(null);
   const [allowanceRecord, setAllowanceRecord] = useState<HistoryRecord | null>(null);
+  const [timeRevision, setTimeRevision] = useState(0);
   const records = useAttendanceHistory<HistoryRecord>('records', true, userId, {...filters,projectId:sheet.project_id,date:sheet.date}, revision);
   return (
     <div className="divide-y divide-surface-border/60 border-t border-surface-border/60">
+      <AttendanceTimeDetails records={records.items} userId={userId} revision={revision+timeRevision} loading={records.loading||Boolean(records.error)}>
       {records.items.map((rec) => {
         const isUnverifiedSelf = rec.is_supervisor && !rec.is_founder_override && (rec.status === 'present' || rec.status === 'half_day');
         return (
@@ -44,6 +47,7 @@ export function HistorySheetRecords({sheet, filters, userId, revision, isFounder
             </div>
             <div className="flex shrink-0 flex-wrap items-center gap-1.5">
               {typeof rec.hours_worked === 'number' && Number.isFinite(rec.hours_worked) && <span className="text-ink-secondary">{rec.hours_worked} hrs recorded</span>}
+              {!rec.is_supervisor&&<AttendanceTimeLabel id={rec.id} />}
               <Badge variant={rec.status === 'present' ? 'success' : rec.status === 'half_day' ? 'warning' : rec.status === 'leave' ? 'info' : 'danger'} size="sm">{formatStatusLabel(rec.status)}</Badge>
               {isFounder && isUnverifiedSelf && <>
                 <Button type="button" variant="primary" size="sm" disabled={reviewing || records.loading || Boolean(records.error)} onClick={() => onReview(rec,'present')}>Full Day</Button>
@@ -57,8 +61,9 @@ export function HistorySheetRecords({sheet, filters, userId, revision, isFounder
           </div>
         );
       })}
+      </AttendanceTimeDetails>
       {financeFoundationEnabled() && allowanceRecord && <AllowanceDialog record={allowanceRecord} isFounder={isFounder} onClose={() => setAllowanceRecord(null)} />}
-      {financeFoundationEnabled() && timeRecord && <TimeDetailDialog record={timeRecord} onClose={() => setTimeRecord(null)} />}
+      {financeFoundationEnabled() && timeRecord && <TimeDetailDialog record={timeRecord} onClose={() => {setTimeRecord(null);setTimeRevision(n=>n+1);}} />}
       {records.loading && <p role="status" className="px-4 py-3 text-xs text-ink-secondary">Loading attendance records…</p>}
       {records.error && <div className="space-y-2 px-4 py-3 text-xs"><p role="alert" className="text-status-danger">Unable to load attendance records. Please retry.</p><Button type="button" variant="secondary" size="sm" onClick={records.retry}>Retry records</Button></div>}
       {!records.loading && !records.error && records.items.length === 0 && <p className="px-4 py-3 text-xs text-ink-secondary">No records match this sheet now. Refresh history to update its count.</p>}

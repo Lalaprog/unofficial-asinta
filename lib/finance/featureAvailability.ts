@@ -58,6 +58,11 @@ export function rentalConfirmationPreviewEnabled(): boolean {
   return confirmedRentalPreviewEnabled() && process.env.NEXT_PUBLIC_RENTAL_CONFIRMATION_PREVIEW === 'true';
 }
 
+/** Read-only time details in history/site logs; requires the uninstalled batch RPC. */
+export function attendanceTimeHistoryPreviewEnabled(): boolean {
+  return financeFoundationEnabled() && process.env.NEXT_PUBLIC_ATTENDANCE_TIME_HISTORY_PREVIEW === 'true';
+}
+
 /** Independent gate for the uninstalled Supervisor payroll planning RPCs. */
 export function supervisorPayrollPreviewEnabled(): boolean {
   return financeFoundationEnabled() && process.env.NEXT_PUBLIC_SUPERVISOR_PAYROLL_PREVIEW === 'true';
