@@ -4,6 +4,7 @@ import {useAuth} from '@/lib/auth/authContext';
 import {createClient} from '@/lib/supabase/client';
 import {getManilaClock} from '@/lib/reminders/scheduler';
 import {workerPayrollPeriod} from '@/lib/payroll/periods';
+import {useManilaToday} from '@/lib/dates/useManilaToday';
 import {parseWeeklyBaleReleaseList,type WeeklyBaleRelease,type WeeklyBaleReleaseList} from '@/lib/payroll/weeklyBaleRelease';
 import {Button} from '@/components/ui/Button';
 import {Input} from '@/components/ui/Input';
@@ -13,25 +14,27 @@ type State={key:string;list:WeeklyBaleReleaseList|null;error:string;loading:bool
 const blank=(key:string):State=>({key,list:null,error:'',loading:false});
 /** Experimental workflow: external release recording, never a payment transfer. */
 export function WeeklyBaleReleasePanel(){
- const {user,isFounder,isSupervisor}=useAuth();const [open,setOpen]=useState(false),[date,setDate]=useState(()=>getManilaClock().dateIso);
- const [state,setState]=useState<State>(()=>blank('')),[selected,setSelected]=useState<WeeklyBaleRelease|null>(null),[ack,setAck]=useState(false),[saving,setSaving]=useState(false),[message,setMessage]=useState('');
+ const {user,isFounder,isSupervisor,assurance}=useAuth();const today=useManilaToday();const [open,setOpen]=useState(false),[date,setDate]=useState(()=>getManilaClock().dateIso);
+ const [state,setState]=useState<State>(()=>blank('')),[selected,setSelected]=useState<{key:string;item:WeeklyBaleRelease}|null>(null),[ack,setAck]=useState(false),[saving,setSaving]=useState(false),[message,setMessage]=useState('');
  const seq=useRef(0),busy=useRef(false);let period:ReturnType<typeof workerPayrollPeriod>|null=null;try{period=workerPayrollPeriod(date);}catch{}
- const start=period?.start||'',key=JSON.stringify([user?.id,isFounder,isSupervisor,start]);const active=useRef(key);active.current=key;
+ const start=period?.start||'',key=JSON.stringify([user?.id,isFounder,isSupervisor,assurance,start,today]);const active=useRef(key);active.current=key;
  useEffect(()=>{const token=seq;token.current++;busy.current=false;setState(blank(key));setSelected(null);setAck(false);setSaving(false);setMessage('');return()=>{token.current++;};},[key]);
- const current=state.key===key?state:blank(key);
+ const current=state.key===key?state:blank(key),currentSelected=selected?.key===key?selected.item:null;
  async function load(){
-  if(!user?.id||(!isFounder&&!isSupervisor)||!start||busy.current)return;
+  if(!user?.id||(!isFounder&&!isSupervisor)||assurance!=='ready'||!start||busy.current)return;
+  if(getManilaClock().dateIso!==today){setState(blank(key));setMessage('Philippine date changed. Wait for the date to refresh, then reload the list.');return;}
   const token=++seq.current;busy.current=true;setState({...blank(key),loading:true});setMessage('');
-  try{const {data,error}=await createClient().rpc('weekly_bale_release_list',{p_start:start});if(error)throw new Error(error.message);const list=parseWeeklyBaleReleaseList(data,start);if(token===seq.current&&active.current===key)setState({key,list,error:'',loading:false});}
+  try{const {data,error}=await createClient().rpc('weekly_bale_release_list',{p_start:start});if(error)throw new Error(error.message);if(getManilaClock().dateIso!==today)throw new Error('Philippine date changed; refresh and reload');const list=parseWeeklyBaleReleaseList(data,start);if(token===seq.current&&active.current===key)setState({key,list,error:'',loading:false});}
   catch(e){if(token===seq.current&&active.current===key)setState({...blank(key),error:e instanceof Error?e.message:'Unable to load'});}
   finally{if(token===seq.current&&active.current===key)busy.current=false;}
  }
  async function record(){
-  if(!selected||!ack||busy.current||!user?.id||(!isFounder&&!isSupervisor)||selected.status!=='approved_pending_payment'||getManilaClock().dateIso!==selected.release_date)return;
+  if(!currentSelected||!ack||busy.current||!user?.id||(!isFounder&&!isSupervisor)||assurance!=='ready'||currentSelected.status!=='approved_pending_payment')return;
+  if(getManilaClock().dateIso!==today||today!==currentSelected.release_date){setSelected(null);setState(blank(key));setMessage('Philippine date changed. No request was sent; investigate the original week and release ledger. Do not pay again.');return;}
   const token=++seq.current;busy.current=true;setSaving(true);
   try{
-   const {data,error}=await createClient().rpc('record_weekly_bale_release',{p_request_id:selected.request_id});if(error)throw new Error(error.message);
-   if(!data||data.request_id!==selected.request_id||!['updated','already_recorded'].includes(data.outcome)||typeof data.advance_id!=='string'||!data.advance_id)throw new Error('Release response could not be verified');
+   const {data,error}=await createClient().rpc('record_weekly_bale_release',{p_request_id:currentSelected.request_id});if(error)throw new Error(error.message);
+   if(!data||data.request_id!==currentSelected.request_id||!['updated','already_recorded'].includes(data.outcome)||typeof data.advance_id!=='string'||!data.advance_id)throw new Error('Release response could not be verified');
    if(token===seq.current&&active.current===key){setSelected(null);setState(blank(key));setMessage('External release recorded. Reload the list to verify. No money was transferred by this application.');}
   }catch(e){if(token===seq.current&&active.current===key){setSelected(null);setState(blank(key));setMessage(`Release not confirmed: ${e instanceof Error?e.message:'Unknown error'}. Reload and inspect the request and advance ledger before retrying; do not pay again based on this message.`);}}
   finally{if(token===seq.current&&active.current===key){busy.current=false;setSaving(false);}}
@@ -40,13 +43,13 @@ export function WeeklyBaleReleasePanel(){
  return <section className="rounded-2xl border border-surface-border bg-white p-4 sm:p-5">
   <button type="button" className="min-h-11 text-left text-sm font-semibold text-navy" aria-expanded={open} onClick={()=>setOpen(v=>!v)}>Experimental weekly Bale release</button>
   {open&&<div className="space-y-3 text-sm text-ink-secondary">
-   <p>Approved requests for authorized sites appear here. Record only money already given on Wednesday; this does not transfer money. Automatic rejection and this panel are not ready for live use.</p>
-   <div className="flex flex-wrap items-end gap-3"><div className="w-full sm:w-52"><Input label="Date in Bale week" type="date" value={date} onChange={e=>setDate(e.target.value)} min="1900-01-01" max="9998-12-24" /></div><Button type="button" size="sm" variant="secondary" disabled={!start||saving} isLoading={current.loading} onClick={load}>{current.list?'Refresh releases':'Load releases'}</Button></div>
+   <p>Approved requests for authorized sites appear here. Record only money already given on Wednesday; this does not transfer money. If cash was given but recording is blocked, stop and ask the Founder to investigate the original week. Do not pay again, create another Bale or carry it to a later week. Automatic rejection and this panel are not ready for live use.</p>
+   <div className="flex flex-wrap items-end gap-3"><div className="w-full sm:w-52"><Input label="Date in Bale week" type="date" value={date} onChange={e=>setDate(e.target.value)} min="1900-01-01" max="9998-12-24" /></div><Button type="button" size="sm" variant="secondary" disabled={!start||saving||assurance!=='ready'} isLoading={current.loading} onClick={load}>{current.list?'Refresh releases':'Load releases'}</Button></div>
    {period&&<p>Week: {period.start} to {period.end}.</p>}{current.error&&<p role="alert">Could not load releases: {current.error}</p>}{message&&<p role="status">{message}</p>}
-   {current.list&&(!current.list.items.length?<p>No approved or issued weekly requests in the accessible list.</p>:<ul className="space-y-2">{current.list.items.map(item=><li key={item.request_id} className="rounded-xl border border-surface-border p-3"><p className="font-semibold text-navy">{item.worker_name} · {item.project_name} · ₱{item.amount}</p><p>{item.status==='issued'?'Release recorded':'Approved, awaiting release'} · Wednesday {item.release_date}</p>{item.status==='approved_pending_payment'&&<Button type="button" size="sm" variant="secondary" disabled={saving||getManilaClock().dateIso!==item.release_date} onClick={()=>{setSelected(item);setAck(false);}}>Review external release</Button>}</li>)}</ul>)}
+   {current.list&&(!current.list.items.length?<p>No approved or issued weekly requests in the accessible list. This does not prove that no external release happened.</p>:<ul className="space-y-2">{current.list.items.map(item=><li key={item.request_id} className="rounded-xl border border-surface-border p-3"><p className="font-semibold text-navy">{item.worker_name} · {item.project_name} · ₱{item.amount}</p><p>{item.status==='issued'?'Release recorded':'Approved, awaiting release'} · Wednesday {item.release_date}</p>{item.status==='approved_pending_payment'&&<Button type="button" size="sm" variant="secondary" disabled={saving||assurance!=='ready'||today!==item.release_date||getManilaClock().dateIso!==today} onClick={()=>{setSelected({key,item});setAck(false);}}>Review external release</Button>}</li>)}</ul>)}
   </div>}
-  <Modal isOpen={!!selected} onClose={()=>setSelected(null)} title="Record external Bale release?" description="This records a past external release; it does not send money." dismissOnBackdrop={!saving} dismissOnEscape={!saving} showCloseButton={!saving}>
-   {selected&&<div className="space-y-3 text-sm text-ink-secondary"><p>{selected.worker_name} · {selected.project_name} · ₱{selected.amount} · {selected.release_date}</p><p>Only confirm if this exact amount was already given to the worker on the listed Wednesday. Verify other records to avoid duplicates.</p><label className="flex items-start gap-2"><input type="checkbox" checked={ack} onChange={e=>setAck(e.target.checked)} />I verified this external release already happened.</label><div className="flex flex-wrap justify-end gap-2"><Button type="button" size="sm" variant="secondary" disabled={saving} onClick={()=>setSelected(null)}>Cancel</Button><Button type="button" size="sm" isLoading={saving} disabled={!ack||saving} onClick={record}>Record release</Button></div></div>}
+  <Modal isOpen={!!currentSelected} onClose={()=>setSelected(null)} title="Record external Bale release?" description="This records a past external release; it does not send money." dismissOnBackdrop={!saving} dismissOnEscape={!saving} showCloseButton={!saving}>
+   {currentSelected&&<div className="space-y-3 text-sm text-ink-secondary"><p>{currentSelected.worker_name} · {currentSelected.project_name} · ₱{currentSelected.amount} · {currentSelected.release_date}</p><p>Only confirm if this exact amount was already given to the worker on the listed Wednesday. Verify other records to avoid duplicates.</p><label className="flex items-start gap-2"><input type="checkbox" checked={ack} onChange={e=>setAck(e.target.checked)} />I verified this external release already happened.</label><div className="flex flex-wrap justify-end gap-2"><Button type="button" size="sm" variant="secondary" disabled={saving} onClick={()=>setSelected(null)}>Cancel</Button><Button type="button" size="sm" isLoading={saving} disabled={!ack||saving||assurance!=='ready'||getManilaClock().dateIso!==today||today!==currentSelected?.release_date} onClick={record}>Record release</Button></div></div>}
   </Modal>
  </section>;
 }
