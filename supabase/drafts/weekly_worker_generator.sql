@@ -58,38 +58,17 @@ $$;
 REVOKE ALL ON FUNCTION public.weekly_worker_source_has_future(jsonb,date) FROM PUBLIC,anon,authenticated,service_role;
 DO $$ BEGIN IF EXISTS(SELECT 1 FROM unnest(ARRAY['anon','authenticated','service_role']) r(role_name) WHERE has_function_privilege(r.role_name,'public.weekly_worker_source_has_future(jsonb,date)','EXECUTE')) THEN RAISE EXCEPTION 'Unexpected inherited weekly source helper privilege'; END IF; END $$;
 
-CREATE FUNCTION public.create_weekly_worker_draft(p_id uuid,p_worker uuid,p_start date)
+-- Private shared calculator; caller must hold the generator's source locks and
+-- validate authorization/period. Never expose this helper as a standalone RPC.
+CREATE FUNCTION public.compute_weekly_worker_draft_locked(p_worker uuid,p_start date)
 RETURNS jsonb LANGUAGE plpgsql SECURITY DEFINER SET search_path='' AS $$
 DECLARE
  v_snapshot jsonb; v_worker jsonb; v_att jsonb; v_allow jsonb; v_adv jsonb; v_old jsonb;
  v_entry jsonb; v_item jsonb; v_detail jsonb; v_regular numeric:=0; v_ot numeric:=0;
  v_day_regular numeric; v_day_ot numeric; v_allowance numeric:=0; v_bale numeric:=0;
  v_rate numeric; v_wage numeric; v_gross numeric; v_net numeric; v_days numeric;
- v_unmarked jsonb; v_sources jsonb; v_calculation jsonb; v_prev public.weekly_worker_draft_sources%ROWTYPE;
- v_pay public.payroll%ROWTYPE; v_email text; v_dates date[]:='{}';
+ v_unmarked jsonb; v_sources jsonb; v_calculation jsonb; v_dates date[]:='{}';
 BEGIN
- IF auth.uid() IS NULL OR NOT coalesce(public.is_founder(),false) OR NOT coalesce(public.session_assurance_satisfied(),false) THEN
-  RAISE EXCEPTION 'Founder access with required assurance is required' USING ERRCODE='42501'; END IF;
- IF current_setting('transaction_isolation')<>'read committed' THEN RAISE EXCEPTION 'Weekly generation requires read committed isolation' USING ERRCODE='P1002'; END IF;
- IF p_id IS NULL OR p_worker IS NULL OR p_start IS NULL OR p_start<DATE '1900-01-01' OR p_start>DATE '9998-12-24' OR extract(dow FROM p_start)<>0 THEN
-  RAISE EXCEPTION 'Choose a worker, a Sunday, and a request ID' USING ERRCODE='22023'; END IF;
- -- All source snapshots and duplicate checks must precede a single insert.
- -- Lock order is deliberately global and conservative; bound waiting, allow
- -- deadlock abort/retry, and test old client interactions before rollout.
- PERFORM pg_catalog.set_config('lock_timeout','3s',true);
- LOCK TABLE public.users,public.workers,public.attendance,public.attendance_time_details,
-   public.worker_allowances,public.advances,public.advance_requests,public.payroll
-   IN SHARE ROW EXCLUSIVE MODE;
- SELECT * INTO v_prev FROM public.weekly_worker_draft_sources WHERE payroll_id=p_id;
- IF FOUND THEN
-  IF (v_prev.worker_id,v_prev.period_start,v_prev.recorded_by) IS DISTINCT FROM (p_worker,p_start,auth.uid()) THEN
-   RAISE EXCEPTION 'Draft ID already used for another request' USING ERRCODE='22023'; END IF;
-  RETURN jsonb_build_object('replayed',true,'payroll_id',p_id,'calculation',v_prev.calculation);
- END IF;
- IF EXISTS(SELECT 1 FROM public.payroll WHERE id=p_id) OR EXISTS(SELECT 1 FROM public.weekly_worker_draft_sources WHERE worker_id=p_worker AND period_start=p_start) THEN
-  RAISE EXCEPTION 'An existing voucher or weekly draft requires review; no record was overwritten' USING ERRCODE='22023'; END IF;
- IF EXISTS(SELECT 1 FROM public.payroll p WHERE p.worker_id=p_worker AND p.period_start<=p_start+6 AND p.period_end>=p_start) THEN
-  RAISE EXCEPTION 'An existing overlapping voucher requires review; no record was overwritten' USING ERRCODE='22023'; END IF;
  v_snapshot:=public.weekly_worker_preview_inputs(p_start);
  IF coalesce(jsonb_typeof(v_snapshot),'')<>'object' OR v_snapshot->>'start' IS DISTINCT FROM p_start::text OR v_snapshot->>'end' IS DISTINCT FROM (p_start+6)::text
    OR coalesce(jsonb_typeof(v_snapshot->'workers'),'')<>'array'
@@ -188,8 +167,44 @@ BEGIN
   'advances',(SELECT coalesce(jsonb_agg(jsonb_build_object('advance',to_jsonb(a),'request',to_jsonb(r)) ORDER BY a.id),'[]'::jsonb) FROM public.advances a LEFT JOIN public.advance_requests r ON r.issued_advance_id=a.id WHERE a.worker_id=p_worker AND a.date BETWEEN p_start AND p_start+6));
  IF octet_length(v_sources::text)>1048576 THEN RAISE EXCEPTION 'Source snapshot is too large; review before generation' USING ERRCODE='54000'; END IF;
  IF public.weekly_worker_source_has_future(v_sources,(statement_timestamp() AT TIME ZONE 'Asia/Manila')::date) THEN RAISE EXCEPTION 'Future-dated attendance, allowance or Bale requires review before generation' USING ERRCODE='22023'; END IF;
+ RETURN jsonb_build_object('sources',v_sources,'calculation',v_calculation,'days',v_days,'hours',v_regular+v_ot);
+END;
+$$;
+REVOKE ALL ON FUNCTION public.compute_weekly_worker_draft_locked(uuid,date) FROM PUBLIC,anon,authenticated,service_role;
+DO $$ BEGIN IF EXISTS(SELECT 1 FROM unnest(ARRAY['anon','authenticated','service_role']) r(role_name) WHERE has_function_privilege(r.role_name,'public.compute_weekly_worker_draft_locked(uuid,date)','EXECUTE')) THEN RAISE EXCEPTION 'Unexpected inherited weekly calculator privilege'; END IF; END $$;
+
+CREATE FUNCTION public.create_weekly_worker_draft(p_id uuid,p_worker uuid,p_start date)
+RETURNS jsonb LANGUAGE plpgsql SECURITY DEFINER SET search_path='' AS $$
+DECLARE
+ v_computed jsonb; v_sources jsonb; v_calculation jsonb;
+ v_prev public.weekly_worker_draft_sources%ROWTYPE; v_pay public.payroll%ROWTYPE; v_email text;
+BEGIN
+ IF auth.uid() IS NULL OR NOT coalesce(public.is_founder(),false) OR NOT coalesce(public.session_assurance_satisfied(),false) THEN
+  RAISE EXCEPTION 'Founder access with required assurance is required' USING ERRCODE='42501'; END IF;
+ IF current_setting('transaction_isolation')<>'read committed' THEN RAISE EXCEPTION 'Weekly generation requires read committed isolation' USING ERRCODE='P1002'; END IF;
+ IF p_id IS NULL OR p_worker IS NULL OR p_start IS NULL OR p_start<DATE '1900-01-01' OR p_start>DATE '9998-12-24' OR extract(dow FROM p_start)<>0 THEN
+  RAISE EXCEPTION 'Choose a worker, a Sunday, and a request ID' USING ERRCODE='22023'; END IF;
+ -- All source snapshots and duplicate checks must precede a single insert.
+ -- Lock order is deliberately global and conservative; bound waiting, allow
+ -- deadlock abort/retry, and test old client interactions before rollout.
+ PERFORM pg_catalog.set_config('lock_timeout','3s',true);
+ LOCK TABLE public.users,public.workers,public.attendance,public.attendance_time_details,
+   public.worker_allowances,public.advances,public.advance_requests,public.payroll
+   IN SHARE ROW EXCLUSIVE MODE;
+ SELECT * INTO v_prev FROM public.weekly_worker_draft_sources WHERE payroll_id=p_id;
+ IF FOUND THEN
+  IF (v_prev.worker_id,v_prev.period_start,v_prev.recorded_by) IS DISTINCT FROM (p_worker,p_start,auth.uid()) THEN
+   RAISE EXCEPTION 'Draft ID already used for another request' USING ERRCODE='22023'; END IF;
+  RETURN jsonb_build_object('replayed',true,'payroll_id',p_id,'calculation',v_prev.calculation);
+ END IF;
+ IF EXISTS(SELECT 1 FROM public.payroll WHERE id=p_id) OR EXISTS(SELECT 1 FROM public.weekly_worker_draft_sources WHERE worker_id=p_worker AND period_start=p_start) THEN
+  RAISE EXCEPTION 'An existing voucher or weekly draft requires review; no record was overwritten' USING ERRCODE='22023'; END IF;
+ IF EXISTS(SELECT 1 FROM public.payroll p WHERE p.worker_id=p_worker AND p.period_start<=p_start+6 AND p.period_end>=p_start) THEN
+  RAISE EXCEPTION 'An existing overlapping voucher requires review; no record was overwritten' USING ERRCODE='22023'; END IF;
+ v_computed:=public.compute_weekly_worker_draft_locked(p_worker,p_start);
+ v_sources:=v_computed->'sources'; v_calculation:=v_computed->'calculation';
  INSERT INTO public.payroll(id,worker_id,period_start,period_end,gross_pay,bale_deduction,other_deductions,net_pay,status,days_worked,hours_worked,notes)
- VALUES(p_id,p_worker,p_start,p_start+6,v_gross,v_bale,0,v_net,'draft',v_days,v_regular+v_ot,'Weekly source-bound draft; approval workflow not yet available') RETURNING * INTO v_pay;
+ VALUES(p_id,p_worker,p_start,p_start+6,(v_calculation->>'gross')::numeric,(v_calculation->>'bale')::numeric,0,(v_calculation->>'net')::numeric,'draft',(v_computed->>'days')::numeric,(v_computed->>'hours')::numeric,'Weekly source-bound draft; approval workflow not yet available') RETURNING * INTO v_pay;
  INSERT INTO public.weekly_worker_draft_sources(payroll_id,worker_id,period_start,recorded_by,source_snapshot,calculation)
  VALUES(p_id,p_worker,p_start,auth.uid(),v_sources,v_calculation);
  SELECT email INTO v_email FROM public.users WHERE id=auth.uid();
