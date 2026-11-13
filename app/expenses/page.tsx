@@ -60,6 +60,7 @@ import { resolveReceiptForSubmission } from '@/lib/expenses/receiptSubmission';
 import { VISION_MAX_IMAGE_BYTES } from '@/lib/ai/models';
 import { useQuickAction } from '@/lib/mobile/quickActions';
 import { formatRetryWait, validRetryAfter } from '@/lib/ai/cooldown';
+import { weeklyWorkerCutoverMode } from '@/lib/finance/featureAvailability';
 
 /** Bound each saved-photo network stage so an unresponsive request cannot
  * trap the Founder in a disabled expense form. A late result is never applied. */
@@ -84,6 +85,8 @@ export default function ExpensesPage() {
     workers,
   } = useDataStore();
   const { showToast } = useToast();
+  const cutoverMode = weeklyWorkerCutoverMode();
+  const advanceSubmitLock = React.useRef(false);
   const supabase = React.useMemo(() => createClient(), []);
 
   const [searchQuery, setSearchQuery] = useState('');
@@ -547,27 +550,26 @@ export default function ExpensesPage() {
   };
 
   const handleConfirmBaleAdvance = async () => {
-    if (!balePrompt || !baleWorkerId) return;
+    if (cutoverMode || advanceSubmitLock.current || !balePrompt || !baleWorkerId) return;
+    advanceSubmitLock.current = true;
     setIsCreatingAdvance(true);
-    const created = await createAdvance({
-      worker_id: baleWorkerId,
-      project_id: balePrompt.projectId,
-      amount: balePrompt.amount,
-      reason: balePrompt.description,
-      date: balePrompt.expenseDate,
-    });
-    setIsCreatingAdvance(false);
-
-    if (created) {
-      showToast('success', 'Worker advance recorded in the Bale ledger.');
-    } else {
-      showToast(
-        'error',
-        'The expense was saved, but the worker advance could not be created. Record it from the Advances page.'
-      );
+    try {
+      const created = await createAdvance({
+        worker_id: baleWorkerId,
+        project_id: balePrompt.projectId,
+        amount: balePrompt.amount,
+        reason: balePrompt.description,
+        date: balePrompt.expenseDate,
+      });
+      if (created) showToast('success', 'Worker advance recorded in the Bale ledger.');
+      else showToast('error', 'The expense was saved, but the advance outcome is not confirmed. Check the request and advance ledgers before retrying; do not pay or record it again based on this message.');
+    } catch {
+      showToast('error', 'The expense was saved, but the advance outcome is not confirmed. Check the request and advance ledgers before retrying; do not pay or record it again based on this message.');
+    } finally {
+      advanceSubmitLock.current = false;
+      setIsCreatingAdvance(false);
+      handleDismissBalePrompt();
     }
-
-    handleDismissBalePrompt();
   };
 
   // Upload the receipt photo to the PRIVATE `receipts` bucket and persist the
@@ -1687,7 +1689,9 @@ export default function ExpensesPage() {
         isOpen={Boolean(balePrompt)}
         onClose={handleDismissBalePrompt}
         title="Worker advance detected"
-        description="This expense looks like a cash advance (bale). Choose who received it — nothing is deducted automatically."
+        description={cutoverMode
+          ? 'This expense may be a worker Bale. The expense was saved, but no Bale was recorded. Check the Bale ledger; use the weekly workflow only after it has been verified and enabled.'
+          : 'This expense looks like a cash advance (bale). Choose who received it — nothing is deducted automatically.'}
         maxWidth="md"
       >
         {balePrompt && (
@@ -1699,6 +1703,7 @@ export default function ExpensesPage() {
               </div>
             </div>
 
+            {!cutoverMode && <>
             <Select
               label="Advance recipient"
               value={baleWorkerId}
@@ -1724,6 +1729,7 @@ export default function ExpensesPage() {
               </p>
             )}
 
+            </>}
             <div className="flex items-center justify-end gap-2 pt-1">
               <Button
                 type="button"
@@ -1732,18 +1738,18 @@ export default function ExpensesPage() {
                 onClick={handleDismissBalePrompt}
                 disabled={isCreatingAdvance}
               >
-                Not a worker advance
+                {cutoverMode ? 'Close' : 'Not a worker advance'}
               </Button>
-              <Button
+              {!cutoverMode && <Button
                 type="button"
                 variant="primary"
                 size="sm"
                 onClick={handleConfirmBaleAdvance}
-                disabled={!baleWorkerId}
+                disabled={!baleWorkerId || isCreatingAdvance}
                 isLoading={isCreatingAdvance}
               >
                 Record advance in Bale ledger
-              </Button>
+              </Button>}
             </div>
           </div>
         )}
