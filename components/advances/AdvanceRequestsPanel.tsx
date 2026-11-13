@@ -6,7 +6,8 @@ import { useAuth } from '@/lib/auth/authContext';
 import { useDataStore } from '@/lib/data/store';
 import { useBaleProjectWorkers } from '@/lib/attendance/useBaleProjectWorkers';
 import { useWeeklyBaleStatuses } from '@/lib/attendance/useWeeklyBaleStatuses';
-import { weeklyBaleReleasePreviewEnabled } from '@/lib/finance/featureAvailability';
+import { weeklyBaleExpiryHealthPreviewEnabled, weeklyBaleReleasePreviewEnabled } from '@/lib/finance/featureAvailability';
+import { WeeklyBaleExpiryHealth } from '@/components/advances/WeeklyBaleExpiryHealth';
 import type { AdvanceRequest, AdvanceRequestStatus } from '@/types';
 import { formatDatePH, formatPeso, formatPesoCompact } from '@/lib/email/format';
 import { useToast } from '@/components/ui/Toast';
@@ -488,6 +489,7 @@ export function AdvanceRequestsPanel() {
 
   return (
     <div className="space-y-4">
+      {isFounder && user?.id && weeklyBaleExpiryHealthPreviewEnabled() && <WeeklyBaleExpiryHealth userId={user.id} />}
       {weeklyMode && <div className="rounded-xl border border-surface-border bg-white p-3 text-xs text-ink-secondary">
         <p>Weekly decision status is checked against the server. Existing list totals and filters reflect stored statuses, which may lag automatic expiry. Release is handled in the separate experimental panel.</p>
         {weeklyStatuses.loading && <p role="status">Checking weekly request status…</p>}

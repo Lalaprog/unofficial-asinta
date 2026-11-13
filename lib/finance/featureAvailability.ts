@@ -13,6 +13,11 @@ export function weeklyBaleReleasePreviewEnabled(): boolean {
   return financeFoundationEnabled() && process.env.NEXT_PUBLIC_WEEKLY_BALE_RELEASE_PREVIEW === 'true';
 }
 
+/** Independent display gate for the uninstalled expiry job health RPC. */
+export function weeklyBaleExpiryHealthPreviewEnabled(): boolean {
+  return weeklyBaleReleasePreviewEnabled() && process.env.NEXT_PUBLIC_WEEKLY_BALE_EXPIRY_HEALTH_PREVIEW === 'true';
+}
+
 /** Experimental source-bound weekly write UI; never enable without its complete reviewed backend and cutover. */
 export function weeklyWorkerActionsPreviewEnabled(): boolean {
   return financeFoundationEnabled() && process.env.NEXT_PUBLIC_WEEKLY_WORKER_ACTIONS_PREVIEW === 'true';
