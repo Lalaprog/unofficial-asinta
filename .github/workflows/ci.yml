@@ -119,6 +119,12 @@ jobs:
         run: |
           node -e "const {Client}=require('pg'); (async()=>{const c=new Client({connectionString:'postgresql://postgres@127.0.0.1:5433/asinta_test_pr103'}); await c.connect(); await c.query('CREATE DATABASE asinta_test_historical_paid_date'); await c.end()})().catch(e=>{console.error(e); process.exit(1)})"
           npx vitest run tests/historical-paid-date-postgres.test.ts
+      - name: Test historical settled Bale concurrency in a separate empty database
+        env:
+          HISTORICAL_BALE_TEST_DATABASE_URL: postgresql://postgres@127.0.0.1:5433/asinta_test_historical_bale
+        run: |
+          node -e "const {Client}=require('pg'); (async()=>{const c=new Client({connectionString:'postgresql://postgres@127.0.0.1:5433/asinta_test_pr103'}); await c.connect(); await c.query('CREATE DATABASE asinta_test_historical_bale'); await c.end()})().catch(e=>{console.error(e); process.exit(1)})"
+          npx vitest run tests/historical-settled-bale-postgres.test.ts
       - name: Test experimental Bale schedule concurrency in a separate empty database
         env:
           WEEKLY_BALE_SCHEDULE_TEST_DATABASE_URL: postgresql://postgres@127.0.0.1:5433/asinta_test_weekly_bale_schedule
