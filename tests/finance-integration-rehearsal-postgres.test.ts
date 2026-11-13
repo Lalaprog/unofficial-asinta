@@ -82,7 +82,7 @@ suite('coordinated finance integration rehearsal, synthetic PostgreSQL only',()=
    if(!rehearsal.endsWith('ROLLBACK;\n'))throw Error('Unexpected transaction boundary');
    await db.query(rehearsal.slice(0,-'ROLLBACK;\n'.length));
    // Additional experimental assignment history, atomic move and attendance
-   // guard are not in the generated 27-draft chain. Install only inside this
+   // guard are not in the generated 28-draft chain. Install only inside this
    // disposable rollback transaction.
    await db.query(readFileSync('supabase/drafts/project_assignment_history.sql','utf8'));
    await db.query(readFileSync('supabase/drafts/atomic_worker_move.sql','utf8'));
@@ -283,6 +283,12 @@ suite('coordinated finance integration rehearsal, synthetic PostgreSQL only',()=
    await db.query("SELECT public.review_supervisor_day('70000000-0000-4000-8000-000000000005','approved')");
    await db.query("SELECT public.review_supervisor_leave('70000000-0000-4000-8000-000000000013','approved')");
    expect((await db.query('SELECT public.supervisor_leave_pending_summary() v')).rows[0].v).toEqual({pending_count:0});
+   const backfill='70000000-0000-4000-8000-000000000025';
+   const backfillArgs=[backfill,supervisor,'2024-07-31','half_day','Founder reviewed synthetic source'];
+   expect((await db.query('SELECT public.record_supervisor_day_backfill($1,$2,$3,$4,$5) v',backfillArgs)).rows[0].v).toMatchObject({status:'pending',replayed:false});
+   expect((await db.query('SELECT public.record_supervisor_day_backfill($1,$2,$3,$4,$5) v',backfillArgs)).rows[0].v.replayed).toBe(true);
+   expect((await db.query('SELECT public.supervisor_day_backfill_lookup($1) v',[backfill])).rows[0].v).toMatchObject({id:backfill,supervisor_id:supervisor,founder_id:founder,reason:'Founder reviewed synthetic source'});
+   await db.query("SELECT public.review_supervisor_day($1,'approved')",[backfill]);
    const plan=(await db.query("SELECT public.supervisor_period_prepare($1,'2024-08-01') v",[supervisor])).rows[0].v;
    expect(plan.input.legacy_count).toBe(0);
    const supervisorVoucher='70000000-0000-4000-8000-000000000006';

@@ -14,7 +14,7 @@ const base=execFileSync(process.execPath,[join(root,'scripts/build-pr103-rehears
 const ending='ROLLBACK;\n\n';
 if(!base.startsWith('-- REHEARSAL ONLY')||!base.endsWith(ending))throw Error('Unexpected PR103 rehearsal boundaries');
 const names=[
- 'guard_legacy_bale_payment','weekly_payment_date','weekly_worker_generator','weekly_worker_approval',
+ 'supervisor_day_founder_backfill','guard_legacy_bale_payment','weekly_payment_date','weekly_worker_generator','weekly_worker_approval',
  'weekly_worker_paid_allocation','weekly_worker_draft_details','weekly_paid_attendance_change_review','weekly_worker_draft_refresh','weekly_worker_return_to_draft',
  'weekly_bale_schedule','weekly_bale_expiration','weekly_bale_release_list','weekly_bale_status_batch','weekly_bale_scheduler',
  'attendance_history_time_batch','supervisor_leave_notification','project_paid_payroll_evidence','paid_payroll_adjustments','supervisor_payroll_preview',
