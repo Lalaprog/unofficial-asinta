@@ -9,6 +9,7 @@ import {parseWeeklyDraftDetails} from '@/lib/payroll/weeklyDraftDetails';
 import {estimateProjectCost,parseCostSnapshot} from '@/lib/projects/projectCostReconciliation';
 import {parseEquipmentSnapshot} from '@/lib/tools/ownedEquipment';
 import {parseProjectEquipment} from '@/lib/tools/projectEquipment';
+import {parseHistoricalProjectAttributions} from '@/lib/projects/historicalWorkerAttributions';
 
 const url=process.env.FINANCE_INTEGRATION_REHEARSAL_TEST_DATABASE_URL;
 const suite=url?describe:describe.skip;
@@ -99,6 +100,8 @@ suite('coordinated finance integration rehearsal, synthetic PostgreSQL only',()=
    // The review ledger is also separate from the generated chain, and never
    // posts money or makes the bounded snapshot complete.
    await db.query(readFileSync('supabase/drafts/project_cost_review_ledger.sql','utf8'));
+   // New external-pay attribution evidence is separate and never posts project costs.
+   await db.query(readFileSync('supabase/drafts/historical_worker_project_attribution.sql','utf8'));
    // Equipment is outside the generated chain; only this disposable transaction installs it.
    await db.query(readFileSync('supabase/drafts/owned_equipment_allocations.sql','utf8'));
    expect((await db.query("SELECT has_table_privilege('service_role','public.owned_equipment_allocations','INSERT,UPDATE,DELETE') allowed")).rows[0].allowed).toBe(false);
@@ -210,6 +213,18 @@ suite('coordinated finance integration rehearsal, synthetic PostgreSQL only',()=
    const historicalSnap=(await db.query("SELECT public.paid_period_assertion_case_list('external_worker',$1) v",[historicalId])).rows[0].v.snapshot;
    await db.query("SELECT public.open_paid_period_assertion_case($1,'external_worker',$2,$3,20,'Synthetic external review')",[historicalCase,historicalId,JSON.stringify(historicalSnap)]);
    await db.query("SELECT public.resolve_paid_period_assertion_case($1,'no_transfer',NULL,'Synthetic review complete',true)",[historicalCase]);
+   const historicalSource=(await db.query('SELECT public.historical_external_worker_lookup($1) v',[historicalId])).rows[0].v;
+   const attributionId='70000000-0000-4000-8000-000000000040';
+   const attributionSplit=[{project_id:site,gross:'400.25'},{project_id:siteTwo,gross:'199.75'}];
+   const attributionArgs=[attributionId,historicalId,JSON.stringify(historicalSource),JSON.stringify(attributionSplit)];
+   const recordAttribution="SELECT public.record_historical_worker_attribution($1,$2,$3::jsonb,$4::jsonb,'Synthetic original evidence reviewed',true) v";
+   expect((await db.query(recordAttribution,attributionArgs)).rows[0].v).toMatchObject({source_id:historicalId,replayed:false});
+   expect((await db.query(recordAttribution,attributionArgs)).rows[0].v.replayed).toBe(true);
+   const historicalSiteRaw=(await db.query('SELECT public.project_historical_worker_attributions($1) v',[site])).rows[0].v;
+   expect(historicalSiteRaw.items).toEqual([expect.objectContaining({source_id:historicalId,site_gross:'400.25',original_gross:'600.00',case_count:1})]);
+   expect(parseHistoricalProjectAttributions(historicalSiteRaw,site)).toEqual([expect.objectContaining({sourceId:historicalId,siteGross:'400.25',caseCount:1})]);
+   expect((await db.query('SELECT public.project_historical_worker_attributions($1) v',[siteTwo])).rows[0].v.items).toEqual([expect.objectContaining({source_id:historicalId,site_gross:'199.75',case_count:1})]);
+
    await db.query('RESET ROLE');
    expect((await db.query("SELECT count(*)::int n FROM public.payroll WHERE worker_id=$1 AND period_start='2024-07-28'",[worker])).rows[0].n).toBe(0);
    expect((await db.query("SELECT count(*)::int n FROM public.advances WHERE worker_id=$1 AND date BETWEEN '2024-07-28' AND '2024-08-03'",[worker])).rows[0].n).toBe(0);
@@ -312,7 +327,7 @@ suite('coordinated finance integration rehearsal, synthetic PostgreSQL only',()=
    expect((await db.query('SELECT project_id,event_type FROM public.project_assignment_history WHERE worker_id=$1 ORDER BY event_type,project_id',[worker])).rows).toEqual([{project_id:site,event_type:'assigned'},{project_id:destination,event_type:'assigned'},{project_id:site,event_type:'unassigned'}]);
    await db.query('ROLLBACK');expect(await snapshot()).toEqual(before);
    for(const signature of legacySignatures)expect((await db.query("SELECT has_function_privilege('anon',$1,'EXECUTE') allowed",[signature])).rows[0].allowed).toBe(true);
-   expect((await db.query("SELECT to_regclass('public.owned_equipment_allocations') IS NULL absent")).rows[0].absent).toBe(true);
+   expect((await db.query("SELECT to_regclass('public.owned_equipment_allocations') IS NULL absent,to_regclass('public.historical_worker_attributions') IS NULL attribution_absent")).rows[0]).toEqual({absent:true,attribution_absent:true});
    expect((await db.query("SELECT to_regclass('public.weekly_worker_draft_sources') IS NULL absent,to_regprocedure('public.weekly_worker_preview_base_inputs(date)') IS NULL wrapper_absent,to_regprocedure('public.weekly_worker_preview_inputs(date)') IS NOT NULL base_present,to_regprocedure('public.weekly_bale_external_monitor_healthy()') IS NULL monitor_absent")).rows[0]).toEqual({absent:true,wrapper_absent:true,base_present:true,monitor_absent:true});
   }finally{await db.query('ROLLBACK').catch(()=>{});await db.end();}
  },60000);

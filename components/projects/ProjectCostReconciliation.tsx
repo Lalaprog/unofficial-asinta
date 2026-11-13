@@ -3,9 +3,10 @@ import React,{useEffect,useRef,useState} from 'react';
 import {Button} from '@/components/ui/Button';
 import {createClient} from '@/lib/supabase/client';
 import {costCents,estimateProjectCost,formatCostCents,parseCostSnapshot,type CostChoice,type CostSnapshot} from '@/lib/projects/projectCostReconciliation';
-import {projectCostReviewLedgerPreviewEnabled} from '@/lib/finance/featureAvailability';
+import {historicalWorkerAttributionPreviewEnabled,projectCostReviewLedgerPreviewEnabled} from '@/lib/finance/featureAvailability';
 import {ProjectCostReviewLedger} from './ProjectCostReviewLedger';
 import {ProjectAdjustmentSignals} from './ProjectAdjustmentSignals';
+import {HistoricalWorkerAttributions} from './HistoricalWorkerAttributions';
 
 /** Temporary review scratchpad only. It never records classifications or costs. */
 export function ProjectCostReconciliation({projectId,userId}:{projectId:string;userId:string}){
@@ -38,6 +39,7 @@ export function ProjectCostReconciliation({projectId,userId}:{projectId:string;u
    <label className="flex items-start gap-2"><input type="checkbox" checked={ack} disabled={!reviewed} onChange={e=>setAck(e.target.checked)}/> I reviewed every expense and paid allocation for possible duplicates and understand this is an incomplete, unsaved estimate.</label>
    {estimate&&<div aria-live="polite" className="rounded-lg border border-surface-border p-3 space-y-1"><p className="font-semibold text-navy">Temporary, incomplete estimate: {formatCostCents(estimate.total)}</p><p>Included recorded expenses {formatCostCents(estimate.expenses)} + paid worker gross allocations {formatCostCents(estimate.payroll)}.</p><p>Expenses excluded from this preview: {formatCostCents(estimate.excluded)}. Rentals are not added separately.</p><p>Not saved, posted, automatically reconciled, or a profit figure. Refresh and independently verify before use.</p></div>}
   </>}
+  {historicalWorkerAttributionPreviewEnabled()&&<HistoricalWorkerAttributions key={scope} projectId={projectId} userId={userId} />}
   {projectCostReviewLedgerPreviewEnabled()&&<ProjectCostReviewLedger key={scope} projectId={projectId} userId={userId} snapshot={snapshot} raw={snapshot?snapshotEvidence:null} choices={choices} reasons={reasons} />}
  </section>;
 }

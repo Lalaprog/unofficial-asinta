@@ -47,7 +47,7 @@ suite('real PostgreSQL combined weekly Bale and payroll candidate races',()=>{
   for(const path of paths)await admin.query(readFileSync(path,'utf8'));
   // Rehearse coexistence of the Supervisor, historical-worker and original-period
   // assertion candidates with the weekly Bale/payroll chain in this fixture.
-  for(const name of ['supervisor_table_foundation','supervisor_rpc_rollout','supervisor_payroll_preview','historical_external_worker_payroll','supervisor_payroll_ledger','paid_period_assertion_adjustments','confirmed_rental_expense_link','project_cost_reconciliation_preview'])await admin.query(`BEGIN; ${readFileSync(`supabase/drafts/${name}.sql`,'utf8')} COMMIT;`);
+  for(const name of ['supervisor_table_foundation','supervisor_rpc_rollout','supervisor_payroll_preview','historical_external_worker_payroll','supervisor_payroll_ledger','paid_period_assertion_adjustments','confirmed_rental_expense_link','project_cost_reconciliation_preview','historical_worker_project_attribution'])await admin.query(`BEGIN; ${readFileSync(`supabase/drafts/${name}.sql`,'utf8')} COMMIT;`);
   await admin.query(`INSERT INTO public.workers(id,name,position,contact_number,pay_rate,pay_rate_type,active) VALUES ('${supervisor}','Supervisor','Supervisor','none',600,'daily',true),('${id(105)}','Worker Five','Mason','none',600,'daily',true),('${id(106)}','Worker Six','Mason','none',600,'daily',true),('${id(107)}','Worker Seven','Mason','none',600,'daily',true),('${id(108)}','Worker Eight','Mason','none',600,'daily',true),('${id(109)}','Worker Nine','Mason','none',600,'daily',true);
    INSERT INTO public.project_worker_assignments VALUES ('${site}','${id(107)}',true),('${site}','${id(108)}',true);
    INSERT INTO public.attendance(id,worker_id,project_id,date,status,hours_worked,submitted_at) VALUES ('${id(206)}','${id(105)}','${site}','2024-11-03','present',8,'2024-11-03T08:00:00Z'),('${id(207)}','${id(106)}','${site}','2024-11-10','present',8,'2024-11-10T08:00:00Z'),('${id(209)}','${id(109)}','${site}','2024-09-15','present',8,'2024-09-15T08:00:00Z');
@@ -119,6 +119,33 @@ suite('real PostgreSQL combined weekly Bale and payroll candidate races',()=>{
    expect((await admin.query('SELECT count(*)::int n FROM public.payroll WHERE id=$1',[payroll])).rows[0].n).toBe(0);expect((await admin.query('SELECT count(*)::int n FROM public.advances WHERE worker_id=$1',[worker])).rows[0].n).toBe(0);
    const snap=(await first.query("SELECT public.paid_period_assertion_case_list('external_worker',$1) v",[claim])).rows[0].v.snapshot;await first.query("SELECT public.open_paid_period_assertion_case($1,'external_worker',$2,$3,30,'Review')",[id(503),claim,JSON.stringify(snap)]);await first.query("SELECT public.resolve_paid_period_assertion_case($1,'no_transfer',NULL,'Reviewed',true)",[id(503)]);
    expect((await admin.query('SELECT count(*)::int n FROM public.payroll WHERE worker_id=$1',[worker])).rows[0].n).toBe(0);expect((await admin.query('SELECT count(*)::int n FROM public.weekly_worker_paid_allocations a JOIN public.payroll p ON p.id=a.payroll_id WHERE p.worker_id=$1',[worker])).rows[0].n).toBe(0);
+  }finally{await first.query('ROLLBACK');await second.query('ROLLBACK');}
+ },15000);
+ it('serializes historical attribution retries and competing splits without creating finance transactions',async()=>{
+  const source=id(501),original=(await first.query('SELECT public.historical_external_worker_lookup($1) v',[source])).rows[0].v;
+  const split=[{project_id:site,gross:'400.25'},{project_id:'00000000-0000-0000-0000-000000000005',gross:'199.75'}];
+  const call=(c:Client,request:string,items:unknown)=>c.query("SELECT public.record_historical_worker_attribution($1,$2,$3::jsonb,$4::jsonb,'Synthetic evidence reviewed',true) v",[request,source,JSON.stringify(original),JSON.stringify(items)]);
+  await first.query(`SET test.uid='${founder}'`);await second.query(`SET test.uid='${founder}'`);
+  await first.query('BEGIN');await second.query('BEGIN');try{
+   expect((await call(first,id(700),split)).rows[0].v.replayed).toBe(false);
+   let done=false;const retry=call(second,id(700),[...split].reverse()).finally(()=>{done=true});await pause();expect(done).toBe(false);
+   await first.query('COMMIT');expect((await retry).rows[0].v.replayed).toBe(true);await second.query('COMMIT');
+   await expect(call(first,id(701),split)).rejects.toMatchObject({code:'23505'});
+   // A distinct assertion exercises genuinely concurrent different request IDs.
+   const secondWorker=id(950),secondSource=id(702);
+   await admin.query("INSERT INTO public.workers(id,name,position,contact_number,pay_rate,pay_rate_type,active) VALUES($1,'Additional worker','Mason','none',600,'daily',true)",[secondWorker]);
+   const reviewed=(await first.query("SELECT public.historical_external_worker_review($1,'2024-10-20') v",[secondWorker])).rows[0].v.worker;
+   await first.query("SELECT public.record_historical_external_worker_payroll($1,$2,'2024-10-20','2024-10-26',600,0,0,600,'Synthetic evidence',$3,true)",[secondSource,secondWorker,JSON.stringify(reviewed)]);
+   const secondOriginal=(await first.query('SELECT public.historical_external_worker_lookup($1) v',[secondSource])).rows[0].v;
+   const competing=(c:Client,request:string,items:unknown)=>c.query("SELECT public.record_historical_worker_attribution($1,$2,$3::jsonb,$4::jsonb,'Synthetic evidence reviewed',true) v",[request,secondSource,JSON.stringify(secondOriginal),JSON.stringify(items)]);
+   await first.query('BEGIN');await second.query('BEGIN');await competing(first,id(703),split);
+   let finished=false;const conflict=competing(second,id(704),[{project_id:site,gross:'600.00'}]).then(()=>({code:'success'}),(error:{code:string})=>({code:error.code})).finally(()=>{finished=true});
+   await pause();expect(finished).toBe(false);await first.query('COMMIT');expect((await conflict).code).toBe('23505');await second.query('ROLLBACK');
+   expect((await admin.query('SELECT count(*)::int n FROM public.historical_worker_attributions WHERE source_id=$1',[secondSource])).rows[0].n).toBe(1);
+   expect((await admin.query('SELECT count(*)::int n FROM public.historical_worker_attributions WHERE source_id=$1',[source])).rows[0].n).toBe(1);
+   expect((await admin.query('SELECT sum(gross)::text total,count(*)::int n FROM public.historical_worker_attribution_sites WHERE attribution_id=$1',[id(700)])).rows[0]).toEqual({total:'600.00',n:2});
+   expect((await admin.query('SELECT count(*)::int n FROM public.payroll WHERE worker_id=$1 AND period_start=$2',[id(105),'2024-11-03'])).rows[0].n).toBe(0);
+   expect((await first.query('SELECT public.project_historical_worker_attributions($1) v',[site])).rows[0].v.items).toEqual(expect.arrayContaining([expect.objectContaining({source_id:source,site_gross:'400.25',case_count:1})]));
   }finally{await first.query('ROLLBACK');await second.query('ROLLBACK');}
  },15000);
  it('serializes a weekly draft before a competing historical external claim',async()=>{
