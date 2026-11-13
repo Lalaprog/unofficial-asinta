@@ -22,7 +22,7 @@ describe('uninstalled Supervisor payroll planning SQL',()=>{
    await db.exec(`SET test.uid='${founder}'`);await db.query("SELECT public.review_supervisor_day($1,'approved')",[entry]);
    const catalog=(await db.query<{v:unknown}>('SELECT public.supervisor_payroll_preview_catalog() v')).rows[0].v;expect(parseSupervisorCatalog(catalog)).toEqual([{id:sup,name:'Supervisor'}]);
    const call=async(start:string)=>(await db.query<{v:unknown}>('SELECT public.supervisor_payroll_preview_inputs($1,$2) v',[sup,start])).rows[0].v;
-   const input=parseSupervisorPreview(await call('2024-02-16'),sup,'2024-02-16');expect(input.end).toBe('2024-02-29');expect(buildSupervisorPreview(input,'655.55','2024-02-29').gross).toBe('327.78');
+   const input=parseSupervisorPreview(await call('2024-02-16'),sup,'2024-02-16');expect(input.end).toBe('2024-02-29');expect(buildSupervisorPreview(input,'655.55',input.as_of).gross).toBe('327.78');
    expect(parseSupervisorPreview(await call('2023-02-16'),sup,'2023-02-16').end).toBe('2023-02-28');expect(parseSupervisorPreview(await call('2026-12-16'),sup,'2026-12-16').end).toBe('2026-12-31');
    await expect(call('2024-02-15')).rejects.toThrow(/Invalid Supervisor period/);await db.exec("SET test.assurance='no'");await expect(call('2024-02-16')).rejects.toThrow(/Founder access/);
    await db.exec('RESET ROLE; SET ROLE anon');await expect(db.query('SELECT public.supervisor_payroll_preview_catalog()')).rejects.toThrow(/permission denied/);await db.exec('RESET ROLE');
@@ -45,7 +45,7 @@ describe('uninstalled Supervisor payroll planning SQL',()=>{
    await db.exec(`UPDATE public.workers SET name='Supervisor'; SET test.uid='${founder}'; SET test.assurance='yes'; SET ROLE authenticated`);
    const raw=(await db.query<{v:unknown}>("SELECT public.supervisor_payroll_preview_inputs($1,'2026-10-16') v",[sup])).rows[0].v;
    const value=parseSupervisorPreview(raw,sup,'2026-10-16');expect(value).toMatchObject({identity_needs_review:true,legacy_count:1,overlapping_vouchers:1});
-   expect(buildSupervisorPreview(value,'600','2026-10-30').gross).toBeNull();
+   expect(buildSupervisorPreview(value,'600',value.as_of).gross).toBeNull();
   }finally{await db.close();}
  },30000);
 });

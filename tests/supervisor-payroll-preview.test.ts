@@ -1,6 +1,6 @@
 import {describe,expect,it} from 'vitest';
 import {buildSupervisorPreview,parseDailyRate,parseSupervisorCatalog,parseSupervisorPreview,supervisorPeriodDates} from '@/lib/payroll/supervisorPreview';
-const source={supervisor_id:'s',start:'2024-02-16',end:'2024-02-29',days:[{id:'a',date:'2024-02-16',work_status:'present',status:'approved'},{id:'b',date:'2024-02-17',work_status:'half_day',status:'approved'},{id:'c',date:'2024-02-18',work_status:'absent',status:'approved'}],leave:[{id:'l',start:'2024-02-19',end:'2024-02-20',status:'approved'}],identity_needs_review:false,legacy_count:0,overlapping_vouchers:0};
+const source={supervisor_id:'s',start:'2024-02-16',end:'2024-02-29',as_of:'2024-02-25',days:[{id:'a',date:'2024-02-16',work_status:'present',status:'approved'},{id:'b',date:'2024-02-17',work_status:'half_day',status:'approved'},{id:'c',date:'2024-02-18',work_status:'absent',status:'approved'}],leave:[{id:'l',start:'2024-02-19',end:'2024-02-20',status:'approved'}],identity_needs_review:false,legacy_count:0,overlapping_vouchers:0};
 const parsed=(x:unknown=source)=>parseSupervisorPreview(x,'s','2024-02-16');
 describe('Supervisor semi-monthly planning calculation',()=>{
  it('uses 1–15 or 16–month-end, including leap years and year end',()=>{
@@ -18,6 +18,15 @@ describe('Supervisor semi-monthly planning calculation',()=>{
   expect(buildSupervisorPreview(parsed({...source,days:[],leave:[]}),'600','2024-02-25').gross).toBeNull();
   expect(buildSupervisorPreview(parsed({...source,days:[],leave:source.leave}),'600','2024-02-25').gross).toBe('0.00');
  });
+ it('does not count future attendance or infer zero from only upcoming leave',()=>{
+  const upcoming=parsed({...source,days:[{...source.days[0],date:'2024-02-28'}],leave:[]});
+  const blocked=buildSupervisorPreview(upcoming,'600','2024-02-25');expect(blocked.gross).toBeNull();expect(blocked.halfDayUnits).toBe(0n);expect(blocked.reasons).toContain('Future attendance requires investigation');
+  const wrongClock=buildSupervisorPreview(upcoming,'600','2024-02-29');expect(wrongClock.gross).toBeNull();expect(wrongClock.halfDayUnits).toBe(0n);expect(wrongClock.reasons).toContain('Device and server Philippine dates differ; verify the clock and reload');
+  const onlyFuture=parsed({...source,days:[],leave:[{...source.leave[0],start:'2024-02-28',end:'2024-02-29'}]});
+  const leave=buildSupervisorPreview(onlyFuture,'600','2024-02-25');expect(leave.gross).toBeNull();expect(leave.known).toBe(0);expect(leave.days.find(d=>d.date==='2024-02-28')?.label).toBe('Approved leave · upcoming, unpaid');
+  const partly=parsed({...source,days:[source.days[0]],leave:[{...source.leave[0],start:'2024-02-24',end:'2024-02-28'}]});
+  expect(buildSupervisorPreview(partly,'600','2024-02-25')).toMatchObject({gross:'600.00',known:3});
+ });
  it('withholds gross for overlapping vouchers, identity or legacy uncertainty, pending entries, or contradictory leave',()=>{
   for(const change of [{identity_needs_review:true},{legacy_count:1},{overlapping_vouchers:1},{days:[{...source.days[0],status:'pending'}]},{leave:[{...source.leave[0],status:'pending'}]},{leave:[{...source.leave[0],start:'2024-02-16'}]}]){
    const r=buildSupervisorPreview(parsed({...source,...change}),'600','2024-02-25');expect(r.gross).toBeNull();expect(r.reasons.length).toBeGreaterThan(0);
@@ -30,6 +39,7 @@ describe('Supervisor semi-monthly planning calculation',()=>{
   expect(()=>parsed({...source,end:'2024-02-28'})).toThrow();
   expect(()=>parsed({...source,days:[source.days[0],{...source.days[0],id:'z'}]})).toThrow();
   expect(()=>parsed({...source,leave:[{...source.leave[0],start:'2024-02-30'}]})).toThrow();
-  expect(()=>parsed({...source,legacy_count:-1})).toThrow();
+  expect(()=>parsed({...source,legacy_count:-1})).toThrow();expect(()=>parsed({...source,as_of:'2024-02-30'})).toThrow();
+  const mismatch=buildSupervisorPreview(parsed(),'600','2024-02-26');expect(mismatch.gross).toBeNull();expect(mismatch.reasons).toContain('Device and server Philippine dates differ; verify the clock and reload');
  });
 });

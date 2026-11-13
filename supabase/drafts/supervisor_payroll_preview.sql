@@ -67,7 +67,9 @@ BEGIN
  WHERE (w.id=p_supervisor OR lower(btrim(w.name))=lower(btrim(v_name))) AND a.date BETWEEN p_start AND v_end;
  SELECT count(*) INTO v_vouchers FROM public.payroll p JOIN public.workers w ON w.id=p.worker_id
  WHERE (w.id=p_supervisor OR lower(btrim(w.name))=lower(btrim(v_name))) AND p.period_start<=v_end AND p.period_end>=p_start;
- RETURN jsonb_build_object('supervisor_id',p_supervisor,'start',p_start,'end',v_end,'days',v_days,'leave',v_leave,
+ -- All inputs in this STABLE function use one statement snapshot. The Manila
+ -- date is server-provided, so device clock errors cannot make future work payable.
+ RETURN jsonb_build_object('supervisor_id',p_supervisor,'start',p_start,'end',v_end,'as_of',(statement_timestamp() AT TIME ZONE 'Asia/Manila')::date,'days',v_days,'leave',v_leave,
    'identity_needs_review',v_identity,'legacy_count',v_legacy,'overlapping_vouchers',v_vouchers);
 END;
 $$;
