@@ -5,6 +5,8 @@ import { useRouter, useSearchParams } from 'next/navigation';
 import { useAuth } from '@/lib/auth/authContext';
 import { useDataStore } from '@/lib/data/store';
 import { useBaleProjectWorkers } from '@/lib/attendance/useBaleProjectWorkers';
+import { useWeeklyBaleStatuses } from '@/lib/attendance/useWeeklyBaleStatuses';
+import { weeklyBaleReleasePreviewEnabled } from '@/lib/finance/featureAvailability';
 import type { AdvanceRequest, AdvanceRequestStatus } from '@/types';
 import { formatDatePH, formatPeso, formatPesoCompact } from '@/lib/email/format';
 import { useToast } from '@/components/ui/Toast';
@@ -110,6 +112,10 @@ export function AdvanceRequestsPanel() {
     [isFounder, projects, user, getProjectsForSupervisor]
   );
   const team = useBaleProjectWorkers(user?.id, selectedProjectId, isSupervisor && requestModalOpen);
+  const weeklyMode = weeklyBaleReleasePreviewEnabled();
+  const weeklyStatuses = useWeeklyBaleStatuses(weeklyMode, user?.id, isFounder ? 'founder' : isSupervisor ? 'supervisor' : 'other', isFounder ? advanceRequests : advanceRequests.filter(r => r.submitted_by === user?.id));
+  const statusFor = (request: AdvanceRequest) => weeklyStatuses.data?.items.find(item => item.id === request.id && item.stored_status === request.status);
+  const canReview = (request: AdvanceRequest) => request.status === 'pending_approval' && (!weeklyMode || statusFor(request)?.can_review === true);
   const activeWorkers = team.status === 'ready' ? team.workers : [];
   const missingWorkerDetails = team.status === 'ready' && team.someDetailsUnavailable;
   const pendingApprovalRequests = advanceRequests.filter(
@@ -181,7 +187,7 @@ export function AdvanceRequestsPanel() {
 
   const selectedRequestIds = new Set(requestSelection.ids);
   const selectedRequests = advanceRequests.filter(
-    (request) => selectedRequestIds.has(request.id) && request.status === 'pending_approval'
+    (request) => selectedRequestIds.has(request.id) && canReview(request)
   );
   const selectedRequestTotal = selectedRequests.reduce(
     (sum, request) => sum + request.requested_amount,
@@ -207,13 +213,14 @@ export function AdvanceRequestsPanel() {
           (request) =>
             request.id === id &&
             request.status === 'pending_approval' &&
+            (!weeklyMode || weeklyStatuses.data?.items.some(item => item.id === request.id && item.stored_status === request.status && item.can_review)) &&
             request.project_id === previous.siteId
         )
       );
       if (validIds.length === previous.ids.length) return previous;
       return { siteId: validIds.length > 0 ? previous.siteId : null, ids: validIds };
     });
-  }, [advanceRequests]);
+  }, [advanceRequests, weeklyMode, weeklyStatuses.data]);
 
   const clearRequestFocus = () => {
     if (!focusedRequestId) return;
@@ -252,7 +259,7 @@ export function AdvanceRequestsPanel() {
   };
 
   const toggleRequestSelection = (request: AdvanceRequest, checked: boolean) => {
-    if (request.status !== 'pending_approval') return;
+    if (!canReview(request)) return;
     setRequestSelection((previous) => {
       if (checked) {
         if (previous.siteId && previous.siteId !== request.project_id) return previous;
@@ -267,7 +274,7 @@ export function AdvanceRequestsPanel() {
 
   const toggleSiteRequestSelection = (group: SiteRequestGroup, checked: boolean) => {
     const pendingIds = group.requests
-      .filter((request) => request.status === 'pending_approval')
+      .filter((request) => canReview(request))
       .map((request) => request.id);
     setRequestSelection((previous) => {
       if (!checked) {
@@ -335,7 +342,8 @@ export function AdvanceRequestsPanel() {
   };
 
   const handleReview = async (id: string, decision: 'approve' | 'reject') => {
-    if (actionLock.current) return;
+    const request = advanceRequests.find(item => item.id === id);
+    if (actionLock.current || !request || !canReview(request)) return;
     actionLock.current = true;
     setActioningRequestId(id);
     try {
@@ -371,8 +379,9 @@ export function AdvanceRequestsPanel() {
     const submitter = users.find((item) => item.id === request.submitted_by);
     const isActioning = actioningRequestId === request.id;
     const isSelected = selectedRequestIds.has(request.id);
+    const weeklyStatus = weeklyMode ? statusFor(request) : undefined;
     const selectionDisabled =
-      request.status !== 'pending_approval' ||
+      !canReview(request) ||
       (Boolean(requestSelection.siteId) && requestSelection.siteId !== request.project_id) ||
       (!isSelected && requestSelection.ids.length >= MAX_BATCH_APPROVAL_SIZE);
 
@@ -403,7 +412,7 @@ export function AdvanceRequestsPanel() {
                 {worker?.name || 'Worker'}
               </span>
               <Badge size="sm" variant={requestStatusVariant(request.status)}>
-                {requestStatusLabel(request.status)}
+                {weeklyStatus?.effective_status === 'expired_unapproved' ? 'Expired · awaiting recorded rejection' : weeklyStatus?.auto_expired ? 'Automatically rejected' : requestStatusLabel(request.status)}
               </Badge>
             </div>
             <p className="break-words text-xs text-ink-secondary">
@@ -414,7 +423,9 @@ export function AdvanceRequestsPanel() {
                 Submitted by {submitter?.name || 'Supervisor'}
               </p>
             )}
-            <p className="max-w-lg text-xs leading-relaxed text-ink-secondary">{requestStatusDescription(request.status)}</p>
+            <p className="max-w-lg text-xs leading-relaxed text-ink-secondary">{weeklyStatus?.effective_status === 'expired_unapproved' ? 'The approval window ended after Tuesday. This request cannot be approved; recorded rejection may be pending the expiry job.' : weeklyStatus?.auto_expired ? 'Automatically rejected after the approval window; no Bale was issued.' : requestStatusDescription(request.status)}</p>
+            {weeklyMode && !weeklyStatus && <p className="text-xs text-status-warning">Weekly status unavailable or changed. Reload the request list and weekly status before taking action.</p>}
+            {weeklyMode && weeklyStatus?.kind === 'legacy' && <p className="text-xs text-status-warning">Legacy request: review separately; weekly actions are unavailable.</p>}
             <details className="group/activity text-xs">
               <summary className="inline-flex min-h-11 cursor-pointer items-center gap-1.5 rounded-md font-semibold text-brand focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand">
                 Status dates <span className="sr-only">for {worker?.name || 'worker'} · {formatPeso(request.requested_amount)}</span>
@@ -440,7 +451,7 @@ export function AdvanceRequestsPanel() {
                 type="button"
                 size="sm"
                 variant="secondary"
-                disabled={isActioning}
+                disabled={isActioning || !canReview(request)}
                 onClick={() => handleReview(request.id, 'reject')}
                 leftIcon={<X className="h-3.5 w-3.5" />}
               >
@@ -450,7 +461,7 @@ export function AdvanceRequestsPanel() {
                 type="button"
                 size="sm"
                 variant="primary"
-                disabled={isActioning}
+                disabled={isActioning || !canReview(request)}
                 onClick={() => handleReview(request.id, 'approve')}
                 leftIcon={<Check className="h-3.5 w-3.5" />}
               >
@@ -458,7 +469,7 @@ export function AdvanceRequestsPanel() {
               </Button>
             </div>
           )}
-          {isFounder && request.status === 'approved_pending_payment' && (
+          {isFounder && !weeklyMode && request.status === 'approved_pending_payment' && (
             <Button
               type="button"
               size="sm"
@@ -477,6 +488,12 @@ export function AdvanceRequestsPanel() {
 
   return (
     <div className="space-y-4">
+      {weeklyMode && <div className="rounded-xl border border-surface-border bg-white p-3 text-xs text-ink-secondary">
+        <p>Weekly decision status is checked against the server. Existing list totals and filters reflect stored statuses, which may lag automatic expiry. Release is handled in the separate experimental panel.</p>
+        {weeklyStatuses.loading && <p role="status">Checking weekly request status…</p>}
+        {weeklyStatuses.error && <p role="alert">Weekly status unavailable: {weeklyStatuses.error}</p>}
+        <Button type="button" size="sm" variant="secondary" disabled={weeklyStatuses.loading} onClick={() => void weeklyStatuses.refresh()}>Refresh weekly status</Button>
+      </div>}
       <div
         className={`animate-mobile-lift flex flex-col gap-3 rounded-2xl border p-4 sm:flex-row sm:items-center sm:justify-between sm:p-5 ${
           isSupervisor
@@ -716,9 +733,7 @@ export function AdvanceRequestsPanel() {
           )}
 
           {siteGroups.map((group) => {
-            const pendingGroupRequests = group.requests.filter(
-              (request) => request.status === 'pending_approval'
-            );
+            const pendingGroupRequests = group.requests.filter((request) => canReview(request));
             const approvedGroupCount = group.requests.filter(
               (request) => request.status === 'approved_pending_payment'
             ).length;
@@ -763,7 +778,7 @@ export function AdvanceRequestsPanel() {
                     </div>
                   </div>
                   <p className="ml-6 break-words text-[11px] leading-relaxed text-ink-secondary">
-                    {group.requests.length} shown · {pendingGroupRequests.length} awaiting approval · {approvedGroupCount} awaiting payment
+                    {group.requests.length} shown · {pendingGroupRequests.length} {weeklyMode ? 'verified for review' : 'awaiting approval'} · {approvedGroupCount} awaiting payment
                   </p>
 
                   <p className="ml-6 text-[11px] leading-relaxed text-ink-muted">Shown total adds requested amounts in this view, including any issued or rejected requests; it is not an amount due.</p>

@@ -32,7 +32,7 @@ async function fixture(withExpiration=false){
  const guard=sql('supabase/drafts/guard_legacy_bale_payment.sql');
  await db.exec(guard.slice(guard.indexOf('CREATE FUNCTION public.guard_new_advance_finalized_payroll()'),guard.indexOf('-- Keep the atomic implementation')));
  await db.exec(sql('supabase/drafts/weekly_bale_schedule.sql'));
- if(withExpiration){await db.exec(sql('supabase/drafts/weekly_bale_expiration.sql'));await db.exec(sql('supabase/drafts/weekly_bale_release_list.sql'));}
+ if(withExpiration){await db.exec(sql('supabase/drafts/weekly_bale_expiration.sql'));await db.exec(sql('supabase/drafts/weekly_bale_release_list.sql'));await db.exec(sql('supabase/drafts/weekly_bale_status_batch.sql'));}
  // Test-only replacement by owner. Production clock accepts no user argument.
  await db.exec(`CREATE OR REPLACE FUNCTION public.weekly_bale_clock() RETURNS timestamptz LANGUAGE sql VOLATILE SET search_path='' AS $$SELECT current_setting('test.clock')::timestamptz$$;
   SET test.clock='2026-11-15T04:00:00Z'; SET test.uid='${supervisor}'; SET test.assurance='yes'; SET ROLE authenticated;`);
@@ -104,6 +104,17 @@ describe('experimental weekly Bale schedule (not deployed)',()=>{
    expect((await db.query("SELECT actor_id,actor_email FROM public.audit_log WHERE record_id=$1 AND action='update'",[overdue])).rows).toEqual([{actor_id:null,actor_email:null}]);
    expect((await db.query<{n:number}>("SELECT count(*)::int n FROM public.user_notifications WHERE advance_request_id=$1 AND event_type='advance_request_rejected'",[overdue])).rows[0].n).toBe(1);
    expect((await db.query('SELECT expiry_xid FROM public.weekly_bale_requests WHERE request_id=$1',[overdue])).rows).toEqual([{expiry_xid:null}]);
+  }finally{await db.close();}
+ },30000);
+ it('returns bounded authorized status for projected expiry, recorded expiry and legacy rows',async()=>{
+  const db=await fixture(true);try{
+   const request=await submit(db);const get=()=>db.query<{data:{items:{id:string;kind:string;effective_status:string;auto_expired:boolean;can_review:boolean}[]}}>('SELECT public.weekly_bale_status_batch($1::uuid[]) data',[[request,id(90)]]);
+   let items=(await get()).rows[0].data.items;expect(items.find(i=>i.id===request)).toMatchObject({kind:'weekly',effective_status:'pending_approval',can_review:true,auto_expired:false});expect(items.find(i=>i.id===id(90))).toMatchObject({kind:'legacy',can_review:false});
+   await time(db,'2026-11-17T16:00:00Z');items=(await get()).rows[0].data.items;expect(items.find(i=>i.id===request)).toMatchObject({effective_status:'expired_unapproved',can_review:false,auto_expired:false});
+   await role(db,outsider);await expect(get()).rejects.toThrow(/unavailable/);
+   await role(db,supervisor);await expect(db.query('SELECT public.weekly_bale_status_batch($1::uuid[])',[[request,request]])).rejects.toThrow(/Invalid request ID/);
+   await db.exec("RESET ROLE; SET test.uid=''");await db.query('SELECT public.materialize_weekly_bale_expiry(100)');await db.exec(`SET ROLE authenticated; SET test.uid='${supervisor}'`);
+   items=(await get()).rows[0].data.items;expect(items.find(i=>i.id===request)).toMatchObject({effective_status:'rejected',can_review:false,auto_expired:true});
   }finally{await db.close();}
  },30000);
  it('lists approved and issued requests only to the Founder or a currently assigned Supervisor',async()=>{

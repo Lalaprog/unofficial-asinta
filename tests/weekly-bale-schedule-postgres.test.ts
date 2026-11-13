@@ -37,6 +37,7 @@ suite('weekly Bale schedule on disposable PostgreSQL',()=>{
   await admin.query(readFileSync('supabase/drafts/weekly_bale_schedule.sql','utf8'));
   await admin.query(readFileSync('supabase/drafts/weekly_bale_expiration.sql','utf8'));
   await admin.query(readFileSync('supabase/drafts/weekly_bale_release_list.sql','utf8'));
+  await admin.query(readFileSync('supabase/drafts/weekly_bale_status_batch.sql','utf8'));
   await admin.query(`CREATE OR REPLACE FUNCTION public.weekly_bale_clock() RETURNS timestamptz LANGUAGE sql VOLATILE SET search_path='' AS $$SELECT current_setting('test.clock')::timestamptz$$;`);
   await Promise.all([first.query(`SET ROLE authenticated; SET test.uid='${supervisor}'; SET test.assurance='yes'; SET test.clock='2026-11-15T04:00:00Z'; SET lock_timeout='4s'`),second.query(`SET ROLE authenticated; SET test.uid='${supervisor}'; SET test.assurance='yes'; SET test.clock='2026-11-18T04:00:00Z'; SET lock_timeout='4s'`)]);
  },30000);
@@ -80,6 +81,8 @@ suite('weekly Bale schedule on disposable PostgreSQL',()=>{
    await first.query('COMMIT');expect((await second.query<{n:number}>('SELECT public.materialize_weekly_bale_expiry(100) n')).rows[0].n).toBe(1);
    expect((await second.query<{n:number}>('SELECT public.materialize_weekly_bale_expiry(100) n')).rows[0].n).toBe(0);
    expect((await admin.query('SELECT status,auto_expired,rejected_by FROM public.advance_requests WHERE id=$1',[request])).rows).toEqual([{status:'rejected',auto_expired:true,rejected_by:null}]);
+   await first.query(`SET ROLE authenticated; SET test.uid='${supervisor}'; SET test.assurance='yes'`);
+   expect((await first.query('SELECT public.weekly_bale_status_batch($1::uuid[]) result',[[request]])).rows[0].result.items).toMatchObject([{id:request,stored_status:'rejected',effective_status:'rejected',auto_expired:true,can_review:false}]);
    expect((await admin.query("SELECT actor_id FROM public.audit_log WHERE record_id=$1 AND action='update'",[request])).rows).toEqual([{actor_id:null}]);
   }finally{await first.query('ROLLBACK');}
  },15000);
