@@ -76,6 +76,8 @@ suite('coordinated finance integration rehearsal, synthetic PostgreSQL only',()=
    await db.query(readFileSync('supabase/drafts/project_assignment_history.sql','utf8'));
    await db.query(readFileSync('supabase/drafts/atomic_worker_move.sql','utf8'));
    await db.query(readFileSync('supabase/drafts/attendance_assignment_guard.sql','utf8'));
+   // Separate uninstalled assignment ACL candidate; this is not in the generated chain.
+   await db.query(readFileSync('supabase/drafts/assignment_writer_acl_cutover.sql','utf8'));
    // Old-client payroll writes must not bypass the source-bound workflow.
    // This extra draft is outside the generated chain and remains uninstalled.
    await db.query(readFileSync('supabase/drafts/weekly_bale_legacy_cutover_guard.sql','utf8'));
@@ -86,6 +88,11 @@ suite('coordinated finance integration rehearsal, synthetic PostgreSQL only',()=
    await db.query(`SET LOCAL test.uid='${founder}'; SET LOCAL test.assurance='yes'`);
    await db.query("INSERT INTO public.attendance(id,worker_id,project_id,date,status,hours_worked,submitted_at) VALUES($1,$2,$3,'2024-08-04','present',8,'2024-08-04T08:00:00Z')",[attendance,worker,site]);
    await db.query('INSERT INTO public.project_worker_assignments(project_id,worker_id,active) VALUES($1,$2,true)',[site,worker]);
+   await db.query('SET LOCAL ROLE service_role; SAVEPOINT denied_assignment_writer');
+   await expect(db.query('UPDATE public.project_worker_assignments SET active=false WHERE worker_id=$1',[worker])).rejects.toThrow(/permission denied/);
+   await db.query('ROLLBACK TO SAVEPOINT denied_assignment_writer; RELEASE SAVEPOINT denied_assignment_writer');
+   await db.query('SELECT public.set_project_worker_guarded($1,$2,$3,true)',[founder,site,worker]);
+   await db.query('RESET ROLE');
    await db.query("INSERT INTO public.project_supervisors(project_id,supervisor_id) VALUES('00000000-0000-0000-0000-000000000005',$1)",[supervisor]);
    await db.query("INSERT INTO public.workers(id,name,position,contact_number,pay_rate,pay_rate_type,active) VALUES($1,'Supervisor','Supervisor','none',600,'daily',true)",[supervisor]);
    await db.query(`INSERT INTO public.expenses(id,project_id,description,category,amount,expense_date,ai_bale_detection) VALUES
