@@ -9,7 +9,7 @@ const founder='00000000-0000-0000-0000-000000000001',supervisor='00000000-0000-0
 const [att1,att2,detail,allowance,advance,request,voucher]=[1,2,3,4,5,6,7].map(id);
 const start='2024-11-03';
 const sql=(path:string)=>readFileSync(path,'utf8');
-async function fixture(withApproval=false,withPayment=false,withRefresh=false,withReturn=false){
+async function fixture(withApproval=false,withPayment=false,withRefresh=false,withReturn=false,withHistorical=false){
  const db=new PGlite();
  await db.exec(baseFixture);
  await db.exec(`ALTER TABLE public.users ADD COLUMN email text;
@@ -40,6 +40,7 @@ async function fixture(withApproval=false,withPayment=false,withRefresh=false,wi
  if(withPayment){await db.exec(sql('supabase/drafts/weekly_worker_paid_allocation.sql'));await db.exec(sql('supabase/drafts/weekly_worker_draft_details.sql'));await db.exec(sql('supabase/drafts/project_paid_payroll_evidence.sql'));}
  if(withRefresh) await db.exec(sql('supabase/drafts/weekly_worker_draft_refresh.sql'));
  if(withReturn) await db.exec(sql('supabase/drafts/weekly_worker_return_to_draft.sql'));
+ if(withHistorical) await db.exec(sql('supabase/drafts/historical_paid_date_annotation.sql'));
  await db.exec(`SET test.uid='${founder}'; SET test.assurance='yes'; SET ROLE authenticated;`);
  return db;
 }
@@ -407,6 +408,39 @@ describe('approved but not paid return candidate',()=>{
    expect((await db.query('SELECT status FROM public.payroll WHERE id=$1',[voucher])).rows).toEqual([{status:'approved'}]);
    expect((await db.query('SELECT draft_revision,approved_by,return_xid,return_actor FROM public.weekly_worker_draft_sources WHERE payroll_id=$1',[voucher])).rows).toEqual([{draft_revision:0,approved_by:founder,return_xid:null,return_actor:null}]);
    expect((await db.query<{n:number}>('SELECT count(*)::int n FROM public.weekly_worker_approval_returns')).rows[0].n).toBe(0);
+  }finally{await db.close();}
+ },30000);
+});
+
+
+describe('historical externally paid date annotation candidate',()=>{
+ const historical=id(50),requestId=id(51);
+ async function seed(db:PGlite){
+  await db.exec("RESET ROLE; SET test.uid=''");await db.query("INSERT INTO public.payroll(id,worker_id,period_start,period_end,status,gross_pay,bale_deduction,other_deductions,net_pay) VALUES($1,$2,'2024-10-20','2024-10-26','paid',1000,200,0,800)",[historical,worker]);
+  const expected=(await db.query<{v:unknown}>('SELECT public.historical_paid_voucher_snapshot(p) v FROM public.payroll p WHERE id=$1',[historical])).rows[0].v;await db.exec(`SET test.uid='${founder}'; SET ROLE authenticated`);return expected;
+ }
+ const annotate=(db:PGlite,expected:unknown,request=requestId,date='2024-10-26',note='Manual payroll ledger reviewed')=>db.query<{r:{replayed:boolean;payment_date:string}}>('SELECT public.annotate_historical_paid_date($1,$2,$3,$4,$5) r',[request,historical,expected,date,note]);
+ it('records an explicit historical date against an existing paid voucher without paying or changing Bale',async()=>{
+  const db=await fixture(true,true,true,true,true);try{
+   const expected=await seed(db);const before=(await db.query('SELECT status,amount_deducted::text FROM public.advances WHERE id=$1',[advance])).rows;
+   expect((await annotate(db,expected)).rows[0].r).toMatchObject({replayed:false,payment_date:'2024-10-26'});expect((await annotate(db,expected)).rows[0].r.replayed).toBe(true);
+   await expect(annotate(db,expected,requestId,'2024-10-25')).rejects.toThrow(/different evidence/);await expect(annotate(db,expected,id(52))).rejects.toThrow(/Existing payment-date evidence/);
+   expect((await db.query('SELECT status,amount_deducted::text FROM public.advances WHERE id=$1',[advance])).rows).toEqual(before);
+   expect((await db.query('SELECT status,gross_pay::text,bale_deduction::text,net_pay::text FROM public.payroll WHERE id=$1',[historical])).rows).toEqual([{status:'paid',gross_pay:'1000',bale_deduction:'200',net_pay:'800'}]);
+   expect((await db.query<{n:number}>('SELECT count(*)::int n FROM public.payroll_payment_dates WHERE payroll_id=$1',[historical])).rows[0].n).toBe(0);
+   expect((await db.query<{n:number}>('SELECT count(*)::int n FROM public.weekly_worker_paid_allocations WHERE payroll_id=$1',[historical])).rows[0].n).toBe(0);
+   await db.exec('RESET ROLE');expect((await db.query<{n:number}>("SELECT count(*)::int n FROM public.audit_log WHERE table_name='historical_paid_date_annotations'")).rows[0].n).toBe(1);await expect(db.query('DELETE FROM public.historical_paid_date_annotations WHERE request_id=$1',[requestId])).rejects.toThrow(/immutable/);
+  }finally{await db.close();}
+ },30000);
+ it('refuses stale, duplicate, wrong role, future or unsupported records and rolls back failed audit',async()=>{
+  const db=await fixture(true,true,true,true,true);try{
+   const expected=await seed(db);await generate(db);await expect(db.query('SELECT public.annotate_historical_paid_date($1,$2,$3,$4,$5)',[id(53),voucher,{},'2024-11-09','ledger'])).rejects.toThrow(/Only an existing paid voucher/);
+   await expect(annotate(db,{...expected as object,net_pay:'999'})).rejects.toThrow(/changed since review/);
+   await expect(annotate(db,expected,requestId,'2024-10-19')).rejects.toThrow(/precede/);await expect(annotate(db,expected,requestId,'9998-01-01')).rejects.toThrow(/valid actual date/);await expect(annotate(db,expected,requestId,'2024-10-26',' ')).rejects.toThrow(/evidence note/);
+   await db.exec(`SET test.uid='${supervisor}'`);await expect(annotate(db,expected)).rejects.toThrow(/Founder access/);await db.exec(`SET test.uid='${founder}'; SET test.assurance='no'`);await expect(annotate(db,expected)).rejects.toThrow(/Founder access/);
+   await db.exec("SET test.assurance='yes'; RESET ROLE");await db.query('INSERT INTO public.payroll_payment_dates(payroll_id,payment_date,recorded_by) VALUES($1,$2,$3)',[historical,'2024-10-26',founder]);await db.exec('SET ROLE authenticated');await expect(annotate(db,expected)).rejects.toThrow(/Existing payment-date evidence/);
+   await db.exec('RESET ROLE');await db.query('DELETE FROM public.payroll_payment_dates WHERE payroll_id=$1',[historical]);await db.exec("ALTER TABLE public.audit_log ADD CONSTRAINT deny_history CHECK (table_name <> 'historical_paid_date_annotations') NOT VALID; SET ROLE authenticated");await expect(annotate(db,expected)).rejects.toThrow(/deny_history/);await db.exec('RESET ROLE');
+   expect((await db.query<{n:number}>('SELECT count(*)::int n FROM public.historical_paid_date_annotations')).rows[0].n).toBe(0);
   }finally{await db.close();}
  },30000);
 });
