@@ -11,6 +11,7 @@ import {parseEquipmentSnapshot} from '@/lib/tools/ownedEquipment';
 import {parseProjectEquipment} from '@/lib/tools/projectEquipment';
 import {parseHistoricalProjectAttributions} from '@/lib/projects/historicalWorkerAttributions';
 import {parseAttributionProjects,parseAttributionSource,parseAttributionStatus} from '@/lib/payroll/historicalAttribution';
+import {estimateHistoricalProjectCost,parseHistoricalCostSnapshot} from '@/lib/projects/projectCostHistoricalReview';
 
 const url=process.env.FINANCE_INTEGRATION_REHEARSAL_TEST_DATABASE_URL;
 const suite=url?describe:describe.skip;
@@ -103,6 +104,7 @@ suite('coordinated finance integration rehearsal, synthetic PostgreSQL only',()=
    await db.query(readFileSync('supabase/drafts/project_cost_review_ledger.sql','utf8'));
    // New external-pay attribution evidence is separate and never posts project costs.
    await db.query(readFileSync('supabase/drafts/historical_worker_project_attribution.sql','utf8'));
+   await db.query(readFileSync('supabase/drafts/project_cost_historical_review.sql','utf8'));
    // Equipment is outside the generated chain; only this disposable transaction installs it.
    await db.query(readFileSync('supabase/drafts/owned_equipment_allocations.sql','utf8'));
    expect((await db.query("SELECT has_table_privilege('service_role','public.owned_equipment_allocations','INSERT,UPDATE,DELETE') allowed")).rows[0].allowed).toBe(false);
@@ -212,8 +214,6 @@ suite('coordinated finance integration rehearsal, synthetic PostgreSQL only',()=
    expect((await db.query(historicalRecord,historicalArgs)).rows[0].v).toMatchObject({replayed:false});
    expect((await db.query(historicalRecord,historicalArgs)).rows[0].v).toMatchObject({replayed:true});
    const historicalSnap=(await db.query("SELECT public.paid_period_assertion_case_list('external_worker',$1) v",[historicalId])).rows[0].v.snapshot;
-   await db.query("SELECT public.open_paid_period_assertion_case($1,'external_worker',$2,$3,20,'Synthetic external review')",[historicalCase,historicalId,JSON.stringify(historicalSnap)]);
-   await db.query("SELECT public.resolve_paid_period_assertion_case($1,'no_transfer',NULL,'Synthetic review complete',true)",[historicalCase]);
    const historicalSource=(await db.query('SELECT public.historical_external_worker_lookup($1) v',[historicalId])).rows[0].v;
    expect(parseAttributionProjects((await db.query('SELECT public.historical_worker_attribution_projects() v')).rows[0].v)).toEqual(expect.arrayContaining([expect.objectContaining({id:site}),expect.objectContaining({id:siteTwo})]));
    expect(parseAttributionSource(historicalSource,worker,historicalId)).toEqual(historicalSource);
@@ -223,6 +223,16 @@ suite('coordinated finance integration rehearsal, synthetic PostgreSQL only',()=
    const recordAttribution="SELECT public.record_historical_worker_attribution($1,$2,$3::jsonb,$4::jsonb,'Synthetic original evidence reviewed',true) v";
    expect((await db.query(recordAttribution,attributionArgs)).rows[0].v).toMatchObject({source_id:historicalId,replayed:false});
    expect((await db.query(recordAttribution,attributionArgs)).rows[0].v.replayed).toBe(true);
+   const combinedRaw=(await db.query('SELECT public.project_cost_historical_review($1) v',[site])).rows[0].v;
+   const combined=parseHistoricalCostSnapshot(combinedRaw,site);
+   expect(combined.historical).toMatchObject([{requestId:attributionId,siteGross:'400.25',caseCount:0,overlappingVouchers:0}]);
+   expect(estimateHistoricalProjectCost(combined,choices,{[attributionId]:'include'})).toMatchObject({expenses:101235n,payroll:80025n,historical:40025n,total:221285n});
+   await db.query("SELECT public.open_paid_period_assertion_case($1,'external_worker',$2,$3,20,'Synthetic external review')",[historicalCase,historicalId,JSON.stringify(historicalSnap)]);
+   await db.query("SELECT public.resolve_paid_period_assertion_case($1,'no_transfer',NULL,'Synthetic review complete',true)",[historicalCase]);
+   const withCase=parseHistoricalCostSnapshot((await db.query('SELECT public.project_cost_historical_review($1) v',[site])).rows[0].v,site);
+   expect(withCase.historical[0].caseCount).toBe(1);
+   expect(()=>estimateHistoricalProjectCost(withCase,choices,{[attributionId]:'include'})).toThrow(/Investigate/);
+   expect(estimateHistoricalProjectCost(withCase,choices,{[attributionId]:'exclude'})).toMatchObject({total:181260n,excludedHistorical:40025n});
    expect(parseAttributionStatus((await db.query('SELECT public.historical_worker_attribution($1) v',[historicalId])).rows[0].v,worker,historicalId)).toMatchObject({found:true,request_id:attributionId,case_count:1,source_changed:false});
    const historicalSiteRaw=(await db.query('SELECT public.project_historical_worker_attributions($1) v',[site])).rows[0].v;
    expect(historicalSiteRaw.items).toEqual([expect.objectContaining({source_id:historicalId,site_gross:'400.25',original_gross:'600.00',case_count:1})]);

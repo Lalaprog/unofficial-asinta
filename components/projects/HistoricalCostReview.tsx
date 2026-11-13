@@ -1,0 +1,39 @@
+'use client';
+import React,{useEffect,useRef,useState} from 'react';
+import {Button} from '@/components/ui/Button';
+import {createClient} from '@/lib/supabase/client';
+import {costCents,formatCostCents,type CostChoice} from '@/lib/projects/projectCostReconciliation';
+import {estimateHistoricalProjectCost,parseHistoricalCostSnapshot,type HistoricalCostSnapshot} from '@/lib/projects/projectCostHistoricalReview';
+import {ProjectAdjustmentSignals} from './ProjectAdjustmentSignals';
+
+/** One bounded snapshot and human decisions; never saves or posts a cost. */
+export function HistoricalCostReview(props:{projectId:string;userId:string}){return <Contents key={JSON.stringify([props.projectId,props.userId])} {...props}/>;}
+function Contents({projectId}:{projectId:string;userId:string}){
+ const [open,setOpen]=useState(false),[snapshot,setSnapshot]=useState<HistoricalCostSnapshot|null>(null),[busy,setBusy]=useState(false),[error,setError]=useState('');
+ const [expenses,setExpenses]=useState<Record<string,CostChoice>>({}),[history,setHistory]=useState<Record<string,CostChoice>>({}),[ack,setAck]=useState(false);
+ const alive=useRef(false),seq=useRef(0),running=useRef(false);
+ useEffect(()=>{const sequence=seq;alive.current=true;return()=>{alive.current=false;sequence.current++;};},[]);
+ async function load(){if(running.current)return;running.current=true;const token=++seq.current;setBusy(true);setError('');setSnapshot(null);setExpenses({});setHistory({});setAck(false);
+  try{const {data,error}=await createClient().rpc('project_cost_historical_review',{p_project:projectId});if(error)throw error;const value=parseHistoricalCostSnapshot(data,projectId);if(alive.current&&token===seq.current)setSnapshot(value);}
+  catch{if(alive.current&&token===seq.current)setError('Could not verify the combined snapshot. Do not assume a zero cost; reload and investigate.');}
+  finally{running.current=false;if(alive.current&&token===seq.current)setBusy(false);}
+ }
+ let estimate:ReturnType<typeof estimateHistoricalProjectCost>|null=null;
+ if(snapshot&&ack){try{estimate=estimateHistoricalProjectCost(snapshot,expenses,history);}catch{/* No result for incomplete or invalid choices. */}}
+ const allReviewed=!!snapshot&&snapshot.base.expenses.every(e=>expenses[e.id]==='include'||expenses[e.id]==='exclude')&&snapshot.historical.every(h=>history[h.requestId]==='include'||history[h.requestId]==='exclude');
+ return <section className="rounded-lg border border-surface-border p-3 space-y-3" aria-label="Experimental combined historical cost review">
+  <button type="button" className="min-h-11 font-semibold text-navy underline" aria-expanded={open} onClick={()=>setOpen(v=>!v)}>Review costs with historical worker evidence</button>
+  {open&&<div className="space-y-3"><p className="rounded-lg bg-status-warning-bg p-3">This combines one point-in-time database snapshot of expenses, paid allocations and attributed external worker evidence. It does not prove payment, find all duplicates, or include unattributed history or corrections. Review records and other sites independently. Rentals are already in their linked expense; Bale is not an extra cost. Results are incomplete, unsaved and can become stale immediately.</p>
+   <Button type="button" size="sm" variant="secondary" disabled={busy} onClick={()=>void load()}>{snapshot?'Reload combined snapshot':'Load combined snapshot'}</Button>{busy&&<p role="status">Loading combined snapshot…</p>}{error&&<p role="alert">{error}</p>}
+   {snapshot&&<><p>Snapshot captured {snapshot.base.capturedAt}. Reload to check for changes; reload clears all choices.</p>
+    <h5 className="font-semibold text-navy">Paid worker gross allocations ({snapshot.base.paid.length})</h5>{snapshot.base.paid.length?<ul>{snapshot.base.paid.map(p=><li key={p.payrollId} className="break-words">{p.workerName} · {p.start}–{p.end} · {formatCostCents(costCents(p.gross))} · voucher {p.payrollId}</li>)}</ul>:<p>No paid allocations returned; missing costs may still exist.</p>}
+    <ProjectAdjustmentSignals snapshot={snapshot.base}/>
+    <h5 className="font-semibold text-navy">Review every expense ({snapshot.base.expenses.length})</h5>{snapshot.base.expenses.length?snapshot.base.expenses.map(e=><fieldset key={e.id} className="border-t border-surface-border py-2 space-y-1"><legend className="sr-only">Combined expense {e.id}</legend><p className="font-semibold break-words">{e.description} · {formatCostCents(costCents(e.amount))} · {e.date}</p><p>{e.category} · {e.baleHint?'AI flagged possible Bale; verify':'No AI Bale flag; still verify'}{e.rental?' · confirmed rental is this same expense':''}</p><div className="flex flex-wrap gap-3"><label><input type="radio" name={`combined-expense-${e.id}`} checked={expenses[e.id]==='include'} onChange={()=>{setExpenses(c=>({...c,[e.id]:'include'}));setAck(false);}}/> Include expense</label><label><input type="radio" name={`combined-expense-${e.id}`} checked={expenses[e.id]==='exclude'} onChange={()=>{setExpenses(c=>({...c,[e.id]:'exclude'}));setAck(false);}}/> Exclude expense</label></div></fieldset>):<p>No recorded expenses returned; missing expenses may still exist.</p>}
+    <h5 className="font-semibold text-navy">Review every historical attribution ({snapshot.historical.length})</h5>{snapshot.historical.length?snapshot.historical.map(h=><fieldset key={h.requestId} className="border-t border-surface-border py-2 space-y-1"><legend className="sr-only">Historical attribution {h.requestId}</legend><p className="font-semibold break-words">{h.workerName} · {h.start}–{h.end} · this site {formatCostCents(costCents(h.siteGross))}</p><p>Whole-week gross {formatCostCents(costCents(h.originalGross))} · reported paid {h.paidOn} · assertion {h.sourceId}</p><p className="break-words">Evidence: {h.note} · cases {h.caseCount} · overlapping vouchers at any site/status {h.overlappingVouchers}.</p>{(h.caseCount>0||h.overlappingVouchers>0)&&<p className="font-semibold text-status-warning">Inclusion blocked: investigate the original-period cases or overlapping vouchers separately. This result excludes the amount if you choose exclude.</p>}
+    <div className="flex flex-wrap gap-3"><label><input type="radio" name={`combined-history-${h.requestId}`} disabled={h.caseCount>0||h.overlappingVouchers>0} checked={history[h.requestId]==='include'} onChange={()=>{setHistory(c=>({...c,[h.requestId]:'include'}));setAck(false);}}/> Include historical site gross</label><label><input type="radio" name={`combined-history-${h.requestId}`} checked={history[h.requestId]==='exclude'} onChange={()=>{setHistory(c=>({...c,[h.requestId]:'exclude'}));setAck(false);}}/> Exclude historical attribution</label></div></fieldset>):<p>No attributed historical pay returned; unattributed external pay may still exist.</p>}
+    <label className="flex items-start gap-2"><input type="checkbox" checked={ack} disabled={!allReviewed} onChange={e=>setAck(e.target.checked)}/> I reviewed all returned items and possible duplicates, understand excluded or missing records and corrections are not counted, and will not treat this as a final cost.</label>
+    {estimate&&<div role="status" className="rounded-lg border border-surface-border p-3 space-y-1"><p className="font-semibold text-navy">Combined incomplete, unsaved estimate: {formatCostCents(estimate.total)}</p><p>Included expenses {formatCostCents(estimate.expenses)} + paid worker allocations {formatCostCents(estimate.payroll)} + selected historical site gross {formatCostCents(estimate.historical)}.</p><p>Excluded expenses {formatCostCents(estimate.excluded)}; excluded historical {formatCostCents(estimate.excludedHistorical)}. No correction, rental or Bale is added separately.</p><p>This is not the saved-review total, a posting, profit figure or proof of payment.</p></div>}
+   </>}
+  </div>}
+ </section>;
+}

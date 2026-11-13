@@ -83,6 +83,11 @@ export function historicalWorkerAttributionEntryPreviewEnabled(): boolean {
   return historicalExternalWorkerPreviewEnabled() && process.env.NEXT_PUBLIC_HISTORICAL_WORKER_ATTRIBUTION_ENTRY_PREVIEW === 'true';
 }
 
+/** Separate combined historical scratch review; read-only and never a saved ledger. */
+export function historicalCostReviewPreviewEnabled(): boolean {
+  return historicalWorkerAttributionPreviewEnabled() && process.env.NEXT_PUBLIC_HISTORICAL_COST_REVIEW_PREVIEW === 'true';
+}
+
 /** Separate experimental durable review UI; requires the scratchpad and its uninstalled backend. */
 export function projectCostReviewLedgerPreviewEnabled(): boolean {
   return projectCostReconciliationPreviewEnabled() && process.env.NEXT_PUBLIC_PROJECT_COST_REVIEW_LEDGER_PREVIEW === 'true';
