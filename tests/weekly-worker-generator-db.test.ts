@@ -9,7 +9,7 @@ const founder='00000000-0000-0000-0000-000000000001',supervisor='00000000-0000-0
 const [att1,att2,detail,allowance,advance,request,voucher]=[1,2,3,4,5,6,7].map(id);
 const start='2024-11-03';
 const sql=(path:string)=>readFileSync(path,'utf8');
-async function fixture(withApproval=false,withPayment=false,withRefresh=false){
+async function fixture(withApproval=false,withPayment=false,withRefresh=false,withReturn=false){
  const db=new PGlite();
  await db.exec(baseFixture);
  await db.exec(`ALTER TABLE public.users ADD COLUMN email text;
@@ -39,6 +39,7 @@ async function fixture(withApproval=false,withPayment=false,withRefresh=false){
  if(withApproval||withPayment) await db.exec(sql('supabase/drafts/weekly_worker_approval.sql'));
  if(withPayment){await db.exec(sql('supabase/drafts/weekly_worker_paid_allocation.sql'));await db.exec(sql('supabase/drafts/weekly_worker_draft_details.sql'));await db.exec(sql('supabase/drafts/project_paid_payroll_evidence.sql'));}
  if(withRefresh) await db.exec(sql('supabase/drafts/weekly_worker_draft_refresh.sql'));
+ if(withReturn) await db.exec(sql('supabase/drafts/weekly_worker_return_to_draft.sql'));
  await db.exec(`SET test.uid='${founder}'; SET test.assurance='yes'; SET ROLE authenticated;`);
  return db;
 }
@@ -374,6 +375,38 @@ describe('uninstalled revision-bound weekly draft refresh',()=>{
    expect((await db.query('SELECT draft_revision,refresh_xid,refresh_actor FROM public.weekly_worker_draft_sources WHERE payroll_id=$1',[voucher])).rows).toEqual([{draft_revision:0,refresh_xid:null,refresh_actor:null}]);
    expect((await db.query<{n:number}>('SELECT count(*)::int n FROM public.weekly_worker_draft_refreshes')).rows[0].n).toBe(0);
    expect((await db.query<{gross:string}>('SELECT gross_pay::text gross FROM public.payroll WHERE id=$1',[voucher])).rows[0].gross).toBe('1197.46');
+  }finally{await db.close();}
+ },30000);
+});
+
+
+describe('approved but not paid return candidate',()=>{
+ const back=(db:PGlite,requestId=id(40),rev=0,reason='Attendance changed')=>db.query<{result:{replayed:boolean;revision:number}}>('SELECT public.return_weekly_worker_to_draft($1,$2,$3,$4) result',[requestId,voucher,rev,reason]);
+ const approve=(db:PGlite,rev:number)=>db.query('SELECT public.approve_weekly_worker_draft($1,$2)',[voucher,rev]);
+ const pay=(db:PGlite,rev:number)=>db.query('SELECT public.record_weekly_worker_payment($1,$2,$3)',[voucher,'2024-11-09',rev]);
+ it('keeps approval evidence, returns to draft, refreshes and requires fresh approval and payment revision',async()=>{
+  const db=await fixture(true,true,true,true);try{
+   await generate(db);await approve(db,0);await db.exec('RESET ROLE');await db.query("INSERT INTO public.attendance(id,worker_id,project_id,date,status,hours_worked,submitted_at) VALUES($1,$2,$3,'2024-11-09','present',8,now())",[id(41),worker,site]);await db.exec('SET ROLE authenticated');
+   await expect(pay(db,0)).rejects.toThrow(/source data changed/);expect((await back(db)).rows[0].result).toEqual({replayed:false,payroll_id:voucher,revision:1});
+   expect((await back(db)).rows[0].result.replayed).toBe(true);await expect(back(db,id(40),0,'Another reason')).rejects.toThrow(/different action/);
+   expect((await db.query('SELECT status FROM public.payroll WHERE id=$1',[voucher])).rows).toEqual([{status:'draft'}]);
+   expect((await db.query("SELECT previous_approved_by,reason,approved_payroll->>'status' status FROM public.weekly_worker_approval_returns WHERE request_id=$1",[id(40)])).rows).toEqual([{previous_approved_by:founder,reason:'Attendance changed',status:'approved'}]);
+   await expect(approve(db,0)).rejects.toThrow(/revision changed/);
+   await db.query('SELECT public.refresh_weekly_worker_draft($1,$2,$3)',[id(42),voucher,1]);await approve(db,2);
+   await expect(pay(db,0)).rejects.toThrow(/revision changed/);await expect(pay(db,1)).rejects.toThrow(/revision changed/);
+   await expect(db.query('SELECT public.record_weekly_worker_payment($1,$2)',[voucher,'2024-11-09'])).rejects.toThrow();await expect(db.query('SELECT public.weekly_worker_payment_internal($1,$2)',[voucher,'2024-11-09'])).rejects.toThrow(/permission denied/);
+   await pay(db,2);await expect(back(db,id(43),2)).rejects.toThrow(/without recorded payment/);expect((await back(db)).rows[0].result.replayed).toBe(true);
+   await db.exec('RESET ROLE');await expect(db.query('DELETE FROM public.weekly_worker_approval_returns WHERE request_id=$1',[id(40)])).rejects.toThrow(/immutable/);
+  }finally{await db.close();}
+ },30000);
+ it('blocks unauthorized, stale, missing reason and rolled-back return without changing state',async()=>{
+  const db=await fixture(true,true,true,true);try{
+   await generate(db);await approve(db,0);await expect(back(db,id(40),0,' ')).rejects.toThrow(/reason/);await expect(back(db,id(40),1)).rejects.toThrow(/revision changed/);
+   await db.exec(`SET test.uid='${supervisor}'`);await expect(back(db)).rejects.toThrow(/Founder access/);await db.exec(`SET test.uid='${founder}'; SET test.assurance='no'`);await expect(back(db)).rejects.toThrow(/Founder access/);
+   await db.exec("SET test.assurance='yes'; RESET ROLE; ALTER TABLE public.audit_log ADD CONSTRAINT deny_update_return CHECK (action <> 'update') NOT VALID; SET ROLE authenticated");await expect(back(db)).rejects.toThrow(/deny_update_return/);await db.exec('RESET ROLE');
+   expect((await db.query('SELECT status FROM public.payroll WHERE id=$1',[voucher])).rows).toEqual([{status:'approved'}]);
+   expect((await db.query('SELECT draft_revision,approved_by,return_xid,return_actor FROM public.weekly_worker_draft_sources WHERE payroll_id=$1',[voucher])).rows).toEqual([{draft_revision:0,approved_by:founder,return_xid:null,return_actor:null}]);
+   expect((await db.query<{n:number}>('SELECT count(*)::int n FROM public.weekly_worker_approval_returns')).rows[0].n).toBe(0);
   }finally{await db.close();}
  },30000);
 });
