@@ -45,7 +45,7 @@ suite('weekly source-bound cutover guard on disposable PostgreSQL',()=>{
   await admin.query('BEGIN');await client.query('BEGIN');try{
    await admin.query(guard);let done=false;const insert=client.query(legacyInsert,[id(3),worker]).finally(()=>{done=true;});
    await pause();expect(done).toBe(false);await admin.query('COMMIT');await insert;
-   await expect(client.query('COMMIT')).rejects.toThrow(/Legacy payroll insertion blocked/);
+   await expect(client.query('COMMIT')).rejects.toThrow(/Legacy payroll insertion blocked; refresh the page.*Check the ledger before retrying/);
    expect((await admin.query('SELECT count(*)::int n FROM public.payroll WHERE id=$1',[id(3)])).rows).toEqual([{n:0}]);
    expect((await admin.query('SELECT status FROM public.payroll WHERE id=$1',[worker])).rows).toEqual([{status:'paid'}]);
   }finally{await client.query('ROLLBACK');await admin.query('ROLLBACK');}
@@ -74,7 +74,7 @@ suite('weekly source-bound cutover guard on disposable PostgreSQL',()=>{
  },15000);
  it('blocks manual Bale creation and partial deduction while allowing one controlled release and full weekly deduction',async()=>{
   await admin.query(`BEGIN; ${readFileSync('supabase/drafts/weekly_bale_legacy_cutover_guard.sql','utf8')} COMMIT;`);
-  await expect(admin.query("INSERT INTO public.advances(id,worker_id,project_id,date,amount,amount_deducted,status,reason) VALUES($1,$2,$3,'2024-11-13',100.25,0,'active','Old manual writer')",[id(5),worker,site])).rejects.toThrow(/Legacy Bale insertion blocked/);
+  await expect(admin.query("INSERT INTO public.advances(id,worker_id,project_id,date,amount,amount_deducted,status,reason) VALUES($1,$2,$3,'2024-11-13',100.25,0,'active','Old manual writer')",[id(5),worker,site])).rejects.toThrow(/Legacy Bale insertion blocked; refresh the page.*do not pay again/);
   expect((await admin.query('SELECT count(*)::int n FROM public.advances WHERE id=$1',[id(5)])).rows).toEqual([{n:0}]);
   const other=id(6);await admin.query("INSERT INTO public.workers(id,name,position,contact_number,pay_rate,pay_rate_type,active) VALUES($1,'Worker Two','Mason','none',600,'daily',true)",[other]);
   await admin.query('INSERT INTO public.project_worker_assignments VALUES($1,$2,true)',[site,other]);await admin.query("INSERT INTO public.attendance(id,worker_id,project_id,date,status,hours_worked,submitted_at) VALUES($1,$2,$3,'2024-11-10','present',8,'2024-11-10T08:00:00Z')",[id(7),other,site]);

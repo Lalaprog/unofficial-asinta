@@ -40,7 +40,7 @@ BEGIN
     AND r.requested_amount=NEW.amount AND NEW.date=w.period_start+3 AND NEW.amount_deducted=0 AND NEW.status='active'
     AND r.issued_by=w.release_actor AND w.release_actor IS NOT NULL AND w.release_xid IS NULL
     AND (r.issued_at AT TIME ZONE 'Asia/Manila')::date=NEW.date) THEN
-  RAISE EXCEPTION 'Legacy Bale insertion blocked; use the controlled weekly release' USING ERRCODE='22023'; END IF;
+  RAISE EXCEPTION 'Legacy Bale insertion blocked; refresh the page and check the records before retrying. If cash was already given, do not pay again; ask the Founder to review' USING ERRCODE='22023'; END IF;
  RETURN NULL;
 END $$;
 REVOKE ALL ON FUNCTION public.require_weekly_bale_source_on_insert() FROM PUBLIC,anon,authenticated,service_role;

@@ -40,7 +40,7 @@ LANGUAGE plpgsql SECURITY DEFINER SET search_path='' AS $$
 BEGIN
  IF NOT EXISTS(SELECT 1 FROM public.weekly_worker_draft_sources s WHERE s.payroll_id=NEW.id
    AND s.worker_id=NEW.worker_id AND s.period_start=NEW.period_start AND NEW.period_end=NEW.period_start+6) THEN
-  RAISE EXCEPTION 'Legacy payroll insertion blocked; use the source-bound weekly workflow' USING ERRCODE='22023'; END IF;
+  RAISE EXCEPTION 'Legacy payroll insertion blocked; refresh the page and use weekly payroll. Check the ledger before retrying' USING ERRCODE='22023'; END IF;
  RETURN NULL;
 END $$;
 REVOKE ALL ON FUNCTION public.require_weekly_worker_source_on_insert() FROM PUBLIC,anon,authenticated,service_role;
@@ -62,7 +62,7 @@ BEGIN
  ELSIF NEW.status IN ('approved','paid') AND NEW.status IS DISTINCT FROM OLD.status AND NOT EXISTS(
   SELECT 1 FROM public.weekly_worker_draft_sources s WHERE s.payroll_id=NEW.id AND s.worker_id=NEW.worker_id
    AND s.period_start=NEW.period_start AND NEW.period_end=NEW.period_start+6) THEN
-  RAISE EXCEPTION 'Legacy payroll finalization blocked; reconcile the original voucher' USING ERRCODE='22023';
+  RAISE EXCEPTION 'Legacy payroll finalization blocked; refresh the page and reconcile the original voucher before retrying' USING ERRCODE='22023';
  END IF;
  RETURN NEW;
 END $$;

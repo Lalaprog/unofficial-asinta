@@ -68,7 +68,7 @@ RETURNS jsonb LANGUAGE plpgsql SECURITY DEFINER SET search_path='' AS $$
 BEGIN
   IF NOT coalesce(public.is_founder(),false) THEN RAISE EXCEPTION 'Founder access required' USING ERRCODE='42501'; END IF;
   IF p_status IS DISTINCT FROM 'approved' THEN
-    RAISE EXCEPTION 'Record payment with its actual date using the updated payment action' USING ERRCODE='22023';
+    RAISE EXCEPTION 'Record payment with its actual date using the updated payment action; refresh the page and check the ledger before retrying' USING ERRCODE='22023';
   END IF;
   RETURN public.weekly_guarded_status_internal(p_payroll_id,p_status);
 END;

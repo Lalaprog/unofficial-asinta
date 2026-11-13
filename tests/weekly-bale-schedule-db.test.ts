@@ -64,7 +64,7 @@ describe('experimental weekly Bale schedule (not deployed)',()=>{
   const db=await fixture();try{
    const request=await submit(db);await role(db,founder);await time(db,'2026-11-17T15:59:59Z');await db.query("SELECT public.review_advance_request($1,'approve')",[request]);
    await expect(release(db,request)).rejects.toThrow(/Wednesday/);
-   await time(db,'2026-11-17T16:00:00Z');await expect(db.query('SELECT public.issue_advance_request($1)',[request])).rejects.toThrow(/controlled Wednesday/);
+   await time(db,'2026-11-17T16:00:00Z');await expect(db.query('SELECT public.issue_advance_request($1)',[request])).rejects.toThrow(/controlled Wednesday.*refresh the page.*do not pay again/);
    await role(db,outsider);await expect(release(db,request)).rejects.toThrow(/Site authorization/);
    await role(db,supervisor);const issued=(await release(db,request)).rows[0].result;expect(issued.outcome).toBe('updated');expect((await release(db,request)).rows[0].result).toEqual({...issued,outcome:'already_recorded'});
    expect((await status(db,request)).rows[0].result.effective_status).toBe('issued');

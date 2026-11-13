@@ -38,7 +38,7 @@ BEGIN
   IF v_date<>v_rule.period_start+3 OR v_rule.release_xid IS DISTINCT FROM txid_current() OR v_rule.release_actor IS DISTINCT FROM auth.uid() OR
    NEW.issued_by IS DISTINCT FROM auth.uid() OR NEW.issued_at IS NULL OR (NEW.issued_at AT TIME ZONE 'Asia/Manila')::date<>v_date OR
    NOT EXISTS(SELECT 1 FROM public.advances a WHERE a.id=NEW.issued_advance_id AND a.worker_id=NEW.worker_id AND a.project_id=NEW.project_id AND a.date=v_date AND a.amount=NEW.requested_amount AND a.amount_deducted=0 AND a.status='active') THEN
-   RAISE EXCEPTION 'Use the controlled Wednesday external-release action' USING ERRCODE='22023'; END IF;
+   RAISE EXCEPTION 'Use the controlled Wednesday external-release action; refresh the page and check the records before retrying. If cash was already given, do not pay again; ask the Founder to review' USING ERRCODE='22023'; END IF;
  ELSE RAISE EXCEPTION 'Unsupported weekly Bale transition' USING ERRCODE='22023'; END IF;
  RETURN NEW;
 END $$;
