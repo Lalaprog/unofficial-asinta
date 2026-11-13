@@ -42,6 +42,6 @@ export function ProjectCostReconciliation({projectId,userId}:{projectId:string;u
   </>}
   {historicalCostReviewPreviewEnabled()&&<HistoricalCostReview key={`${scope}:combined`} projectId={projectId} userId={userId}/>}
   {historicalWorkerAttributionPreviewEnabled()&&<HistoricalWorkerAttributions key={`${scope}:attributions`} projectId={projectId} userId={userId} />}
-  {projectCostReviewLedgerPreviewEnabled()&&<ProjectCostReviewLedger key={`${scope}:ledger`} projectId={projectId} userId={userId} snapshot={snapshot} raw={snapshot?snapshotEvidence:null} choices={choices} reasons={reasons} />}
+  {projectCostReviewLedgerPreviewEnabled()&&!historicalCostReviewPreviewEnabled()&&<ProjectCostReviewLedger key={`${scope}:ledger`} projectId={projectId} userId={userId} snapshot={snapshot} raw={snapshot?snapshotEvidence:null} choices={choices} reasons={reasons} />}
  </section>;
 }
