@@ -56,6 +56,7 @@ import { SupervisorFoundationPanels } from '@/components/attendance/SupervisorFo
 import { WorkerCategoryFoundation } from '@/components/workforce/WorkerCategoryFoundation';
 import { AssignmentHistory } from '@/components/workforce/AssignmentHistory';
 import { assignmentHistoryPreviewEnabled } from '@/lib/workforce/assignmentHistory';
+import { weeklyWorkerCutoverMode } from '@/lib/finance/featureAvailability';
 
 const EMPTY_ROLL_CALL: ProjectRollCallSnapshot = { workerIds: [], records: [] };
 
@@ -288,6 +289,14 @@ function AttendancePageInner() {
     [isSupervisor, user, users]
   );
 
+  // During the coordinated cutover, linked Supervisors use one company-wide
+  // daily record. Existing site rows stay visible as history, not new pay input.
+  const generalSupervisorCutover = weeklyWorkerCutoverMode();
+  const isLockedRollCallWorker = useCallback((w: Worker): boolean =>
+    isSelfSupervisorWorker(w) || (generalSupervisorCutover && (
+      Boolean(findSupervisorAccountForWorker(w)) || projectSupervisors.some((ps) => ps.supervisor_id === w.id)
+    )), [isSelfSupervisorWorker, generalSupervisorCutover, findSupervisorAccountForWorker, projectSupervisors]);
+
   // Pause this UI's submission when an active workforce profile has the same
   // name as a supervisor but a different ID. This is a review signal, not
   // proof of identity, and does not merge or change any historical records.
@@ -368,9 +377,9 @@ function AttendancePageInner() {
     (record) => !workers.some((worker) => worker.id === record.worker_id && worker.active)
   ), [existingSiteDateRecords, workers]);
   const hiddenDraftIds = useMemo(() => {
-    const visible = new Set(siteRosterWorkers.map((worker) => worker.id));
+    const visible = new Set(siteRosterWorkers.filter((worker) => !generalSupervisorCutover || !isLockedRollCallWorker(worker)).map((worker) => worker.id));
     return dirtyDraftWorkerIds.filter((id) => !visible.has(id));
-  }, [dirtyDraftWorkerIds, siteRosterWorkers]);
+  }, [dirtyDraftWorkerIds, siteRosterWorkers, generalSupervisorCutover, isLockedRollCallWorker]);
 
   const getBaselineDraftEntry = useCallback(
     (workerId: string): AttendanceDraftEntry => {
@@ -516,7 +525,7 @@ function AttendancePageInner() {
 
   const handleStatusChange = (worker: Worker, status: AttendanceStatus) => {
     // Supervisor cannot manually toggle their own row (auto-logged on crew submit)
-    if (isSubmitting || isSelfSupervisorWorker(worker)) {
+    if (isSubmitting || isLockedRollCallWorker(worker)) {
       return;
     }
 
@@ -560,7 +569,7 @@ function AttendancePageInner() {
     if (isSubmitting) return;
     const changes: AttendanceDraftMap = {};
     targetWorkers.forEach((worker) => {
-      if (isSelfSupervisorWorker(worker)) return;
+      if (isLockedRollCallWorker(worker)) return;
       const current = draftAttendance[worker.id] || getBaselineDraftEntry(worker.id);
       if (current.status) return;
       if (otherSiteActiveAttendanceByWorker.has(worker.id)) return;
@@ -573,8 +582,8 @@ function AttendancePageInner() {
   // - For a Supervisor: all `siteRosterWorkers` EXCEPT their own locked row (`!isSelfSupervisorWorker(w)`)
   // - For a Founder: all `siteRosterWorkers`
   const markableWorkers = useMemo(
-    () => siteRosterWorkers.filter((w) => !isSelfSupervisorWorker(w)),
-    [siteRosterWorkers, isSelfSupervisorWorker]
+    () => siteRosterWorkers.filter((w) => !isLockedRollCallWorker(w)),
+    [siteRosterWorkers, isLockedRollCallWorker]
   );
 
   const checkedCount = markableWorkers.filter(
@@ -671,7 +680,7 @@ function AttendancePageInner() {
     //      auto-log the Supervisor as `present` (Pending Founder Review).
     //    - On subsequent updates (e.g. changing a worker to Half Day in the afternoon),
     //      preserve their existing row without duplicating or resetting Founder approval.
-    if (isSupervisor) {
+    if (isSupervisor && !generalSupervisorCutover) {
       const selfWorker = siteRosterWorkers.find((w) => isSelfSupervisorWorker(w));
       if (selfWorker) {
         const existingSelfOnSite = existingSiteDateRecords.find(
@@ -734,7 +743,7 @@ function AttendancePageInner() {
           setDraftStorageStatus('error');
         }
       }
-      showToast('success', 'Attendance saved. Supervisor self-attendance may still require Founder review before payroll.');
+      showToast('success', generalSupervisorCutover ? 'Crew attendance saved. Supervisor attendance is recorded separately.' : 'Attendance saved. Supervisor self-attendance may still require Founder review before payroll.');
       if (isFounder) void pendingApprovals.refresh();
       void rollCall.reload();
       setHistoryRevision((n) => n + 1);
@@ -748,6 +757,7 @@ function AttendancePageInner() {
     rec: Attendance,
     decision: 'present' | 'half_day' | 'absent'
   ) => {
+    if (generalSupervisorCutover && (users.some(u => u.id === rec.worker_id && u.role === 'supervisor') || projectSupervisors.some(ps => ps.supervisor_id === rec.worker_id))) { showToast('error', 'Legacy site-based Supervisor attendance is read-only; use general daily attendance.'); return; }
     if (reviewInFlightRef.current) return;
     reviewInFlightRef.current = true;
     setIsReviewingSupervisor(true);
@@ -853,7 +863,7 @@ function AttendancePageInner() {
   };
 
   const collectUnmarkedWorkerIds = () => siteRosterWorkers
-    .filter((worker) => !isSelfSupervisorWorker(worker))
+    .filter((worker) => !isLockedRollCallWorker(worker))
     .filter((worker) => !(draftAttendance[worker.id] || getBaselineDraftEntry(worker.id)).status)
     .map((worker) => worker.id);
 
@@ -1113,6 +1123,7 @@ function AttendancePageInner() {
             {pendingApprovals.error && <p role="alert" className="text-status-danger">Could not load the approval queue. Retry before assuming there are no pending approvals.</p>}
             {pendingApprovals.items.length > 0 && <div className="divide-y divide-surface-border/60 bg-white rounded-xl border border-surface-border overflow-hidden">
               {pendingApprovals.items.map((rec) => {
+                const legacyLocked = generalSupervisorCutover && (users.some(u => u.id === rec.worker_id && u.role === 'supervisor') || projectSupervisors.some(ps => ps.supervisor_id === rec.worker_id));
                 return (
                   <div
                     key={rec.id}
@@ -1128,6 +1139,7 @@ function AttendancePageInner() {
                           · Attendance at <strong className="text-navy">{rec.project_name || 'Project Site'}</strong> on <strong>{rec.date}</strong>
                         </span>
                       </div>
+                      {legacyLocked && <p className="font-semibold text-status-warning">Historical site record is read-only; review general daily attendance and reconcile this history separately.</p>}
                       {rec.notes && (
                         <div className="whitespace-pre-wrap break-words text-[11px] text-ink-muted">{rec.notes}</div>
                       )}
@@ -1139,7 +1151,7 @@ function AttendancePageInner() {
                         variant="primary"
                         size="sm"
                         className="min-h-11 sm:min-h-9"
-                        disabled={isReviewingSupervisor || pendingApprovals.loading || Boolean(pendingApprovals.error)}
+                        disabled={legacyLocked || isReviewingSupervisor || pendingApprovals.loading || Boolean(pendingApprovals.error)}
                         onClick={() => handleFounderSupervisorReview(rec, 'present')}
                         leftIcon={<ShieldCheck className="w-3.5 h-3.5" />}
                       >
@@ -1150,7 +1162,7 @@ function AttendancePageInner() {
                         variant="secondary"
                         size="sm"
                         className="min-h-11 sm:min-h-9"
-                        disabled={isReviewingSupervisor || pendingApprovals.loading || Boolean(pendingApprovals.error)}
+                        disabled={legacyLocked || isReviewingSupervisor || pendingApprovals.loading || Boolean(pendingApprovals.error)}
                         onClick={() => handleFounderSupervisorReview(rec, 'half_day')}
                       >
                         Half Day
@@ -1160,7 +1172,7 @@ function AttendancePageInner() {
                         variant="danger"
                         size="sm"
                         className="min-h-11 sm:min-h-9"
-                        disabled={isReviewingSupervisor || pendingApprovals.loading || Boolean(pendingApprovals.error)}
+                        disabled={legacyLocked || isReviewingSupervisor || pendingApprovals.loading || Boolean(pendingApprovals.error)}
                         onClick={() => handleFounderSupervisorReview(rec, 'absent')}
                         leftIcon={<XCircle className="w-3.5 h-3.5" />}
                       >
@@ -1280,7 +1292,7 @@ function AttendancePageInner() {
             {unavailableAssignedIds.length > 0 && <div role="alert" className="rounded-xl border border-status-warning/30 bg-status-warning-bg p-4 text-sm text-navy">Some assigned workers are inactive or their details are unavailable. Check the project team before submitting.</div>}
             {unreadableDraft && <div role="alert" className="rounded-xl border border-status-warning/30 bg-status-warning-bg p-4 text-sm text-navy">Could not read the draft storage on this device. Nothing was submitted or deliberately deleted. Check browser storage before submitting.</div>}
             {hiddenDraftIds.length > 0 && <div role="alert" className="rounded-xl border border-status-warning/30 bg-status-warning-bg p-4 text-sm text-navy">
-              <p>A saved draft includes {hiddenDraftIds.length} worker(s) not in the current roster. The draft is preserved on this device. Add the worker back to the project, or discard only these hidden draft selections before submitting.</p>
+              <p>A saved draft includes {hiddenDraftIds.length} worker(s) unavailable for Roll Call or no longer in the current roster. The draft is preserved on this device. Review the project team or discard only these hidden draft selections before submitting.</p>
               <Button type="button" variant="secondary" size="sm" onClick={() => setDiscardHiddenDraftOpen(true)}>Review hidden draft selections</Button>
             </div>}
             {rollCallSnapshot.workerIds.length === 0 && <div role="status" className="rounded-xl border border-surface-border bg-white p-4 text-sm text-ink-secondary">No workers are assigned to this project yet. Saved attendance for this date remains visible below. <Link href={`/projects/${encodeURIComponent(selectedProjectId)}`} className="font-semibold text-brand underline">Manage project workers</Link></div>}
@@ -1468,7 +1480,7 @@ function AttendancePageInner() {
               {groupedRosterWorkers.map(([groupKey, groupWorkers]) => {
                 const isCollapsed = Boolean(collapsedGroups[groupKey]);
                 const groupMarkableWorkers = groupWorkers.filter(
-                  (worker) => !isSelfSupervisorWorker(worker)
+                  (worker) => !isLockedRollCallWorker(worker)
                 );
                 const groupPresent = groupMarkableWorkers.filter(
                   (w) => draftAttendance[w.id]?.status === 'present'
@@ -1561,6 +1573,7 @@ function AttendancePageInner() {
                             notes: '',
                           };
                           const isSelfSup = isSelfSupervisorWorker(worker);
+                          const isGeneralSup = generalSupervisorCutover && isLockedRollCallWorker(worker);
                           const isAnySupRow =
                             Boolean(findSupervisorAccountForWorker(worker)) ||
                             worker.position.toLowerCase().includes('supervisor');
@@ -1600,17 +1613,17 @@ function AttendancePageInner() {
                                         Supervisor
                                       </Badge>
                                     )}
-                                    {isFounder && isPendingFounderApprovalOnRow && (
+                                    {isFounder && !isGeneralSup && isPendingFounderApprovalOnRow && (
                                       <Badge variant="warning" size="sm">
                                         Pending Founder Approval
                                       </Badge>
                                     )}
-                                    {isFounder && isAnySupRow && savedRec && isVerifiedByFounder && (
+                                    {isFounder && !isGeneralSup && isAnySupRow && savedRec && isVerifiedByFounder && (
                                       <Badge variant="success" size="sm">
                                         Founder Approved ✓
                                       </Badge>
                                     )}
-                                    {!isSelfSup && !currentDraft.status && (
+                                    {!isSelfSup && !isGeneralSup && !currentDraft.status && (
                                       <Badge variant="neutral" size="sm">
                                         Unmarked
                                       </Badge>
@@ -1633,11 +1646,13 @@ function AttendancePageInner() {
                                 </div>
 
                                 {/* A Supervisor's own status remains locked; all other rows get equal-width choices. */}
-                                {isSelfSup ? (
+                                {isSelfSup || isGeneralSup ? (
                                   <div className="flex w-full min-w-0 items-start gap-2 rounded-lg border border-surface-border bg-white px-3 py-2.5 text-[11px] font-semibold text-navy lg:w-[26rem] lg:shrink-0">
                                     <Lock className="mt-0.5 h-3.5 w-3.5 shrink-0 text-status-warning" />
                                     <span className="min-w-0 break-words leading-snug">
-                                      {otherSiteInfo ? (
+                                      {isGeneralSup ? (
+                                        savedRec ? `Historical site record: ${formatStatusLabel(savedRec.status)}. Supervisor attendance is recorded separately in General Daily Attendance.` : 'Supervisor attendance is recorded separately in General Daily Attendance.'
+                                      ) : otherSiteInfo ? (
                                         `Logged via ${otherSiteInfo.projectName} (${selectedDate})`
                                       ) : savedRec ? (
                                         isVerifiedByFounder ? (
@@ -1786,7 +1801,7 @@ function AttendancePageInner() {
               )}
             </div>
 
-            <ConfirmDialog isOpen={discardHiddenDraftOpen} title="Discard hidden draft selections?" message="Only selections for workers no longer in this roster will be removed from this device. Saved attendance and payroll are not changed." destructive confirmLabel="Discard hidden selections" onCancel={() => setDiscardHiddenDraftOpen(false)} onConfirm={() => { setDraftState((current) => ({ dirtyIds: current.dirtyIds.filter((id) => !hiddenDraftIds.includes(id)), entries: Object.fromEntries(Object.entries(current.entries).filter(([id]) => !hiddenDraftIds.includes(id))) })); setDiscardHiddenDraftOpen(false); }} />
+            <ConfirmDialog isOpen={discardHiddenDraftOpen} title="Discard hidden draft selections?" message="Only the unavailable or hidden selections listed by this warning will be removed from this device. Saved attendance and payroll are not changed." destructive confirmLabel="Discard hidden selections" onCancel={() => setDiscardHiddenDraftOpen(false)} onConfirm={() => { setDraftState((current) => ({ dirtyIds: current.dirtyIds.filter((id) => !hiddenDraftIds.includes(id)), entries: Object.fromEntries(Object.entries(current.entries).filter(([id]) => !hiddenDraftIds.includes(id))) })); setDiscardHiddenDraftOpen(false); }} />
 
             {/* In-Flow Bottom Submit & Sync Card (Moves naturally with collapsed/expanded groups — never overlaps) */}
             <div data-roll-call-guide="submit" className="mt-3 px-3 sm:px-4 py-3 rounded-xl bg-white border border-surface-border flex flex-col sm:flex-row sm:items-center justify-between gap-3">

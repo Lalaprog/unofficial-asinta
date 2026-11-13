@@ -30,27 +30,35 @@ const fixture=`
 const write=(id:string,w:string,p=site,date='2024-08-04')=>`INSERT INTO public.attendance VALUES('${id}','${w}','${p}','${date}','present')`;
 
 describe('uninstalled Supervisor attendance assignment guard',()=>{
- it('enforces active single-site workers while preserving Founder backfill, history, self-row and upserts',async()=>{const db=new PGlite();try{
+ it('enforces active single-site workers while preserving Founder backfill, history and upserts while retiring linked Supervisor site rows',async()=>{const db=new PGlite();try{
   await db.exec(fixture);const before=(await db.query('SELECT * FROM public.attendance')).rows;
   await db.exec(`BEGIN;${draft} COMMIT;`);expect((await db.query('SELECT * FROM public.attendance')).rows).toEqual(before);
   await db.exec(`SET ROLE authenticated; SET test.uid='${sup}'; SET test.assurance='yes'`);
   await db.exec(write('20000000-0000-4000-8000-000000000002',worker));
   await db.exec(`INSERT INTO public.attendance VALUES('20000000-0000-4000-8000-000000000003','${worker}','${site}','2024-08-04','absent') ON CONFLICT(worker_id,project_id,date) DO UPDATE SET status=EXCLUDED.status`);
   expect((await db.query("SELECT status FROM public.attendance WHERE id='20000000-0000-4000-8000-000000000002'")).rows).toEqual([{status:'absent'}]);
-  await db.exec(write('20000000-0000-4000-8000-000000000004',sup));
+  await expect(db.exec(write('20000000-0000-4000-8000-000000000004',sup))).rejects.toThrow(/general daily attendance/);
   await expect(db.exec(write('20000000-0000-4000-8000-000000000005',moved))).rejects.toThrow(/one active assignment/);
   await expect(db.exec(write('20000000-0000-4000-8000-000000000006',inactive))).rejects.toThrow(/Worker unavailable/);
-  await expect(db.exec(write('20000000-0000-4000-8000-000000000007',otherSup))).rejects.toThrow(/one active assignment/);
+  await expect(db.exec(write('20000000-0000-4000-8000-000000000007',otherSup))).rejects.toThrow(/general daily attendance/);
   await expect(db.exec("UPDATE public.attendance SET status='absent' WHERE id='20000000-0000-4000-8000-000000000001'")).rejects.toThrow(/one active assignment/);
   expect((await db.query("SELECT status FROM public.attendance WHERE id='20000000-0000-4000-8000-000000000001'")).rows).toEqual([{status:'present'}]);
   await expect(db.exec(`UPDATE public.attendance SET worker_id='${moved}' WHERE id='20000000-0000-4000-8000-000000000002'`)).rejects.toThrow(/identity cannot be changed/);
   // One invalid item aborts the whole Roll Call batch.
   await expect(db.exec(`INSERT INTO public.attendance VALUES('20000000-0000-4000-8000-000000000008','${worker}','${site}','2024-08-05','present'),('20000000-0000-4000-8000-000000000009','${moved}','${site}','2024-08-05','present')`)).rejects.toThrow(/one active assignment/);
   expect((await db.query("SELECT id FROM public.attendance WHERE date='2024-08-05'")).rows).toEqual([]);
-  await db.exec(`SET test.uid='${founder}'`);await db.exec("UPDATE public.attendance SET status='half_day' WHERE id='20000000-0000-4000-8000-000000000001'");
+  await db.exec(`SET test.uid='${founder}'`);await expect(db.exec(write('20000000-0000-4000-8000-000000000014',sup))).rejects.toThrow(/general daily attendance/);await db.exec("UPDATE public.attendance SET status='half_day' WHERE id='20000000-0000-4000-8000-000000000001'");
   await db.exec(write('20000000-0000-4000-8000-000000000010',moved,site,'2024-07-31'));
   await db.exec("SET test.assurance='no'");await expect(db.exec(write('20000000-0000-4000-8000-000000000011',worker))).rejects.toThrow(/Attendance access required/);
   await db.exec("SET test.assurance='yes'; SET test.uid='' ");await expect(db.exec(write('20000000-0000-4000-8000-000000000012',worker))).rejects.toThrow(/Attendance access required/);
+ }finally{await db.close();}},30000);
+ it('retains existing Supervisor history but blocks changes from both roles',async()=>{const db=new PGlite();try{
+  await db.exec(fixture);await db.exec(write('20000000-0000-4000-8000-000000000020',sup));
+  await db.exec(`BEGIN;${draft} COMMIT;SET ROLE authenticated;SET test.assurance='yes';SET test.uid='${founder}'`);
+  await expect(db.exec("UPDATE public.attendance SET status='absent' WHERE id='20000000-0000-4000-8000-000000000020'")).rejects.toThrow(/general daily attendance/);
+  await expect(db.exec(`UPDATE public.attendance SET worker_id='${worker}' WHERE id='20000000-0000-4000-8000-000000000020'`)).rejects.toThrow(/general daily attendance/);
+  await db.exec(`SET test.uid='${sup}'`);await expect(db.exec("UPDATE public.attendance SET status='absent' WHERE id='20000000-0000-4000-8000-000000000020'")).rejects.toThrow(/general daily attendance/);
+  await db.exec('RESET ROLE');expect((await db.query("SELECT status FROM public.attendance WHERE id='20000000-0000-4000-8000-000000000020'")).rows).toEqual([{status:'present'}]);
  }finally{await db.close();}},30000);
  it('fails closed on simultaneous assignments, revoked project access, and direct guard execution',async()=>{const db=new PGlite();try{
   await db.exec(fixture);await db.exec(`BEGIN;${draft} COMMIT;`);

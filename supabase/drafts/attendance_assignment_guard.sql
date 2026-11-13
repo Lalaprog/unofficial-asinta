@@ -1,8 +1,8 @@
 -- UNINSTALLED EXPERIMENTAL DRAFT. NOT a standalone deployment or migration.
 -- Prevent Supervisor Roll Call writes for workers outside their current site.
--- Founder backfill is unchanged. For compatibility only, a Supervisor can
--- still record their OWN legacy site-attendance at an assigned site; this does
--- NOT implement one general daily Supervisor attendance or payroll cutover.
+-- Founder backfill for regular workers is unchanged. Linked Supervisor site
+-- attendance is read-only: new daily attendance uses the general-day workflow.
+-- Existing historical records are retained, not converted or deleted.
 -- Current assignments are not historical intervals. After a worker moves,
 -- historical edits by the former Supervisor require Founder review/backfill.
 -- Auth-less/service/owner attendance writes are blocked by this trigger and
@@ -27,7 +27,7 @@ END;
 $preflight$;
 CREATE FUNCTION public.guard_attendance_assignment() RETURNS trigger
 LANGUAGE plpgsql SECURITY DEFINER SET search_path='' AS $$
-DECLARE v_actor uuid:=auth.uid();v_role text;v_active boolean;
+DECLARE v_actor uuid:=auth.uid();v_role text;v_target_role text;v_old_role text;v_active boolean;
 BEGIN
  IF v_actor IS NULL OR NOT coalesce(public.session_assurance_satisfied(),false) THEN
   RAISE EXCEPTION 'Attendance access required' USING ERRCODE='42501'; END IF;
@@ -35,6 +35,15 @@ BEGIN
   RAISE EXCEPTION 'Attendance writes require read committed isolation' USING ERRCODE='P1002'; END IF;
  -- Match guarded assignment lock order: actor, project, authorization, worker.
  SELECT role INTO v_role FROM public.users WHERE id=v_actor FOR SHARE;
+ -- Pin a linked target account while checking its role, including Founder writes.
+ -- Preserve old site rows as evidence, but do not create or alter them once
+ -- the general daily-attendance cutover is active.
+ SELECT role INTO v_target_role FROM public.users WHERE id=NEW.worker_id FOR SHARE;
+ IF TG_OP='UPDATE' AND OLD.worker_id IS DISTINCT FROM NEW.worker_id THEN
+  SELECT role INTO v_old_role FROM public.users WHERE id=OLD.worker_id FOR SHARE;
+ END IF;
+ IF v_target_role='supervisor' OR v_old_role='supervisor' THEN
+  RAISE EXCEPTION 'Supervisor site attendance is read-only; use general daily attendance' USING ERRCODE='22023'; END IF;
  IF v_role='founder' AND coalesce(public.is_founder(),false) AND coalesce(public.session_assurance_satisfied(),false) THEN RETURN NEW; END IF;
  IF v_role IS DISTINCT FROM 'supervisor' OR NOT coalesce(public.session_assurance_satisfied(),false) THEN
   RAISE EXCEPTION 'Attendance access required' USING ERRCODE='42501'; END IF;
@@ -47,9 +56,6 @@ BEGIN
   RAISE EXCEPTION 'Attendance access required' USING ERRCODE='42501'; END IF;
  SELECT active INTO v_active FROM public.workers WHERE id=NEW.worker_id FOR UPDATE;
  IF NOT FOUND OR v_active IS NOT TRUE THEN RAISE EXCEPTION 'Worker unavailable' USING ERRCODE='22023'; END IF;
- -- Preserve only the actor's own legacy Supervisor auto-row, not another
- -- Supervisor identity; the new general-attendance cutover must retire this.
- IF NEW.worker_id=v_actor THEN RETURN NEW; END IF;
  IF EXISTS(SELECT 1 FROM public.users WHERE id=NEW.worker_id AND role='supervisor')
  OR NOT EXISTS(SELECT 1 FROM public.project_worker_assignments WHERE worker_id=NEW.worker_id AND project_id=NEW.project_id AND active=true)
  OR EXISTS(SELECT 1 FROM public.project_worker_assignments WHERE worker_id=NEW.worker_id AND project_id<>NEW.project_id AND active=true) THEN

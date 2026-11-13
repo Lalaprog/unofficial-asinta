@@ -36,7 +36,7 @@ beforeEach(() => {
   state.record.mockReset().mockResolvedValue(true); state.reload.mockClear(); state.toast.mockClear(); state.create.mockClear();
   window.localStorage.clear(); window.history.replaceState({},'', '/attendance');
 });
-afterEach(() => {cleanup(); vi.useRealTimers();});
+afterEach(() => {cleanup(); vi.unstubAllEnvs(); vi.useRealTimers();});
 
 describe('project-specific Roll Call', () => {
   it('shows guidance, no shared workforce and no auto-log for an empty team', () => {
@@ -84,6 +84,23 @@ describe('project-specific Roll Call', () => {
     expect(state.record).toHaveBeenCalledOnce();
     const rows=state.record.mock.calls[0][0] as unknown as Array<{worker_id:string}>;
     expect(rows.map(r=>r.worker_id)).toEqual(['amy']);
+  });
+  it('in cutover mode saves crew without creating legacy Supervisor self-attendance', async () => {
+    vi.stubEnv('NEXT_PUBLIC_WEEKLY_WORKER_CUTOVER_PREVIEW','true');
+    state.snapshot={workerIds:['amy'],records:[]};render(React.createElement(AttendancePage));
+    expect(screen.getByText(/Supervisor attendance is recorded separately in General Daily Attendance/)).toBeTruthy();
+    expect(screen.queryByText('Auto-logged when you submit crew roll call.')).toBeNull();
+    fireEvent.click(within(screen.getByRole('group',{name:'Attendance status for Amy'})).getByRole('button',{name:'Present'}));
+    fireEvent.click(screen.getByRole('button',{name:'Submit Roll Call'}));await act(async()=>{});
+    expect(state.record).toHaveBeenCalledOnce();expect((state.record.mock.calls[0][0] as unknown as Array<{worker_id:string}>).map(r=>r.worker_id)).toEqual(['amy']);
+  });
+  it('locks linked Supervisor rows for the Founder and preserves a pre-cutover draft', () => {
+    vi.stubEnv('NEXT_PUBLIC_WEEKLY_WORKER_CUTOVER_PREVIEW','true');state.supervisor=false;
+    state.snapshot={workerIds:['amy'],records:[saved('sup','r2','Supervisor')]};
+    const key='asinta-attendance-draft:v1:founder:site:2026-11-03';localStorage.setItem(key,serializeAttendanceDraft({sup:{status:'absent',notes:'old draft'}}));
+    render(React.createElement(AttendancePage));expect(screen.queryByRole('group',{name:'Attendance status for Supervisor'})).toBeNull();
+    expect(screen.getByText(/Historical site record: Half Day/)).toBeTruthy();expect(screen.getByText(/saved draft includes 1 worker/)).toBeTruthy();
+    expect(localStorage.getItem(key)).toContain('old draft');expect(state.record).not.toHaveBeenCalled();
   });
   it('never silently drops malformed entries from a partially readable draft', () => {
     state.snapshot={workerIds:['amy'],records:[]};

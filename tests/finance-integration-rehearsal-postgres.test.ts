@@ -271,6 +271,11 @@ suite('coordinated finance integration rehearsal, synthetic PostgreSQL only',()=
    await expect(db.query('SELECT public.weekly_worker_draft_details($1)',[voucher])).rejects.toThrow(/Founder|assurance/i);
    await db.query("ROLLBACK TO SAVEPOINT denied_assurance; RELEASE SAVEPOINT denied_assurance; SET LOCAL test.assurance='yes'");
    await db.query(`SET LOCAL test.uid='${supervisor}'`);
+   // Retire the old auto-self-row: otherwise the legacy signal blocks the
+   // new company-wide Supervisor period even for an ordinary crew Roll Call.
+   await db.query('SAVEPOINT denied_old_supervisor_site');
+   await expect(db.query("INSERT INTO public.attendance(id,worker_id,project_id,date,status,hours_worked,submitted_at) VALUES('70000000-0000-4000-8000-000000000024',$1,$2,'2024-08-04','present',8,'2024-08-04T08:00:00Z')",[supervisor,site])).rejects.toThrow(/general daily attendance/);
+   await db.query('ROLLBACK TO SAVEPOINT denied_old_supervisor_site; RELEASE SAVEPOINT denied_old_supervisor_site');
    await db.query("SELECT public.submit_supervisor_day('70000000-0000-4000-8000-000000000005','2024-08-04','present')");
    await db.query("SELECT public.submit_supervisor_leave('70000000-0000-4000-8000-000000000013','2024-08-05','2024-08-05','emergency','Synthetic leave')");
    await db.query(`SET LOCAL test.uid='${founder}'`);
@@ -279,6 +284,7 @@ suite('coordinated finance integration rehearsal, synthetic PostgreSQL only',()=
    await db.query("SELECT public.review_supervisor_leave('70000000-0000-4000-8000-000000000013','approved')");
    expect((await db.query('SELECT public.supervisor_leave_pending_summary() v')).rows[0].v).toEqual({pending_count:0});
    const plan=(await db.query("SELECT public.supervisor_period_prepare($1,'2024-08-01') v",[supervisor])).rows[0].v;
+   expect(plan.input.legacy_count).toBe(0);
    const supervisorVoucher='70000000-0000-4000-8000-000000000006';
    await db.query("SELECT public.create_supervisor_period_draft($1,$2,'2024-08-01',600,$3)",[supervisorVoucher,supervisor,JSON.stringify(plan)]);
    await db.query("SELECT public.transition_supervisor_period_payroll('70000000-0000-4000-8000-000000000007',$1,'approved',NULL,true)",[supervisorVoucher]);
