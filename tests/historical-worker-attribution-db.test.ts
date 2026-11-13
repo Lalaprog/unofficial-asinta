@@ -17,6 +17,7 @@ const save=(db:PGlite,request:string,source:unknown,split:unknown,note='Evidence
 describe('historical worker project attribution (uninstalled)',()=>{
  it('records a complete explicit split once without creating finance transactions and flags cases',async()=>{
   const {db,source,split}=await setup();try{
+   expect((await db.query<{v:{projects:{id:string;name:string}[]}}>('SELECT public.historical_worker_attribution_projects() v')).rows[0].v.projects).toEqual([{id:site,name:'Site One'},{id:other,name:'Site Two'}]);
    expect((await db.query<{v:{found:boolean}}>('SELECT public.historical_worker_attribution($1) v',[id(1)])).rows[0].v.found).toBe(false);
    expect((await save(db,id(2),source,split)).rows[0].v).toEqual({request_id:id(2),source_id:id(1),replayed:false});
    expect((await save(db,id(2),source,[...split].reverse())).rows[0].v.replayed).toBe(true);
@@ -43,9 +44,9 @@ describe('historical worker project attribution (uninstalled)',()=>{
    await expect(save(db,id(5),source,[{project_id:site,gross:'NaN'}])).rejects.toThrow(/Invalid attribution/);
    await expect(save(db,id(5),source,[{project_id:id(99),gross:'600.00'}])).rejects.toThrow(/project unavailable/);
    await expect(save(db,id(5),source,split,'Evidence',false)).rejects.toThrow(/Invalid attribution/);
-   await db.exec(`SET test.uid='${supervisor}'`);await expect(save(db,id(5),source,split)).rejects.toThrow(/Founder/);await expect(db.query('SELECT public.project_historical_worker_attributions($1)',[site])).rejects.toThrow(/Founder/);
-   await db.exec(`SET test.uid='${founder}'; SET test.assurance='no'`);await expect(save(db,id(5),source,split)).rejects.toThrow(/Founder/);
-   await db.exec('RESET ROLE; SET ROLE service_role');await expect(db.query('SELECT * FROM public.historical_worker_attributions')).rejects.toThrow(/permission denied/);await expect(save(db,id(5),source,split)).rejects.toThrow(/permission denied/);
+   await db.exec(`SET test.uid='${supervisor}'`);await expect(db.query('SELECT public.historical_worker_attribution_projects()')).rejects.toThrow(/Founder/);await expect(save(db,id(5),source,split)).rejects.toThrow(/Founder/);await expect(db.query('SELECT public.project_historical_worker_attributions($1)',[site])).rejects.toThrow(/Founder/);
+   await db.exec(`SET test.uid='${founder}'; SET test.assurance='no'`);await expect(db.query('SELECT public.historical_worker_attribution_projects()')).rejects.toThrow(/Founder/);await expect(save(db,id(5),source,split)).rejects.toThrow(/Founder/);
+   await db.exec('RESET ROLE; SET ROLE service_role');await expect(db.query('SELECT public.historical_worker_attribution_projects()')).rejects.toThrow(/permission denied/);await expect(db.query('SELECT * FROM public.historical_worker_attributions')).rejects.toThrow(/permission denied/);await expect(save(db,id(5),source,split)).rejects.toThrow(/permission denied/);
    await db.exec('RESET ROLE');expect((await db.query<{n:number}>('SELECT count(*)::int n FROM public.historical_worker_attributions')).rows[0].n).toBe(0);
   }finally{await db.close();}
  },30000);

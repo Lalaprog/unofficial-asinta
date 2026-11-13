@@ -77,6 +77,12 @@ export function historicalWorkerAttributionPreviewEnabled(): boolean {
   return projectCostReconciliationPreviewEnabled() && process.env.NEXT_PUBLIC_HISTORICAL_WORKER_ATTRIBUTION_PREVIEW === 'true';
 }
 
+/** Attribution entry needs its own default-off gate and the external history surface.
+ * This is a display gate only, not authorization or a backend readiness check. */
+export function historicalWorkerAttributionEntryPreviewEnabled(): boolean {
+  return historicalExternalWorkerPreviewEnabled() && process.env.NEXT_PUBLIC_HISTORICAL_WORKER_ATTRIBUTION_ENTRY_PREVIEW === 'true';
+}
+
 /** Separate experimental durable review UI; requires the scratchpad and its uninstalled backend. */
 export function projectCostReviewLedgerPreviewEnabled(): boolean {
   return projectCostReconciliationPreviewEnabled() && process.env.NEXT_PUBLIC_PROJECT_COST_REVIEW_LEDGER_PREVIEW === 'true';

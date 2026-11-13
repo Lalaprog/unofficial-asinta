@@ -10,7 +10,7 @@ SET LOCAL lock_timeout='3s'; SET LOCAL statement_timeout='30s';
 DO $preflight$
 BEGIN
  IF to_regclass('public.historical_external_worker_payroll') IS NULL OR to_regclass('public.paid_period_assertion_cases') IS NULL OR to_regclass('public.projects') IS NULL OR to_regclass('public.users') IS NULL OR to_regprocedure('public.historical_external_worker_lookup(uuid)') IS NULL OR to_regprocedure('auth.uid()') IS NULL OR to_regprocedure('public.is_founder()') IS NULL OR to_regprocedure('public.session_assurance_satisfied()') IS NULL THEN RAISE EXCEPTION 'Historical attribution prerequisites missing'; END IF;
- IF to_regclass('public.historical_worker_attributions') IS NOT NULL OR to_regclass('public.historical_worker_attribution_sites') IS NOT NULL OR to_regprocedure('public.record_historical_worker_attribution(uuid,uuid,jsonb,jsonb,text,boolean)') IS NOT NULL OR to_regprocedure('public.historical_worker_attribution(uuid)') IS NOT NULL OR to_regprocedure('public.project_historical_worker_attributions(uuid)') IS NOT NULL OR to_regprocedure('public.guard_historical_worker_attribution_immutable()') IS NOT NULL THEN RAISE EXCEPTION 'Historical attribution objects already exist'; END IF;
+ IF to_regclass('public.historical_worker_attributions') IS NOT NULL OR to_regclass('public.historical_worker_attribution_sites') IS NOT NULL OR to_regprocedure('public.record_historical_worker_attribution(uuid,uuid,jsonb,jsonb,text,boolean)') IS NOT NULL OR to_regprocedure('public.historical_worker_attribution(uuid)') IS NOT NULL OR to_regprocedure('public.historical_worker_attribution_projects()') IS NOT NULL OR to_regprocedure('public.project_historical_worker_attributions(uuid)') IS NOT NULL OR to_regprocedure('public.guard_historical_worker_attribution_immutable()') IS NOT NULL THEN RAISE EXCEPTION 'Historical attribution objects already exist'; END IF;
 END;
 $preflight$;
 CREATE TABLE public.historical_worker_attributions (
@@ -36,6 +36,20 @@ CREATE FUNCTION public.guard_historical_worker_attribution_immutable() RETURNS t
 REVOKE ALL ON FUNCTION public.guard_historical_worker_attribution_immutable() FROM PUBLIC,anon,authenticated,service_role;
 CREATE TRIGGER historical_worker_attribution_immutable BEFORE UPDATE OR DELETE ON public.historical_worker_attributions FOR EACH ROW EXECUTE FUNCTION public.guard_historical_worker_attribution_immutable();
 CREATE TRIGGER historical_worker_attribution_sites_immutable BEFORE UPDATE OR DELETE ON public.historical_worker_attribution_sites FOR EACH ROW EXECUTE FUNCTION public.guard_historical_worker_attribution_immutable();
+
+-- All projects, including completed/archived ones, are candidates for a
+-- historical split. This list does not prove work occurred at any of them.
+CREATE FUNCTION public.historical_worker_attribution_projects() RETURNS jsonb
+LANGUAGE plpgsql STABLE SECURITY DEFINER SET search_path='' AS $$
+DECLARE v_items jsonb;
+BEGIN
+ IF auth.uid() IS NULL OR NOT coalesce(public.is_founder(),false) OR NOT coalesce(public.session_assurance_satisfied(),false) THEN RAISE EXCEPTION 'Founder access with required assurance is required' USING ERRCODE='42501'; END IF;
+ IF (SELECT count(*) FROM public.projects)>2000 THEN RAISE EXCEPTION 'Project catalog exceeds attribution limit' USING ERRCODE='54000'; END IF;
+ SELECT coalesce(jsonb_agg(jsonb_build_object('id',id,'name',name) ORDER BY name,id),'[]'::jsonb) INTO v_items FROM public.projects;
+ IF octet_length(v_items::text)>1048576 THEN RAISE EXCEPTION 'Project catalog too large' USING ERRCODE='54000'; END IF;
+ RETURN jsonb_build_object('projects',v_items);
+END;
+$$;
 
 CREATE FUNCTION public.record_historical_worker_attribution(p_request uuid,p_source uuid,p_expected jsonb,p_split jsonb,p_note text,p_ack boolean) RETURNS jsonb
 LANGUAGE plpgsql SECURITY DEFINER SET search_path='' AS $$
@@ -117,8 +131,8 @@ BEGIN
  RETURN jsonb_build_object('project_id',p_project,'items',v_items);
 END;
 $$;
-REVOKE ALL ON FUNCTION public.record_historical_worker_attribution(uuid,uuid,jsonb,jsonb,text,boolean),public.historical_worker_attribution(uuid),public.project_historical_worker_attributions(uuid) FROM PUBLIC,anon,authenticated,service_role;
-GRANT EXECUTE ON FUNCTION public.record_historical_worker_attribution(uuid,uuid,jsonb,jsonb,text,boolean),public.historical_worker_attribution(uuid),public.project_historical_worker_attributions(uuid) TO authenticated;
+REVOKE ALL ON FUNCTION public.record_historical_worker_attribution(uuid,uuid,jsonb,jsonb,text,boolean),public.historical_worker_attribution(uuid),public.project_historical_worker_attributions(uuid),public.historical_worker_attribution_projects() FROM PUBLIC,anon,authenticated,service_role;
+GRANT EXECUTE ON FUNCTION public.record_historical_worker_attribution(uuid,uuid,jsonb,jsonb,text,boolean),public.historical_worker_attribution(uuid),public.project_historical_worker_attributions(uuid),public.historical_worker_attribution_projects() TO authenticated;
 DO $postflight$
 DECLARE n text; r text; t regclass;
 BEGIN
@@ -128,7 +142,7 @@ BEGIN
    IF pg_catalog.has_table_privilege(r,t,'SELECT,INSERT,UPDATE,DELETE,TRUNCATE,REFERENCES,TRIGGER') OR EXISTS(SELECT 1 FROM pg_catalog.pg_attribute a WHERE a.attrelid=t AND a.attnum>0 AND NOT a.attisdropped AND pg_catalog.has_column_privilege(r,t,a.attname,'SELECT,INSERT,UPDATE,REFERENCES')) THEN RAISE EXCEPTION 'Unexpected historical attribution table privilege'; END IF;
   END LOOP;
  END LOOP;
- FOREACH n IN ARRAY ARRAY['public.record_historical_worker_attribution(uuid,uuid,jsonb,jsonb,text,boolean)','public.historical_worker_attribution(uuid)','public.project_historical_worker_attributions(uuid)'] LOOP
+ FOREACH n IN ARRAY ARRAY['public.record_historical_worker_attribution(uuid,uuid,jsonb,jsonb,text,boolean)','public.historical_worker_attribution(uuid)','public.project_historical_worker_attributions(uuid)','public.historical_worker_attribution_projects()'] LOOP
   IF pg_catalog.has_function_privilege('anon',n,'EXECUTE') OR pg_catalog.has_function_privilege('service_role',n,'EXECUTE') OR NOT pg_catalog.has_function_privilege('authenticated',n,'EXECUTE') THEN RAISE EXCEPTION 'Unexpected historical attribution RPC privilege'; END IF;
  END LOOP;
  IF EXISTS(SELECT 1 FROM unnest(ARRAY['anon','authenticated','service_role']) AS roles(role_name) WHERE pg_catalog.has_function_privilege(roles.role_name,'public.guard_historical_worker_attribution_immutable()','EXECUTE')) THEN RAISE EXCEPTION 'Unexpected historical attribution guard privilege'; END IF;

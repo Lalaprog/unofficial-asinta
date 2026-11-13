@@ -10,6 +10,7 @@ import {estimateProjectCost,parseCostSnapshot} from '@/lib/projects/projectCostR
 import {parseEquipmentSnapshot} from '@/lib/tools/ownedEquipment';
 import {parseProjectEquipment} from '@/lib/tools/projectEquipment';
 import {parseHistoricalProjectAttributions} from '@/lib/projects/historicalWorkerAttributions';
+import {parseAttributionProjects,parseAttributionSource,parseAttributionStatus} from '@/lib/payroll/historicalAttribution';
 
 const url=process.env.FINANCE_INTEGRATION_REHEARSAL_TEST_DATABASE_URL;
 const suite=url?describe:describe.skip;
@@ -214,12 +215,15 @@ suite('coordinated finance integration rehearsal, synthetic PostgreSQL only',()=
    await db.query("SELECT public.open_paid_period_assertion_case($1,'external_worker',$2,$3,20,'Synthetic external review')",[historicalCase,historicalId,JSON.stringify(historicalSnap)]);
    await db.query("SELECT public.resolve_paid_period_assertion_case($1,'no_transfer',NULL,'Synthetic review complete',true)",[historicalCase]);
    const historicalSource=(await db.query('SELECT public.historical_external_worker_lookup($1) v',[historicalId])).rows[0].v;
+   expect(parseAttributionProjects((await db.query('SELECT public.historical_worker_attribution_projects() v')).rows[0].v)).toEqual(expect.arrayContaining([expect.objectContaining({id:site}),expect.objectContaining({id:siteTwo})]));
+   expect(parseAttributionSource(historicalSource,worker,historicalId)).toEqual(historicalSource);
    const attributionId='70000000-0000-4000-8000-000000000040';
    const attributionSplit=[{project_id:site,gross:'400.25'},{project_id:siteTwo,gross:'199.75'}];
    const attributionArgs=[attributionId,historicalId,JSON.stringify(historicalSource),JSON.stringify(attributionSplit)];
    const recordAttribution="SELECT public.record_historical_worker_attribution($1,$2,$3::jsonb,$4::jsonb,'Synthetic original evidence reviewed',true) v";
    expect((await db.query(recordAttribution,attributionArgs)).rows[0].v).toMatchObject({source_id:historicalId,replayed:false});
    expect((await db.query(recordAttribution,attributionArgs)).rows[0].v.replayed).toBe(true);
+   expect(parseAttributionStatus((await db.query('SELECT public.historical_worker_attribution($1) v',[historicalId])).rows[0].v,worker,historicalId)).toMatchObject({found:true,request_id:attributionId,case_count:1,source_changed:false});
    const historicalSiteRaw=(await db.query('SELECT public.project_historical_worker_attributions($1) v',[site])).rows[0].v;
    expect(historicalSiteRaw.items).toEqual([expect.objectContaining({source_id:historicalId,site_gross:'400.25',original_gross:'600.00',case_count:1})]);
    expect(parseHistoricalProjectAttributions(historicalSiteRaw,site)).toEqual([expect.objectContaining({sourceId:historicalId,siteGross:'400.25',caseCount:1})]);
