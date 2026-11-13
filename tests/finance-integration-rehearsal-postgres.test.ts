@@ -7,6 +7,8 @@ import {describe,expect,it} from 'vitest';
 import {baseFixture} from './helpers/pr103-fixture';
 import {parseWeeklyDraftDetails} from '@/lib/payroll/weeklyDraftDetails';
 import {estimateProjectCost,parseCostSnapshot} from '@/lib/projects/projectCostReconciliation';
+import {parseEquipmentSnapshot} from '@/lib/tools/ownedEquipment';
+import {parseProjectEquipment} from '@/lib/tools/projectEquipment';
 
 const url=process.env.FINANCE_INTEGRATION_REHEARSAL_TEST_DATABASE_URL;
 const suite=url?describe:describe.skip;
@@ -28,6 +30,8 @@ suite('coordinated finance integration rehearsal, synthetic PostgreSQL only',()=
    await db.query(`ALTER TABLE public.users ADD COLUMN email text; UPDATE public.users SET email='fixture@example.invalid';
     ALTER TABLE public.payroll ADD COLUMN notes text;
     ALTER TABLE public.expenses ADD COLUMN ai_bale_detection boolean DEFAULT false, ADD COLUMN revision bigint NOT NULL DEFAULT 0;
+    ALTER TABLE public.tools ADD COLUMN name text, ADD COLUMN quantity integer, ADD COLUMN condition text, ADD COLUMN project_id uuid;
+    UPDATE public.tools SET name='Existing fixture equipment',quantity=0,condition='good';
     ALTER TABLE public.advances ADD COLUMN reason text, ADD COLUMN created_at timestamptz DEFAULT now(); ALTER TABLE public.advances ALTER COLUMN id SET DEFAULT gen_random_uuid();
     ALTER TABLE public.advance_requests ADD COLUMN approved_by uuid, ADD COLUMN approved_at timestamptz, ADD COLUMN rejected_by uuid, ADD COLUMN rejected_at timestamptz, ADD COLUMN issued_by uuid, ADD COLUMN updated_at timestamptz DEFAULT now();
     ALTER TABLE public.advance_requests ADD CONSTRAINT advance_request_rejection_fields CHECK(status<>'rejected' OR (rejected_by IS NOT NULL AND rejected_at IS NOT NULL));
@@ -56,6 +60,7 @@ suite('coordinated finance integration rehearsal, synthetic PostgreSQL only',()=
     (SELECT md5(coalesce(string_agg(row_to_json(u)::text,',' ORDER BY id),'')) FROM public.users u) users,
     (SELECT md5(coalesce(string_agg(row_to_json(w)::text,',' ORDER BY id),'')) FROM public.workers w) workers,
     (SELECT md5(coalesce(string_agg(row_to_json(e)::text,',' ORDER BY id),'')) FROM public.expenses e) expenses,
+    (SELECT md5(coalesce(string_agg(row_to_json(t)::text,',' ORDER BY id),'')) FROM public.tools t) tools,
     (SELECT md5(coalesce(string_agg(row_to_json(a)::text,',' ORDER BY project_id,worker_id),'')) FROM public.project_worker_assignments a) assignments,
     (SELECT md5(coalesce(string_agg(row_to_json(s)::text,',' ORDER BY project_id,supervisor_id),'')) FROM public.project_supervisors s) supervisors,
     (SELECT md5(coalesce(string_agg(row_to_json(r)::text,',' ORDER BY id),'')) FROM public.advance_requests r) requests,
@@ -94,6 +99,9 @@ suite('coordinated finance integration rehearsal, synthetic PostgreSQL only',()=
    // The review ledger is also separate from the generated chain, and never
    // posts money or makes the bounded snapshot complete.
    await db.query(readFileSync('supabase/drafts/project_cost_review_ledger.sql','utf8'));
+   // Equipment is outside the generated chain; only this disposable transaction installs it.
+   await db.query(readFileSync('supabase/drafts/owned_equipment_allocations.sql','utf8'));
+   expect((await db.query("SELECT has_table_privilege('service_role','public.owned_equipment_allocations','INSERT,UPDATE,DELETE') allowed")).rows[0].allowed).toBe(false);
    await db.query(`SET LOCAL test.uid='${founder}'; SET LOCAL test.assurance='yes'`);
    await db.query("INSERT INTO public.attendance(id,worker_id,project_id,date,status,hours_worked,submitted_at) VALUES($1,$2,$3,'2024-08-04','present',8,'2024-08-04T08:00:00Z')",[attendance,worker,site]);
    await db.query('INSERT INTO public.project_worker_assignments(project_id,worker_id,active) VALUES($1,$2,true)',[site,worker]);
@@ -103,6 +111,7 @@ suite('coordinated finance integration rehearsal, synthetic PostgreSQL only',()=
    await db.query('SELECT public.set_project_worker_guarded($1,$2,$3,true)',[founder,site,worker]);
    await db.query('RESET ROLE');
    await db.query("INSERT INTO public.project_supervisors(project_id,supervisor_id) VALUES('00000000-0000-0000-0000-000000000005',$1)",[supervisor]);
+   await db.query("INSERT INTO public.tools(id,name,quantity,condition,project_id) VALUES('70000000-0000-4000-8000-000000000030','Synthetic drill',5,'good',NULL)");
    await db.query("INSERT INTO public.workers(id,name,position,contact_number,pay_rate,pay_rate_type,active) VALUES($1,'Supervisor','Supervisor','none',600,'daily',true)",[supervisor]);
    await db.query(`INSERT INTO public.expenses(id,project_id,description,category,amount,expense_date,ai_bale_detection) VALUES
     ('70000000-0000-4000-8000-000000000009',$1,'Excavator','equipment',1000,'2024-08-04',false),
@@ -156,6 +165,21 @@ suite('coordinated finance integration rehearsal, synthetic PostgreSQL only',()=
    const costs=parseCostSnapshot(rawCosts,site);
    const choices=Object.fromEntries(costs.expenses.map(e=>[e.id,e.id==='70000000-0000-4000-8000-000000000010'?'exclude' as const:'include' as const]));
    expect(estimateProjectCost(costs,choices)).toEqual({expenses:101235n,excluded:10025n,payroll:80025n,total:181260n});
+   // Owned stock movements are inventory, not a second rental expense or payroll cost.
+   const drill='70000000-0000-4000-8000-000000000030',siteTwo='00000000-0000-0000-0000-000000000005';
+   const equipmentChange='SELECT public.change_owned_equipment($1,$2,$3,$4,$5,$6,$7) v';
+   const adopt=['70000000-0000-4000-8000-000000000031',drill,'adopt',null,null,5,null];
+   expect((await db.query(equipmentChange,adopt)).rows[0].v).toMatchObject({allocated:0,depot:5,replayed:false});
+   expect((await db.query(equipmentChange,adopt)).rows[0].v.replayed).toBe(true);
+   expect((await db.query(equipmentChange,['70000000-0000-4000-8000-000000000032',drill,'allocate',site,3,5,0])).rows[0].v).toMatchObject({allocated:3,depot:2});
+   expect((await db.query(equipmentChange,['70000000-0000-4000-8000-000000000033',drill,'allocate',siteTwo,1,5,0])).rows[0].v).toMatchObject({allocated:4,depot:1});
+   const inventory=parseEquipmentSnapshot((await db.query('SELECT public.owned_equipment_snapshot() v')).rows[0].v);
+   expect(inventory.items.find(item=>item.id===drill)).toMatchObject({stock:5,managed:true,sites:[{project_id:site,name:'Site One',quantity:3},{project_id:siteTwo,name:'Site Two',quantity:1}]});
+   await db.query(`SET LOCAL test.uid='${supervisor}'`);
+   expect(parseProjectEquipment((await db.query('SELECT public.project_equipment_snapshot($1) v',[site])).rows[0].v,site).items).toEqual([expect.objectContaining({id:drill,quantity:3,source:'allocated'})]);
+   expect(parseProjectEquipment((await db.query('SELECT public.project_equipment_snapshot($1) v',[siteTwo])).rows[0].v,siteTwo).items).toEqual([expect.objectContaining({id:drill,quantity:1,source:'allocated'})]);
+   await db.query(`SET LOCAL test.uid='${founder}'`);
+   expect(estimateProjectCost(parseCostSnapshot((await db.query('SELECT public.project_cost_reconciliation_preview($1) v',[site])).rows[0].v,site),choices)).toEqual({expenses:101235n,excluded:10025n,payroll:80025n,total:181260n});
    const reviewChoices=Object.fromEntries(Object.entries(choices).map(([id,decision])=>[id,{decision,reason:decision==='exclude'?'Already represented in payroll gross':null}]));
    const reviewArgs=['70000000-0000-4000-8000-000000000021',site,0,JSON.stringify(rawCosts),JSON.stringify(reviewChoices),'Synthetic incomplete review'];
    const saveReview='SELECT public.record_project_cost_review($1,$2,$3,$4::jsonb,$5::jsonb,$6) v';
@@ -175,6 +199,22 @@ suite('coordinated finance integration rehearsal, synthetic PostgreSQL only',()=
    const corrected=parseCostSnapshot((await db.query('SELECT public.project_cost_reconciliation_preview($1) v',[site])).rows[0].v,site);
    expect(corrected.adjustments).toMatchObject([{payrollId:voucher,status:'settled_external',difference:'25.50',settledOn:'2024-08-12'}]);
    expect(estimateProjectCost(corrected,choices)).toEqual({expenses:101235n,excluded:10025n,payroll:80025n,total:181260n});
+   // An earlier external assertion is evidence only: it creates no voucher,
+   // advance or site allocation and a correction never enters later payroll.
+   const historicalId='70000000-0000-4000-8000-000000000038',historicalCase='70000000-0000-4000-8000-000000000039';
+   const historicalWorker=(await db.query("SELECT public.historical_external_worker_review($1,'2024-07-28') v",[worker])).rows[0].v.worker;
+   const historicalArgs=[historicalId,worker,JSON.stringify(historicalWorker)];
+   const historicalRecord="SELECT public.record_historical_external_worker_payroll($1,$2,'2024-07-28','2024-08-03',600,100,0,500,'Synthetic external evidence',$3::jsonb,true) v";
+   expect((await db.query(historicalRecord,historicalArgs)).rows[0].v).toMatchObject({replayed:false});
+   expect((await db.query(historicalRecord,historicalArgs)).rows[0].v).toMatchObject({replayed:true});
+   const historicalSnap=(await db.query("SELECT public.paid_period_assertion_case_list('external_worker',$1) v",[historicalId])).rows[0].v.snapshot;
+   await db.query("SELECT public.open_paid_period_assertion_case($1,'external_worker',$2,$3,20,'Synthetic external review')",[historicalCase,historicalId,JSON.stringify(historicalSnap)]);
+   await db.query("SELECT public.resolve_paid_period_assertion_case($1,'no_transfer',NULL,'Synthetic review complete',true)",[historicalCase]);
+   await db.query('RESET ROLE');
+   expect((await db.query("SELECT count(*)::int n FROM public.payroll WHERE worker_id=$1 AND period_start='2024-07-28'",[worker])).rows[0].n).toBe(0);
+   expect((await db.query("SELECT count(*)::int n FROM public.advances WHERE worker_id=$1 AND date BETWEEN '2024-07-28' AND '2024-08-03'",[worker])).rows[0].n).toBe(0);
+   await db.query('SET LOCAL ROLE authenticated');
+   expect(estimateProjectCost(parseCostSnapshot((await db.query('SELECT public.project_cost_reconciliation_preview($1) v',[site])).rows[0].v,site),choices)).toEqual({expenses:101235n,excluded:10025n,payroll:80025n,total:181260n});
    const detailHistory=(await db.query('SELECT public.attendance_history_time_batch($1::uuid[]) v',[[attendance]])).rows[0].v;
    expect(detailHistory).toMatchObject({items:[{id:attendance,detail:{regular_hours:'8.00',overtime_hours:'2.00'}}]});
    const paidSite=(await db.query('SELECT public.project_paid_worker_evidence($1) v',[site])).rows[0].v;
@@ -203,6 +243,37 @@ suite('coordinated finance integration rehearsal, synthetic PostgreSQL only',()=
    await db.query("SELECT public.transition_supervisor_period_payroll('70000000-0000-4000-8000-000000000007',$1,'approved',NULL,true)",[supervisorVoucher]);
    await db.query("SELECT public.transition_supervisor_period_payroll('70000000-0000-4000-8000-000000000008',$1,'recorded_paid','2024-08-15',true)",[supervisorVoucher]);
    expect((await db.query("SELECT public.supervisor_paid_company_evidence('2024-08-01','2024-08-15') v")).rows[0].v).toMatchObject({count:1,total:'600.00'});
+   // A retroactive emergency request after recorded pay is flagged for review;
+   // it never changes the original paid ledger or carries a case into the next period.
+   await db.query('RESET ROLE');
+   const paidSupervisorBefore=(await db.query('SELECT to_jsonb(p) v FROM public.supervisor_period_payroll p WHERE id=$1',[supervisorVoucher])).rows[0].v;
+   await db.query(`SET LOCAL ROLE authenticated; SET LOCAL test.uid='${supervisor}'`);
+   const lateLeave='70000000-0000-4000-8000-000000000034';
+   await db.query("SELECT public.submit_supervisor_leave($1,'2024-08-06','2024-08-06','emergency','Synthetic late leave')",[lateLeave]);
+   await db.query(`SET LOCAL test.uid='${founder}'`);
+   const leaveList=(await db.query('SELECT public.supervisor_leave_list() v')).rows[0].v;
+   expect(leaveList.items.find((entry:{id:string})=>entry.id===lateLeave)).toMatchObject({possible_paid_overlap:true});
+   await db.query("SELECT public.review_supervisor_leave($1,'approved')",[lateLeave]);
+   expect((await db.query("SELECT public.supervisor_period_payroll_review($1,'2024-08-01') v",[supervisor])).rows[0].v).toMatchObject({status:'paid',gross:'600.00',source_changed:true});
+   const paidSupervisorSnapshot=(await db.query("SELECT public.paid_period_assertion_case_list('supervisor',$1) v",[supervisorVoucher])).rows[0].v.snapshot;
+   const caseId='70000000-0000-4000-8000-000000000035';
+   const openCase="SELECT public.open_paid_period_assertion_case($1,'supervisor',$2,$3,-75,'Synthetic original-period review') v";
+   expect((await db.query(openCase,[caseId,supervisorVoucher,JSON.stringify(paidSupervisorSnapshot)])).rows[0].v).toMatchObject({status:'pending',replayed:false});
+   expect((await db.query(openCase,[caseId,supervisorVoucher,JSON.stringify(paidSupervisorSnapshot)])).rows[0].v).toMatchObject({status:'pending',replayed:true});
+   const resolveCase="SELECT public.resolve_paid_period_assertion_case($1,'no_transfer',NULL,'Synthetic review complete',true) v";
+   expect((await db.query(resolveCase,[caseId])).rows[0].v).toMatchObject({status:'no_transfer',replayed:false});
+   expect((await db.query(resolveCase,[caseId])).rows[0].v).toMatchObject({status:'no_transfer',replayed:true});
+   await db.query('RESET ROLE');
+   expect((await db.query('SELECT to_jsonb(p) v FROM public.supervisor_period_payroll p WHERE id=$1',[supervisorVoucher])).rows[0].v).toEqual(paidSupervisorBefore);
+   await db.query(`SET LOCAL ROLE authenticated; SET LOCAL test.uid='${supervisor}'`);
+   await db.query("SELECT public.submit_supervisor_day('70000000-0000-4000-8000-000000000036','2024-08-16','present')");
+   await db.query(`SET LOCAL test.uid='${founder}'`);
+   await db.query("SELECT public.review_supervisor_day('70000000-0000-4000-8000-000000000036','approved')");
+   const nextSupervisorPlan=(await db.query("SELECT public.supervisor_period_prepare($1,'2024-08-16') v",[supervisor])).rows[0].v;
+   await db.query("SELECT public.create_supervisor_period_draft('70000000-0000-4000-8000-000000000037',$1,'2024-08-16',600,$2)",[supervisor,JSON.stringify(nextSupervisorPlan)]);
+   expect((await db.query("SELECT public.supervisor_period_payroll_review($1,'2024-08-16') v",[supervisor])).rows[0].v).toMatchObject({status:'draft',gross:'600.00'});
+   expect((await db.query("SELECT public.supervisor_paid_company_evidence('2024-08-01','2024-08-15') v")).rows[0].v).toMatchObject({count:1,total:'600.00'});
+
    expect((await db.query('SELECT public.project_paid_worker_evidence($1) v',[site])).rows[0].v.items).toEqual([expect.objectContaining({payroll_id:voucher,gross:'800.25'})]);
    // A second week's unapproved request is expired by the system-only runner,
    // not treated as a release or as an additional payroll deduction.
@@ -241,6 +312,7 @@ suite('coordinated finance integration rehearsal, synthetic PostgreSQL only',()=
    expect((await db.query('SELECT project_id,event_type FROM public.project_assignment_history WHERE worker_id=$1 ORDER BY event_type,project_id',[worker])).rows).toEqual([{project_id:site,event_type:'assigned'},{project_id:destination,event_type:'assigned'},{project_id:site,event_type:'unassigned'}]);
    await db.query('ROLLBACK');expect(await snapshot()).toEqual(before);
    for(const signature of legacySignatures)expect((await db.query("SELECT has_function_privilege('anon',$1,'EXECUTE') allowed",[signature])).rows[0].allowed).toBe(true);
+   expect((await db.query("SELECT to_regclass('public.owned_equipment_allocations') IS NULL absent")).rows[0].absent).toBe(true);
    expect((await db.query("SELECT to_regclass('public.weekly_worker_draft_sources') IS NULL absent,to_regprocedure('public.weekly_worker_preview_base_inputs(date)') IS NULL wrapper_absent,to_regprocedure('public.weekly_worker_preview_inputs(date)') IS NOT NULL base_present,to_regprocedure('public.weekly_bale_external_monitor_healthy()') IS NULL monitor_absent")).rows[0]).toEqual({absent:true,wrapper_absent:true,base_present:true,monitor_absent:true});
   }finally{await db.query('ROLLBACK').catch(()=>{});await db.end();}
  },60000);

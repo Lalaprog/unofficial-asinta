@@ -45,6 +45,33 @@ describe('owned equipment allocation draft',()=>{
    expect((await db.query<{n:number}>('SELECT count(*)::int n FROM public.owned_equipment_events')).rows[0].n).toBe(4);
   }finally{await db.close();}
  },30000);
+ it('removes service-role defaults and blocks direct evidence changes and RPC calls',async()=>{
+  const db=new PGlite();try{
+   await db.exec(fixture);await db.exec(`BEGIN; ${sql} COMMIT; SET ROLE service_role`);
+   for(const table of ['managed_owned_equipment','owned_equipment_allocations','owned_equipment_events']){
+    await expect(db.query(`SELECT * FROM public.${table}`)).rejects.toThrow(/permission denied/);
+    await expect(db.exec(`DELETE FROM public.${table}`)).rejects.toThrow(/permission denied/);
+   }
+   await expect(db.query('SELECT public.owned_equipment_snapshot()')).rejects.toThrow(/permission denied/);
+   await expect(db.query('SELECT public.change_owned_equipment($1,$2,$3,$4,$5,$6,$7)',[id(100),tool,'adopt',null,null,5,null])).rejects.toThrow(/permission denied/);
+   await db.exec(`RESET ROLE; SET ROLE authenticated; SET test.uid='${founder}'; SET test.assurance='yes'`);
+   expect((await db.query<{v:{replayed:boolean}}>('SELECT public.change_owned_equipment($1,$2,$3,$4,$5,$6,$7) v',[id(100),tool,'adopt',null,null,5,null])).rows[0].v.replayed).toBe(false);
+  }finally{await db.close();}
+ },30000);
+ it('rolls back when an inherited default table grant bypasses the service-role revocation',async()=>{
+  const db=new PGlite();try{
+   await db.exec(fixture);await db.exec('CREATE ROLE equipment_inherited; GRANT equipment_inherited TO service_role; ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT SELECT ON TABLES TO equipment_inherited');
+   await expect(db.exec(`BEGIN; ${sql} COMMIT;`)).rejects.toThrow(/Unexpected inherited equipment table or column privileges/);await db.exec('ROLLBACK');
+   expect((await db.query("SELECT to_regclass('public.owned_equipment_events') IS NULL absent")).rows[0]).toEqual({absent:true});
+  }finally{await db.close();}
+ },30000);
+ it('rolls back when an inherited default function grant bypasses the service-role revocation',async()=>{
+  const db=new PGlite();try{
+   await db.exec(fixture);await db.exec('CREATE ROLE equipment_inherited; GRANT equipment_inherited TO service_role; ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT EXECUTE ON FUNCTIONS TO equipment_inherited');
+   await expect(db.exec(`BEGIN; ${sql} COMMIT;`)).rejects.toThrow(/Unexpected inherited equipment function privileges/);await db.exec('ROLLBACK');
+   expect((await db.query("SELECT to_regclass('public.owned_equipment_events') IS NULL absent")).rows[0]).toEqual({absent:true});
+  }finally{await db.close();}
+ },30000);
  it('does not reinterpret site-assigned legacy stock and fails closed on schema drift',async()=>{
   const db=new PGlite();try{
    await db.exec(fixture);await db.exec('ALTER TABLE public.tools ALTER COLUMN quantity TYPE bigint');

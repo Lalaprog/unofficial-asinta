@@ -53,7 +53,7 @@ CREATE TABLE public.owned_equipment_events (
 ALTER TABLE public.managed_owned_equipment ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.owned_equipment_allocations ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.owned_equipment_events ENABLE ROW LEVEL SECURITY;
-REVOKE ALL ON public.managed_owned_equipment,public.owned_equipment_allocations,public.owned_equipment_events FROM PUBLIC,anon,authenticated;
+REVOKE ALL ON public.managed_owned_equipment,public.owned_equipment_allocations,public.owned_equipment_events FROM PUBLIC,anon,authenticated,service_role;
 
 -- Old clients may still edit total stock. Row locking in UPDATE serializes them
 -- with allocations; they cannot reduce it below allocated stock or assign a
@@ -71,7 +71,7 @@ BEGIN
  RETURN NEW;
 END;
 $$;
-REVOKE ALL ON FUNCTION public.guard_managed_equipment() FROM PUBLIC,anon,authenticated;
+REVOKE ALL ON FUNCTION public.guard_managed_equipment() FROM PUBLIC,anon,authenticated,service_role;
 CREATE TRIGGER guard_managed_equipment BEFORE UPDATE OF quantity,project_id ON public.tools FOR EACH ROW EXECUTE FUNCTION public.guard_managed_equipment();
 
 -- Callers choose an idempotency ID. Each change compares the stock and target
@@ -133,7 +133,7 @@ BEGIN
  RETURN v_result;
 END;
 $$;
-REVOKE ALL ON FUNCTION public.change_owned_equipment(uuid,uuid,text,uuid,integer,integer,integer) FROM PUBLIC,anon,authenticated;
+REVOKE ALL ON FUNCTION public.change_owned_equipment(uuid,uuid,text,uuid,integer,integer,integer) FROM PUBLIC,anon,authenticated,service_role;
 GRANT EXECUTE ON FUNCTION public.change_owned_equipment(uuid,uuid,text,uuid,integer,integer,integer) TO authenticated;
 
 CREATE FUNCTION public.owned_equipment_snapshot() RETURNS jsonb
@@ -150,7 +150,7 @@ BEGIN
  RETURN jsonb_build_object('items',v_items,'projects',v_projects);
 END;
 $$;
-REVOKE ALL ON FUNCTION public.owned_equipment_snapshot() FROM PUBLIC,anon,authenticated;
+REVOKE ALL ON FUNCTION public.owned_equipment_snapshot() FROM PUBLIC,anon,authenticated,service_role;
 GRANT EXECUTE ON FUNCTION public.owned_equipment_snapshot() TO authenticated;
 
 -- Lookup is restricted to the original actor. A missing event does not establish
@@ -166,7 +166,7 @@ BEGIN
  RETURN jsonb_build_object('found',true,'attempt',jsonb_build_object('id',v_event.id,'tool',v_event.tool_id,'action',v_event.action,'project',v_event.project_id,'quantity',v_event.quantity,'expectedStock',v_event.expected_stock,'expectedSite',v_event.expected_site),'result',v_event.result);
 END;
 $$;
-REVOKE ALL ON FUNCTION public.owned_equipment_operation_status(uuid) FROM PUBLIC,anon,authenticated;
+REVOKE ALL ON FUNCTION public.owned_equipment_operation_status(uuid) FROM PUBLIC,anon,authenticated,service_role;
 GRANT EXECUTE ON FUNCTION public.owned_equipment_operation_status(uuid) TO authenticated;
 -- Only the requested authorized site is visible. Legacy single-site records
 -- and managed allocations are separate; neither proves current physical stock.
@@ -191,17 +191,30 @@ BEGIN
  RETURN jsonb_build_object('project_id',p_project,'items',v_items);
 END;
 $$;
-REVOKE ALL ON FUNCTION public.project_equipment_snapshot(uuid) FROM PUBLIC,anon,authenticated;
+REVOKE ALL ON FUNCTION public.project_equipment_snapshot(uuid) FROM PUBLIC,anon,authenticated,service_role;
 GRANT EXECUTE ON FUNCTION public.project_equipment_snapshot(uuid) TO authenticated;
 
+-- RLS alone does not protect these tables from service roles with BYPASSRLS.
+-- Reject inherited table/column or function grants as well as direct defaults.
+-- An owner, superuser, role administrator or trigger-disabling maintenance
+-- operation can still bypass these controls and needs separate review.
 DO $postflight$
-DECLARE n text;
+DECLARE n text; role_name text; target regclass;
 BEGIN
  FOREACH n IN ARRAY ARRAY['public.managed_owned_equipment','public.owned_equipment_allocations','public.owned_equipment_events'] LOOP
-  IF has_table_privilege('anon',n,'SELECT,INSERT,UPDATE,DELETE,TRUNCATE,REFERENCES,TRIGGER') OR has_table_privilege('authenticated',n,'SELECT,INSERT,UPDATE,DELETE,TRUNCATE,REFERENCES,TRIGGER') THEN RAISE EXCEPTION 'Unexpected equipment table privileges'; END IF;
+  target:=pg_catalog.to_regclass(n);
+  FOREACH role_name IN ARRAY ARRAY['anon','authenticated','service_role'] LOOP
+   IF pg_catalog.has_table_privilege(role_name,target,'SELECT,INSERT,UPDATE,DELETE,TRUNCATE,REFERENCES,TRIGGER') OR EXISTS(
+    SELECT 1 FROM pg_catalog.pg_attribute a WHERE a.attrelid=target AND a.attnum>0 AND NOT a.attisdropped
+     AND pg_catalog.has_column_privilege(role_name,target,a.attname,'SELECT,INSERT,UPDATE,REFERENCES')) THEN
+    RAISE EXCEPTION 'Unexpected inherited equipment table or column privileges'; END IF;
+  END LOOP;
  END LOOP;
  FOREACH n IN ARRAY ARRAY['public.change_owned_equipment(uuid,uuid,text,uuid,integer,integer,integer)','public.owned_equipment_snapshot()','public.owned_equipment_operation_status(uuid)','public.project_equipment_snapshot(uuid)'] LOOP
-  IF has_function_privilege('anon',n,'EXECUTE') OR NOT has_function_privilege('authenticated',n,'EXECUTE') THEN RAISE EXCEPTION 'Unexpected equipment function privileges'; END IF;
+  IF pg_catalog.has_function_privilege('anon',n,'EXECUTE') OR pg_catalog.has_function_privilege('service_role',n,'EXECUTE') OR NOT pg_catalog.has_function_privilege('authenticated',n,'EXECUTE') THEN RAISE EXCEPTION 'Unexpected inherited equipment function privileges'; END IF;
  END LOOP;
+ IF EXISTS(SELECT 1 FROM unnest(ARRAY['anon','authenticated','service_role']) r(role_name)
+  WHERE pg_catalog.has_function_privilege(r.role_name,'public.guard_managed_equipment()','EXECUTE')) THEN
+  RAISE EXCEPTION 'Unexpected inherited equipment trigger privilege'; END IF;
 END;
 $postflight$;

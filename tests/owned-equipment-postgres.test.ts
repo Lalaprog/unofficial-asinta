@@ -21,6 +21,17 @@ suite('owned equipment allocation concurrency on isolated PostgreSQL',()=>{
   await change(a,id(10),'adopt',null,null,5,null);
  },30000);
  afterAll(async()=>{await Promise.all([admin?.end(),a?.end(),b?.end()]);});
+ it('keeps default-granted service role out of equipment evidence and operations',async()=>{
+  await b.query('SET ROLE service_role');try{
+   for(const table of ['managed_owned_equipment','owned_equipment_allocations','owned_equipment_events']){
+    await expect(b.query(`SELECT * FROM public.${table}`)).rejects.toMatchObject({code:'42501'});
+    await expect(b.query(`DELETE FROM public.${table}`)).rejects.toMatchObject({code:'42501'});
+   }
+   await expect(b.query('SELECT public.owned_equipment_snapshot()')).rejects.toMatchObject({code:'42501'});
+   await expect(change(b,id(8),'allocate',siteA,1,5,0)).rejects.toMatchObject({code:'42501'});
+   expect((await admin.query('SELECT count(*)::int n FROM public.owned_equipment_events')).rows[0].n).toBe(1);
+  }finally{await b.query(`SET ROLE authenticated; SET test.uid='${founder}'; SET test.assurance='yes'`);}
+ });
  it('serializes legacy site adoption with old-client assignment writes and preserves the site allocation',async()=>{
   const other=id(90);await admin.query("INSERT INTO public.tools VALUES ($1,'Site saw',4,'good',$2)",[other,siteA]);
   await a.query('BEGIN');await b.query('BEGIN');try{
