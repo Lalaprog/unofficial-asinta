@@ -54,6 +54,7 @@ export function buildWeeklyPreview(input:WeeklyInput,today:string):{rows:WeeklyR
   const days=dates.map(date=>{const entries=att.filter(a=>a.date===date);return {date,entries,unmarked:entries.length?null:date<today?'past' as const:date===today?'today' as const:'upcoming' as const};});
   const reasons:string[]=[];
   if(worker.possible_supervisor)reasons.push('Possible Supervisor identity');
+  if(att.some(a=>a.date>today)||allow.some(a=>a.status!=='rejected'&&a.date>today)||bales.some(a=>a.status!=='cancelled'&&a.date>today))reasons.push('Future-dated attendance, allowance or Bale requires review');
   if(pays.length>1 || pays.some(p=>p.period_start!==input.start||p.period_end!==input.end))reasons.push('Multiple or overlapping vouchers');
   if(days.some(d=>d.entries.length>1 || d.entries.some(a=>a.time_detail?.stale || ((a.status==='present'||a.status==='half_day') ? (a.time_detail ? cents(a.time_detail.regular_hours)+cents(a.time_detail.overtime_hours)===0n : (cents(a.hours_worked)>800n || cents(a.hours_worked)===0n)) : (cents(a.hours_worked)!==0n || Boolean(a.time_detail))))))reasons.push('Attendance conflicts, unusual hours or stale time details');
   if(allow.some(a=>a.status!=='rejected'&&a.stale))reasons.push('Allowance attendance changed');

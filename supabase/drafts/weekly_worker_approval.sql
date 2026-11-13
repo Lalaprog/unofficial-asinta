@@ -58,6 +58,7 @@ BEGIN
  END IF;
  IF v_pay.status<>'draft' OR v_source.approved_by IS NOT NULL OR v_source.approval_xid IS NOT NULL THEN
   RAISE EXCEPTION 'Weekly voucher state requires review' USING ERRCODE='22023'; END IF;
+ IF public.weekly_worker_source_has_future(v_source.source_snapshot,(statement_timestamp() AT TIME ZONE 'Asia/Manila')::date) THEN RAISE EXCEPTION 'Future-dated attendance, allowance or Bale requires review before approval' USING ERRCODE='22023'; END IF;
  IF EXISTS(SELECT 1 FROM public.payroll p WHERE p.id<>p_id AND p.worker_id=v_pay.worker_id AND p.period_start<=v_pay.period_end AND p.period_end>=v_pay.period_start) THEN
   RAISE EXCEPTION 'Another overlapping voucher requires review' USING ERRCODE='22023'; END IF;
  IF v_pay.gross_pay IS DISTINCT FROM (v_source.calculation->>'gross')::numeric

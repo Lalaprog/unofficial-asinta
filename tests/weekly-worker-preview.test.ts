@@ -9,6 +9,10 @@ describe('weekly worker planning preview',()=>{
   expect(v.rows[0]).toMatchObject({wage:'983.33',gross:'983.33',net:'983.33',pastUnmarked:true});
   expect(v.rows[0].days.map(d=>d.unmarked)).toEqual([null,null,'past','today','upcoming','upcoming','upcoming']);
  });
+ it('does not treat future-dated source records as completed payable work',()=>{
+  const s=snapshot();s.attendance[1].date='2026-11-19';let row=view(s).rows[0];expect(row.net).toBeNull();expect(row.reviewReasons).toContain('Future-dated attendance, allowance or Bale requires review');
+  s.attendance[1].date='2026-11-16';s.advances.push({id:'z',worker_id:'w',project_id:'p',date:'2026-11-19',amount:'10.00',deducted:'0',status:'active',linked_release:true});row=view(s).rows[0];expect(row.net).toBeNull();expect(row.reviewReasons).toContain('Future-dated attendance, allowance or Bale requires review');
+ });
  it('converts regular hours to eight-hour day equivalents with decimal rounding',()=>{
   expect(regularDayEquivalent('8.00')).toBe('1.00');expect(regularDayEquivalent('4.00')).toBe('0.50');
   expect(regularDayEquivalent('0.04')).toBe('0.01');expect(regularDayEquivalent('12.01')).toBe('1.50');

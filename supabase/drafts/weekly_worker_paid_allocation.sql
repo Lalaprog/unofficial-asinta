@@ -117,6 +117,7 @@ BEGIN
   OR v_source.payment_actor IS NOT NULL OR v_source.payment_xid IS NOT NULL OR v_count<>0
   OR EXISTS(SELECT 1 FROM public.payroll_payment_dates WHERE payroll_id=p_id) THEN
   RAISE EXCEPTION 'Weekly payment state requires review' USING ERRCODE='22023'; END IF;
+ IF public.weekly_worker_source_has_future(v_source.source_snapshot,(statement_timestamp() AT TIME ZONE 'Asia/Manila')::date) THEN RAISE EXCEPTION 'Future-dated attendance, allowance or Bale requires review before payment recording' USING ERRCODE='22023'; END IF;
  IF EXISTS(SELECT 1 FROM public.payroll p WHERE p.id<>p_id AND p.worker_id=v_pay.worker_id AND p.period_start<=v_pay.period_end AND p.period_end>=v_pay.period_start) THEN
   RAISE EXCEPTION 'Another overlapping voucher requires review' USING ERRCODE='22023'; END IF;
  -- Legacy Roll Call can still edit attendance after approval. Do not pay a

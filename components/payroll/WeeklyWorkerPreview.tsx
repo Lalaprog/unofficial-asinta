@@ -8,6 +8,7 @@ import { useAuth } from '@/lib/auth/authContext';
 import { createClient } from '@/lib/supabase/client';
 import { useDataStore } from '@/lib/data/store';
 import { getManilaClock } from '@/lib/reminders/scheduler';
+import { useManilaToday } from '@/lib/dates/useManilaToday';
 import { workerPayrollPeriod } from '@/lib/payroll/periods';
 import { weeklyWorkerActionsPreviewEnabled } from '@/lib/finance/featureAvailability';
 import { WeeklyWorkerActions } from './WeeklyWorkerActions';
@@ -29,13 +30,15 @@ export function WeeklyWorkerPreview() {
 function Contents(){
  const {user,isFounder}=useAuth();
  const {projects}=useDataStore();
+ const today=useManilaToday();
  const [date,setDate]=useState(()=>getManilaClock().dateIso);
  const [result,setResult]=useState<Result>(()=>empty(''));
  const sequence=useRef(0),busy=useRef(false);
  let period:ReturnType<typeof workerPayrollPeriod>|null=null;
  try {period=workerPayrollPeriod(date);} catch { /* Date input may be blank. */ }
  const start=period?.start || '',end=period?.end || '';
- const key=JSON.stringify([user?.id,isFounder,start]);
+ // Crossing Manila midnight invalidates the snapshot and its action controls.
+ const key=JSON.stringify([user?.id,isFounder,start,today]);
  const currentKey=useRef(key);currentKey.current=key;
  useEffect(()=>{const seq=sequence;const lock=busy;seq.current++;lock.current=false;setResult(empty(key));return()=>{seq.current++;lock.current=false;};},[key]);
  const current=result.key===key?result:empty(key);
@@ -45,7 +48,8 @@ function Contents(){
   try {
    const {data,error}=await createClient().rpc('weekly_worker_preview_inputs',{p_start:start});
    if(error)throw new Error(error.message);
-   const preview=buildWeeklyPreview(parseWeeklyInput(data,start),getManilaClock().dateIso);
+   if(getManilaClock().dateIso!==today)throw new Error('Philippine date changed; refresh the preview');
+   const preview=buildWeeklyPreview(parseWeeklyInput(data,start),today);
    if(token!==sequence.current||currentKey.current!==key)return;
    setResult({key,loading:false,error:null,rows:preview.rows,excluded:preview.linkedSupervisors});
   } catch(e){if(token===sequence.current&&currentKey.current===key)setResult({...empty(key),error:e instanceof Error?e.message:'Unable to load preview'});}
@@ -59,7 +63,7 @@ function Contents(){
   {current.error&&<p role="alert" className="text-sm text-status-danger">Could not load weekly preview: {current.error}</p>}
   {current.loading&&<p role="status" className="text-sm text-ink-secondary">Loading weekly preview…</p>}
   {current.rows&&<>
-   <p className="text-xs text-ink-secondary">Includes active workers and inactive workers with logs this week, regardless of current site. {current.excluded} UUID-linked Supervisor profile(s) excluded; identity matching for other profiles is only a warning and can miss cases. Missing past days may not have been scheduled work. Today and future days are not treated as missing past records. Dates use Philippine time at loading. OT uses daily rate ÷ 8 (or hourly rate), with no Sunday/holiday premium under the requested rule; seek payroll/legal advice before use.</p>
+   <p className="text-xs text-ink-secondary">Includes active workers and inactive workers with logs this week, regardless of current site. {current.excluded} UUID-linked Supervisor profile(s) excluded; identity matching for other profiles is only a warning and can miss cases. Missing past days may not have been scheduled work. Today and future days are not treated as missing past records. Dates use the device’s Philippine-time clock; if the day changes, reload this snapshot. Future-dated source records require review rather than inclusion in an estimate. OT uses daily rate ÷ 8 (or hourly rate), with no Sunday/holiday premium under the requested rule; seek payroll/legal advice before use.</p>
    {current.rows.length>0&&(()=>{const totals=summarizeWeeklyColumns(current.rows);return <p className="rounded-xl bg-surface-inset p-3 text-xs text-ink-secondary">Partial subtotal of {totals.count} row(s) with an illustrative net: {totals.regularHours} regular hrs · {totals.otHours} OT hrs · wages ₱{totals.wage} · allowances ₱{totals.allowance} · Bale ₱{totals.bale} · gross ₱{totals.gross} · net ₱{totals.net}. Excludes {totals.excluded} worker row(s), plus {current.excluded} linked Supervisor profile(s); unmarked days can still make included rows incomplete. Not a payroll total or payment authorization.</p>;})()}
    {current.rows.length===0?<p className="text-sm text-ink-secondary">No worker profiles in this preview.</p>:<div role="region" aria-label="Weekly worker preview, scroll horizontally" tabIndex={0} className="max-w-full overflow-x-auto rounded-xl border border-surface-border focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand">
     <table className="w-full border-collapse text-xs"><caption className="sr-only">Read-only worker planning preview for {start} to {end}. Days without records are unmarked, not absent.</caption>
@@ -72,10 +76,10 @@ function Contents(){
     </tr></thead>
     <tbody>{current.rows.map(row=><tr key={row.worker.id} className="border-t border-surface-border align-top">
      <th scope="row" className="p-3 text-left"><span className="block break-words font-semibold">{row.worker.name}</span><span className="block font-normal text-ink-secondary">{row.worker.position}{!row.worker.active?' · inactive':''}</span><span className="block font-normal text-ink-secondary">₱{row.worker.pay_rate} / {row.worker.pay_rate_type==='daily'?'day':'hour'}</span></th>
-     {row.days.map(day=><td key={day.date} className="p-3 text-ink-secondary">{day.entries.length ? day.entries.map((entry,i)=><div key={entry.id}>{i>0&&<span>Additional entry: </span>}{entry.status.replace('_',' ')}<br />{entry.time_detail ? `${entry.time_detail.regular_hours} regular + ${entry.time_detail.overtime_hours} OT hrs${entry.time_detail.stale?' · stale, review':''}` : `${entry.hours_worked} legacy hrs`}</div>) : <span>Unmarked ({day.unmarked})</span>}</td>)}
+     {row.days.map(day=><td key={day.date} className="p-3 text-ink-secondary">{day.entries.length ? day.entries.map((entry,i)=><div key={entry.id}>{i>0&&<span>Additional entry: </span>}{entry.status.replace('_',' ')}<br />{entry.time_detail ? `${entry.time_detail.regular_hours} regular + ${entry.time_detail.overtime_hours} OT hrs${entry.time_detail.stale?' · stale, review':''}` : `${entry.hours_worked} legacy hrs`}</div>) : <span>{day.unmarked==='upcoming'?'Upcoming':day.unmarked==='today'?'Unmarked today':'Past unmarked'}</span>}</td>)}
      <td className="p-3 text-ink-secondary">{row.pastUnmarked&&<p className="mb-2 font-semibold text-status-warning">Past unmarked day(s) — review, not presumed absent.</p>}{row.wage===null?<p>No earnings estimate; check reasons or saved vouchers.</p>:<p>{row.regularHours} regular hrs ({regularDayEquivalent(row.regularHours)} days at 8 hrs/day) + {row.otHours} OT hrs · wages ₱{row.wage} · gross with allowances ₱{row.gross}</p>}<details className="mt-2"><summary className="cursor-pointer font-semibold text-navy">Illustrative project breakdown</summary>{row.projectEstimates===null?<p className="mt-1">Unavailable: review the worker, attendance, allowances and voucher context. No project costs were posted.</p>:<><p className="mt-1">Recorded hours split wages; allowances follow their recorded site. Not posted or proof of payment.</p><ul className="mt-1 space-y-1">{row.projectEstimates.map(site=><li key={site.projectId} className="break-all">{projects.find(p=>p.id===site.projectId)?.name || `Site ID ${site.projectId}`}: ₱{site.gross} gross (₱{site.wage} wages + ₱{site.allowance} allowances)</li>)}</ul></>}</details></td>
      <td className="p-3 text-ink-secondary"><div>Approved, non-stale allowances: ₱{row.allowance}</div><div>Pending allowances: {row.pendingAllowances}</div><div>Recorded non-cancelled Bale: ₱{row.bale}</div><div>Older active balance (not carried): ₱{row.olderBalance}</div></td>
-     <td className="p-3 text-ink-secondary">{row.net===null?<div className="font-semibold text-status-warning">Net withheld — review</div>:<div className="font-semibold text-navy">Illustrative net: ₱{row.net}</div>}{row.reviewReasons.map(reason=><div className="mt-1 text-status-warning" key={reason}>{reason}</div>)}{row.vouchers.length?row.vouchers.map(v=><div className="mt-1" key={v.id}>At preview refresh: {v.status} voucher ({v.period_start} → {v.period_end})</div>):<div className="mt-1">At preview refresh: no overlapping voucher</div>}{weeklyWorkerActionsPreviewEnabled()&&isFounder&&user?.id&&<WeeklyWorkerActions key={`${key}:${sequence.current}:${row.worker.id}`} row={row} start={start} end={end} userId={user.id} projects={projects} />}</td>
+     <td className="p-3 text-ink-secondary">{row.net===null?<div className="font-semibold text-status-warning">Net withheld — review</div>:<div className="font-semibold text-navy">Illustrative net: ₱{row.net}</div>}{row.reviewReasons.map(reason=><div className="mt-1 text-status-warning" key={reason}>{reason}</div>)}{row.vouchers.length?row.vouchers.map(v=><div className="mt-1" key={v.id}>At preview refresh: {v.status} voucher ({v.period_start} → {v.period_end})</div>):<div className="mt-1">At preview refresh: no overlapping voucher</div>}{weeklyWorkerActionsPreviewEnabled()&&isFounder&&user?.id&&<WeeklyWorkerActions key={`${key}:${sequence.current}:${row.worker.id}`} row={row} start={start} end={end} previewDate={today} userId={user.id} projects={projects} />}</td>
     </tr>)}</tbody></table></div>}
   </>}
  </div>;

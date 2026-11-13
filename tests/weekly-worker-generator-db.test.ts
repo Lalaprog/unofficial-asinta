@@ -47,7 +47,7 @@ describe('server-calculated weekly source-bound draft (not payable)',()=>{
  it('creates a centavo-exact Sun–Sat draft from real preview migrations and matches the client preview',async()=>{
   const db=await fixture();try{
    const raw=(await db.query<{data:unknown}>('SELECT public.weekly_worker_preview_inputs($1) data',[start])).rows[0].data;
-   const preview=buildWeeklyPreview(parseWeeklyInput(raw,start),'2024-11-05').rows.find(r=>r.worker.id===worker)!;
+   const preview=buildWeeklyPreview(parseWeeklyInput(raw,start),'2024-11-09').rows.find(r=>r.worker.id===worker)!;
    const result=(await generate(db)).rows[0].result;expect(result).toMatchObject({payroll_id:voucher,replayed:false,calculation:{wage:'1147.21',allowance:'50.25',gross:'1197.46',bale:'500.50',net:'696.96',unmarked_dates:['2024-11-05','2024-11-06','2024-11-07','2024-11-08','2024-11-09']}});
    expect(result.calculation).toMatchObject({wage:preview.wage,allowance:preview.allowance,gross:preview.gross,bale:preview.bale,net:preview.net});
    expect((await db.query('SELECT gross_pay::text,bale_deduction::text,net_pay::text,status,days_worked::text,hours_worked::text FROM public.payroll WHERE id=$1',[voucher])).rows).toEqual([{gross_pay:'1197.46',bale_deduction:'500.50',net_pay:'696.96',status:'draft',days_worked:'1.50',hours_worked:'14.00'}]);
@@ -110,6 +110,40 @@ describe('server-calculated weekly source-bound draft (not payable)',()=>{
    const result=(await generate(db)).rows[0].result;
    expect(result.calculation).toMatchObject({wage:'0.00',gross:'0.00',net:'0.00'});
    expect((result.calculation.unmarked_dates as string[])).toHaveLength(5);
+  }finally{await db.close();}
+ },30000);
+ it('blocks future-dated inputs using Philippine server date while allowing incomplete current weeks',async()=>{
+  const db=await fixture(true,true);try{
+   await db.exec(`RESET ROLE; DELETE FROM public.attendance_time_details; DELETE FROM public.worker_allowances; DELETE FROM public.advance_requests WHERE id='${request}'; DELETE FROM public.advances WHERE id='${advance}'; DELETE FROM public.attendance WHERE id='${att2}';`);
+   const future=(await db.query<{start:string}>("SELECT ((statement_timestamp() AT TIME ZONE 'Asia/Manila')::date + (7-extract(dow FROM (statement_timestamp() AT TIME ZONE 'Asia/Manila')::date))::int)::text start")).rows[0].start;
+   await db.query('UPDATE public.attendance SET date=$1 WHERE id=$2',[future,att1]);await db.exec('SET ROLE authenticated');
+   await expect(db.query('SELECT public.create_weekly_worker_draft($1,$2,$3)',[voucher,worker,future])).rejects.toThrow(/Future-dated/);
+   await db.exec('RESET ROLE');expect((await db.query<{n:number}>('SELECT count(*)::int n FROM public.payroll WHERE id=$1',[voucher])).rows[0].n).toBe(0);
+   const today=(await db.query<{today_date:string}>("SELECT (statement_timestamp() AT TIME ZONE 'Asia/Manila')::date::text today_date")).rows[0].today_date;
+   const current=(await db.query<{start:string}>("SELECT ((statement_timestamp() AT TIME ZONE 'Asia/Manila')::date - extract(dow FROM (statement_timestamp() AT TIME ZONE 'Asia/Manila')::date)::int)::text start")).rows[0].start;
+   await db.query('UPDATE public.attendance SET date=$1 WHERE id=$2',[today,att1]);await db.exec('SET ROLE authenticated');
+   const result=await db.query<{result:{calculation:{unmarked_dates:string[]}}}>('SELECT public.create_weekly_worker_draft($1,$2,$3) result',[voucher,worker,current]);expect(result.rows[0].result.calculation.unmarked_dates).toHaveLength(6);
+  }finally{await db.close();}
+ },30000);
+ it('blocks future evidence in previously saved drafts at approval and payment without changing voucher state',async()=>{
+  const db=await fixture(true,true);try{
+   await generate(db);await db.exec('RESET ROLE');await db.query("UPDATE public.weekly_worker_draft_sources SET source_snapshot=jsonb_set(source_snapshot,'{attendance,0,record,date}',to_jsonb(((statement_timestamp() AT TIME ZONE 'Asia/Manila')::date+1)::text)) WHERE payroll_id=$1",[voucher]);await db.exec('SET ROLE authenticated');
+   await expect(db.query('SELECT public.approve_weekly_worker_draft($1)',[voucher])).rejects.toThrow(/Future-dated/);
+   await db.exec('RESET ROLE');await db.query("UPDATE public.weekly_worker_draft_sources SET source_snapshot=jsonb_set(source_snapshot,'{attendance,0,record,date}',to_jsonb('2024-11-03'::text)) WHERE payroll_id=$1",[voucher]);await db.exec('SET ROLE authenticated');await db.query('SELECT public.approve_weekly_worker_draft($1)',[voucher]);
+   await db.exec('RESET ROLE');await db.query("UPDATE public.weekly_worker_draft_sources SET source_snapshot=jsonb_set(source_snapshot,'{attendance,0,record,date}',to_jsonb(((statement_timestamp() AT TIME ZONE 'Asia/Manila')::date+1)::text)) WHERE payroll_id=$1",[voucher]);await db.exec('SET ROLE authenticated');
+   await expect(db.query('SELECT public.record_weekly_worker_payment($1,$2)',[voucher,'2024-11-09'])).rejects.toThrow(/Future-dated/);
+   expect((await db.query('SELECT status FROM public.payroll WHERE id=$1',[voucher])).rows[0]).toEqual({status:'approved'});
+  }finally{await db.close();}
+ },30000);
+ it('recognizes future source records without treating today or rejected/cancelled items as future payable work',async()=>{
+  const db=await fixture();try{
+   await expect(db.query('SELECT public.weekly_worker_source_has_future($1,$2)',[{},'2026-11-18'])).rejects.toThrow(/permission denied/);await db.exec('RESET ROLE');
+   const check=(source:object)=>db.query<{v:boolean}>('SELECT public.weekly_worker_source_has_future($1,$2) v',[source,'2026-11-18']);
+   const base={attendance:[{record:{date:'2026-11-18'}}],allowances:[{status:'rejected',attendance_date:'2026-11-20'}],advances:[{advance:{status:'cancelled',date:'2026-11-20'}}]};
+   expect((await check(base)).rows[0].v).toBe(false);
+   expect((await check({...base,attendance:[{record:{date:'2026-11-19'}}]})).rows[0].v).toBe(true);
+   expect((await check({...base,allowances:[{status:'approved',attendance_date:'2026-11-19'}]})).rows[0].v).toBe(true);
+   expect((await check({...base,advances:[{advance:{status:'active',date:'2026-11-19'}}]})).rows[0].v).toBe(true);
   }finally{await db.close();}
  },30000);
  it('will not turn an entirely unmarked week into a zero voucher',async()=>{
@@ -202,7 +236,7 @@ describe('integrated weekly payment and gross site allocations (draft)',()=>{
    await db.exec('RESET ROLE');await db.query('UPDATE public.attendance SET project_id=$2 WHERE id=$1',[att2,other]);await db.exec('SET ROLE authenticated');
    const expensesBefore=(await db.query('SELECT * FROM public.expenses ORDER BY id')).rows;
    const raw=(await db.query<{data:unknown}>('SELECT public.weekly_worker_preview_inputs($1) data',[start])).rows[0].data;
-   const expected=buildWeeklyPreview(parseWeeklyInput(raw,start),'2024-11-05').rows.find(r=>r.worker.id===worker)!.projectEstimates;
+   const expected=buildWeeklyPreview(parseWeeklyInput(raw,start),'2024-11-09').rows.find(r=>r.worker.id===worker)!.projectEstimates;
    await generate(db);
    const getDetails=async()=>parseWeeklyDraftDetails((await db.query<{result:unknown}>('SELECT public.weekly_worker_draft_details($1) result',[voucher])).rows[0].result,{id:voucher,worker,start});
    expect((await getDetails()).status).toBe('draft');await approve(db);expect((await getDetails()).status).toBe('approved');

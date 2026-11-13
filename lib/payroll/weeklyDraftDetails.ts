@@ -7,6 +7,11 @@ export type WeeklyDraftDetails={payroll_id:string;worker_id:string;period_start:
 const amount=/^(?:0|[1-9]\d{0,9})\.\d{2}$/;
 const units=(value:unknown):bigint=>{if(typeof value!=='string'||!amount.test(value))throw new Error('Invalid weekly voucher amount');const [a,b]=value.split('.');return BigInt(a)*100n+BigInt(b);};
 const validDate=(value:unknown):value is string=>{try{return typeof value==='string'&&!!workerPayrollPeriod(value);}catch{return false;}};
+/** The snapshot lists unmarked dates; this groups them relative to today's date, not its creation date. */
+export function classifyUnmarkedDates(dates:string[],today:string):{past:string[];today:string[];upcoming:string[]} {
+ if(!validDate(today)||dates.some(d=>!validDate(d)))throw new Error('Invalid calendar date');
+ return {past:dates.filter(d=>d<today),today:dates.filter(d=>d===today),upcoming:dates.filter(d=>d>today)};
+}
 /** Reject incomplete, inconsistent or unexpected responses rather than enabling finance actions. */
 export function parseWeeklyDraftDetails(raw:unknown,expected:{id:string;worker:string;start:string}):WeeklyDraftDetails {
  if(!raw||typeof raw!=='object')throw new Error('Invalid weekly voucher details');

@@ -47,6 +47,17 @@ REVOKE ALL ON FUNCTION public.guard_weekly_worker_draft() FROM PUBLIC,anon,authe
 CREATE TRIGGER guard_weekly_worker_draft BEFORE UPDATE OR DELETE ON public.payroll
  FOR EACH ROW EXECUTE FUNCTION public.guard_weekly_worker_draft();
 
+-- Private evidence check. A pre-entered future day is not completed work or a
+-- confirmed future disbursement. Never silently convert it to a payable wage.
+CREATE FUNCTION public.weekly_worker_source_has_future(p_sources jsonb,p_today date) RETURNS boolean
+LANGUAGE sql IMMUTABLE SET search_path='' AS $$
+ SELECT EXISTS(SELECT 1 FROM jsonb_array_elements(p_sources->'attendance') a WHERE (a->'record'->>'date')::date>p_today)
+ OR EXISTS(SELECT 1 FROM jsonb_array_elements(p_sources->'allowances') a WHERE a->>'status'<>'rejected' AND (a->>'attendance_date')::date>p_today)
+ OR EXISTS(SELECT 1 FROM jsonb_array_elements(p_sources->'advances') a WHERE a->'advance'->>'status'<>'cancelled' AND (a->'advance'->>'date')::date>p_today)
+$$;
+REVOKE ALL ON FUNCTION public.weekly_worker_source_has_future(jsonb,date) FROM PUBLIC,anon,authenticated,service_role;
+DO $$ BEGIN IF EXISTS(SELECT 1 FROM unnest(ARRAY['anon','authenticated','service_role']) r(role_name) WHERE has_function_privilege(r.role_name,'public.weekly_worker_source_has_future(jsonb,date)','EXECUTE')) THEN RAISE EXCEPTION 'Unexpected inherited weekly source helper privilege'; END IF; END $$;
+
 CREATE FUNCTION public.create_weekly_worker_draft(p_id uuid,p_worker uuid,p_start date)
 RETURNS jsonb LANGUAGE plpgsql SECURITY DEFINER SET search_path='' AS $$
 DECLARE
@@ -176,6 +187,7 @@ BEGIN
   'allowances',(SELECT coalesce(jsonb_agg(to_jsonb(a) ORDER BY a.id),'[]'::jsonb) FROM public.worker_allowances a WHERE a.worker_id=p_worker AND a.attendance_date BETWEEN p_start AND p_start+6),
   'advances',(SELECT coalesce(jsonb_agg(jsonb_build_object('advance',to_jsonb(a),'request',to_jsonb(r)) ORDER BY a.id),'[]'::jsonb) FROM public.advances a LEFT JOIN public.advance_requests r ON r.issued_advance_id=a.id WHERE a.worker_id=p_worker AND a.date BETWEEN p_start AND p_start+6));
  IF octet_length(v_sources::text)>1048576 THEN RAISE EXCEPTION 'Source snapshot is too large; review before generation' USING ERRCODE='54000'; END IF;
+ IF public.weekly_worker_source_has_future(v_sources,(statement_timestamp() AT TIME ZONE 'Asia/Manila')::date) THEN RAISE EXCEPTION 'Future-dated attendance, allowance or Bale requires review before generation' USING ERRCODE='22023'; END IF;
  INSERT INTO public.payroll(id,worker_id,period_start,period_end,gross_pay,bale_deduction,other_deductions,net_pay,status,days_worked,hours_worked,notes)
  VALUES(p_id,p_worker,p_start,p_start+6,v_gross,v_bale,0,v_net,'draft',v_days,v_regular+v_ot,'Weekly source-bound draft; approval workflow not yet available') RETURNING * INTO v_pay;
  INSERT INTO public.weekly_worker_draft_sources(payroll_id,worker_id,period_start,recorded_by,source_snapshot,calculation)

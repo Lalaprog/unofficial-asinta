@@ -2,17 +2,17 @@
 import React from 'react';
 import {cleanup,fireEvent,render,screen,within} from '@testing-library/react';
 import {afterEach,beforeEach,describe,expect,it,vi} from 'vitest';
-const mock=vi.hoisted(()=>({rpc:vi.fn()}));
+const mock=vi.hoisted(()=>({rpc:vi.fn(),today:'2026-11-21'}));
 vi.mock('@/lib/supabase/client',()=>({createClient:()=>({rpc:mock.rpc})}));
-vi.mock('@/lib/reminders/scheduler',()=>({getManilaClock:()=>({dateIso:'2026-11-21'})}));
+vi.mock('@/lib/reminders/scheduler',()=>({getManilaClock:()=>({dateIso:mock.today})}));
 import {WeeklyWorkerActions} from '@/components/payroll/WeeklyWorkerActions';
 import {buildWeeklyPreview,parseWeeklyInput} from '@/lib/payroll/weeklyPreview';
 const start='2026-11-15',end='2026-11-21',worker='00000000-0000-0000-0000-000000000003',site='00000000-0000-0000-0000-000000000004',id='10000000-0000-4000-8000-000000000007';
 const input={start,end,workers:[{id:worker,name:'Ada',position:'Mason',active:true,pay_rate:'600.00',pay_rate_type:'daily',linked_supervisor:false,possible_supervisor:false}],attendance:[{id:'a',worker_id:worker,project_id:site,date:start,status:'present',hours_worked:'8.00',time_detail:null}],vouchers:[],allowances:[],advances:[],older_advances:[]};
 const row=buildWeeklyPreview(parseWeeklyInput(input,start),'2026-11-21').rows[0];
 const details=(status:'draft'|'approved'|'paid')=>({payroll_id:id,worker_id:worker,period_start:start,period_end:end,status,calculation:{regular_hours:'8.00',overtime_hours:'0.00',wage:'600.00',allowance:'0.00',gross:'600.00',bale:'0.00',net:'600.00',unmarked_dates:['2026-11-16','2026-11-17','2026-11-18','2026-11-19','2026-11-20','2026-11-21']},gross:'600.00',bale:'0.00',other:'0.00',net:'600.00',payment_date:status==='paid'?end:null,approved:status!=='draft',allocations:status==='paid'?[{project_id:site,hours:'8.00',wage:'600.00',allowance:'0.00',gross:'600.00'}]:[]});
-const props={row,start,end,userId:'founder',projects:[{id:site,name:'Site One'}]};
-beforeEach(()=>{mock.rpc.mockReset();localStorage.clear();vi.spyOn(crypto,'randomUUID').mockReturnValue(id);});
+const props={row,start,end,previewDate:'2026-11-21',userId:'founder',projects:[{id:site,name:'Site One'}]};
+beforeEach(()=>{mock.rpc.mockReset();mock.today='2026-11-21';localStorage.clear();vi.spyOn(crypto,'randomUUID').mockReturnValue(id);});
 afterEach(()=>{cleanup();vi.restoreAllMocks();});
 
 describe('experimental source-bound weekly action UI',()=>{
@@ -36,6 +36,16 @@ describe('experimental source-bound weekly action UI',()=>{
   fireEvent.click(screen.getByRole('checkbox',{name:/I verified the external payment/}));expect(record.disabled).toBe(false);fireEvent.click(record);
   await screen.findByText(/Saved status: paid/);expect(mock.rpc).toHaveBeenCalledWith('record_weekly_worker_payment',{p_id:id,p_payment_date:end});
   expect(screen.getByText(/Site One: ₱600.00/)).toBeTruthy();expect(screen.getByText(/No money was transferred/)).toBeTruthy();expect(screen.getByText(/without reconciling Bale/)).toBeTruthy();
+ });
+ it('distinguishes saved past, today and future unmarked days without changing the saved voucher',async()=>{
+  mock.today='2026-11-18';const existing={...row,vouchers:[{id,worker_id:worker,status:'draft' as const,period_start:start,period_end:end}]};mock.rpc.mockResolvedValue({data:details('draft'),error:null});
+  render(React.createElement(WeeklyWorkerActions,{...props,previewDate:mock.today,row:existing}));fireEvent.click(screen.getByRole('button',{name:'Load voucher details'}));await screen.findByText(/Saved status: draft/);
+  expect(screen.getByText('Past unmarked: 2026-11-16, 2026-11-17.')).toBeTruthy();expect(screen.getByText('Today unmarked: 2026-11-18.')).toBeTruthy();expect(screen.getByText('Upcoming: 2026-11-19, 2026-11-20, 2026-11-21.')).toBeTruthy();
+  fireEvent.click(screen.getByRole('button',{name:'Review approval'}));expect(within(screen.getByRole('dialog')).getByText(/upcoming: 2026-11-19/)).toBeTruthy();
+ });
+ it('refuses an action if the Philippine day changed before the view refreshed',async()=>{
+  render(React.createElement(WeeklyWorkerActions,props));fireEvent.click(screen.getByRole('button',{name:'Review new draft'}));mock.today='2026-11-22';fireEvent.click(screen.getByRole('button',{name:'Create draft'}));
+  expect(await screen.findByText(/Philippine date changed/)).toBeTruthy();expect(mock.rpc).not.toHaveBeenCalled();
  });
  it('locks on an unknown outcome and preserves the request ID across reloads',async()=>{
   mock.rpc.mockRejectedValue(new Error('Network lost'));
