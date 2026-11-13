@@ -3,7 +3,7 @@ import React from 'react';
 import {act,cleanup,fireEvent,render,screen} from '@testing-library/react';
 import {afterEach,beforeEach,describe,expect,it,vi} from 'vitest';
 const mock=vi.hoisted(()=>({rpc:vi.fn(),user:'founder',founder:true}));
-vi.mock('@/lib/auth/authContext',()=>({useAuth:()=>({user:{id:mock.user},isFounder:mock.founder})}));
+vi.mock('@/lib/auth/authContext',()=>({useAuth:()=>({user:{id:mock.user},isFounder:mock.founder,assurance:'ready'})}));
 vi.mock('@/lib/supabase/client',()=>({createClient:()=>({rpc:mock.rpc})}));
 vi.mock('@/lib/reminders/scheduler',()=>({getManilaClock:()=>({dateIso:'2026-11-18'})}));
 import {PaidHistoryReview} from '@/components/payroll/PaidHistoryReview';
@@ -24,6 +24,13 @@ describe('paid history review',()=>{
   expect(screen.queryByRole('button',{name:'Adjustment cases for this voucher'})).toBeNull();
   vi.stubEnv('NEXT_PUBLIC_PAID_ADJUSTMENTS_PREVIEW','true');view.rerender(React.createElement(PaidHistoryReview));expect(screen.getByRole('button',{name:'Adjustment cases for this voucher'})).toBeTruthy();
   vi.stubEnv('NEXT_PUBLIC_FINANCE_FOUNDATION_PREVIEW','false');view.rerender(React.createElement(PaidHistoryReview));expect(screen.queryByRole('button',{name:'Adjustment cases for this voucher'})).toBeNull();
+ });
+ it('separately gates the paid-attendance check and reports changed evidence without changing payroll',async()=>{
+  vi.stubEnv('NEXT_PUBLIC_FINANCE_FOUNDATION_PREVIEW','true');vi.stubEnv('NEXT_PUBLIC_PAID_ATTENDANCE_REVIEW_PREVIEW','false');
+  mock.rpc.mockImplementation(async(name:string)=>name==='paid_payroll_review'?{data:snapshot,error:null}:{data:{payroll_id:'v',worker_id:'w',period_start:voucher.period_start,period_end:voucher.period_end,attendance:'changed'},error:null});
+  const view=render(React.createElement(PaidHistoryReview));fireEvent.click(screen.getByRole('button',{name:/Paid payroll history review/}));fireEvent.click(screen.getByRole('button',{name:'Load paid history'}));await screen.findByText(/Fixture Worker/);expect(screen.queryByRole('button',{name:'Check attendance changes'})).toBeNull();
+  vi.stubEnv('NEXT_PUBLIC_PAID_ATTENDANCE_REVIEW_PREVIEW','true');view.rerender(React.createElement(PaidHistoryReview));fireEvent.click(screen.getByRole('button',{name:'Check attendance changes'}));await screen.findByText(/Attendance or time details differ/);expect(screen.getByText(/review a separate correction/)).toBeTruthy();expect(mock.rpc).toHaveBeenCalledWith('weekly_paid_attendance_change_review',{p_id:'v'});
+  vi.stubEnv('NEXT_PUBLIC_FINANCE_FOUNDATION_PREVIEW','false');view.rerender(React.createElement(PaidHistoryReview));expect(screen.queryByRole('button',{name:'Recheck attendance'})).toBeNull();
  });
  it('gates the separate historical evidence viewer independently',async()=>{
   vi.stubEnv('NEXT_PUBLIC_FINANCE_FOUNDATION_PREVIEW','true');vi.stubEnv('NEXT_PUBLIC_HISTORICAL_FINANCE_EVIDENCE_PREVIEW','false');mock.rpc.mockResolvedValue({data:snapshot,error:null});

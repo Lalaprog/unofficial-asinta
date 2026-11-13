@@ -117,6 +117,11 @@ export function supervisorLeaveNotificationsPreviewEnabled(): boolean {
   return financeFoundationEnabled() && process.env.NEXT_PUBLIC_SUPERVISOR_LEAVE_NOTIFICATIONS_PREVIEW === 'true';
 }
 
+/** Founder-only paid attendance drift signal. Requires its separate uninstalled read-only RPC. */
+export function paidAttendanceReviewPreviewEnabled(): boolean {
+  return financeFoundationEnabled() && process.env.NEXT_PUBLIC_PAID_ATTENDANCE_REVIEW_PREVIEW === 'true';
+}
+
 /** A second independent display gate; the experimental adjustment RPCs must exist first. */
 export function paidAdjustmentsPreviewEnabled(): boolean {
   return financeFoundationEnabled() && process.env.NEXT_PUBLIC_PAID_ADJUSTMENTS_PREVIEW === 'true';

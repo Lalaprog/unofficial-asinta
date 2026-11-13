@@ -15,7 +15,7 @@ const ending='ROLLBACK;\n\n';
 if(!base.startsWith('-- REHEARSAL ONLY')||!base.endsWith(ending))throw Error('Unexpected PR103 rehearsal boundaries');
 const names=[
  'guard_legacy_bale_payment','weekly_payment_date','weekly_worker_generator','weekly_worker_approval',
- 'weekly_worker_paid_allocation','weekly_worker_draft_details','weekly_worker_draft_refresh','weekly_worker_return_to_draft',
+ 'weekly_worker_paid_allocation','weekly_worker_draft_details','weekly_paid_attendance_change_review','weekly_worker_draft_refresh','weekly_worker_return_to_draft',
  'weekly_bale_schedule','weekly_bale_expiration','weekly_bale_release_list','weekly_bale_status_batch','weekly_bale_scheduler',
  'attendance_history_time_batch','supervisor_leave_notification','project_paid_payroll_evidence','paid_payroll_adjustments','supervisor_payroll_preview',
  'historical_paid_date_annotation','historical_settled_bale_evidence','historical_finance_evidence_review',
@@ -39,7 +39,7 @@ BEGIN
   v_table:=pg_catalog.to_regclass(v);
   IF v_table IS NULL OR NOT (SELECT relrowsecurity FROM pg_catalog.pg_class WHERE oid=v_table) OR pg_catalog.has_table_privilege('anon',v_table,'SELECT,INSERT,UPDATE,DELETE,TRUNCATE') OR pg_catalog.has_table_privilege('authenticated',v_table,'INSERT,UPDATE,DELETE,TRUNCATE') THEN RAISE EXCEPTION 'Missing or unexpectedly accessible finance table: %',v; END IF;
  END LOOP;
- FOREACH v IN ARRAY ARRAY['public.create_weekly_worker_draft(uuid,uuid,date)','public.approve_weekly_worker_draft(uuid,bigint)','public.record_weekly_worker_payment(uuid,date,bigint)','public.return_weekly_worker_to_draft(uuid,uuid,bigint,text)','public.record_weekly_bale_release(uuid)','public.project_cost_reconciliation_preview(uuid)'] LOOP
+ FOREACH v IN ARRAY ARRAY['public.create_weekly_worker_draft(uuid,uuid,date)','public.approve_weekly_worker_draft(uuid,bigint)','public.record_weekly_worker_payment(uuid,date,bigint)','public.return_weekly_worker_to_draft(uuid,uuid,bigint,text)','public.weekly_paid_attendance_change_review(uuid)','public.record_weekly_bale_release(uuid)','public.project_cost_reconciliation_preview(uuid)'] LOOP
   v_function:=pg_catalog.to_regprocedure(v);
   IF v_function IS NULL OR pg_catalog.has_function_privilege('anon',v_function,'EXECUTE') OR NOT pg_catalog.has_function_privilege('authenticated',v_function,'EXECUTE') THEN RAISE EXCEPTION 'Missing or unexpectedly accessible finance function: %',v; END IF;
  END LOOP;

@@ -71,7 +71,7 @@ suite('coordinated finance integration rehearsal, synthetic PostgreSQL only',()=
    if(!rehearsal.endsWith('ROLLBACK;\n'))throw Error('Unexpected transaction boundary');
    await db.query(rehearsal.slice(0,-'ROLLBACK;\n'.length));
    // Additional experimental assignment history, atomic move and attendance
-   // guard are not in the generated 26-draft chain. Install only inside this
+   // guard are not in the generated 27-draft chain. Install only inside this
    // disposable rollback transaction.
    await db.query(readFileSync('supabase/drafts/project_assignment_history.sql','utf8'));
    await db.query(readFileSync('supabase/drafts/atomic_worker_move.sql','utf8'));
@@ -131,6 +131,12 @@ suite('coordinated finance integration rehearsal, synthetic PostgreSQL only',()=
    expect((await db.query("SELECT public.record_weekly_worker_payment($1,'2024-08-10',0) v",[voucher])).rows[0].v.outcome).toBe('updated');
    const details=parseWeeklyDraftDetails((await db.query('SELECT public.weekly_worker_draft_details($1) v',[voucher])).rows[0].v,{id:voucher,worker,start:'2024-08-04'},true);
    expect(details).toMatchObject({status:'paid',draft_revision:0,gross:'800.25',bale:'100.25',net:'700.00',payment_date:'2024-08-10'});
+   expect((await db.query('SELECT public.weekly_paid_attendance_change_review($1) v',[voucher])).rows[0].v.attendance).toBe('unchanged');
+   await db.query('SAVEPOINT paid_attendance_change; RESET ROLE');
+   await db.query("UPDATE public.attendance SET notes='Synthetic later review' WHERE id=$1",[attendance]);await db.query('SET LOCAL ROLE authenticated');
+   expect((await db.query('SELECT public.weekly_paid_attendance_change_review($1) v',[voucher])).rows[0].v.attendance).toBe('changed');
+   expect((await db.query('SELECT status,net_pay::text net FROM public.payroll WHERE id=$1',[voucher])).rows[0]).toEqual({status:'paid',net:'700.00'});
+   await db.query('ROLLBACK TO SAVEPOINT paid_attendance_change; RELEASE SAVEPOINT paid_attendance_change');
    await db.query("SELECT public.confirm_rental_expense('70000000-0000-4000-8000-000000000011','70000000-0000-4000-8000-000000000009',$1,1000,'2024-08-04','Excavator','Excavator','Supplier',1,'2024-08-04','2024-08-10')",[site]);
    // Exercise the actual legacy expense-revision trigger alongside the rental
    // guard, with constraints resembling the observed development database.

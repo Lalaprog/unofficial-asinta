@@ -8,7 +8,8 @@ import {useAuth} from '@/lib/auth/authContext';
 import {createClient} from '@/lib/supabase/client';
 import {getManilaClock} from '@/lib/reminders/scheduler';
 import {parsePaidReview,paidReviewSignals,validReviewRange,type PaidReview} from '@/lib/payroll/paidReview';
-import {historicalFinanceEvidencePreviewEnabled,paidAdjustmentsPreviewEnabled} from '@/lib/finance/featureAvailability';
+import {historicalFinanceEvidencePreviewEnabled,paidAdjustmentsPreviewEnabled,paidAttendanceReviewPreviewEnabled} from '@/lib/finance/featureAvailability';
+import {PaidAttendanceReview} from './PaidAttendanceReview';
 import {PaidAdjustmentPanel} from './PaidAdjustmentPanel';
 import {HistoricalFinanceEvidence} from './HistoricalFinanceEvidence';
 
@@ -57,6 +58,7 @@ function Contents(){
     <p className="mt-1">Recorded net ₱{v.net_pay} · gross ₱{v.gross_pay} · other deductions ₱{v.other_deductions}</p>
     <p className="mt-1">Voucher Bale deduction ₱{v.bale_deduction} · non-cancelled Bale dated in period ₱{v.period_bale_total} ({v.period_bale_count} record(s)).</p>
     {signals.length?<ul className="mt-2 list-disc space-y-1 pl-4 font-semibold text-status-warning">{signals.map(s=><li key={s}>{s}</li>)}</ul>:<p className="mt-2">No selected signals found. This is not confirmation that the records or payment are correct.</p>}
+    {paidAttendanceReviewPreviewEnabled()&&<PaidAttendanceReview voucher={v}/>}
     {historicalFinanceEvidencePreviewEnabled()&&<HistoricalFinanceEvidence voucher={v}/>}
     {paidAdjustmentsPreviewEnabled()&&<PaidAdjustmentPanel voucher={v}/>}
    </article>;})}
