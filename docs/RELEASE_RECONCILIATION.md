@@ -35,6 +35,12 @@ A subsequent read-only development snapshot found zero selected payroll, advance
 
 The candidate build now requires the finance foundation, cutover hold, weekly worker actions and weekly Bale release flags together before showing either weekly write surface. The legacy hold still activates independently even under an incomplete flag configuration. The on-demand expiry health view has its own read-only gate and remains visible during partial configuration; it is not an independent alert. Synthetic UI/workflow tests exercise the configuration and candidate flow, not real Auth, PostgREST, deployed old sessions or scheduler. All flags remain off by default. This guard alone cannot safely authorize rollout: old deployments and direct API clients bypass it, and the development database lacks the replacement backend and an independently monitored expiry job. Do not disable old writers or switch the site until their replacements, target-compatible installation and recovery are verified together.
 
+## Subsequent target rehearsal and monitor candidate
+
+The assignment-table ACL candidate was exercised on the connected development database inside a bounded transaction and rolled back; the preflight and inherited-privilege postflight passed, and the original service-role insert privilege and guarded setter execute grant were observed after rollback. It acquired a writer-blocking lock briefly, did not insert business data, and is not a full finance installation or a committed change. See `FINANCE_INTEGRATION_REHEARSAL.md` for its limits and the expanded writer/policy inventory.
+
+A separate external Bale-expiry health signal and command-line probe have been implemented and tested locally, including a restricted PostgreSQL login and verified TLS. Neither a hosted monitor login nor a monitoring schedule or alert service has been configured. They do not activate the expiry worker or change the running site. The independent platform, missed-run detection and alert delivery still need verification before relying on them; see `WEEKLY_BALE_EXPIRY_OPERATIONS.md`.
+
 ## Weekly legacy-writer cutover candidates remain held
 
 A later read-only development snapshot again returned zero workers, projects, attendance, payroll, advances and advance requests; the weekly generator and Bale clock were absent, as were time details and allowances. `pg_cron` was available but still not installed. This is only a point-in-time observation and neither proves safety nor establishes a backup.

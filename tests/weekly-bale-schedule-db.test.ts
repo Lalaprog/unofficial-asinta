@@ -1,6 +1,7 @@
 import {PGlite} from '@electric-sql/pglite';
 import {readFileSync} from 'node:fs';
 import {describe,expect,it} from 'vitest';
+import {roleCheck} from '../scripts/check-weekly-bale-expiry.mjs';
 const id=(n:number)=>`00000000-0000-0000-0000-${String(n).padStart(12,'0')}`;
 const [founder,supervisor,outsider,worker,site,other]=[1,2,3,4,5,6].map(id);
 const sql=(path:string)=>readFileSync(path,'utf8');
@@ -164,6 +165,32 @@ describe('experimental weekly Bale schedule (not deployed)',()=>{
    await time(db,'2026-11-18T04:03:01Z');expect((await health()).rows[0].data.healthy).toBe(false);
    await role(db,supervisor);await expect(health()).rejects.toThrow(/Founder access/);
    await db.exec('RESET ROLE');expect((await db.query('SELECT status,auto_expired FROM public.advance_requests WHERE id=$1',[request])).rows).toEqual([{status:'rejected',auto_expired:true}]);
+  }finally{await db.close();}
+ },30000);
+ it('gives a separate restricted monitor only a fail-closed expiry signal',async()=>{
+  const db=await fixture(true);try{
+   const request=await submit(db);await db.exec("RESET ROLE; SET test.uid=''; CREATE ROLE bale_monitor; GRANT USAGE ON SCHEMA public TO bale_monitor;");
+   await db.exec(sql('supabase/drafts/weekly_bale_external_monitor.sql'));
+   for(const name of ['anon','authenticated','service_role']){
+    expect((await db.query<{allowed:boolean}>("SELECT has_function_privilege($1,'public.weekly_bale_external_monitor_healthy()','EXECUTE') allowed",[name])).rows[0].allowed).toBe(false);
+   }
+   await db.exec('GRANT EXECUTE ON FUNCTION public.weekly_bale_external_monitor_healthy() TO bale_monitor; SET ROLE bale_monitor');
+   const health=()=>db.query<{healthy:boolean}>('SELECT public.weekly_bale_external_monitor_healthy() healthy');
+   const roleReport=(await db.query<Record<string,unknown>>(roleCheck)).rows[0];
+   expect(roleReport).toMatchObject({role_name:'bale_monitor',superuser:false,bypass_rls:false,create_role:false,create_db:false,replication:false,elevated_membership:false,schema_create:false,owns_monitor:false,can_run_job:false,table_access:false});
+   expect((await health()).rows[0].healthy).toBe(false); // No heartbeat yet.
+   await expect(db.query('SELECT * FROM public.weekly_bale_expiry_health')).rejects.toThrow(/permission denied/);
+   await expect(db.query('SELECT public.run_weekly_bale_expiry_job()')).rejects.toThrow(/permission denied/);
+   await db.exec("RESET ROLE; SET test.clock='2026-11-18T04:00:00Z'");
+   // Overdue work is unhealthy even if the heartbeat was just written.
+   await db.exec("INSERT INTO public.weekly_bale_expiry_health VALUES(true,'2026-11-18T04:00:00Z',0,0); SET ROLE bale_monitor");
+   expect((await health()).rows[0].healthy).toBe(false);
+   await db.exec("RESET ROLE; DELETE FROM public.weekly_bale_expiry_health; SELECT public.run_weekly_bale_expiry_job(); SET ROLE bale_monitor");
+   expect((await health()).rows[0].healthy).toBe(true);
+   await time(db,'2026-11-18T04:03:01Z');expect((await health()).rows[0].healthy).toBe(false);
+   await time(db,'2026-11-18T03:59:59Z');expect((await health()).rows[0].healthy).toBe(false); // Future heartbeat.
+   await role(db,founder);await expect(health()).rejects.toThrow(/must not use a user session/);
+   await db.exec('RESET ROLE');expect((await db.query('SELECT status FROM public.advance_requests WHERE id=$1',[request])).rows).toEqual([{status:'rejected'}]);
   }finally{await db.close();}
  },30000);
  it('limits each catch-up transaction to 500 and drains the remaining backlog on retry',async()=>{

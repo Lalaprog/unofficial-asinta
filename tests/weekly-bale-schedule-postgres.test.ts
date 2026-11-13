@@ -2,6 +2,7 @@
 import {readFileSync} from 'node:fs';
 import {Client} from 'pg';
 import {afterAll,beforeAll,describe,expect,it} from 'vitest';
+import {roleCheck} from '../scripts/check-weekly-bale-expiry.mjs';
 const url=process.env.WEEKLY_BALE_SCHEDULE_TEST_DATABASE_URL;
 const suite=url?describe:describe.skip;
 const id=(n:number)=>`00000000-0000-0000-0000-${String(n).padStart(12,'0')}`;
@@ -39,7 +40,10 @@ suite('weekly Bale schedule on disposable PostgreSQL',()=>{
   await admin.query(readFileSync('supabase/drafts/weekly_bale_release_list.sql','utf8'));
   await admin.query(readFileSync('supabase/drafts/weekly_bale_status_batch.sql','utf8'));
   await admin.query(readFileSync('supabase/drafts/weekly_bale_scheduler.sql','utf8'));
-  await admin.query(`CREATE OR REPLACE FUNCTION public.weekly_bale_clock() RETURNS timestamptz LANGUAGE sql VOLATILE SET search_path='' AS $$SELECT current_setting('test.clock')::timestamptz$$;`);
+  await admin.query(readFileSync('supabase/drafts/weekly_bale_external_monitor.sql','utf8'));
+  await admin.query(`DO $$BEGIN IF NOT EXISTS(SELECT 1 FROM pg_roles WHERE rolname='asinta_expiry_monitor_test') THEN CREATE ROLE asinta_expiry_monitor_test LOGIN; END IF; END$$;
+   GRANT USAGE ON SCHEMA public TO asinta_expiry_monitor_test; GRANT EXECUTE ON FUNCTION public.weekly_bale_external_monitor_healthy() TO asinta_expiry_monitor_test;
+   CREATE OR REPLACE FUNCTION public.weekly_bale_clock() RETURNS timestamptz LANGUAGE sql VOLATILE SET search_path='' AS $$SELECT current_setting('test.clock')::timestamptz$$;`);
   await Promise.all([first.query(`SET ROLE authenticated; SET test.uid='${supervisor}'; SET test.assurance='yes'; SET test.clock='2026-11-15T04:00:00Z'; SET lock_timeout='4s'`),second.query(`SET ROLE authenticated; SET test.uid='${supervisor}'; SET test.assurance='yes'; SET test.clock='2026-11-18T04:00:00Z'; SET lock_timeout='4s'`)]);
  },30000);
  afterAll(async()=>{await Promise.all([admin?.end(),first?.end(),second?.end()]);});
@@ -97,6 +101,21 @@ suite('weekly Bale schedule on disposable PostgreSQL',()=>{
    await admin.query('UPDATE public.project_worker_assignments SET active=false WHERE worker_id=$1 AND project_id=$2',[worker,id(91)]);
    await admin.query('UPDATE public.project_worker_assignments SET active=true WHERE worker_id=$1 AND project_id=$2',[worker,site]);
   }
+ },15000);
+ it('checks the real database with a separate nonprivileged monitor login',async()=>{
+  const monitorUrl=new URL(url!);monitorUrl.username='asinta_expiry_monitor_test';monitorUrl.password='';
+  const monitor=new Client({connectionString:monitorUrl.toString()});await monitor.connect();
+  try{
+   await monitor.query("SET test.clock='2026-11-18T04:00:00Z'; SET test.uid=''");
+   expect((await monitor.query(roleCheck)).rows[0]).toEqual({role_name:'asinta_expiry_monitor_test',session_role:'asinta_expiry_monitor_test',superuser:false,bypass_rls:false,create_role:false,create_db:false,replication:false,elevated_membership:false,schema_create:false,owns_monitor:false,can_run_job:false,table_access:false});
+   expect((await monitor.query('SELECT public.weekly_bale_external_monitor_healthy() healthy')).rows[0].healthy).toBe(false);
+   await expect(monitor.query('SELECT * FROM public.advance_requests')).rejects.toThrow(/permission denied/);
+   await expect(monitor.query('SELECT public.run_weekly_bale_expiry_job()')).rejects.toThrow(/permission denied/);
+   await second.query("RESET ROLE; SET test.uid=''; SET test.clock='2026-11-18T04:00:00Z'; SELECT public.run_weekly_bale_expiry_job()");
+   expect((await monitor.query('SELECT public.weekly_bale_external_monitor_healthy() healthy')).rows[0].healthy).toBe(true);
+   await monitor.query("SET test.clock='2026-11-18T04:03:01Z'");
+   expect((await monitor.query('SELECT public.weekly_bale_external_monitor_healthy() healthy')).rows[0].healthy).toBe(false);
+  }finally{await monitor.end();}
  },15000);
  it('does not run two scheduler executions concurrently',async()=>{
   await first.query("RESET ROLE; SET test.uid=''; SET test.clock='2026-11-18T04:00:00Z'");await second.query("RESET ROLE; SET test.uid=''; SET test.clock='2026-11-18T04:00:00Z'");

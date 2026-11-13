@@ -82,6 +82,9 @@ suite('coordinated finance integration rehearsal, synthetic PostgreSQL only',()=
    // This extra draft is outside the generated chain and remains uninstalled.
    await db.query(readFileSync('supabase/drafts/weekly_bale_legacy_cutover_guard.sql','utf8'));
    await db.query(readFileSync('supabase/drafts/weekly_worker_legacy_cutover_guard.sql','utf8'));
+   // External health signal is a separate draft, installed only in this test transaction.
+   await db.query(readFileSync('supabase/drafts/weekly_bale_external_monitor.sql','utf8'));
+   expect((await db.query("SELECT has_function_privilege('authenticated','public.weekly_bale_external_monitor_healthy()','EXECUTE') allowed")).rows[0].allowed).toBe(false);
    // The review ledger is also separate from the generated chain, and never
    // posts money or makes the bounded snapshot complete.
    await db.query(readFileSync('supabase/drafts/project_cost_review_ledger.sql','utf8'));
@@ -194,7 +197,9 @@ suite('coordinated finance integration rehearsal, synthetic PostgreSQL only',()=
    await db.query(`SET LOCAL test.uid='${supervisor}'; SET LOCAL test.clock='2024-08-11T04:00:00Z'`);
    const pending=(await db.query('INSERT INTO public.advance_requests(worker_id,project_id,requested_amount,submitted_by) VALUES($1,$2,90,$3) RETURNING id',[worker,site,supervisor])).rows[0].id;
    await db.query("RESET ROLE; SET LOCAL test.uid=''; SET LOCAL test.clock='2024-08-13T16:00:00Z'");
+   expect((await db.query('SELECT public.weekly_bale_external_monitor_healthy() v')).rows[0].v).toBe(false);
    expect((await db.query('SELECT public.run_weekly_bale_expiry_job() v')).rows[0].v).toMatchObject({outcome:'completed',processed:1});
+   expect((await db.query('SELECT public.weekly_bale_external_monitor_healthy() v')).rows[0].v).toBe(true);
    expect((await db.query('SELECT public.run_weekly_bale_expiry_job() v')).rows[0].v).toMatchObject({outcome:'completed',processed:0});
    expect((await db.query('SELECT status,auto_expired,issued_advance_id FROM public.advance_requests WHERE id=$1',[pending])).rows).toEqual([{status:'rejected',auto_expired:true,issued_advance_id:null}]);
    expect((await db.query("SELECT actor_id FROM public.audit_log WHERE table_name='advance_requests' AND record_id=$1 AND after_row->>'auto_expired'='true'",[pending])).rows).toEqual([{actor_id:null}]);
@@ -223,7 +228,7 @@ suite('coordinated finance integration rehearsal, synthetic PostgreSQL only',()=
    await db.query('RESET ROLE');expect((await db.query('SELECT to_jsonb(p) v FROM public.payroll p WHERE id=$1',[voucher])).rows[0].v).toEqual(original);
    expect((await db.query('SELECT project_id,event_type FROM public.project_assignment_history WHERE worker_id=$1 ORDER BY event_type,project_id',[worker])).rows).toEqual([{project_id:site,event_type:'assigned'},{project_id:destination,event_type:'assigned'},{project_id:site,event_type:'unassigned'}]);
    await db.query('ROLLBACK');expect(await snapshot()).toEqual(before);
-   expect((await db.query("SELECT to_regclass('public.weekly_worker_draft_sources') IS NULL absent,to_regprocedure('public.weekly_worker_preview_base_inputs(date)') IS NULL wrapper_absent,to_regprocedure('public.weekly_worker_preview_inputs(date)') IS NOT NULL base_present")).rows[0]).toEqual({absent:true,wrapper_absent:true,base_present:true});
+   expect((await db.query("SELECT to_regclass('public.weekly_worker_draft_sources') IS NULL absent,to_regprocedure('public.weekly_worker_preview_base_inputs(date)') IS NULL wrapper_absent,to_regprocedure('public.weekly_worker_preview_inputs(date)') IS NOT NULL base_present,to_regprocedure('public.weekly_bale_external_monitor_healthy()') IS NULL monitor_absent")).rows[0]).toEqual({absent:true,wrapper_absent:true,base_present:true,monitor_absent:true});
   }finally{await db.query('ROLLBACK').catch(()=>{});await db.end();}
  },60000);
 });
