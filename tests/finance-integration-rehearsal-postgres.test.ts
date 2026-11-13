@@ -33,8 +33,11 @@ suite('coordinated finance integration rehearsal, synthetic PostgreSQL only',()=
     ALTER TABLE public.advance_requests ADD CONSTRAINT advance_request_rejection_fields CHECK(status<>'rejected' OR (rejected_by IS NOT NULL AND rejected_at IS NOT NULL));
     DROP TABLE public.audit_log; CREATE TABLE public.audit_log(actor_id uuid,actor_email text,action text,table_name text,record_id uuid,before_row jsonb,after_row jsonb);
     CREATE POLICY test_founder_payroll_write ON public.payroll FOR ALL TO authenticated USING(public.is_founder()) WITH CHECK(public.is_founder());`);
+   // Selected hosted-shaped constraints and types, NOT a complete schema clone.
+   // These expose mistakes hidden by the deliberately minimal shared fixture.
+   await db.query(readFileSync('tests/helpers/finance-hosted-shape-fixture.sql','utf8'));
    for(const name of previous)await db.query(sql(name));
-   for(const name of ['20261102000000_atomic_payroll_payments.sql','20261013000000_advance_requests.sql','20261013000001_advance_request_notifications.sql','20261113000004_bale_request_site_guard.sql','20261113000000_weekly_worker_preview.sql'])await db.query(sql(name));
+   for(const name of ['20261105000002_expense_breakdown.sql','20261102000000_atomic_payroll_payments.sql','20261013000000_advance_requests.sql','20261013000001_advance_request_notifications.sql','20261113000004_bale_request_site_guard.sql','20261113000000_weekly_worker_preview.sql'])await db.query(sql(name));
    await db.query(readFileSync('supabase/drafts/supervisor_table_foundation.sql','utf8'));
    const rehearsal=execFileSync('node',['scripts/build-finance-integration-rehearsal.mjs'],{encoding:'utf8'});
    await expect(db.query(rehearsal)).rejects.toThrow(/Synthetic disposable database and marker required/);await db.query('ROLLBACK');
@@ -89,6 +92,14 @@ suite('coordinated finance integration rehearsal, synthetic PostgreSQL only',()=
    const details=parseWeeklyDraftDetails((await db.query('SELECT public.weekly_worker_draft_details($1) v',[voucher])).rows[0].v,{id:voucher,worker,start:'2024-08-04'},true);
    expect(details).toMatchObject({status:'paid',draft_revision:0,gross:'800.25',bale:'100.25',net:'700.00',payment_date:'2024-08-10'});
    await db.query("SELECT public.confirm_rental_expense('70000000-0000-4000-8000-000000000011','70000000-0000-4000-8000-000000000009',$1,1000,'2024-08-04','Excavator','Excavator','Supplier',1,'2024-08-04','2024-08-10')",[site]);
+   // Exercise the actual legacy expense-revision trigger alongside the rental
+   // guard, with constraints resembling the observed development database.
+   await db.query('RESET ROLE');
+   expect((await db.query("SELECT revision FROM public.expenses WHERE id='70000000-0000-4000-8000-000000000009'")).rows[0].revision).toBe('1'); // Confirmation touches the parent for concurrency.
+   expect((await db.query("UPDATE public.expenses SET notes='Non-financial note' WHERE id='70000000-0000-4000-8000-000000000009' RETURNING revision")).rows[0].revision).toBe('2');
+   await db.query('SAVEPOINT rental_locked');
+   await expect(db.query("UPDATE public.expenses SET amount=1001 WHERE id='70000000-0000-4000-8000-000000000009'")).rejects.toThrow(/financial details are locked/);
+   await db.query('ROLLBACK TO SAVEPOINT rental_locked; RELEASE SAVEPOINT rental_locked; SET LOCAL ROLE authenticated');
    const costs=parseCostSnapshot((await db.query('SELECT public.project_cost_reconciliation_preview($1) v',[site])).rows[0].v,site);
    const choices=Object.fromEntries(costs.expenses.map(e=>[e.id,e.id==='70000000-0000-4000-8000-000000000010'?'exclude' as const:'include' as const]));
    expect(estimateProjectCost(costs,choices)).toEqual({expenses:101235n,excluded:10025n,payroll:80025n,total:181260n});
@@ -109,6 +120,11 @@ suite('coordinated finance integration rehearsal, synthetic PostgreSQL only',()=
    await db.query('SAVEPOINT denied_finance');
    await expect(db.query('SELECT public.project_cost_reconciliation_preview($1)',[site])).rejects.toThrow(/Founder/);
    await db.query('ROLLBACK TO SAVEPOINT denied_finance; RELEASE SAVEPOINT denied_finance');
+   await db.query(`SET LOCAL test.uid='${founder}'; SET LOCAL test.assurance='no'`);
+   await db.query('SAVEPOINT denied_assurance');
+   await expect(db.query('SELECT public.weekly_worker_draft_details($1)',[voucher])).rejects.toThrow(/Founder|assurance/i);
+   await db.query("ROLLBACK TO SAVEPOINT denied_assurance; RELEASE SAVEPOINT denied_assurance; SET LOCAL test.assurance='yes'");
+   await db.query(`SET LOCAL test.uid='${supervisor}'`);
    await db.query("SELECT public.submit_supervisor_day('70000000-0000-4000-8000-000000000005','2024-08-04','present')");
    await db.query("SELECT public.submit_supervisor_leave('70000000-0000-4000-8000-000000000013','2024-08-05','2024-08-05','emergency','Synthetic leave')");
    await db.query(`SET LOCAL test.uid='${founder}'`);
@@ -131,7 +147,14 @@ suite('coordinated finance integration rehearsal, synthetic PostgreSQL only',()=
    expect((await db.query('SELECT public.run_weekly_bale_expiry_job() v')).rows[0].v).toMatchObject({outcome:'completed',processed:1});
    expect((await db.query('SELECT public.run_weekly_bale_expiry_job() v')).rows[0].v).toMatchObject({outcome:'completed',processed:0});
    expect((await db.query('SELECT status,auto_expired,issued_advance_id FROM public.advance_requests WHERE id=$1',[pending])).rows).toEqual([{status:'rejected',auto_expired:true,issued_advance_id:null}]);
+   expect((await db.query("SELECT actor_id FROM public.audit_log WHERE table_name='advance_requests' AND record_id=$1 AND after_row->>'auto_expired'='true'",[pending])).rows).toEqual([{actor_id:null}]);
    expect((await db.query('SELECT count(*)::int n FROM public.advances WHERE worker_id=$1',[worker])).rows[0].n).toBe(1);
+   // The earlier external correction and expired request must not leak into the
+   // following week's new draft or create an extra advance.
+   await db.query("INSERT INTO public.attendance(id,worker_id,project_id,date,status,hours_worked,submitted_at) VALUES('70000000-0000-4000-8000-000000000014',$1,$2,'2024-08-11','present',8,'2024-08-11T08:00:00Z')",[worker,site]);
+   await db.query(`SET LOCAL ROLE authenticated; SET LOCAL test.uid='${founder}'`);
+   expect((await db.query("SELECT public.create_weekly_worker_draft('70000000-0000-4000-8000-000000000015',$1,'2024-08-11') v",[worker])).rows[0].v.calculation).toMatchObject({gross:'600.00',bale:'0.00',net:'600.00'});
+   await db.query('RESET ROLE');expect((await db.query('SELECT to_jsonb(p) v FROM public.payroll p WHERE id=$1',[voucher])).rows[0].v).toEqual(original);
    await db.query('ROLLBACK');expect(await snapshot()).toEqual(before);
    expect((await db.query("SELECT to_regclass('public.weekly_worker_draft_sources') IS NULL absent,to_regprocedure('public.weekly_worker_preview_base_inputs(date)') IS NULL wrapper_absent,to_regprocedure('public.weekly_worker_preview_inputs(date)') IS NOT NULL base_present")).rows[0]).toEqual({absent:true,wrapper_absent:true,base_present:true});
   }finally{await db.query('ROLLBACK').catch(()=>{});await db.end();}
