@@ -25,6 +25,11 @@ describe('paid history review',()=>{
   vi.stubEnv('NEXT_PUBLIC_PAID_ADJUSTMENTS_PREVIEW','true');view.rerender(React.createElement(PaidHistoryReview));expect(screen.getByRole('button',{name:'Adjustment cases for this voucher'})).toBeTruthy();
   vi.stubEnv('NEXT_PUBLIC_FINANCE_FOUNDATION_PREVIEW','false');view.rerender(React.createElement(PaidHistoryReview));expect(screen.queryByRole('button',{name:'Adjustment cases for this voucher'})).toBeNull();
  });
+ it('gates the separate historical evidence viewer independently',async()=>{
+  vi.stubEnv('NEXT_PUBLIC_FINANCE_FOUNDATION_PREVIEW','true');vi.stubEnv('NEXT_PUBLIC_HISTORICAL_FINANCE_EVIDENCE_PREVIEW','false');mock.rpc.mockResolvedValue({data:snapshot,error:null});
+  const view=render(React.createElement(PaidHistoryReview));fireEvent.click(screen.getByRole('button',{name:/Paid payroll history review/}));fireEvent.click(screen.getByRole('button',{name:'Load paid history'}));await screen.findByText(/Fixture Worker/);expect(screen.queryByRole('button',{name:'Historical payment and Bale evidence'})).toBeNull();
+  vi.stubEnv('NEXT_PUBLIC_HISTORICAL_FINANCE_EVIDENCE_PREVIEW','true');view.rerender(React.createElement(PaidHistoryReview));expect(screen.getByRole('button',{name:'Historical payment and Bale evidence'})).toBeTruthy();vi.stubEnv('NEXT_PUBLIC_FINANCE_FOUNDATION_PREVIEW','false');view.rerender(React.createElement(PaidHistoryReview));expect(screen.queryByRole('button',{name:'Historical payment and Bale evidence'})).toBeNull();
+ });
  it('clears stale responses, rejects invalid ranges and surfaces missing RPCs',async()=>{
   const old=deferred();mock.rpc.mockReturnValueOnce(old.promise).mockResolvedValueOnce({data:null,error:{message:'Function unavailable'}});
   render(React.createElement(PaidHistoryReview));fireEvent.click(screen.getByRole('button',{name:/Paid payroll history review/}));fireEvent.click(screen.getByRole('button',{name:'Load paid history'}));

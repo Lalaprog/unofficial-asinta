@@ -9,7 +9,7 @@ const founder='00000000-0000-0000-0000-000000000001',supervisor='00000000-0000-0
 const [att1,att2,detail,allowance,advance,request,voucher]=[1,2,3,4,5,6,7].map(id);
 const start='2024-11-03';
 const sql=(path:string)=>readFileSync(path,'utf8');
-async function fixture(withApproval=false,withPayment=false,withRefresh=false,withReturn=false,withHistorical=false,withHistoricalBale=false){
+async function fixture(withApproval=false,withPayment=false,withRefresh=false,withReturn=false,withHistorical=false,withHistoricalBale=false,withHistoricalReview=false){
  const db=new PGlite();
  await db.exec(baseFixture);
  await db.exec(`ALTER TABLE public.users ADD COLUMN email text;
@@ -42,6 +42,7 @@ async function fixture(withApproval=false,withPayment=false,withRefresh=false,wi
  if(withReturn) await db.exec(sql('supabase/drafts/weekly_worker_return_to_draft.sql'));
  if(withHistorical) await db.exec(sql('supabase/drafts/historical_paid_date_annotation.sql'));
  if(withHistoricalBale) await db.exec(sql('supabase/drafts/historical_settled_bale_evidence.sql'));
+ if(withHistoricalReview) await db.exec(sql('supabase/drafts/historical_finance_evidence_review.sql'));
  await db.exec(`SET test.uid='${founder}'; SET test.assurance='yes'; SET ROLE authenticated;`);
  return db;
 }
@@ -464,6 +465,26 @@ describe('historical settled Bale evidence candidate',()=>{
    expect((await db.query<{n:number}>('SELECT count(*)::int n FROM public.advance_requests WHERE issued_advance_id=$1',[baleRequest])).rows[0].n).toBe(0);
    expect((await db.query('SELECT release_date::text,payment_date::text,payment_date_source,amount::text FROM public.historical_settled_bale_evidence WHERE request_id=$1',[baleRequest])).rows).toEqual([{release_date:'2024-10-23',payment_date:'2024-10-26',payment_date_source:'historical_annotation',amount:'200.00'}]);
    await db.exec('RESET ROLE');await expect(db.query('DELETE FROM public.historical_settled_bale_evidence WHERE request_id=$1',[baleRequest])).rejects.toThrow(/immutable/);
+  }finally{await db.close();}
+ },30000);
+ it('reads saved historical assertions and flags later conflicting records without changing them',async()=>{
+  const db=await fixture(true,true,true,true,true,true,true);try{
+   const expected=await seed(db);const empty=(await db.query<{v:{date_evidence:object;bale_evidence:unknown}}>('SELECT public.historical_finance_evidence_review($1) v',[historical])).rows[0].v;expect(empty.date_evidence).toMatchObject({payment_date:'2024-10-26',matches_voucher:true});expect(empty.bale_evidence).toBeNull();
+   await record(db,expected);let v=(await db.query<{v:{payment_conflict:boolean;bale_evidence:{context_changed:boolean;matches_voucher:boolean;amount:string}}}>('SELECT public.historical_finance_evidence_review($1) v',[historical])).rows[0].v;expect(v.payment_conflict).toBe(false);expect(v.bale_evidence).toMatchObject({context_changed:false,matches_voucher:true,amount:'200.00'});
+   await db.exec('RESET ROLE');await db.query('INSERT INTO public.payroll_payment_dates(payroll_id,payment_date,recorded_by) VALUES($1,$2,$3)',[historical,'2024-10-25',founder]);await db.exec('SET ROLE authenticated');
+   v=(await db.query<{v:typeof v}>('SELECT public.historical_finance_evidence_review($1) v',[historical])).rows[0].v;expect(v.payment_conflict).toBe(true);expect(v.bale_evidence.context_changed).toBe(true);
+   await db.exec('RESET ROLE; ALTER TABLE public.payroll_payment_dates DROP CONSTRAINT payroll_payment_dates_pkey');await db.query('INSERT INTO public.payroll_payment_dates(payroll_id,payment_date,recorded_by) VALUES($1,$2,$3)',[historical,'2024-10-25',founder]);await db.exec('SET ROLE authenticated');await expect(db.query('SELECT public.historical_finance_evidence_review($1)',[historical])).rejects.toThrow(/Ambiguous recorded payment-date/);
+   await db.exec('RESET ROLE; DELETE FROM public.payroll_payment_dates; SET ROLE authenticated');await expect(db.query('SELECT public.historical_finance_evidence_review($1)',[id(999)])).rejects.toThrow(/Paid voucher unavailable/);
+   await db.exec(`SET test.uid='${supervisor}'`);await expect(db.query('SELECT public.historical_finance_evidence_review($1)',[historical])).rejects.toThrow(/Founder access/);await db.exec(`SET test.uid='${founder}'; SET test.assurance='no'`);await expect(db.query('SELECT public.historical_finance_evidence_review($1)',[historical])).rejects.toThrow(/Founder access/);
+  }finally{await db.close();}
+ },30000);
+ it('flags changed voucher, period advances and overlaps without modifying them',async()=>{
+  const db=await fixture(true,true,true,true,true,true,true);try{
+   const expected=await seed(db);await record(db,expected);
+   const review=async()=>(await db.query<{v:{date_evidence:{matches_voucher:boolean};bale_evidence:{matches_voucher:boolean;context_changed:boolean}}}>('SELECT public.historical_finance_evidence_review($1) v',[historical])).rows[0].v;
+   await db.exec("RESET ROLE; SET test.uid=''");await db.query("INSERT INTO public.advances(id,worker_id,project_id,date,amount,amount_deducted,status) VALUES($1,$2,$3,'2024-10-23',200,200,'fully_deducted')",[id(65),worker,site]);await db.exec(`SET test.uid='${founder}'; SET ROLE authenticated`);expect((await review()).bale_evidence.context_changed).toBe(true);
+   await db.exec("RESET ROLE; SET test.uid=''");await db.query('DELETE FROM public.advances WHERE id=$1',[id(65)]);await db.query("INSERT INTO public.payroll(id,worker_id,period_start,period_end,status,gross_pay,bale_deduction,other_deductions,net_pay) VALUES($1,$2,'2024-10-24','2024-10-30','paid',100,0,0,100)",[id(66),worker]);await db.exec(`SET test.uid='${founder}'; SET ROLE authenticated`);expect((await review()).bale_evidence.context_changed).toBe(true);
+   await db.exec("RESET ROLE; SET test.uid=''; ALTER TABLE public.payroll DISABLE TRIGGER USER");await db.query('UPDATE public.payroll SET bale_deduction=NULL WHERE id=$1',[historical]);await db.exec(`ALTER TABLE public.payroll ENABLE TRIGGER USER; SET test.uid='${founder}'; SET ROLE authenticated`);const changed=await review();expect(changed.date_evidence.matches_voucher).toBe(false);expect(changed.bale_evidence).toMatchObject({matches_voucher:false,context_changed:true});
   }finally{await db.close();}
  },30000);
  it('fails closed on missing date, duplicate advances, mismatch, access and audit failure',async()=>{
