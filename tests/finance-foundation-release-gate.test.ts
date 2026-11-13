@@ -13,7 +13,7 @@ vi.mock('@/components/attendance/SupervisorLeavePanel', () => ({ SupervisorLeave
 vi.mock('@/components/attendance/TimeDetailDialog', () => ({ TimeDetailDialog: () => React.createElement('div', null, 'Time dialog') }));
 vi.mock('@/components/attendance/AllowanceDialog', () => ({ AllowanceDialog: () => React.createElement('div', null, 'Allowance dialog') }));
 vi.mock('@/lib/attendance/useAttendanceHistory', () => ({ useAttendanceHistory: () => ({ items: mock.records, loading: false, error: null, hasMore: false }) }));
-import { attendanceTimeHistoryPreviewEnabled, financeFoundationEnabled, weeklyBaleReleasePreviewEnabled } from '@/lib/finance/featureAvailability';
+import { attendanceTimeHistoryPreviewEnabled, financeFoundationEnabled, weeklyBaleReleasePreviewEnabled, weeklyWorkerActionsPreviewEnabled } from '@/lib/finance/featureAvailability';
 import { PayrollFoundationPanels } from '@/components/payroll/PayrollFoundationPanels';
 import { SupervisorFoundationPanels } from '@/components/attendance/SupervisorFoundationPanels';
 import { HistorySheetRecords } from '@/components/attendance/HistorySheetRecords';
@@ -37,10 +37,14 @@ describe('unfinished finance foundation UI release gate', () => {
     render(React.createElement(React.Fragment, null, React.createElement(PayrollFoundationPanels), React.createElement(SupervisorFoundationPanels)));
     expect(mock.mounts.mock.calls.map(([name]) => name)).toEqual(['allowance','weekly','review','day','leave']);
   });
-  it('requires both switches for the experimental Bale release panel', () => {
-    vi.stubEnv('NEXT_PUBLIC_FINANCE_FOUNDATION_PREVIEW','false');vi.stubEnv('NEXT_PUBLIC_WEEKLY_BALE_RELEASE_PREVIEW','true');expect(weeklyBaleReleasePreviewEnabled()).toBe(false);
-    vi.stubEnv('NEXT_PUBLIC_FINANCE_FOUNDATION_PREVIEW','true');expect(weeklyBaleReleasePreviewEnabled()).toBe(true);
-    vi.stubEnv('NEXT_PUBLIC_WEEKLY_BALE_RELEASE_PREVIEW','false');expect(weeklyBaleReleasePreviewEnabled()).toBe(false);
+  it('exposes both weekly write surfaces only when the full coordinated set is enabled', () => {
+    const keys=['NEXT_PUBLIC_FINANCE_FOUNDATION_PREVIEW','NEXT_PUBLIC_WEEKLY_WORKER_CUTOVER_PREVIEW','NEXT_PUBLIC_WEEKLY_BALE_RELEASE_PREVIEW','NEXT_PUBLIC_WEEKLY_WORKER_ACTIONS_PREVIEW'];
+    for(const key of keys)vi.stubEnv(key,'true');
+    expect(weeklyBaleReleasePreviewEnabled()).toBe(true);expect(weeklyWorkerActionsPreviewEnabled()).toBe(true);
+    for(const key of keys){
+      vi.stubEnv(key,'false');expect(weeklyBaleReleasePreviewEnabled()).toBe(false);expect(weeklyWorkerActionsPreviewEnabled()).toBe(false);
+      vi.stubEnv(key,'true');
+    }
   });
   it('requires both switches for time details in attendance history and project logs', () => {
     vi.stubEnv('NEXT_PUBLIC_FINANCE_FOUNDATION_PREVIEW','false');vi.stubEnv('NEXT_PUBLIC_ATTENDANCE_TIME_HISTORY_PREVIEW','true');expect(attendanceTimeHistoryPreviewEnabled()).toBe(false);

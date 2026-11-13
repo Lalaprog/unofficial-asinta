@@ -14,7 +14,7 @@ import {AdvanceRequestsPanel} from '@/components/advances/AdvanceRequestsPanel';
 const request=(id:string,status='pending_approval')=>({id,worker_id:'worker',project_id:'site',requested_amount:100,submitted_by:'sup',status,created_at:'2026-11-15T04:00:00Z',updated_at:'2026-11-15T04:00:00Z',approved_at:null,rejected_at:status==='rejected'?'2026-11-18T00:00:00Z':null,issued_at:null});
 const status=(id:string,stored_status:string,effective_status:string,can_review:boolean,auto_expired=false)=>({id,kind:'weekly',period_start:'2026-11-15',stored_status,effective_status,can_review,auto_expired});
 const response=(items:object[])=>({data:{as_of:'2026-11-18T00:00:00Z',items},error:null});
-beforeEach(()=>{mock.rpc.mockReset();mock.review.mockReset();mock.batch.mockReset();mock.issue.mockReset();mock.rows=[request('r1')];vi.stubEnv('NEXT_PUBLIC_FINANCE_FOUNDATION_PREVIEW','true');vi.stubEnv('NEXT_PUBLIC_WEEKLY_BALE_RELEASE_PREVIEW','true');});
+beforeEach(()=>{mock.rpc.mockReset();mock.review.mockReset();mock.batch.mockReset();mock.issue.mockReset();mock.rows=[request('r1')];vi.stubEnv('NEXT_PUBLIC_FINANCE_FOUNDATION_PREVIEW','true');vi.stubEnv('NEXT_PUBLIC_WEEKLY_BALE_RELEASE_PREVIEW','true');vi.stubEnv('NEXT_PUBLIC_WEEKLY_WORKER_ACTIONS_PREVIEW','true');vi.stubEnv('NEXT_PUBLIC_WEEKLY_WORKER_CUTOVER_PREVIEW','true');});
 afterEach(()=>{cleanup();vi.unstubAllEnvs();});
 describe('weekly request status in legacy list',()=>{
  it('labels expired pending requests and blocks all approval paths',async()=>{
@@ -35,7 +35,7 @@ describe('weekly request status in legacy list',()=>{
   fireEvent.click(screen.getByRole('button',{name:'Refresh weekly status'}));await screen.findByRole('alert');expect(approve.disabled).toBe(true);fireEvent.click(approve);expect(mock.review).not.toHaveBeenCalled();
  });
  it('retains old UI without making a status request when flags are off',()=>{
-  vi.stubEnv('NEXT_PUBLIC_WEEKLY_BALE_RELEASE_PREVIEW','false');render(React.createElement(AdvanceRequestsPanel));expect(mock.rpc).not.toHaveBeenCalled();expect((screen.getByRole('button',{name:'Approve'}) as HTMLButtonElement).disabled).toBe(false);
+  vi.stubEnv('NEXT_PUBLIC_WEEKLY_WORKER_CUTOVER_PREVIEW','false');vi.stubEnv('NEXT_PUBLIC_WEEKLY_BALE_RELEASE_PREVIEW','false');render(React.createElement(AdvanceRequestsPanel));expect(mock.rpc).not.toHaveBeenCalled();expect((screen.getByRole('button',{name:'Approve'}) as HTMLButtonElement).disabled).toBe(false);
  });
  it('holds decisions and old issuance when cutover is on but the weekly Bale gate is missing',()=>{
   vi.stubEnv('NEXT_PUBLIC_WEEKLY_WORKER_CUTOVER_PREVIEW','true');vi.stubEnv('NEXT_PUBLIC_WEEKLY_BALE_RELEASE_PREVIEW','false');mock.rows=[request('r1'),request('r2','approved_pending_payment')];

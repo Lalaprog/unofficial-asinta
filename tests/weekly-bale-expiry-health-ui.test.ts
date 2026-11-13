@@ -10,10 +10,11 @@ import {weeklyBaleExpiryHealthPreviewEnabled} from '@/lib/finance/featureAvailab
 const healthy={checked_at:'2026-11-18T04:01:00Z',last_success:'2026-11-18T04:00:00Z',last_processed:1,last_remaining_due:0,current_remaining_due:0,healthy:true};
 beforeEach(()=>mock.rpc.mockReset());afterEach(()=>{cleanup();vi.unstubAllEnvs();});
 describe('expiry health candidate',()=>{
- it('requires all three display flags',()=>{
-  vi.stubEnv('NEXT_PUBLIC_FINANCE_FOUNDATION_PREVIEW','true');vi.stubEnv('NEXT_PUBLIC_WEEKLY_BALE_RELEASE_PREVIEW','true');vi.stubEnv('NEXT_PUBLIC_WEEKLY_BALE_EXPIRY_HEALTH_PREVIEW','false');expect(weeklyBaleExpiryHealthPreviewEnabled()).toBe(false);
+ it('keeps read-only health available during a partially configured cutover',()=>{
+  vi.stubEnv('NEXT_PUBLIC_FINANCE_FOUNDATION_PREVIEW','true');vi.stubEnv('NEXT_PUBLIC_WEEKLY_WORKER_CUTOVER_PREVIEW','true');vi.stubEnv('NEXT_PUBLIC_WEEKLY_BALE_RELEASE_PREVIEW','false');vi.stubEnv('NEXT_PUBLIC_WEEKLY_WORKER_ACTIONS_PREVIEW','false');vi.stubEnv('NEXT_PUBLIC_WEEKLY_BALE_EXPIRY_HEALTH_PREVIEW','false');expect(weeklyBaleExpiryHealthPreviewEnabled()).toBe(false);
   vi.stubEnv('NEXT_PUBLIC_WEEKLY_BALE_EXPIRY_HEALTH_PREVIEW','true');expect(weeklyBaleExpiryHealthPreviewEnabled()).toBe(true);
-  vi.stubEnv('NEXT_PUBLIC_FINANCE_FOUNDATION_PREVIEW','false');expect(weeklyBaleExpiryHealthPreviewEnabled()).toBe(false);
+  vi.stubEnv('NEXT_PUBLIC_WEEKLY_WORKER_CUTOVER_PREVIEW','false');expect(weeklyBaleExpiryHealthPreviewEnabled()).toBe(false);
+  vi.stubEnv('NEXT_PUBLIC_WEEKLY_WORKER_CUTOVER_PREVIEW','true');vi.stubEnv('NEXT_PUBLIC_FINANCE_FOUNDATION_PREVIEW','false');expect(weeklyBaleExpiryHealthPreviewEnabled()).toBe(false);
  });
  it('checks on demand, warns about stale observations, and fails closed',async()=>{
   mock.rpc.mockResolvedValueOnce({data:healthy,error:null}).mockResolvedValueOnce({data:{...healthy,current_remaining_due:2},error:null});

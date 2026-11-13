@@ -13,8 +13,8 @@ const snapshot={start:'2026-11-15',end:'2026-11-21',workers:[{id:'w',name:'Ada',
 const deferred=()=>{let resolve!:(value:unknown)=>void;const promise=new Promise(r=>resolve=r);return {promise,resolve};};
 beforeEach(()=>{mock.rpc.mockReset();mock.user='founder';mock.today='2026-11-18';});afterEach(()=>{cleanup();vi.unstubAllEnvs();});
 describe('weekly planning preview',()=>{
- it('requires both independent flags before mounting experimental write actions',async()=>{
-  mock.rpc.mockResolvedValue({data:snapshot,error:null});vi.stubEnv('NEXT_PUBLIC_FINANCE_FOUNDATION_PREVIEW','false');vi.stubEnv('NEXT_PUBLIC_WEEKLY_WORKER_ACTIONS_PREVIEW','true');
+ it('requires the coordinated gates before mounting experimental write actions',async()=>{
+  mock.rpc.mockResolvedValue({data:snapshot,error:null});vi.stubEnv('NEXT_PUBLIC_FINANCE_FOUNDATION_PREVIEW','false');vi.stubEnv('NEXT_PUBLIC_WEEKLY_WORKER_ACTIONS_PREVIEW','true');vi.stubEnv('NEXT_PUBLIC_WEEKLY_BALE_RELEASE_PREVIEW','true');vi.stubEnv('NEXT_PUBLIC_WEEKLY_WORKER_CUTOVER_PREVIEW','true');
   const view=render(React.createElement(WeeklyWorkerPreview));fireEvent.click(screen.getByRole('button',{name:/Weekly worker planning preview/}));fireEvent.click(screen.getByRole('button',{name:'Load preview'}));await screen.findByText('Ada');
   expect(screen.queryByRole('button',{name:'Review new draft'})).toBeNull();expect(screen.getByText(/read-only, not a payroll run/)).toBeTruthy();expect(screen.getByText(/The preview is read-only/)).toBeTruthy();
   vi.stubEnv('NEXT_PUBLIC_FINANCE_FOUNDATION_PREVIEW','true');view.rerender(React.createElement(WeeklyWorkerPreview));expect(screen.getByRole('button',{name:'Review new draft'})).toBeTruthy();expect(screen.getByText(/experimental voucher actions available/)).toBeTruthy();expect(screen.getByText(/Experimental voucher actions are available in the final column/)).toBeTruthy();expect(screen.queryByText(/read-only, not a payroll run/)).toBeNull();

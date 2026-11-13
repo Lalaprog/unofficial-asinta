@@ -86,7 +86,7 @@ describe('revision-aware draft refresh UI (independent gate)',()=>{
  const existing={...row,vouchers:[{id,worker_id:worker,status:'draft' as const,period_start:start,period_end:end}]};
  const request='20000000-0000-4000-8000-000000000008';
  const version=(n:number)=>({...details('draft'),draft_revision:n});
- function enable(){vi.stubEnv('NEXT_PUBLIC_FINANCE_FOUNDATION_PREVIEW','true');vi.stubEnv('NEXT_PUBLIC_WEEKLY_WORKER_ACTIONS_PREVIEW','true');vi.stubEnv('NEXT_PUBLIC_WEEKLY_WORKER_REFRESH_PREVIEW','true');}
+ function enable(){vi.stubEnv('NEXT_PUBLIC_FINANCE_FOUNDATION_PREVIEW','true');vi.stubEnv('NEXT_PUBLIC_WEEKLY_WORKER_ACTIONS_PREVIEW','true');vi.stubEnv('NEXT_PUBLIC_WEEKLY_BALE_RELEASE_PREVIEW','true');vi.stubEnv('NEXT_PUBLIC_WEEKLY_WORKER_CUTOVER_PREVIEW','true');vi.stubEnv('NEXT_PUBLIC_WEEKLY_WORKER_REFRESH_PREVIEW','true');}
  it('requires all three gates and a valid server revision',async()=>{
   const {weeklyWorkerRefreshPreviewEnabled}=await import('@/lib/finance/featureAvailability');enable();expect(weeklyWorkerRefreshPreviewEnabled()).toBe(true);
   vi.stubEnv('NEXT_PUBLIC_WEEKLY_WORKER_ACTIONS_PREVIEW','false');expect(weeklyWorkerRefreshPreviewEnabled()).toBe(false);vi.stubEnv('NEXT_PUBLIC_WEEKLY_WORKER_ACTIONS_PREVIEW','true');vi.stubEnv('NEXT_PUBLIC_FINANCE_FOUNDATION_PREVIEW','false');expect(weeklyWorkerRefreshPreviewEnabled()).toBe(false);
@@ -144,7 +144,7 @@ describe('revision-aware draft refresh UI (independent gate)',()=>{
 describe('approved voucher return and revision-bound payment UI',()=>{
  const existing={...row,vouchers:[{id,worker_id:worker,status:'approved' as const,period_start:start,period_end:end}]};
  const request='20000000-0000-4000-8000-000000000008';
- function enable(){vi.stubEnv('NEXT_PUBLIC_FINANCE_FOUNDATION_PREVIEW','true');vi.stubEnv('NEXT_PUBLIC_WEEKLY_WORKER_ACTIONS_PREVIEW','true');vi.stubEnv('NEXT_PUBLIC_WEEKLY_WORKER_REFRESH_PREVIEW','true');vi.stubEnv('NEXT_PUBLIC_WEEKLY_WORKER_RETURN_PREVIEW','true');}
+ function enable(){vi.stubEnv('NEXT_PUBLIC_FINANCE_FOUNDATION_PREVIEW','true');vi.stubEnv('NEXT_PUBLIC_WEEKLY_WORKER_ACTIONS_PREVIEW','true');vi.stubEnv('NEXT_PUBLIC_WEEKLY_BALE_RELEASE_PREVIEW','true');vi.stubEnv('NEXT_PUBLIC_WEEKLY_WORKER_CUTOVER_PREVIEW','true');vi.stubEnv('NEXT_PUBLIC_WEEKLY_WORKER_REFRESH_PREVIEW','true');vi.stubEnv('NEXT_PUBLIC_WEEKLY_WORKER_RETURN_PREVIEW','true');}
  it('requires all gates and confirmation of no external payment with a reason',async()=>{
   const {weeklyWorkerReturnPreviewEnabled}=await import('@/lib/finance/featureAvailability');enable();expect(weeklyWorkerReturnPreviewEnabled()).toBe(true);vi.stubEnv('NEXT_PUBLIC_WEEKLY_WORKER_REFRESH_PREVIEW','false');expect(weeklyWorkerReturnPreviewEnabled()).toBe(false);enable();
   vi.spyOn(crypto,'randomUUID').mockReturnValue(request);let status:'approved'|'draft'='approved',revision=0;

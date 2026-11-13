@@ -38,7 +38,7 @@ async function fixture(cutover=true){
 
 describe('weekly Bale through worker payroll: candidate UI and synthetic SQL',()=>{
  it('records one release and one external payment, recovering safely from lost responses',async()=>{
-  for(const name of ['NEXT_PUBLIC_FINANCE_FOUNDATION_PREVIEW','NEXT_PUBLIC_WEEKLY_WORKER_ACTIONS_PREVIEW','NEXT_PUBLIC_WEEKLY_WORKER_REFRESH_PREVIEW','NEXT_PUBLIC_WEEKLY_WORKER_RETURN_PREVIEW'])vi.stubEnv(name,'true');
+  for(const name of ['NEXT_PUBLIC_FINANCE_FOUNDATION_PREVIEW','NEXT_PUBLIC_WEEKLY_WORKER_ACTIONS_PREVIEW','NEXT_PUBLIC_WEEKLY_WORKER_CUTOVER_PREVIEW','NEXT_PUBLIC_WEEKLY_BALE_RELEASE_PREVIEW','NEXT_PUBLIC_WEEKLY_WORKER_REFRESH_PREVIEW','NEXT_PUBLIC_WEEKLY_WORKER_RETURN_PREVIEW'])vi.stubEnv(name,'true');
   mock.today='2024-11-06';mock.actor=supervisor;mock.supervisor=true;mock.founder=false;const db=await fixture();try{
    const req=(await db.query<{id:string}>('INSERT INTO public.advance_requests(worker_id,project_id,requested_amount,submitted_by) VALUES($1,$2,100.25,$3) RETURNING id',[worker,site,supervisor])).rows[0].id;
    await db.exec(`SET test.uid='${founder}';SET test.clock='2024-11-05T04:00:00Z'`);await db.query("SELECT public.review_advance_request($1,'approve')",[req]);
@@ -82,7 +82,7 @@ describe('weekly Bale through worker payroll: candidate UI and synthetic SQL',()
   }finally{cleanup();await db.close();}
  },30000);
  it('blocks stale approval after a late Bale release, then refreshes and approves the revised amount',async()=>{
-  for(const name of ['NEXT_PUBLIC_FINANCE_FOUNDATION_PREVIEW','NEXT_PUBLIC_WEEKLY_WORKER_ACTIONS_PREVIEW','NEXT_PUBLIC_WEEKLY_WORKER_REFRESH_PREVIEW','NEXT_PUBLIC_WEEKLY_WORKER_RETURN_PREVIEW'])vi.stubEnv(name,'true');
+  for(const name of ['NEXT_PUBLIC_FINANCE_FOUNDATION_PREVIEW','NEXT_PUBLIC_WEEKLY_WORKER_ACTIONS_PREVIEW','NEXT_PUBLIC_WEEKLY_WORKER_CUTOVER_PREVIEW','NEXT_PUBLIC_WEEKLY_BALE_RELEASE_PREVIEW','NEXT_PUBLIC_WEEKLY_WORKER_REFRESH_PREVIEW','NEXT_PUBLIC_WEEKLY_WORKER_RETURN_PREVIEW'])vi.stubEnv(name,'true');
   mock.today='2024-11-06';mock.actor=founder;mock.supervisor=false;mock.founder=true;const db=await fixture();try{
    const req=(await db.query<{id:string}>('INSERT INTO public.advance_requests(worker_id,project_id,requested_amount,submitted_by) VALUES($1,$2,100.25,$3) RETURNING id',[worker,site,supervisor])).rows[0].id;
    await db.exec(`SET test.uid='${founder}';SET test.clock='2024-11-05T04:00:00Z'`);await db.query("SELECT public.review_advance_request($1,'approve')",[req]);

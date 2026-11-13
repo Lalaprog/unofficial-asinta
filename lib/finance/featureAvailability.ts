@@ -8,19 +8,31 @@ export function financeFoundationEnabled(): boolean {
   return process.env.NEXT_PUBLIC_FINANCE_FOUNDATION_PREVIEW === 'true';
 }
 
-/** Experimental weekly Bale release panel; not authorization or schema verification. */
-export function weeklyBaleReleasePreviewEnabled(): boolean {
-  return financeFoundationEnabled() && process.env.NEXT_PUBLIC_WEEKLY_BALE_RELEASE_PREVIEW === 'true';
+/** Both weekly write surfaces require the same complete display configuration.
+ * This prevents a build from exposing weekly writes alongside legacy controls
+ * or exposing just one half of the workflow. It does not verify backend state,
+ * authorize writes, protect older deployments, or schedule expiry. */
+function coordinatedWeeklyWritePreviewEnabled(): boolean {
+  return financeFoundationEnabled() && weeklyWorkerCutoverMode()
+    && process.env.NEXT_PUBLIC_WEEKLY_BALE_RELEASE_PREVIEW === 'true'
+    && process.env.NEXT_PUBLIC_WEEKLY_WORKER_ACTIONS_PREVIEW === 'true';
 }
 
-/** Independent display gate for the uninstalled expiry job health RPC. */
+/** Experimental weekly Bale release panel; not authorization or schema verification. */
+export function weeklyBaleReleasePreviewEnabled(): boolean {
+  return coordinatedWeeklyWritePreviewEnabled();
+}
+
+/** Read-only health remains visible during a partially configured cutover so
+ * an operator can investigate; the RPC and independent monitoring are required. */
 export function weeklyBaleExpiryHealthPreviewEnabled(): boolean {
-  return weeklyBaleReleasePreviewEnabled() && process.env.NEXT_PUBLIC_WEEKLY_BALE_EXPIRY_HEALTH_PREVIEW === 'true';
+  return financeFoundationEnabled() && weeklyWorkerCutoverMode()
+    && process.env.NEXT_PUBLIC_WEEKLY_BALE_EXPIRY_HEALTH_PREVIEW === 'true';
 }
 
 /** Experimental source-bound weekly write UI; never enable without its complete reviewed backend and cutover. */
 export function weeklyWorkerActionsPreviewEnabled(): boolean {
-  return financeFoundationEnabled() && process.env.NEXT_PUBLIC_WEEKLY_WORKER_ACTIONS_PREVIEW === 'true';
+  return coordinatedWeeklyWritePreviewEnabled();
 }
 
 /** Requires the reviewed refresh backend and the base weekly action gates; not authorization. */
