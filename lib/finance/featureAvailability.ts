@@ -23,6 +23,11 @@ export function weeklyWorkerActionsPreviewEnabled(): boolean {
   return financeFoundationEnabled() && process.env.NEXT_PUBLIC_WEEKLY_WORKER_ACTIONS_PREVIEW === 'true';
 }
 
+/** Read-only experimental confirmed rental links; not a write UI or schema check. */
+export function confirmedRentalPreviewEnabled(): boolean {
+  return financeFoundationEnabled() && process.env.NEXT_PUBLIC_CONFIRMED_RENTAL_PREVIEW === 'true';
+}
+
 /** Independent gate for the uninstalled Supervisor payroll planning RPCs. */
 export function supervisorPayrollPreviewEnabled(): boolean {
   return financeFoundationEnabled() && process.env.NEXT_PUBLIC_SUPERVISOR_PAYROLL_PREVIEW === 'true';

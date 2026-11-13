@@ -6,6 +6,8 @@ import { Button } from '@/components/ui/Button';
 import { Badge } from '@/components/ui/Badge';
 import { formatPeso } from '@/lib/email/format';
 import { useExpenseLedger } from '@/lib/projects/useExpenseLedger';
+import { confirmedRentalPreviewEnabled } from '@/lib/finance/featureAvailability';
+import { ConfirmedRentals } from '@/components/projects/ConfirmedRentals';
 
 export function ProjectExpenseLedger({projectId,userId,onRefreshTotals}:{projectId:string;userId:string|undefined;onRefreshTotals:()=>void}) {
  const ledger=useExpenseLedger(userId,true,projectId,true);
@@ -16,6 +18,7 @@ export function ProjectExpenseLedger({projectId,userId,onRefreshTotals}:{project
    <div className="flex flex-wrap gap-2"><Button variant="secondary" size="sm" onClick={()=>{ledger.reload();onRefreshTotals()}}>Refresh ledger</Button><Link href="/expenses"><Button variant="primary" size="sm" leftIcon={<Sparkles className="w-3.5 h-3.5" />}>Record Expense</Button></Link></div>
   </div>
   <p className="text-xs text-ink-secondary">Recorded expense entries only, newest first. Payroll and rentals appear only if already recorded as expenses; their automatic integration is not yet implemented. Pages and totals can change as records are edited; refresh to review the latest data.</p>
+  {confirmedRentalPreviewEnabled() && <ConfirmedRentals projectId={projectId} userId={userId} />}
   <div className="bg-white rounded-xl border border-surface-border overflow-hidden">
    <div className="divide-y divide-surface-border/70">
     {ledger.items.map(exp=><div key={exp.id} className="p-4 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
