@@ -191,6 +191,9 @@ BEGIN
  LOCK TABLE public.users,public.workers,public.attendance,public.attendance_time_details,
    public.worker_allowances,public.advances,public.advance_requests,public.payroll
    IN SHARE ROW EXCLUSIVE MODE;
+ -- The actor's role may have changed while this statement waited for locks.
+ IF auth.uid() IS NULL OR NOT coalesce(public.is_founder(),false) OR NOT coalesce(public.session_assurance_satisfied(),false) THEN
+  RAISE EXCEPTION 'Founder access with required assurance is required' USING ERRCODE='42501'; END IF;
  SELECT * INTO v_prev FROM public.weekly_worker_draft_sources WHERE payroll_id=p_id;
  IF FOUND THEN
   IF (v_prev.worker_id,v_prev.period_start,v_prev.recorded_by) IS DISTINCT FROM (p_worker,p_start,auth.uid()) THEN

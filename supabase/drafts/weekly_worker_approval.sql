@@ -46,6 +46,9 @@ BEGIN
  LOCK TABLE public.users,public.workers,public.attendance,public.attendance_time_details,
   public.worker_allowances,public.advances,public.advance_requests,public.payroll,
   public.weekly_worker_draft_sources IN SHARE ROW EXCLUSIVE MODE;
+ -- The actor's role may have changed while this statement waited for locks.
+ IF auth.uid() IS NULL OR NOT coalesce(public.is_founder(),false) OR NOT coalesce(public.session_assurance_satisfied(),false) THEN
+  RAISE EXCEPTION 'Founder access with required assurance is required' USING ERRCODE='42501'; END IF;
  SELECT * INTO v_source FROM public.weekly_worker_draft_sources WHERE payroll_id=p_id FOR UPDATE;
  IF NOT FOUND THEN RAISE EXCEPTION 'Weekly source-bound draft unavailable' USING ERRCODE='P0002'; END IF;
  SELECT * INTO v_pay FROM public.payroll WHERE id=p_id FOR UPDATE;

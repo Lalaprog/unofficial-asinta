@@ -31,11 +31,30 @@ suite('approved voucher return and payment concurrency',()=>{
     ('${id(11)}','${worker}','${other}','2024-11-04','half_day',4,'2024-11-04T08:00:00Z'),
     ('${id(12)}','${worker}','${site}','2024-11-10','present',8,'2024-11-10T08:00:00Z'),
     ('${id(13)}','${worker}','${site}','2024-11-17','present',8,'2024-11-17T08:00:00Z'),
-    ('${id(14)}','${worker}','${site}','2024-11-24','present',8,'2024-11-24T08:00:00Z');`);
+    ('${id(14)}','${worker}','${site}','2024-11-24','present',8,'2024-11-24T08:00:00Z'),
+    ('${id(15)}','${worker}','${site}','2024-09-01','present',8,'2024-09-01T08:00:00Z'),
+    ('${id(16)}','${worker}','${site}','2024-09-08','present',8,'2024-09-08T08:00:00Z'),
+    ('${id(17)}','${worker}','${site}','2024-09-15','present',8,'2024-09-15T08:00:00Z'),
+    ('${id(18)}','${worker}','${site}','2024-09-22','present',8,'2024-09-22T08:00:00Z'),
+    ('${id(19)}','${worker}','${site}','2024-09-29','present',8,'2024-09-29T08:00:00Z');`);
   for(const path of ['supabase/migrations/20261102000000_atomic_payroll_payments.sql','supabase/migrations/20261113000000_weekly_worker_preview.sql','supabase/migrations/20261113000001_attendance_time_detail.sql','supabase/migrations/20261113000002_worker_allowances.sql','supabase/migrations/20261113000003_weekly_payroll_context.sql','supabase/drafts/guard_legacy_bale_payment.sql','supabase/drafts/weekly_payment_date.sql','supabase/drafts/weekly_worker_generator.sql','supabase/drafts/weekly_worker_approval.sql','supabase/drafts/weekly_worker_paid_allocation.sql','supabase/drafts/weekly_worker_draft_details.sql','supabase/drafts/weekly_worker_draft_refresh.sql','supabase/drafts/weekly_worker_return_to_draft.sql'])await admin.query(readFileSync(path,'utf8'));
   await Promise.all([first.query(`SET ROLE authenticated; SET test.uid='${founder}'; SET test.assurance='yes'; SET lock_timeout='4s'`),second.query(`SET ROLE authenticated; SET test.uid='${founder}'; SET test.assurance='yes'; SET lock_timeout='4s'`)]);
  },30000);
  afterAll(async()=>{await Promise.all([admin?.end(),first?.end(),second?.end()]);});
+ it('rechecks Founder authorization after waiting for concurrent revocation on every weekly writer',async()=>{
+  const starts=['2024-09-01','2024-09-08','2024-09-15','2024-09-22','2024-09-29'];
+  for(let i=0;i<starts.length;i++){
+   const payroll=id(100+i),request=id(200+i),start=starts[i];
+   if(i>0)await draft(first,payroll,start);if(i>=3)await approve(first,payroll,0);
+   const before=(await admin.query(`SELECT (SELECT to_jsonb(p) FROM public.payroll p WHERE id=$1) payroll,(SELECT to_jsonb(s) FROM public.weekly_worker_draft_sources s WHERE payroll_id=$1) source,(SELECT count(*)::int FROM public.weekly_worker_draft_refreshes WHERE payroll_id=$1) refreshes,(SELECT count(*)::int FROM public.weekly_worker_approval_returns WHERE payroll_id=$1) returns,(SELECT count(*)::int FROM public.payroll_payment_dates WHERE payroll_id=$1) dates,(SELECT count(*)::int FROM public.weekly_worker_paid_allocations WHERE payroll_id=$1) allocations,(SELECT count(*)::int FROM public.audit_log WHERE record_id=$1) audit`,[payroll])).rows[0];
+   await admin.query('BEGIN');try{
+    await admin.query("UPDATE public.users SET role='supervisor' WHERE id=$1",[founder]);let finished=false;
+    const operation=i===0?()=>draft(first,payroll,start):i===1?()=>approve(first,payroll,0):i===2?()=>first.query('SELECT public.refresh_weekly_worker_draft($1,$2,0)',[request,payroll]):i===3?()=>back(first,payroll,request,0):()=>pay(first,payroll,'2024-10-05',0);
+    const pending=operation().then(()=>({code:'success'}),(e:{code:string})=>({code:e.code})).finally(()=>{finished=true});await pause();expect(finished).toBe(false);await admin.query('COMMIT');expect((await pending).code).toBe('42501');
+    const after=(await admin.query(`SELECT (SELECT to_jsonb(p) FROM public.payroll p WHERE id=$1) payroll,(SELECT to_jsonb(s) FROM public.weekly_worker_draft_sources s WHERE payroll_id=$1) source,(SELECT count(*)::int FROM public.weekly_worker_draft_refreshes WHERE payroll_id=$1) refreshes,(SELECT count(*)::int FROM public.weekly_worker_approval_returns WHERE payroll_id=$1) returns,(SELECT count(*)::int FROM public.payroll_payment_dates WHERE payroll_id=$1) dates,(SELECT count(*)::int FROM public.weekly_worker_paid_allocations WHERE payroll_id=$1) allocations,(SELECT count(*)::int FROM public.audit_log WHERE record_id=$1) audit`,[payroll])).rows[0];expect(after).toEqual(before);
+   }finally{await admin.query('ROLLBACK');await admin.query("UPDATE public.users SET role='founder' WHERE id=$1",[founder]);}
+  }
+ },20000);
  it('serializes exact return retries and rejects stale approval',async()=>{
   await draft(first,id(1),'2024-11-03');await approve(first,id(1),0);await first.query('BEGIN');await second.query('BEGIN');try{
    expect((await back(first,id(1),id(40),0)).rows[0].result.replayed).toBe(false);let done=false;

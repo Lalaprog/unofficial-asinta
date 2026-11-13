@@ -42,6 +42,13 @@ suite('real PostgreSQL combined weekly Bale and payroll candidate races',()=>{
     ('${id(205)}','${id(104)}','${site}','2024-12-29','present',8,'2024-12-29T08:00:00Z');`);
   const paths=['supabase/migrations/20261102000000_atomic_payroll_payments.sql','supabase/migrations/20261113000000_weekly_worker_preview.sql','supabase/migrations/20261113000001_attendance_time_detail.sql','supabase/migrations/20261113000002_worker_allowances.sql','supabase/migrations/20261113000003_weekly_payroll_context.sql','supabase/drafts/guard_legacy_bale_payment.sql','supabase/drafts/weekly_payment_date.sql','supabase/drafts/weekly_worker_generator.sql','supabase/drafts/weekly_worker_approval.sql','supabase/drafts/weekly_worker_paid_allocation.sql','supabase/drafts/weekly_worker_draft_details.sql','supabase/drafts/project_paid_payroll_evidence.sql','supabase/drafts/paid_payroll_adjustments.sql','supabase/migrations/20261013000000_advance_requests.sql','supabase/migrations/20261013000001_advance_request_notifications.sql','supabase/migrations/20261113000004_bale_request_site_guard.sql','supabase/drafts/weekly_bale_schedule.sql'];
   for(const path of paths)await admin.query(readFileSync(path,'utf8'));
+  // Rehearse coexistence of the Supervisor, historical-worker and original-period
+  // assertion candidates with the weekly Bale/payroll chain in this fixture.
+  for(const name of ['supervisor_table_foundation','supervisor_rpc_rollout','supervisor_payroll_preview','historical_external_worker_payroll','supervisor_payroll_ledger','paid_period_assertion_adjustments'])await admin.query(`BEGIN; ${readFileSync(`supabase/drafts/${name}.sql`,'utf8')} COMMIT;`);
+  await admin.query(`INSERT INTO public.workers(id,name,position,contact_number,pay_rate,pay_rate_type,active) VALUES ('${supervisor}','Supervisor','Supervisor','none',600,'daily',true),('${id(105)}','Worker Five','Mason','none',600,'daily',true),('${id(106)}','Worker Six','Mason','none',600,'daily',true),('${id(107)}','Worker Seven','Mason','none',600,'daily',true),('${id(108)}','Worker Eight','Mason','none',600,'daily',true),('${id(109)}','Worker Nine','Mason','none',600,'daily',true);
+   INSERT INTO public.project_worker_assignments VALUES ('${site}','${id(107)}',true),('${site}','${id(108)}',true);
+   INSERT INTO public.attendance(id,worker_id,project_id,date,status,hours_worked,submitted_at) VALUES ('${id(206)}','${id(105)}','${site}','2024-11-03','present',8,'2024-11-03T08:00:00Z'),('${id(207)}','${id(106)}','${site}','2024-11-10','present',8,'2024-11-10T08:00:00Z'),('${id(209)}','${id(109)}','${site}','2024-09-15','present',8,'2024-09-15T08:00:00Z');
+   INSERT INTO public.supervisor_daily_attendance(id,supervisor_id,work_date,work_status,status,submitted_at,reviewed_by,reviewed_at) VALUES ('${id(208)}','${supervisor}','2024-11-01','present','approved',now(),'${founder}',now())`);
   // Test-only clock; actual candidate uses the database clock, not caller input.
   await admin.query("CREATE OR REPLACE FUNCTION public.weekly_bale_clock() RETURNS timestamptz LANGUAGE sql VOLATILE SET search_path='' AS $$SELECT current_setting('test.clock')::timestamptz$$");
   await Promise.all([first.query(`SET ROLE authenticated; SET test.uid='${founder}'; SET test.assurance='yes'; SET lock_timeout='4s'`),second.query(`SET ROLE authenticated; SET test.uid='${supervisor}'; SET test.assurance='yes'; SET lock_timeout='4s'`)]);
@@ -98,4 +105,62 @@ suite('real PostgreSQL combined weekly Bale and payroll candidate races',()=>{
   expect((await admin.query('SELECT status,amount_deducted::text FROM public.advances WHERE id=$1',[issued.advance_id])).rows).toEqual([{status:'fully_deducted',amount_deducted:'100.25'}]);
   expect((await admin.query<{n:number}>('SELECT count(*)::int n FROM public.weekly_worker_paid_allocations WHERE payroll_id=$1',[payroll])).rows[0].n).toBe(1);
  },15000);
+ it('serializes a historical external claim before a competing weekly draft',async()=>{
+  const worker=id(105),start='2024-11-03',claim=id(501),payroll=id(502);await first.query(`SET test.uid='${founder}'`);await second.query(`SET test.uid='${founder}'`);
+  const reviewed=(await first.query('SELECT public.historical_external_worker_review($1,$2) v',[worker,start])).rows[0].v.worker;
+  await first.query('BEGIN');await second.query('BEGIN');try{
+   await first.query('SELECT public.record_historical_external_worker_payroll($1,$2,$3,$3::date+6,600,100,0,500,$4,$5,true)',[claim,worker,start,'Original ledger',JSON.stringify(reviewed)]);
+   let done=false;const attempted=generate(second,payroll,worker,start).then(()=>({code:'success'}),(e:{code:string})=>({code:e.code})).finally(()=>{done=true});await pause();expect(done).toBe(false);await first.query('COMMIT');expect((await attempted).code).toBe('22023');await second.query('ROLLBACK');
+   expect((await admin.query('SELECT count(*)::int n FROM public.payroll WHERE id=$1',[payroll])).rows[0].n).toBe(0);expect((await admin.query('SELECT count(*)::int n FROM public.advances WHERE worker_id=$1',[worker])).rows[0].n).toBe(0);
+   const snap=(await first.query("SELECT public.paid_period_assertion_case_list('external_worker',$1) v",[claim])).rows[0].v.snapshot;await first.query("SELECT public.open_paid_period_assertion_case($1,'external_worker',$2,$3,30,'Review')",[id(503),claim,JSON.stringify(snap)]);await first.query("SELECT public.resolve_paid_period_assertion_case($1,'no_transfer',NULL,'Reviewed',true)",[id(503)]);
+   expect((await admin.query('SELECT count(*)::int n FROM public.payroll WHERE worker_id=$1',[worker])).rows[0].n).toBe(0);expect((await admin.query('SELECT count(*)::int n FROM public.weekly_worker_paid_allocations a JOIN public.payroll p ON p.id=a.payroll_id WHERE p.worker_id=$1',[worker])).rows[0].n).toBe(0);
+  }finally{await first.query('ROLLBACK');await second.query('ROLLBACK');}
+ },15000);
+ it('serializes a weekly draft before a competing historical external claim',async()=>{
+  const worker=id(106),start='2024-11-10',claim=id(504),payroll=id(505);const reviewed=(await first.query('SELECT public.historical_external_worker_review($1,$2) v',[worker,start])).rows[0].v.worker;
+  await first.query('BEGIN');await second.query('BEGIN');try{
+   await generate(first,payroll,worker,start);let done=false;const attempted=second.query('SELECT public.record_historical_external_worker_payroll($1,$2,$3,$3::date+6,600,0,0,600,$4,$5,true)',[claim,worker,start,'Original ledger',JSON.stringify(reviewed)]).then(()=>({code:'success'}),(e:{code:string})=>({code:e.code})).finally(()=>{done=true});await pause();expect(done).toBe(false);await first.query('COMMIT');expect((await attempted).code).toBe('22023');await second.query('ROLLBACK');
+   expect((await admin.query('SELECT count(*)::int n FROM public.historical_external_worker_payroll WHERE request_id=$1',[claim])).rows[0].n).toBe(0);expect((await admin.query('SELECT status FROM public.payroll WHERE id=$1',[payroll])).rows[0].status).toBe('draft');
+  }finally{await first.query('ROLLBACK');await second.query('ROLLBACK');}
+ },15000);
+ it('keeps Supervisor company evidence and worker site allocation separate in the same period',async()=>{
+  const supervisorPayroll=id(506),workerPayroll=id(505);const prepared=(await first.query("SELECT public.supervisor_period_prepare($1,'2024-11-01') v",[supervisor])).rows[0].v;
+  await first.query("SELECT public.create_supervisor_period_draft($1,$2,'2024-11-01',600,$3)",[supervisorPayroll,supervisor,JSON.stringify(prepared)]);
+  await first.query("SELECT public.transition_supervisor_period_payroll($1,$2,'approved',NULL,true)",[id(507),supervisorPayroll]);await first.query("SELECT public.transition_supervisor_period_payroll($1,$2,'recorded_paid','2024-11-15',true)",[id(508),supervisorPayroll]);
+  await approve(first,workerPayroll);await first.query("SELECT public.record_weekly_worker_payment($1,'2024-11-16')",[workerPayroll]);
+  const snapshot=(await first.query("SELECT public.paid_period_assertion_case_list('supervisor',$1) v",[supervisorPayroll])).rows[0].v.snapshot;await first.query("SELECT public.open_paid_period_assertion_case($1,'supervisor',$2,$3,-25,'Review')",[id(509),supervisorPayroll,JSON.stringify(snapshot)]);await first.query("SELECT public.resolve_paid_period_assertion_case($1,'no_transfer',NULL,'Reviewed',true)",[id(509)]);
+  const evidence=(await first.query("SELECT public.supervisor_paid_company_evidence('2024-11-01','2024-11-30') v")).rows[0].v;expect(evidence).toMatchObject({count:1,total:'600.00'});
+  expect((await admin.query('SELECT project_id,gross::text FROM public.weekly_worker_paid_allocations WHERE payroll_id=$1',[workerPayroll])).rows).toEqual([{project_id:site,gross:'600.00'}]);
+  expect((await admin.query('SELECT count(*)::int n FROM public.weekly_worker_paid_allocations WHERE payroll_id=$1',[supervisorPayroll])).rows[0].n).toBe(0);
+  expect((await admin.query('SELECT gross::text,status FROM public.supervisor_period_payroll WHERE id=$1',[supervisorPayroll])).rows).toEqual([{gross:'600.00',status:'paid'}]);
+ },15000);
+
+ it('does not record a Bale release after the Supervisor role is revoked while waiting',async()=>{
+  const worker=id(107),req=await request(worker,'2024-10-20','2024-10-22','2024-10-23');await admin.query('BEGIN');try{
+   await admin.query("UPDATE public.users SET role='worker' WHERE id=$1",[supervisor]);let done=false;const pending=release(second,req).then(()=>({code:'success'}),(e:{code:string})=>({code:e.code})).finally(()=>{done=true});await pause();expect(done).toBe(false);await admin.query('COMMIT');expect((await pending).code).toBe('42501');
+   expect((await admin.query('SELECT status,issued_advance_id FROM public.advance_requests WHERE id=$1',[req])).rows).toEqual([{status:'approved_pending_payment',issued_advance_id:null}]);expect((await admin.query('SELECT count(*)::int n FROM public.advances WHERE worker_id=$1',[worker])).rows[0].n).toBe(0);
+  }finally{await admin.query('ROLLBACK');await admin.query("UPDATE public.users SET role='supervisor' WHERE id=$1",[supervisor]);}
+  expect((await release(second,req)).rows[0].result.outcome).toBe('updated');
+ },15000);
+
+ it('does not record a Bale release after the Founder role is revoked while waiting',async()=>{
+  const worker=id(108),req=await request(worker,'2024-10-13','2024-10-15','2024-10-16');await first.query("SELECT set_config('test.clock','2024-10-16T04:00:00Z',false)");await admin.query('BEGIN');try{
+   await admin.query("UPDATE public.users SET role='worker' WHERE id=$1",[founder]);let done=false;const pending=release(first,req).then(()=>({code:'success'}),(e:{code:string})=>({code:e.code})).finally(()=>{done=true});await pause();expect(done).toBe(false);await admin.query('COMMIT');expect((await pending).code).toBe('42501');
+   expect((await admin.query('SELECT status,issued_advance_id FROM public.advance_requests WHERE id=$1',[req])).rows).toEqual([{status:'approved_pending_payment',issued_advance_id:null}]);expect((await admin.query('SELECT count(*)::int n FROM public.advances WHERE worker_id=$1',[worker])).rows[0].n).toBe(0);
+  }finally{await admin.query('ROLLBACK');await admin.query("UPDATE public.users SET role='founder' WHERE id=$1",[founder]);}
+  expect((await release(first,req)).rows[0].result.outcome).toBe('updated');
+  await first.query('BEGIN');try{expect((await release(first,req)).rows[0].result.outcome).toBe('already_recorded');let changed=false;const revoke=admin.query("UPDATE public.users SET role='worker' WHERE id=$1",[founder]).finally(()=>{changed=true;});await pause();expect(changed).toBe(false);await first.query('COMMIT');await revoke;}finally{await first.query('ROLLBACK');await admin.query("UPDATE public.users SET role='founder' WHERE id=$1",[founder]);}
+ },15000);
+
+ it('blocks unwrapped weekly approval and payment after a concurrent Founder revocation',async()=>{
+  const payroll=id(510);await generate(first,payroll,id(109),'2024-09-15');
+  for(const [operation,status] of [[()=>approve(first,payroll),'draft'],[()=>first.query("SELECT public.record_weekly_worker_payment($1,'2024-09-21')",[payroll]),'approved']] as const){
+   if(status==='approved')await approve(first,payroll);await admin.query('BEGIN');try{
+    await admin.query("UPDATE public.users SET role='worker' WHERE id=$1",[founder]);let done=false;const pending=operation().then(()=>({code:'success'}),(e:{code:string})=>({code:e.code})).finally(()=>{done=true});await pause();expect(done).toBe(false);await admin.query('COMMIT');expect((await pending).code).toBe('42501');
+    expect((await admin.query('SELECT status FROM public.payroll WHERE id=$1',[payroll])).rows[0].status).toBe(status);expect((await admin.query('SELECT count(*)::int n FROM public.weekly_worker_paid_allocations WHERE payroll_id=$1',[payroll])).rows[0].n).toBe(0);expect((await admin.query('SELECT count(*)::int n FROM public.payroll_payment_dates WHERE payroll_id=$1',[payroll])).rows[0].n).toBe(0);
+   }finally{await admin.query('ROLLBACK');await admin.query("UPDATE public.users SET role='founder' WHERE id=$1",[founder]);}
+  }
+  expect((await first.query("SELECT public.record_weekly_worker_payment($1,'2024-09-21') v",[payroll])).rows[0].v.outcome).toBe('updated');
+ },15000);
+
 });

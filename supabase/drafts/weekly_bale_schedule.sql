@@ -107,6 +107,11 @@ DECLARE v_request public.advance_requests%ROWTYPE;v_rule public.weekly_bale_requ
 BEGIN
  IF auth.uid() IS NULL OR NOT coalesce(public.session_assurance_satisfied(),false) THEN RAISE EXCEPTION 'Authorized access required' USING ERRCODE='42501'; END IF;
  IF current_setting('transaction_isolation')<>'read committed' THEN RAISE EXCEPTION 'Bale release requires read committed isolation' USING ERRCODE='P1002'; END IF;
+ -- Pin the actor's profile before the worker/request locks. Role changes must
+ -- wait for this decision, and a role revoked while waiting must fail closed.
+ PERFORM pg_catalog.set_config('lock_timeout','3s',true);
+ PERFORM 1 FROM public.users WHERE id=auth.uid() FOR SHARE;
+ IF NOT FOUND OR auth.uid() IS NULL OR NOT coalesce(public.session_assurance_satisfied(),false) THEN RAISE EXCEPTION 'Authorized access required' USING ERRCODE='42501'; END IF;
  SELECT worker_id INTO v_worker FROM public.advance_requests WHERE id=p_request_id;
  IF NOT FOUND THEN RAISE EXCEPTION 'Request unavailable' USING ERRCODE='P0002'; END IF;
  -- Shared worker lock serializes with the guarded payroll paid transition.
@@ -114,6 +119,7 @@ BEGIN
  SELECT * INTO v_request FROM public.advance_requests WHERE id=p_request_id AND worker_id=v_worker FOR UPDATE;
  SELECT * INTO v_rule FROM public.weekly_bale_requests WHERE request_id=p_request_id FOR UPDATE;
  IF v_request.id IS NULL OR v_rule.request_id IS NULL THEN RAISE EXCEPTION 'Weekly request unavailable; review legacy records separately' USING ERRCODE='P0002'; END IF;
+ IF auth.uid() IS NULL OR NOT coalesce(public.session_assurance_satisfied(),false) THEN RAISE EXCEPTION 'Authorized access required' USING ERRCODE='42501'; END IF;
  IF NOT coalesce(public.is_founder(),false) THEN
   PERFORM 1 FROM public.project_supervisors WHERE project_id=v_request.project_id AND supervisor_id=auth.uid() FOR KEY SHARE;
   IF NOT FOUND OR NOT coalesce(public.current_user_role()='supervisor',false) OR NOT coalesce(public.is_supervisor_assigned(v_request.project_id),false) THEN RAISE EXCEPTION 'Site authorization required' USING ERRCODE='42501'; END IF;

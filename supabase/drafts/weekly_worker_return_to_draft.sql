@@ -80,6 +80,9 @@ BEGIN
   public.worker_allowances,public.advances,public.advance_requests,public.payroll,public.weekly_worker_draft_sources,
   public.payroll_payment_dates,public.weekly_worker_paid_allocations,public.weekly_worker_draft_refreshes,
   public.weekly_worker_approval_returns IN SHARE ROW EXCLUSIVE MODE;
+ -- The actor's role may have changed while this statement waited for locks.
+ IF auth.uid() IS NULL OR NOT coalesce(public.is_founder(),false) OR NOT coalesce(public.session_assurance_satisfied(),false) THEN
+  RAISE EXCEPTION 'Founder access with required assurance is required' USING ERRCODE='42501'; END IF;
  SELECT * INTO v_previous FROM public.weekly_worker_approval_returns WHERE request_id=p_request;
  IF FOUND THEN
   IF (v_previous.payroll_id,v_previous.actor_id,v_previous.expected_revision,v_previous.reason) IS DISTINCT FROM (p_id,auth.uid(),p_expected_revision,v_reason) THEN
@@ -134,6 +137,9 @@ BEGIN
  PERFORM pg_catalog.set_config('lock_timeout','3s',true);
  LOCK TABLE public.users,public.workers,public.projects,public.attendance,public.attendance_time_details,public.worker_allowances,
   public.advances,public.advance_requests,public.payroll,public.weekly_worker_draft_sources,public.payroll_payment_dates,public.weekly_worker_paid_allocations IN SHARE ROW EXCLUSIVE MODE;
+ -- The actor's role may have changed while this statement waited for locks.
+ IF auth.uid() IS NULL OR NOT coalesce(public.is_founder(),false) OR NOT coalesce(public.session_assurance_satisfied(),false) THEN
+  RAISE EXCEPTION 'Founder access with required assurance is required' USING ERRCODE='42501'; END IF;
  SELECT draft_revision INTO v_revision FROM public.weekly_worker_draft_sources WHERE payroll_id=p_id;
  IF NOT FOUND THEN RAISE EXCEPTION 'Weekly source-bound voucher unavailable' USING ERRCODE='P0002'; END IF;
  IF v_revision<>p_expected_revision THEN RAISE EXCEPTION 'Voucher revision changed; review before recording payment' USING ERRCODE='40001'; END IF;

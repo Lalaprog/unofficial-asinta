@@ -59,4 +59,12 @@ suite.each(['historical-first','supervisor-first'])('cross-ledger and paid-perio
   }finally{await first.query('ROLLBACK');await second.query('ROLLBACK');}
   await first.query('BEGIN ISOLATION LEVEL REPEATABLE READ');try{await expect(first.query("SELECT public.resolve_paid_period_assertion_case($1,'no_transfer',NULL,'Reviewed',true)",[id(21)])).rejects.toMatchObject({code:'P1002'});}finally{await first.query('ROLLBACK');}
  });
+ it('rejects decisions after frozen Supervisor source details change without changing the amount',async()=>{
+  await first.query("SELECT public.transition_supervisor_period_payroll($1,$2,'approved',NULL,true)",[id(50),id(10)]);await first.query("SELECT public.transition_supervisor_period_payroll($1,$2,'recorded_paid','2024-12-15',true)",[id(51),id(10)]);
+  const original=(await first.query("SELECT public.paid_period_assertion_case_list('supervisor',$1) v",[id(10)])).rows[0].v.snapshot;await first.query("SELECT public.open_paid_period_assertion_case($1,'supervisor',$2,$3,5,'Review')",[id(52),id(10),JSON.stringify(original)]);
+  await admin.query("UPDATE public.supervisor_period_payroll SET source_snapshot=source_snapshot||'{\"changed\":true}'::jsonb WHERE id=$1",[id(10)]);
+  const current=(await first.query("SELECT public.paid_period_assertion_case_list('supervisor',$1) v",[id(10)])).rows[0].v.snapshot;expect(current.details.source_fingerprint).not.toBe(original.details.source_fingerprint);expect(current.gross).toBe(original.gross);
+  await expect(first.query("SELECT public.resolve_paid_period_assertion_case($1,'no_transfer',NULL,'Reviewed',true)",[id(52)])).rejects.toMatchObject({code:'40001'});
+ });
+
 });
