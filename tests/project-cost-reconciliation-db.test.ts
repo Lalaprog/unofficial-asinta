@@ -6,6 +6,11 @@ import {baleExpense,candidatePaths,confirmRental,fixture,founder,materialExpense
 async function setup(){const db=new PGlite();await db.exec(`${roles} ${fixture}`);for(const path of candidatePaths)await db.exec(readFileSync(path,'utf8'));await db.exec(`SET ROLE authenticated;SET test.uid='${founder}';SET test.assurance='yes'; ${confirmRental}`);return db;}
 const read=async(db:PGlite,project=site)=>(await db.query<{v:unknown}>('SELECT public.project_cost_reconciliation_preview($1) v',[project])).rows[0].v;
 describe('uninstalled project-cost reconciliation snapshot',()=>{
+ it('fails closed when the correction-case prerequisite is missing',async()=>{const db=new PGlite();try{
+  await db.exec(`${roles} ${fixture}`);for(const path of candidatePaths.slice(0,2))await db.exec(readFileSync(path,'utf8'));
+  await expect(db.exec(`BEGIN; ${readFileSync('supabase/drafts/project_cost_reconciliation_preview.sql','utf8')} COMMIT`)).rejects.toThrow(/prerequisites missing/);await db.exec('ROLLBACK');
+  expect((await db.query<{absent:boolean}>("SELECT to_regprocedure('public.project_cost_reconciliation_preview(uuid)') IS NULL absent")).rows[0].absent).toBe(true);
+ }finally{await db.close();}},30000);
  it('joins expense, linked rental and validated paid allocation once, without writing finance',async()=>{const db=await setup();try{
   await db.exec('RESET ROLE');const before=(await db.query('SELECT (SELECT jsonb_agg(to_jsonb(e) ORDER BY e.id) FROM public.expenses e) expenses,(SELECT jsonb_agg(to_jsonb(p) ORDER BY p.id) FROM public.payroll p) payroll,(SELECT jsonb_agg(to_jsonb(a) ORDER BY a.project_id) FROM public.weekly_worker_paid_allocations a) allocations')).rows[0];await db.exec('SET ROLE authenticated');
   const s=parseCostSnapshot(await read(db),site);expect(s.expenses).toHaveLength(3);expect(s.paid).toHaveLength(1);expect(s.paid[0].gross).toBe('600.00');expect(s.paid[0].voucherBale).toBe('100.00');expect(s.expenses.find(e=>e.id===rentalExpense)?.rental?.item).toBe('Excavator');expect(s.expenses.find(e=>e.id===baleExpense)?.baleHint).toBe(true);

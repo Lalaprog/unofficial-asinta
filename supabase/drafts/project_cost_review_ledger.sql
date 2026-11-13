@@ -1,8 +1,9 @@
 -- EXPERIMENTAL DRAFT ONLY. Not a final project cost or release migration.
 -- A Founder records an immutable, explicitly incomplete review of one bounded
 -- snapshot. No expense, payment, allocation, Bale or accounting ledger is
--- changed. Missing legacy/external pay, correction cases, duplicates and
--- unrecorded items remain outside the snapshot; a match is not completeness.
+-- changed. Missing legacy/external pay, unlinked correction cases, correction
+-- allocations, duplicates and unrecorded items remain outside the snapshot;
+-- a match is not completeness.
 SET LOCAL lock_timeout='3s'; SET LOCAL statement_timeout='30s';
 DO $preflight$
 BEGIN

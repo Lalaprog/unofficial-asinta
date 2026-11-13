@@ -132,9 +132,12 @@ suite('coordinated finance integration rehearsal, synthetic PostgreSQL only',()=
    await db.query("SELECT public.open_paid_payroll_adjustment('70000000-0000-4000-8000-000000000012',$1,$2,25.50,'Synthetic review')",[voucher,correctionSnapshot]);
    await db.query("SELECT public.resolve_paid_payroll_adjustment('70000000-0000-4000-8000-000000000012','settled_external','2024-08-12','Synthetic settlement')");
    await db.query('RESET ROLE');expect((await db.query('SELECT to_jsonb(p) v FROM public.payroll p WHERE id=$1',[voucher])).rows[0].v).toEqual(original);await db.query('SET LOCAL ROLE authenticated');
-   // Adjustments are outside this snapshot: matching included sources is not
-   // evidence of complete costs or of a correction's project allocation.
-   expect((await db.query('SELECT public.project_cost_review($1) v',[site])).rows[0].v).toMatchObject({freshness:'matches',incomplete_total:'1812.60'});
+   // The case changes the evidence snapshot but its whole-voucher difference
+   // is not silently assigned or added to a site cost.
+   expect((await db.query('SELECT public.project_cost_review($1) v',[site])).rows[0].v).toMatchObject({freshness:'changed',incomplete_total:'1812.60'});
+   const corrected=parseCostSnapshot((await db.query('SELECT public.project_cost_reconciliation_preview($1) v',[site])).rows[0].v,site);
+   expect(corrected.adjustments).toMatchObject([{payrollId:voucher,status:'settled_external',difference:'25.50',settledOn:'2024-08-12'}]);
+   expect(estimateProjectCost(corrected,choices)).toEqual({expenses:101235n,excluded:10025n,payroll:80025n,total:181260n});
    const detailHistory=(await db.query('SELECT public.attendance_history_time_batch($1::uuid[]) v',[[attendance]])).rows[0].v;
    expect(detailHistory).toMatchObject({items:[{id:attendance,detail:{regular_hours:'8.00',overtime_hours:'2.00'}}]});
    const paidSite=(await db.query('SELECT public.project_paid_worker_evidence($1) v',[site])).rows[0].v;

@@ -5,7 +5,7 @@ export const roles='CREATE ROLE anon; CREATE ROLE authenticated; CREATE ROLE ser
 export const fixture=`
  ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT ALL ON TABLES TO anon,authenticated,service_role;
  ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT EXECUTE ON FUNCTIONS TO anon,authenticated,service_role;
- CREATE SCHEMA auth;CREATE FUNCTION auth.uid() RETURNS uuid LANGUAGE sql STABLE AS $$SELECT nullif(current_setting('test.uid',true),'')::uuid$$;
+ CREATE SCHEMA auth;CREATE SCHEMA app_private;CREATE FUNCTION auth.uid() RETURNS uuid LANGUAGE sql STABLE AS $$SELECT nullif(current_setting('test.uid',true),'')::uuid$$;
  CREATE FUNCTION public.session_assurance_satisfied() RETURNS boolean LANGUAGE sql STABLE AS $$SELECT current_setting('test.assurance',true)='yes'$$;
  CREATE TABLE public.users(id uuid primary key,role text NOT NULL);INSERT INTO public.users VALUES('${founder}','founder'),('${supervisor}','supervisor');
  CREATE FUNCTION public.is_founder() RETURNS boolean LANGUAGE sql STABLE SECURITY DEFINER AS $$SELECT EXISTS(SELECT 1 FROM public.users WHERE id=auth.uid() AND role='founder')$$;
@@ -28,5 +28,5 @@ export const fixture=`
  CREATE POLICY founder_expenses ON public.expenses TO authenticated USING(public.is_founder() AND public.session_assurance_satisfied()) WITH CHECK(public.is_founder() AND public.session_assurance_satisfied());
  GRANT USAGE ON SCHEMA public,auth TO anon,authenticated,service_role;
  GRANT SELECT,UPDATE,DELETE ON public.expenses TO authenticated;`;
-export const candidatePaths=['supabase/drafts/project_paid_payroll_evidence.sql','supabase/drafts/confirmed_rental_expense_link.sql','supabase/drafts/project_cost_reconciliation_preview.sql'];
+export const candidatePaths=['supabase/drafts/project_paid_payroll_evidence.sql','supabase/drafts/confirmed_rental_expense_link.sql','supabase/drafts/paid_payroll_adjustments.sql','supabase/drafts/project_cost_reconciliation_preview.sql'];
 export const confirmRental=`SELECT public.confirm_rental_expense('${rentalId}','${rentalExpense}','${site}',1000,'2024-11-02','Excavator hire','Excavator','Supplier',1,'2024-11-01','2024-11-02')`;

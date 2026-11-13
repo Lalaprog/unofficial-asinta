@@ -23,9 +23,11 @@ suite('project cost reconciliation snapshot on PostgreSQL 17',()=>{
   await admin.query('BEGIN');try{
    await admin.query('SELECT pg_advisory_xact_lock(918376)');await admin.query('UPDATE public.expenses SET amount=70 WHERE id=$1',[materialExpense]);
    await admin.query('UPDATE public.payroll SET gross_pay=760,net_pay=660 WHERE id=$1',[payroll]);await admin.query('UPDATE public.weekly_worker_draft_sources SET calculation=$2 WHERE payroll_id=$1',[payroll,JSON.stringify({wage:'710.00',allowance:'50.00',gross:'760.00',bale:'100.00',net:'660.00'})]);await admin.query('UPDATE public.weekly_worker_paid_allocations SET wage=560,gross=610 WHERE payroll_id=$1 AND project_id=$2',[payroll,site]);
+   await admin.query(`SET LOCAL test.uid='${founder}'; SET LOCAL test.assurance='yes'`);
+   await admin.query("SELECT public.open_paid_payroll_adjustment('20000000-0000-0000-0000-000000000099',p.id,app_private.paid_adjustment_voucher_snapshot(p),25.50,'Separate case') FROM public.payroll p WHERE id=$1",[payroll]);
    let done=false;const pending=reader.query<{v:unknown}>('SELECT public.project_cost_reconciliation_preview($1) v',[site]).finally(()=>{done=true});await pause();expect(done).toBe(false);await admin.query('COMMIT');
-   const previous=parseCostSnapshot((await pending).rows[0].v,site);expect(previous.expenses.find(x=>x.id===materialExpense)?.amount).toBe('50.00');expect(previous.paid[0].gross).toBe('600.00');
-   const current=parseCostSnapshot((await reader.query<{v:unknown}>('SELECT public.project_cost_reconciliation_preview($1) v',[site])).rows[0].v,site);expect(current.expenses.find(x=>x.id===materialExpense)?.amount).toBe('70.00');expect(current.paid[0].gross).toBe('610.00');
+   const previous=parseCostSnapshot((await pending).rows[0].v,site);expect(previous.expenses.find(x=>x.id===materialExpense)?.amount).toBe('50.00');expect(previous.paid[0].gross).toBe('600.00');expect(previous.adjustments).toEqual([]);
+   const current=parseCostSnapshot((await reader.query<{v:unknown}>('SELECT public.project_cost_reconciliation_preview($1) v',[site])).rows[0].v,site);expect(current.expenses.find(x=>x.id===materialExpense)?.amount).toBe('70.00');expect(current.paid[0].gross).toBe('610.00');expect(current.adjustments).toMatchObject([{payrollId:payroll,status:'pending',difference:'25.50'}]);
   }finally{await admin.query('ROLLBACK');}
  },15000);
  it('rejects more than 500 paid allocations instead of returning a partial total',async()=>{
@@ -37,6 +39,16 @@ suite('project cost reconciliation snapshot on PostgreSQL 17',()=>{
   await admin.query(`INSERT INTO public.payroll VALUES(md5('limit500')::uuid,'${worker}','2024-11-03','2024-11-09','paid',100,0,0,100,8);
    INSERT INTO public.weekly_worker_draft_sources VALUES(md5('limit500')::uuid,'${worker}','2024-11-03','${founder}',now(),NULL,'${founder}',NULL,'{"wage":"100.00","allowance":"0.00","gross":"100.00","bale":"0.00","net":"100.00"}');
    INSERT INTO public.payroll_payment_dates VALUES(md5('limit500')::uuid,'2024-11-09','${founder}');INSERT INTO public.weekly_worker_paid_allocations VALUES(md5('limit500')::uuid,'${site}',8,100,0,100);`);
+  await expect(reader.query('SELECT public.project_cost_reconciliation_preview($1)',[site])).rejects.toMatchObject({code:'54000'});
+ },30000);
+ it('rejects more than 500 matching correction cases instead of returning partial signals',async()=>{
+  // Clear only synthetic excess payroll from the previous boundary test.
+  await admin.query("DELETE FROM public.weekly_worker_paid_allocations WHERE payroll_id=md5('limit500')::uuid;DELETE FROM public.payroll_payment_dates WHERE payroll_id=md5('limit500')::uuid;DELETE FROM public.weekly_worker_draft_sources WHERE payroll_id=md5('limit500')::uuid;DELETE FROM public.payroll WHERE id=md5('limit500')::uuid");
+  await admin.query(`INSERT INTO public.paid_payroll_adjustment_cases(id,payroll_id,worker_id,original_voucher,difference,reason,status,created_by,resolved_by,resolved_at,resolution_note)
+   SELECT md5(('case'||g)::text)::uuid,'${payroll}','${worker}','{}'::jsonb,1,'Synthetic','no_transfer','${founder}','${founder}',now(),'Synthetic' FROM generate_series(1,499) g`);
+  const full=parseCostSnapshot((await reader.query<{v:unknown}>('SELECT public.project_cost_reconciliation_preview($1) v',[site])).rows[0].v,site);expect(full.adjustments).toHaveLength(500);
+  await admin.query(`INSERT INTO public.paid_payroll_adjustment_cases(id,payroll_id,worker_id,original_voucher,difference,reason,status,created_by,resolved_by,resolved_at,resolution_note)
+   VALUES(md5('case500')::uuid,'${payroll}','${worker}','{}',1,'Synthetic','no_transfer','${founder}','${founder}',now(),'Synthetic')`);
   await expect(reader.query('SELECT public.project_cost_reconciliation_preview($1)',[site])).rejects.toMatchObject({code:'54000'});
  },30000);
 });
