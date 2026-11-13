@@ -35,6 +35,7 @@ suite('weekly Bale schedule on disposable PostgreSQL',()=>{
   for(const path of ['supabase/migrations/20261013000000_advance_requests.sql','supabase/migrations/20261013000001_advance_request_notifications.sql','supabase/migrations/20261113000004_bale_request_site_guard.sql'])await admin.query(readFileSync(path,'utf8'));
   const guard=readFileSync('supabase/drafts/guard_legacy_bale_payment.sql','utf8');await admin.query(guard.slice(guard.indexOf('CREATE FUNCTION public.guard_new_advance_finalized_payroll()'),guard.indexOf('-- Keep the atomic implementation')));
   await admin.query(readFileSync('supabase/drafts/weekly_bale_schedule.sql','utf8'));
+  await admin.query(readFileSync('supabase/drafts/weekly_bale_expiration.sql','utf8'));
   await admin.query(`CREATE OR REPLACE FUNCTION public.weekly_bale_clock() RETURNS timestamptz LANGUAGE sql VOLATILE SET search_path='' AS $$SELECT current_setting('test.clock')::timestamptz$$;`);
   await Promise.all([first.query(`SET ROLE authenticated; SET test.uid='${supervisor}'; SET test.assurance='yes'; SET test.clock='2026-11-15T04:00:00Z'; SET lock_timeout='4s'`),second.query(`SET ROLE authenticated; SET test.uid='${supervisor}'; SET test.assurance='yes'; SET test.clock='2026-11-18T04:00:00Z'; SET lock_timeout='4s'`)]);
  },30000);
@@ -67,5 +68,17 @@ suite('weekly Bale schedule on disposable PostgreSQL',()=>{
    await pause();expect(finished).toBe(false);await admin.query('COMMIT');expect((await attempt).code).toBe('22023');await second.query('ROLLBACK');
    expect((await admin.query<{n:number}>("SELECT count(*)::int n FROM public.advance_requests WHERE id=$1 AND status='approved_pending_payment'",[request])).rows[0].n).toBe(1);
   }finally{await admin.query('ROLLBACK');await second.query('ROLLBACK');}
+ },15000);
+ it('skips an in-flight request and materializes it only once after the lock clears',async()=>{
+  await first.query(`SET test.uid='${supervisor}'; SET test.clock='2026-11-15T04:00:00Z'`);const request=await submit(first);
+  await first.query("RESET ROLE; SET test.uid=''; SET test.clock='2026-11-18T04:00:00Z'");await second.query("RESET ROLE; SET test.uid=''; SET test.clock='2026-11-18T04:00:00Z'");
+  await first.query('BEGIN');try{
+   await first.query('SELECT id FROM public.advance_requests WHERE id=$1 FOR UPDATE',[request]);
+   expect((await second.query<{n:number}>('SELECT public.materialize_weekly_bale_expiry(100) n')).rows[0].n).toBe(0);
+   await first.query('COMMIT');expect((await second.query<{n:number}>('SELECT public.materialize_weekly_bale_expiry(100) n')).rows[0].n).toBe(1);
+   expect((await second.query<{n:number}>('SELECT public.materialize_weekly_bale_expiry(100) n')).rows[0].n).toBe(0);
+   expect((await admin.query('SELECT status,auto_expired,rejected_by FROM public.advance_requests WHERE id=$1',[request])).rows).toEqual([{status:'rejected',auto_expired:true,rejected_by:null}]);
+   expect((await admin.query("SELECT actor_id FROM public.audit_log WHERE record_id=$1 AND action='update'",[request])).rows).toEqual([{actor_id:null}]);
+  }finally{await first.query('ROLLBACK');}
  },15000);
 });

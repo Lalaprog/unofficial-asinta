@@ -4,7 +4,7 @@ import {describe,expect,it} from 'vitest';
 const id=(n:number)=>`00000000-0000-0000-0000-${String(n).padStart(12,'0')}`;
 const [founder,supervisor,outsider,worker,site,other]=[1,2,3,4,5,6].map(id);
 const sql=(path:string)=>readFileSync(path,'utf8');
-async function fixture(){
+async function fixture(withExpiration=false){
  const db=new PGlite();
  await db.exec(`CREATE ROLE anon; CREATE ROLE authenticated; CREATE ROLE service_role; CREATE SCHEMA auth;
   CREATE FUNCTION auth.uid() RETURNS uuid LANGUAGE sql STABLE AS $$SELECT nullif(current_setting('test.uid',true),'')::uuid$$;
@@ -32,6 +32,7 @@ async function fixture(){
  const guard=sql('supabase/drafts/guard_legacy_bale_payment.sql');
  await db.exec(guard.slice(guard.indexOf('CREATE FUNCTION public.guard_new_advance_finalized_payroll()'),guard.indexOf('-- Keep the atomic implementation')));
  await db.exec(sql('supabase/drafts/weekly_bale_schedule.sql'));
+ if(withExpiration) await db.exec(sql('supabase/drafts/weekly_bale_expiration.sql'));
  // Test-only replacement by owner. Production clock accepts no user argument.
  await db.exec(`CREATE OR REPLACE FUNCTION public.weekly_bale_clock() RETURNS timestamptz LANGUAGE sql VOLATILE SET search_path='' AS $$SELECT current_setting('test.clock')::timestamptz$$;
   SET test.clock='2026-11-15T04:00:00Z'; SET test.uid='${supervisor}'; SET test.assurance='yes'; SET ROLE authenticated;`);
@@ -87,6 +88,33 @@ describe('experimental weekly Bale schedule (not deployed)',()=>{
    await time(db,'2026-11-18T04:00:00Z');await db.exec(`RESET ROLE; INSERT INTO public.payroll VALUES ('${id(80)}','${worker}','2026-11-15','2026-11-21','approved'); SET ROLE authenticated;`);
    await expect(release(db,request)).rejects.toThrow(/Finalized payroll/);await db.exec('SET test.assurance=\'no\'');await expect(release(db,request)).rejects.toThrow(/Authorized access/);
    await db.exec('RESET ROLE');expect((await db.query<{n:number}>('SELECT count(*)::int n FROM public.advances')).rows[0].n).toBe(0);
+  }finally{await db.close();}
+ },30000);
+ it('materializes overdue requests as system rejections with audit and notification exactly once',async()=>{
+  const db=await fixture(true);try{
+   const overdue=await submit(db),approved=await submit(db);await role(db,founder);await db.query("SELECT public.review_advance_request($1,'approve')",[approved]);
+   await expect(db.query('SELECT public.materialize_weekly_bale_expiry(100)')).rejects.toThrow(/permission denied/);
+   await db.exec("RESET ROLE; SET test.uid=''; SET test.clock='2026-11-17T15:59:59Z'");
+   expect((await db.query<{n:number}>('SELECT public.materialize_weekly_bale_expiry(100) n')).rows[0].n).toBe(0);
+   await time(db,'2026-11-17T16:00:00Z');expect((await db.query<{n:number}>('SELECT public.materialize_weekly_bale_expiry(100) n')).rows[0].n).toBe(1);
+   expect((await db.query<{n:number}>('SELECT public.materialize_weekly_bale_expiry(100) n')).rows[0].n).toBe(0);
+   expect((await db.query('SELECT status,auto_expired,rejected_by FROM public.advance_requests WHERE id=$1',[overdue])).rows).toEqual([{status:'rejected',auto_expired:true,rejected_by:null}]);
+   expect((await db.query('SELECT status,auto_expired FROM public.advance_requests WHERE id=$1',[approved])).rows).toEqual([{status:'approved_pending_payment',auto_expired:false}]);
+   expect((await db.query('SELECT status,auto_expired FROM public.advance_requests WHERE id=$1',[id(90)])).rows).toEqual([{status:'pending_approval',auto_expired:false}]);
+   expect((await db.query("SELECT actor_id,actor_email FROM public.audit_log WHERE record_id=$1 AND action='update'",[overdue])).rows).toEqual([{actor_id:null,actor_email:null}]);
+   expect((await db.query<{n:number}>("SELECT count(*)::int n FROM public.user_notifications WHERE advance_request_id=$1 AND event_type='advance_request_rejected'",[overdue])).rows[0].n).toBe(1);
+   expect((await db.query('SELECT expiry_xid FROM public.weekly_bale_requests WHERE request_id=$1',[overdue])).rows).toEqual([{expiry_xid:null}]);
+  }finally{await db.close();}
+ },30000);
+ it('rolls back expiry and notification when audit fails and preserves manual Founder attribution',async()=>{
+  const db=await fixture(true);try{
+   const overdue=await submit(db),manual=await submit(db);await role(db,founder);await db.query("SELECT public.review_advance_request($1,'reject')",[manual]);
+   await db.exec("RESET ROLE; SET test.uid=''; SET test.clock='2026-11-18T04:00:00Z'; CREATE FUNCTION public.fail_expiry_audit() RETURNS trigger LANGUAGE plpgsql AS $$BEGIN IF NEW.action='update' AND NEW.actor_id IS NULL THEN RAISE EXCEPTION 'expiry audit failed'; END IF; RETURN NEW; END$$; CREATE TRIGGER fail_expiry_audit BEFORE INSERT ON public.audit_log FOR EACH ROW EXECUTE FUNCTION public.fail_expiry_audit();");
+   await expect(db.query('SELECT public.materialize_weekly_bale_expiry(100)')).rejects.toThrow(/expiry audit failed/);
+   expect((await db.query('SELECT status,auto_expired FROM public.advance_requests WHERE id=$1',[overdue])).rows).toEqual([{status:'pending_approval',auto_expired:false}]);
+   expect((await db.query('SELECT status,auto_expired,rejected_by FROM public.advance_requests WHERE id=$1',[manual])).rows).toEqual([{status:'rejected',auto_expired:false,rejected_by:founder}]);
+   expect((await db.query<{n:number}>("SELECT count(*)::int n FROM public.user_notifications WHERE advance_request_id=$1 AND event_type='advance_request_rejected'",[overdue])).rows[0].n).toBe(0);
+   expect((await db.query('SELECT expiry_xid,expired_at FROM public.weekly_bale_requests WHERE request_id=$1',[overdue])).rows).toEqual([{expiry_xid:null,expired_at:null}]);
   }finally{await db.close();}
  },30000);
  it('rolls back release and private marker if audit fails, and prevents direct client writes',async()=>{
