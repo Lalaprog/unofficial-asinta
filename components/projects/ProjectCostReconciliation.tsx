@@ -3,14 +3,16 @@ import React,{useEffect,useRef,useState} from 'react';
 import {Button} from '@/components/ui/Button';
 import {createClient} from '@/lib/supabase/client';
 import {costCents,estimateProjectCost,formatCostCents,parseCostSnapshot,type CostChoice,type CostSnapshot} from '@/lib/projects/projectCostReconciliation';
+import {projectCostReviewLedgerPreviewEnabled} from '@/lib/finance/featureAvailability';
+import {ProjectCostReviewLedger} from './ProjectCostReviewLedger';
 
 /** Temporary review scratchpad only. It never records classifications or costs. */
 export function ProjectCostReconciliation({projectId,userId}:{projectId:string;userId:string}){
- const [rawSnapshot,setSnapshot]=useState<CostSnapshot|null>(null),[snapshotScope,setSnapshotScope]=useState(''),[loading,setLoading]=useState(false),[error,setError]=useState('');
- const [choices,setChoices]=useState<Record<string,CostChoice>>({}),[ack,setAck]=useState(false);const alive=useRef(false),seq=useRef(0),busy=useRef(false),scope=JSON.stringify([projectId,userId]),active=useRef(scope);active.current=scope;const snapshot=snapshotScope===scope?rawSnapshot:null;
- useEffect(()=>{const sequence=seq;sequence.current++;alive.current=true;busy.current=false;setLoading(false);setSnapshot(null);setChoices({});setAck(false);setError('');return()=>{alive.current=false;sequence.current++;busy.current=false;};},[projectId,userId]);
- async function load(){if(busy.current)return;busy.current=true;setLoading(true);setSnapshot(null);setChoices({});setAck(false);setError('');const token=++seq.current;
-  try{const {data,error:rpcError}=await createClient().rpc('project_cost_reconciliation_preview',{p_project:projectId});if(rpcError)throw rpcError;const parsed=parseCostSnapshot(data,projectId);if(alive.current&&active.current===scope&&token===seq.current){setSnapshotScope(scope);setSnapshot(parsed);}}
+ const [rawSnapshot,setSnapshot]=useState<CostSnapshot|null>(null),[snapshotEvidence,setSnapshotEvidence]=useState<unknown>(null),[snapshotScope,setSnapshotScope]=useState(''),[loading,setLoading]=useState(false),[error,setError]=useState('');
+ const [choices,setChoices]=useState<Record<string,CostChoice>>({}),[reasons,setReasons]=useState<Record<string,string>>({}),[ack,setAck]=useState(false);const alive=useRef(false),seq=useRef(0),busy=useRef(false),scope=JSON.stringify([projectId,userId]),active=useRef(scope);active.current=scope;const snapshot=snapshotScope===scope?rawSnapshot:null;
+ useEffect(()=>{const sequence=seq;sequence.current++;alive.current=true;busy.current=false;setLoading(false);setSnapshot(null);setSnapshotEvidence(null);setChoices({});setReasons({});setAck(false);setError('');return()=>{alive.current=false;sequence.current++;busy.current=false;};},[projectId,userId]);
+ async function load(){if(busy.current)return;busy.current=true;setLoading(true);setSnapshot(null);setSnapshotEvidence(null);setChoices({});setReasons({});setAck(false);setError('');const token=++seq.current;
+  try{const {data,error:rpcError}=await createClient().rpc('project_cost_reconciliation_preview',{p_project:projectId});if(rpcError)throw rpcError;const parsed=parseCostSnapshot(data,projectId);if(alive.current&&active.current===scope&&token===seq.current){setSnapshotScope(scope);setSnapshot(parsed);setSnapshotEvidence(data);}}
   catch{if(alive.current&&active.current===scope&&token===seq.current)setError('Could not verify a complete reconciliation snapshot. No total is available; refresh or investigate.');}
   finally{if(active.current===scope&&token===seq.current){busy.current=false;if(alive.current)setLoading(false);}}
  }
@@ -29,9 +31,11 @@ export function ProjectCostReconciliation({projectId,userId}:{projectId:string;u
    <h5 className="font-semibold text-navy">Review every recorded expense ({snapshot.expenses.length})</h5>
    {snapshot.expenses.length?<div className="max-h-[32rem] overflow-auto divide-y divide-surface-border">{snapshot.expenses.map(e=><fieldset key={e.id} className="space-y-2 py-3"><legend className="sr-only">Expense {e.id}</legend><p className="font-semibold text-navy break-words">{e.description} · {formatCostCents(costCents(e.amount))}</p><p>{e.category} · {e.date} · {e.baleHint?'AI flagged possible Bale; verify':'No AI Bale flag; still verify'}</p><p className="break-all">Expense {e.id}</p>{e.rental&&<p>Confirmed rental: {e.rental.item} · {e.rental.supplier} · {e.rental.start} to {e.rental.end}. This is the same expense, not an extra amount.</p>}
     <div className="flex flex-wrap gap-3"><label className="flex items-center gap-1"><input type="radio" name={`cost-${e.id}`} checked={choices[e.id]==='include'} onChange={()=>{setChoices(c=>({...c,[e.id]:'include'}));setAck(false);}}/> Include expense</label><label className="flex items-center gap-1"><input type="radio" name={`cost-${e.id}`} checked={choices[e.id]==='exclude'} onChange={()=>{setChoices(c=>({...c,[e.id]:'exclude'}));setAck(false);}}/> Exclude from this preview</label></div>
+    {projectCostReviewLedgerPreviewEnabled()&&choices[e.id]==='exclude'&&<label className="block">Reason for excluding {e.description}<input type="text" className="mt-1 block min-h-11 w-full rounded-lg border border-surface-border p-2" maxLength={300} value={reasons[e.id]??''} onChange={event=>setReasons(r=>({...r,[e.id]:event.target.value}))} /></label>}
    </fieldset>)}</div>:<p>No recorded expenses returned. This does not prove all expenses were recorded.</p>}
    <label className="flex items-start gap-2"><input type="checkbox" checked={ack} disabled={!reviewed} onChange={e=>setAck(e.target.checked)}/> I reviewed every expense and paid allocation for possible duplicates and understand this is an incomplete, unsaved estimate.</label>
    {estimate&&<div aria-live="polite" className="rounded-lg border border-surface-border p-3 space-y-1"><p className="font-semibold text-navy">Temporary, incomplete estimate: {formatCostCents(estimate.total)}</p><p>Included recorded expenses {formatCostCents(estimate.expenses)} + paid worker gross allocations {formatCostCents(estimate.payroll)}.</p><p>Expenses excluded from this preview: {formatCostCents(estimate.excluded)}. Rentals are not added separately.</p><p>Not saved, posted, automatically reconciled, or a profit figure. Refresh and independently verify before use.</p></div>}
   </>}
+  {projectCostReviewLedgerPreviewEnabled()&&<ProjectCostReviewLedger key={scope} projectId={projectId} userId={userId} snapshot={snapshot} raw={snapshot?snapshotEvidence:null} choices={choices} reasons={reasons} />}
  </section>;
 }

@@ -53,6 +53,11 @@ export function projectCostReconciliationPreviewEnabled(): boolean {
   return financeFoundationEnabled() && process.env.NEXT_PUBLIC_PROJECT_COST_RECONCILIATION_PREVIEW === 'true';
 }
 
+/** Separate experimental durable review UI; requires the scratchpad and its uninstalled backend. */
+export function projectCostReviewLedgerPreviewEnabled(): boolean {
+  return projectCostReconciliationPreviewEnabled() && process.env.NEXT_PUBLIC_PROJECT_COST_REVIEW_LEDGER_PREVIEW === 'true';
+}
+
 /** Read-only experimental confirmed rental links; not a write UI or schema check. */
 export function confirmedRentalPreviewEnabled(): boolean {
   return financeFoundationEnabled() && process.env.NEXT_PUBLIC_CONFIRMED_RENTAL_PREVIEW === 'true';
