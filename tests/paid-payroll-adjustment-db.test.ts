@@ -47,6 +47,24 @@ describe('separate paid-period adjustment cases (draft)',()=>{
    expect(after).toEqual(before);
   }finally{await db.close();}
  },30000);
+ it('enforces independent assurance and atomically preserves immutable case and event history',async()=>{
+  const db=new PGlite();try{
+   await db.exec(baseFixture);await db.exec(sql);const snap=(await db.query<{snapshot:unknown}>('SELECT app_private.paid_adjustment_voucher_snapshot(p) snapshot FROM public.payroll p WHERE id=$1',[voucher])).rows[0].snapshot;
+   // Simulate a role helper that accidentally stops checking assurance.
+   await db.exec("CREATE OR REPLACE FUNCTION public.is_founder() RETURNS boolean LANGUAGE sql STABLE SECURITY DEFINER AS $$ SELECT EXISTS(SELECT 1 FROM public.users WHERE id=auth.uid() AND role='founder') $$");
+   const open=()=>db.query('SELECT public.open_paid_payroll_adjustment($1,$2,$3,$4,$5)',[case1,voucher,snap,'50.25','Missed OT']);
+   const resolve=()=>db.query('SELECT public.resolve_paid_payroll_adjustment($1,$2,$3,$4)',[case1,'no_transfer',null,'Reviewed']);
+   await db.exec(`SET test.uid='${founder}'; SET test.assurance='no'; SET ROLE authenticated`);await expect(open()).rejects.toThrow(/assurance/);await expect(db.query('SELECT public.paid_payroll_adjustment_list($1)',[voucher])).rejects.toThrow(/assurance/);
+   await db.exec("SET test.assurance='yes'");await open();await open();await db.exec('RESET ROLE');
+   expect((await db.query<{kind:string;actor:string}>("SELECT kind,actor FROM public.paid_payroll_adjustment_events ORDER BY kind")).rows).toEqual([{kind:'opened',actor:founder}]);
+   await expect(db.query('DELETE FROM public.paid_payroll_adjustment_cases WHERE id=$1',[case1])).rejects.toThrow(/immutable/);await expect(db.query("UPDATE public.paid_payroll_adjustment_cases SET reason='Changed' WHERE id=$1",[case1])).rejects.toThrow(/controlled final/);await expect(db.query('DELETE FROM public.paid_payroll_adjustment_events WHERE case_id=$1',[case1])).rejects.toThrow(/immutable/);
+   await db.exec("ALTER TABLE public.paid_payroll_adjustment_events ADD CONSTRAINT fail_resolution CHECK(kind<>'resolved') NOT VALID; SET ROLE authenticated");await expect(resolve()).rejects.toThrow(/fail_resolution/);await db.exec('RESET ROLE');expect((await db.query<{status:string}>('SELECT status FROM public.paid_payroll_adjustment_cases WHERE id=$1',[case1])).rows[0].status).toBe('pending');
+   await db.exec('ALTER TABLE public.paid_payroll_adjustment_events DROP CONSTRAINT fail_resolution; SET ROLE authenticated');await resolve();await resolve();await db.exec('RESET ROLE');
+   expect((await db.query<{kind:string;before_row:{status:string}|null;after_row:{status:string}}>('SELECT kind,before_row,after_row FROM public.paid_payroll_adjustment_events WHERE case_id=$1 ORDER BY kind',[case1])).rows).toMatchObject([{kind:'opened',before_row:null,after_row:{status:'pending'}},{kind:'resolved',before_row:{status:'pending'},after_row:{status:'no_transfer'}}]);
+   await expect(db.query("UPDATE public.paid_payroll_adjustment_cases SET resolution_note='changed' WHERE id=$1",[case1])).rejects.toThrow(/controlled final/);
+   await db.exec("SET test.assurance='no'; SET ROLE authenticated");await expect(resolve()).rejects.toThrow(/assurance/);await expect(db.query('SELECT public.paid_payroll_adjustment_list($1)',[voucher])).rejects.toThrow(/assurance/);
+  }finally{await db.close();}
+ },30000);
  it('accepts the exact snapshot assembled from the paid history review response',async()=>{
   const db=new PGlite();try{
    await db.exec(baseFixture);await db.exec(sql);await db.exec(readFileSync('supabase/migrations/20261114000002_paid_payroll_review.sql','utf8'));

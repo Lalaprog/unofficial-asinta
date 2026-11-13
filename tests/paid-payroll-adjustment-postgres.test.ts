@@ -27,7 +27,8 @@ suite('paid adjustment concurrent actions on PostgreSQL 17',()=>{
   expected=(await admin.query('SELECT app_private.paid_adjustment_voucher_snapshot(p) snapshot FROM public.payroll p WHERE id=$1',[voucher])).rows[0].snapshot;
   await Promise.all([first.query(`SET ROLE authenticated; SET test.uid='${founder}'; SET test.assurance='yes'; SET lock_timeout='4s'`),second.query(`SET ROLE authenticated; SET test.uid='${founder}'; SET test.assurance='yes'; SET lock_timeout='4s'`)]);
  },30000);
- beforeEach(async()=>{await admin.query('DELETE FROM public.paid_payroll_adjustment_cases');});
+ // Owner-only fixture reset in the disposable database; never use TRUNCATE on live data.
+ beforeEach(async()=>{await admin.query('TRUNCATE public.paid_payroll_adjustment_events,public.paid_payroll_adjustment_cases');});
  afterAll(async()=>{await Promise.all([admin?.end(),first?.end(),second?.end()]);});
  it('serializes separate pending cases for the same paid voucher',async()=>{
   await first.query('BEGIN');await second.query('BEGIN');
@@ -42,6 +43,7 @@ suite('paid adjustment concurrent actions on PostgreSQL 17',()=>{
   await first.query('BEGIN');await second.query('BEGIN');try{
    expect((await open(first,one)).rows[0].data.replayed).toBe(false);let finished=false;const retry=open(second,one).finally(()=>{finished=true});
    await pause();expect(finished).toBe(false);await first.query('COMMIT');expect((await retry).rows[0].data.replayed).toBe(true);await second.query('COMMIT');
+   expect((await admin.query("SELECT kind,count(*)::int n FROM public.paid_payroll_adjustment_events GROUP BY kind")).rows).toEqual([{kind:'opened',n:1}]);
   }finally{await first.query('ROLLBACK');await second.query('ROLLBACK');}
  },15000);
  it('serializes contradictory resolution attempts instead of overwriting the first',async()=>{
@@ -50,6 +52,7 @@ suite('paid adjustment concurrent actions on PostgreSQL 17',()=>{
    const conflicting=resolve(second,'no_transfer',null).then(()=>({code:'success'}),(e:{code:string})=>({code:e.code})).finally(()=>{finished=true});
    await pause();expect(finished).toBe(false);await first.query('COMMIT');expect((await conflicting).code).toBe('22023');await second.query('ROLLBACK');
    expect((await admin.query('SELECT status,settled_on::text FROM public.paid_payroll_adjustment_cases WHERE id=$1',[one])).rows[0]).toEqual({status:'settled_external',settled_on:'2020-01-01'});
+   expect((await admin.query('SELECT kind FROM public.paid_payroll_adjustment_events WHERE case_id=$1 ORDER BY kind',[one])).rows).toEqual([{kind:'opened'},{kind:'resolved'}]);
   }finally{await first.query('ROLLBACK');await second.query('ROLLBACK');}
  },15000);
 });
