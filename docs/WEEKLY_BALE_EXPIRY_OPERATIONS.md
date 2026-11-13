@@ -1,6 +1,6 @@
 # Weekly Bale expiry: uninstalled operational candidate
 
-**Not active.** No extension, scheduler, monitoring service, grant or job is installed by this draft. It is not a migration and must not be applied independently of the reviewed weekly Bale/finance cutover. Legacy requests are not swept. No message or money is sent by the runner; the existing in-app rejection notification and audit are written in the same transaction as rejection.
+**Not active.** This draft installs no extension, scheduler, monitoring service, grant or job. The connected development database separately has `pg_cron` installed, and a temporary harmless connectivity job succeeded once and was removed; the Bale runner and its job are not installed. The draft is not a migration and must not be applied independently of the reviewed weekly Bale/finance cutover. Legacy requests are not swept. No message or money is sent by the runner; the existing in-app rejection notification and audit are written in the same transaction as rejection.
 
 ## Intended behavior
 

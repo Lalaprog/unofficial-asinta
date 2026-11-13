@@ -29,6 +29,12 @@ The candidate also displays a warning to both roles that the agreed Bale schedul
 
 In a further read-only SQL simulation using the existing Supervisor's AAL2 claims, an unassigned project existed but was not visible via `visible_projects`, `is_supervisor_assigned` returned false for it, and no active assignment rows for that project were visible. The same simulated role saw zero payroll/advance rows and lacked execute privilege on the service-only available-worker and assignment functions. These are targeted negative checks, not actual Auth/PostgREST tests or exhaustive policy or privileged API verification.
 
+## Development scheduler preparation
+
+The development database now has `pg_cron` 1.6.4 installed by hosted migration `20261113235340_prepare_weekly_bale_scheduler_extension`. A temporary one-minute job owned by `postgres`, running only `SELECT 1`, produced one successful recorded run; it was then explicitly unscheduled and its absence verified. This tests one connection and execution only: no Bale job, runner, alert or financial workflow was installed. The extension uses the `postgres` database and `localhost`, with background workers off. At the time checked, API roles lacked `USAGE` on the `cron` schema even though effective object-level SELECT/EXECUTE checks returned true; do not grant schema access without separately reviewing those privileges. A durable least-privilege job identity, runner compatibility, independent monitoring and failure/catch-up still require verification. No new business records or external messages were created.
+
+The branch's Vercel preview for commit `70f07f2` was READY with a preview target, while the recovered #102 production deployment remained in place. Preview and production both have Supabase environment variable definitions, but their sensitive values were not inspected; isolation has not been established. Finance gates and production hold must not be mistaken for a coordinated rollout.
+
 ## Coordinated rollout check and UI configuration guard
 
 A subsequent read-only development snapshot found zero selected payroll, advances, advance requests, attendance, workers and projects; the checked weekly generator and Bale clock were absent, as were the checked time-detail/allowance tables and `pg_cron`. Vercel still listed the #102 recovery deployment as promoted. These are point-in-time, partial observations, not permission, recovery or readiness proof. No hosted changes were made.
