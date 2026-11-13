@@ -37,6 +37,10 @@ describe('weekly request status in legacy list',()=>{
  it('retains old UI without making a status request when flags are off',()=>{
   vi.stubEnv('NEXT_PUBLIC_WEEKLY_BALE_RELEASE_PREVIEW','false');render(React.createElement(AdvanceRequestsPanel));expect(mock.rpc).not.toHaveBeenCalled();expect((screen.getByRole('button',{name:'Approve'}) as HTMLButtonElement).disabled).toBe(false);
  });
+ it('holds decisions and old issuance when cutover is on but the weekly Bale gate is missing',()=>{
+  vi.stubEnv('NEXT_PUBLIC_WEEKLY_WORKER_CUTOVER_PREVIEW','true');vi.stubEnv('NEXT_PUBLIC_WEEKLY_BALE_RELEASE_PREVIEW','false');mock.rows=[request('r1'),request('r2','approved_pending_payment')];
+  render(React.createElement(AdvanceRequestsPanel));expect(screen.getByRole('alert').textContent).toMatch(/Requests and decisions are held/);expect((screen.getByRole('button',{name:'Approve'}) as HTMLButtonElement).disabled).toBe(true);expect(screen.queryByRole('button',{name:'Confirm paid & issue'})).toBeNull();expect(mock.review).not.toHaveBeenCalled();expect(mock.issue).not.toHaveBeenCalled();
+ });
  it('discards a previous request list response after the rows change',async()=>{
   let resolve!:(value:unknown)=>void;const old=new Promise(r=>{resolve=r;});mock.rpc.mockReturnValueOnce(old).mockResolvedValueOnce(response([status('r2','pending_approval','expired_unapproved',false)]));
   const view=render(React.createElement(AdvanceRequestsPanel));mock.rows=[request('r2')];view.rerender(React.createElement(AdvanceRequestsPanel));

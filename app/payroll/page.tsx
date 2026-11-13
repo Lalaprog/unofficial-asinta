@@ -29,9 +29,11 @@ import { AttendanceMatrix } from '@/components/payroll/AttendanceMatrix';
 import { PayrollFoundationPanels } from '@/components/payroll/PayrollFoundationPanels';
 import { getManilaClock } from '@/lib/reminders/scheduler';
 import { workerPayrollPeriod } from '@/lib/payroll/periods';
+import { weeklyWorkerCutoverMode, weeklyWorkerReturnPreviewEnabled } from '@/lib/finance/featureAvailability';
 
 export default function PayrollPage() {
   const { showToast } = useToast();
+  const cutoverMode = weeklyWorkerCutoverMode();
   const [pendingPayAction, setPendingPayAction] = useState<{ pay: Payroll; status: 'approved' | 'paid' } | null>(null);
   const [isUpdatingStatus, setIsUpdatingStatus] = useState(false);
   const statusLock = React.useRef(false);
@@ -145,7 +147,7 @@ export default function PayrollPage() {
 
   const handleGenerateSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (generateLock.current) return;
+    if (cutoverMode || generateLock.current) return;
     generateLock.current = true;
     setIsGenerating(true);
     try {
@@ -162,7 +164,7 @@ export default function PayrollPage() {
   };
 
   const handleConfirmStatus = async () => {
-    if (!pendingPayAction || statusLock.current) return;
+    if (cutoverMode || !pendingPayAction || statusLock.current) return;
     statusLock.current = true;
     setIsUpdatingStatus(true);
     try {
@@ -190,11 +192,11 @@ export default function PayrollPage() {
           eyebrow="Workforce & pay"
           title="Payroll"
           description="Review attendance-based vouchers, Bale deductions and worker payslips."
-          action={<div className="flex flex-wrap gap-2"><Button variant="secondary" size="md" onClick={() => setIsBatchPayslipOpen(true)} leftIcon={<Printer className="w-4 h-4" />}>Print worker payslips</Button><Button variant="primary" size="md" onClick={() => setIsGenerateModalOpen(true)} leftIcon={<Plus className="w-4 h-4" />}>New Payroll Run</Button></div>}
+          action={<div className="flex flex-wrap gap-2"><Button variant="secondary" size="md" onClick={() => setIsBatchPayslipOpen(true)} leftIcon={<Printer className="w-4 h-4" />}>Print worker payslips</Button>{!cutoverMode && <Button variant="primary" size="md" onClick={() => setIsGenerateModalOpen(true)} leftIcon={<Plus className="w-4 h-4" />}>New Payroll Run</Button>}</div>}
         />
 
         <div className="rounded-xl border border-status-warning/25 bg-status-warning-bg p-3 text-xs leading-relaxed text-ink-secondary" role="note">
-          The current payroll generator uses the existing legacy rules. The requested weekly payroll and Bale rules are not yet implemented. Verify amounts against your records before approving or recording a payment.
+          {cutoverMode ? (weeklyWorkerReturnPreviewEnabled() ? 'Experimental weekly cutover mode: legacy payroll actions are hidden. Use the weekly voucher controls below, and reconcile existing vouchers before recording any external payment. This is not proof that the database or scheduler is ready.' : 'Experimental weekly cutover mode: legacy payroll actions are hidden, but the complete weekly voucher controls are not enabled. Do not record payroll until the configuration is reviewed.') : 'The current payroll generator uses the existing legacy rules. The requested weekly payroll and Bale rules are not yet implemented. Verify amounts against your records before approving or recording a payment.'}
         </div>
 
         <PayrollFoundationPanels />
@@ -352,7 +354,7 @@ export default function PayrollPage() {
                       Print Payslip
                     </Button>
 
-                    {(pay.status === 'draft' || pay.status === 'reviewed') && (
+                    {!cutoverMode && (pay.status === 'draft' || pay.status === 'reviewed') && (
                       <Button
                         variant="soft"
                         size="sm"
@@ -363,7 +365,7 @@ export default function PayrollPage() {
                       </Button>
                     )}
 
-                    {pay.status === 'approved' && (
+                    {!cutoverMode && pay.status === 'approved' && (
                       <Button
                         variant="primary"
                         size="sm"
@@ -387,7 +389,7 @@ export default function PayrollPage() {
 
       {/* GENERATE RUN MODAL */}
       <Modal
-        isOpen={isGenerateModalOpen}
+        isOpen={!cutoverMode && isGenerateModalOpen}
         onClose={() => setIsGenerateModalOpen(false)}
         dismissOnBackdrop={!isGenerating}
         dismissOnEscape={!isGenerating}
@@ -472,7 +474,7 @@ export default function PayrollPage() {
       </Modal>
 
       <Modal
-        isOpen={Boolean(pendingPayAction)}
+        isOpen={!cutoverMode && Boolean(pendingPayAction)}
         onClose={() => setPendingPayAction(null)}
         dismissOnBackdrop={!isUpdatingStatus}
         dismissOnEscape={!isUpdatingStatus}

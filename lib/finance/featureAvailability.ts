@@ -33,6 +33,13 @@ export function weeklyWorkerReturnPreviewEnabled(): boolean {
   return weeklyWorkerRefreshPreviewEnabled() && process.env.NEXT_PUBLIC_WEEKLY_WORKER_RETURN_PREVIEW === 'true';
 }
 
+/** Hide legacy payroll writes when the explicit cutover mode is requested.
+ * Intentionally independent of other gates: a misconfigured build must not
+ * bring legacy write buttons back. This is not a backend security boundary. */
+export function weeklyWorkerCutoverMode(): boolean {
+  return process.env.NEXT_PUBLIC_WEEKLY_WORKER_CUTOVER_PREVIEW === 'true';
+}
+
 /** Separate read-only historical payment/Bale evidence, not a schema or authorization check. */
 export function historicalFinanceEvidencePreviewEnabled(): boolean {
   return financeFoundationEnabled() && process.env.NEXT_PUBLIC_HISTORICAL_FINANCE_EVIDENCE_PREVIEW === 'true';

@@ -6,7 +6,7 @@ import { useAuth } from '@/lib/auth/authContext';
 import { useDataStore } from '@/lib/data/store';
 import { useBaleProjectWorkers } from '@/lib/attendance/useBaleProjectWorkers';
 import { useWeeklyBaleStatuses } from '@/lib/attendance/useWeeklyBaleStatuses';
-import { weeklyBaleExpiryHealthPreviewEnabled, weeklyBaleReleasePreviewEnabled } from '@/lib/finance/featureAvailability';
+import { weeklyBaleExpiryHealthPreviewEnabled, weeklyBaleReleasePreviewEnabled, weeklyWorkerCutoverMode } from '@/lib/finance/featureAvailability';
 import { WeeklyBaleExpiryHealth } from '@/components/advances/WeeklyBaleExpiryHealth';
 import type { AdvanceRequest, AdvanceRequestStatus } from '@/types';
 import { formatDatePH, formatPeso, formatPesoCompact } from '@/lib/email/format';
@@ -114,9 +114,10 @@ export function AdvanceRequestsPanel() {
   );
   const team = useBaleProjectWorkers(user?.id, selectedProjectId, isSupervisor && requestModalOpen);
   const weeklyMode = weeklyBaleReleasePreviewEnabled();
+  const cutoverMode = weeklyWorkerCutoverMode();
   const weeklyStatuses = useWeeklyBaleStatuses(weeklyMode, user?.id, isFounder ? 'founder' : isSupervisor ? 'supervisor' : 'other', isFounder ? advanceRequests : advanceRequests.filter(r => r.submitted_by === user?.id));
   const statusFor = (request: AdvanceRequest) => weeklyStatuses.data?.items.find(item => item.id === request.id && item.stored_status === request.status);
-  const canReview = (request: AdvanceRequest) => request.status === 'pending_approval' && (!weeklyMode || statusFor(request)?.can_review === true);
+  const canReview = (request: AdvanceRequest) => request.status === 'pending_approval' && (weeklyMode ? statusFor(request)?.can_review === true : !cutoverMode);
   const activeWorkers = team.status === 'ready' ? team.workers : [];
   const missingWorkerDetails = team.status === 'ready' && team.someDetailsUnavailable;
   const pendingApprovalRequests = advanceRequests.filter(
@@ -214,14 +215,14 @@ export function AdvanceRequestsPanel() {
           (request) =>
             request.id === id &&
             request.status === 'pending_approval' &&
-            (!weeklyMode || weeklyStatuses.data?.items.some(item => item.id === request.id && item.stored_status === request.status && item.can_review)) &&
+            (weeklyMode ? weeklyStatuses.data?.items.some(item => item.id === request.id && item.stored_status === request.status && item.can_review) : !cutoverMode) &&
             request.project_id === previous.siteId
         )
       );
       if (validIds.length === previous.ids.length) return previous;
       return { siteId: validIds.length > 0 ? previous.siteId : null, ids: validIds };
     });
-  }, [advanceRequests, weeklyMode, weeklyStatuses.data]);
+  }, [advanceRequests, cutoverMode, weeklyMode, weeklyStatuses.data]);
 
   const clearRequestFocus = () => {
     if (!focusedRequestId) return;
@@ -323,7 +324,7 @@ export function AdvanceRequestsPanel() {
   const handleSubmitRequest = async (event: React.FormEvent) => {
     event.preventDefault();
     const amount = Number(requestedAmount);
-    if (submitLock.current || team.status !== 'ready' || !activeWorkers.some((worker) => worker.id === selectedWorkerId) || !selectedProjectId || !Number.isFinite(amount) || amount <= 0) return;
+    if ((cutoverMode && !weeklyMode) || submitLock.current || team.status !== 'ready' || !activeWorkers.some((worker) => worker.id === selectedWorkerId) || !selectedProjectId || !Number.isFinite(amount) || amount <= 0) return;
     submitLock.current = true;
     setIsSubmitting(true);
     try {
@@ -359,7 +360,7 @@ export function AdvanceRequestsPanel() {
   };
 
   const handleIssue = async () => {
-    if (!requestToIssue || actionLock.current) return;
+    if (cutoverMode || weeklyMode || !requestToIssue || actionLock.current) return;
     actionLock.current = true;
     setActioningRequestId(requestToIssue);
     try {
@@ -470,7 +471,7 @@ export function AdvanceRequestsPanel() {
               </Button>
             </div>
           )}
-          {isFounder && !weeklyMode && request.status === 'approved_pending_payment' && (
+          {isFounder && !weeklyMode && !cutoverMode && request.status === 'approved_pending_payment' && (
             <Button
               type="button"
               size="sm"
@@ -489,6 +490,7 @@ export function AdvanceRequestsPanel() {
 
   return (
     <div className="space-y-4">
+      {cutoverMode && !weeklyMode && <p role="alert" className="rounded-xl bg-status-warning-bg p-3 text-xs text-ink-secondary">Weekly Bale controls are not enabled. Requests and decisions are held until the configuration is reviewed.</p>}
       {isFounder && user?.id && weeklyBaleExpiryHealthPreviewEnabled() && <WeeklyBaleExpiryHealth userId={user.id} />}
       {weeklyMode && <div className="rounded-xl border border-surface-border bg-white p-3 text-xs text-ink-secondary">
         <p>Weekly decision status is checked against the server. Existing list totals and filters reflect stored statuses, which may lag automatic expiry. Release is handled in the separate experimental panel.</p>
@@ -985,7 +987,7 @@ export function AdvanceRequestsPanel() {
             <Button type="button" variant="secondary" onClick={() => setRequestModalOpen(false)} disabled={isSubmitting}>
               Cancel
             </Button>
-            <Button type="submit" variant="primary" isLoading={isSubmitting} disabled={team.status !== 'ready' || !activeWorkers.some((worker) => worker.id === selectedWorkerId)}>
+            <Button type="submit" variant="primary" isLoading={isSubmitting} disabled={(cutoverMode && !weeklyMode) || team.status !== 'ready' || !activeWorkers.some((worker) => worker.id === selectedWorkerId)}>
               {isSubmitting ? 'Sending request…' : 'Send to Founder'}
             </Button>
           </div>
@@ -993,7 +995,7 @@ export function AdvanceRequestsPanel() {
       </Modal>
 
       <Modal
-        isOpen={Boolean(requestToIssue)}
+        isOpen={!cutoverMode && !weeklyMode && Boolean(requestToIssue)}
         onClose={() => setRequestToIssue(null)}
         dismissOnBackdrop={!actioningRequestId}
         dismissOnEscape={!actioningRequestId}

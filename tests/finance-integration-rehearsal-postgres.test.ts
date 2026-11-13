@@ -76,6 +76,10 @@ suite('coordinated finance integration rehearsal, synthetic PostgreSQL only',()=
    await db.query(readFileSync('supabase/drafts/project_assignment_history.sql','utf8'));
    await db.query(readFileSync('supabase/drafts/atomic_worker_move.sql','utf8'));
    await db.query(readFileSync('supabase/drafts/attendance_assignment_guard.sql','utf8'));
+   // Old-client payroll writes must not bypass the source-bound workflow.
+   // This extra draft is outside the generated chain and remains uninstalled.
+   await db.query(readFileSync('supabase/drafts/weekly_bale_legacy_cutover_guard.sql','utf8'));
+   await db.query(readFileSync('supabase/drafts/weekly_worker_legacy_cutover_guard.sql','utf8'));
    // The review ledger is also separate from the generated chain, and never
    // posts money or makes the bounded snapshot complete.
    await db.query(readFileSync('supabase/drafts/project_cost_review_ledger.sql','utf8'));
@@ -95,10 +99,21 @@ suite('coordinated finance integration rehearsal, synthetic PostgreSQL only',()=
    await db.query("SELECT public.review_advance_request($1,'approve')",[request]);
    await db.query(`SET LOCAL test.uid='${supervisor}'; SET LOCAL test.clock='2024-08-07T04:00:00Z'`);
    expect((await db.query('SELECT public.record_weekly_bale_release($1) v',[request])).rows[0].v.outcome).toBe('updated');
+   await db.query('SET CONSTRAINTS require_weekly_bale_source_on_insert IMMEDIATE; SET CONSTRAINTS require_weekly_bale_source_on_insert DEFERRED');
    await db.query(`SET LOCAL test.uid='${founder}'`);
+   await db.query('SAVEPOINT denied_manual_deduction');
+   await expect(db.query("SELECT public.record_advance_deduction_atomic((SELECT issued_advance_id FROM public.advance_requests WHERE id=$1),10)",[request])).rejects.toThrow(/Weekly Bale is immutable/);
+   await db.query('ROLLBACK TO SAVEPOINT denied_manual_deduction; RELEASE SAVEPOINT denied_manual_deduction');
    await db.query("SELECT public.record_attendance_time_detail('70000000-0000-4000-8000-000000000003',$1,'2024-08-04T08:00:00Z',8,2,'Synthetic overtime')",[attendance]);
    await db.query("SELECT public.submit_worker_allowance('70000000-0000-4000-8000-000000000004',$1,'2024-08-04T08:00:00Z',50.25,'Synthetic allowance')",[attendance]);
+   await db.query('SAVEPOINT denied_unsourced_insert');
+   await db.query("INSERT INTO public.payroll(id,worker_id,period_start,period_end,status,days_worked,hours_worked,gross_pay,bale_deduction,other_deductions,net_pay) VALUES('70000000-0000-4000-8000-000000000020',$1,'2024-08-04','2024-08-10','draft',1,8,600,0,0,600)",[worker]);
+   await expect(db.query('SET CONSTRAINTS require_weekly_worker_source_on_insert IMMEDIATE')).rejects.toThrow(/Legacy payroll insertion blocked/);
+   await db.query('ROLLBACK TO SAVEPOINT denied_unsourced_insert; RELEASE SAVEPOINT denied_unsourced_insert');
    expect((await db.query("SELECT public.create_weekly_worker_draft($1,$2,'2024-08-04') v",[voucher,worker])).rows[0].v.calculation).toMatchObject({gross:'800.25',bale:'100.25',net:'700.00'});
+   // This rehearsal rolls back the outer transaction, so explicitly fire the
+   // deferred constraint to test the same source check that commit would run.
+   await db.query('SET CONSTRAINTS require_weekly_worker_source_on_insert IMMEDIATE; SET CONSTRAINTS require_weekly_worker_source_on_insert DEFERRED');
    await db.query('SAVEPOINT denied_legacy');
    await expect(db.query("SELECT public.set_payroll_status_atomic($1,'approved')",[voucher])).rejects.toThrow(/frozen/);
    await db.query('ROLLBACK TO SAVEPOINT denied_legacy; RELEASE SAVEPOINT denied_legacy');
@@ -183,6 +198,7 @@ suite('coordinated finance integration rehearsal, synthetic PostgreSQL only',()=
    await db.query("INSERT INTO public.attendance(id,worker_id,project_id,date,status,hours_worked,submitted_at) VALUES('70000000-0000-4000-8000-000000000014',$1,$2,'2024-08-11','present',8,'2024-08-11T08:00:00Z')",[worker,site]);
    await db.query(`SET LOCAL ROLE authenticated; SET LOCAL test.uid='${founder}'`);
    expect((await db.query("SELECT public.create_weekly_worker_draft('70000000-0000-4000-8000-000000000015',$1,'2024-08-11') v",[worker])).rows[0].v.calculation).toMatchObject({gross:'600.00',bale:'0.00',net:'600.00'});
+   await db.query('SET CONSTRAINTS require_weekly_worker_source_on_insert IMMEDIATE; SET CONSTRAINTS require_weekly_worker_source_on_insert DEFERRED');
    await db.query('RESET ROLE');expect((await db.query('SELECT to_jsonb(p) v FROM public.payroll p WHERE id=$1',[voucher])).rows[0].v).toEqual(original);
    await db.query(`SET LOCAL ROLE authenticated; SET LOCAL test.uid='${supervisor}'`);
    await db.query("INSERT INTO public.attendance(id,worker_id,project_id,date,status,hours_worked,submitted_at) VALUES('70000000-0000-4000-8000-000000000016',$1,$2,'2024-08-18','present',8,'2024-08-18T08:00:00Z')",[worker,site]);

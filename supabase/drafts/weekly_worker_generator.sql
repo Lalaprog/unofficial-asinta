@@ -18,15 +18,16 @@ CREATE TABLE public.weekly_worker_draft_sources (
   UNIQUE (worker_id,period_start)
 );
 ALTER TABLE public.weekly_worker_draft_sources ENABLE ROW LEVEL SECURITY;
-REVOKE ALL ON public.weekly_worker_draft_sources FROM PUBLIC,anon,authenticated;
+REVOKE ALL ON public.weekly_worker_draft_sources FROM PUBLIC,anon,authenticated,service_role;
 GRANT SELECT ON public.weekly_worker_draft_sources TO authenticated;
 CREATE POLICY founder_reads_weekly_worker_draft_sources ON public.weekly_worker_draft_sources
  FOR SELECT TO authenticated USING (coalesce(public.is_founder(),false) AND coalesce(public.session_assurance_satisfied(),false));
 DO $$ BEGIN
  IF has_table_privilege('anon','public.weekly_worker_draft_sources','SELECT,INSERT,UPDATE,DELETE,TRUNCATE')
  OR has_table_privilege('authenticated','public.weekly_worker_draft_sources','INSERT,UPDATE,DELETE,TRUNCATE')
+ OR has_table_privilege('service_role','public.weekly_worker_draft_sources','SELECT,INSERT,UPDATE,DELETE,TRUNCATE')
  OR EXISTS(SELECT 1 FROM pg_catalog.pg_attribute a WHERE a.attrelid='public.weekly_worker_draft_sources'::regclass AND a.attnum>0 AND NOT a.attisdropped AND
-  (has_column_privilege('anon',a.attrelid,a.attname,'SELECT,INSERT,UPDATE') OR has_column_privilege('authenticated',a.attrelid,a.attname,'INSERT,UPDATE'))) THEN
+  (has_column_privilege('anon',a.attrelid,a.attname,'SELECT,INSERT,UPDATE') OR has_column_privilege('authenticated',a.attrelid,a.attname,'INSERT,UPDATE') OR has_column_privilege('service_role',a.attrelid,a.attname,'SELECT,INSERT,UPDATE'))) THEN
   RAISE EXCEPTION 'Unexpected inherited privileges on weekly draft sources'; END IF;
 END $$;
 

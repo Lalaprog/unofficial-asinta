@@ -18,7 +18,7 @@ const founder='00000000-0000-0000-0000-000000000001',supervisor='00000000-0000-0
 const attendance='70000000-0000-4000-8000-000000000001',voucher='70000000-0000-4000-8000-000000000002';
 const sql=(p:string)=>readFileSync(p,'utf8');
 afterEach(()=>{cleanup();localStorage.clear();sessionStorage.clear();vi.restoreAllMocks();vi.unstubAllEnvs();});
-async function fixture(){
+async function fixture(cutover=true){
  const db=new PGlite();await db.exec(baseFixture);
  await db.exec(`ALTER TABLE public.users ADD COLUMN email text;UPDATE public.users SET email='fixture@example.invalid';
   ALTER TABLE public.payroll ADD COLUMN notes text;ALTER TABLE public.advances ADD COLUMN reason text, ADD COLUMN created_at timestamptz DEFAULT now();ALTER TABLE public.advances ALTER COLUMN id SET DEFAULT gen_random_uuid();
@@ -30,6 +30,7 @@ async function fixture(){
   INSERT INTO public.attendance(id,worker_id,project_id,date,status,hours_worked,submitted_at) VALUES('${attendance}','${worker}','${site}','2024-11-03','present',8,'2024-11-03T08:00:00Z');`);
  const paths=['supabase/migrations/20261102000000_atomic_payroll_payments.sql','supabase/migrations/20261113000000_weekly_worker_preview.sql','supabase/migrations/20261113000001_attendance_time_detail.sql','supabase/migrations/20261113000002_worker_allowances.sql','supabase/migrations/20261113000003_weekly_payroll_context.sql','supabase/drafts/guard_legacy_bale_payment.sql','supabase/drafts/weekly_payment_date.sql','supabase/drafts/weekly_worker_generator.sql','supabase/drafts/weekly_worker_approval.sql','supabase/drafts/weekly_worker_paid_allocation.sql','supabase/drafts/weekly_worker_draft_details.sql','supabase/drafts/weekly_worker_draft_refresh.sql','supabase/drafts/weekly_worker_return_to_draft.sql','supabase/migrations/20261013000000_advance_requests.sql','supabase/migrations/20261013000001_advance_request_notifications.sql','supabase/migrations/20261113000004_bale_request_site_guard.sql','supabase/drafts/weekly_bale_schedule.sql','supabase/drafts/weekly_bale_expiration.sql','supabase/drafts/weekly_bale_release_list.sql'];
  for(const p of paths)await db.exec(sql(p));
+ if(cutover)await db.exec(`BEGIN; ${sql('supabase/drafts/weekly_bale_legacy_cutover_guard.sql')} ${sql('supabase/drafts/weekly_worker_legacy_cutover_guard.sql')} COMMIT;`);
  await db.exec(`CREATE OR REPLACE FUNCTION public.weekly_bale_clock() RETURNS timestamptz LANGUAGE sql VOLATILE SET search_path='' AS $$SELECT current_setting('test.clock')::timestamptz$$;
  SET test.assurance='yes';SET test.uid='${supervisor}';SET test.clock='2024-11-03T04:00:00Z';SET ROLE authenticated`);
  return db;
@@ -65,6 +66,8 @@ describe('weekly Bale through worker payroll: candidate UI and synthetic SQL',()
    render(React.createElement(WeeklyBaleReleasePanel));fireEvent.click(screen.getByRole('button',{name:'Experimental weekly Bale release'}));fireEvent.click(screen.getByRole('button',{name:'Load releases'}));
    await screen.findByText(/Test Worker.*Site One.*100.25/);fireEvent.click(screen.getByRole('button',{name:'Review external release'}));fireEvent.click(screen.getByRole('checkbox',{name:/verified this external release/}));fireEvent.click(screen.getByRole('button',{name:'Record release'}));
    await screen.findByText(/Release not confirmed/);fireEvent.click(screen.getByRole('button',{name:'Load releases'}));await screen.findByText('Release recorded · Wednesday 2024-11-06');expect(screen.queryByRole('button',{name:'Review external release'})).toBeNull();cleanup();
+   // Manual deductions are blocked; the weekly payment records the full amount once.
+   await db.exec('RESET ROLE');await expect(db.query("UPDATE public.advances SET amount_deducted=10,status='partially_deducted' WHERE worker_id=$1",[worker])).rejects.toThrow(/Weekly Bale is immutable/);await db.exec('SET ROLE authenticated');
    // Founder uses the actual weekly preview and revision-aware voucher actions.
    mock.today='2024-11-09';mock.actor=founder;mock.founder=true;mock.supervisor=false;await db.exec(`SET test.uid='${founder}'`);vi.spyOn(crypto,'randomUUID').mockReturnValue(voucher);
    render(React.createElement(WeeklyWorkerPreview));expect(screen.getByText(/experimental voucher actions available/)).toBeTruthy();fireEvent.click(screen.getByRole('button',{name:/Weekly worker planning preview/}));fireEvent.click(screen.getByRole('button',{name:'Load preview'}));await screen.findByText(/gross with allowances ₱800.25/);expect(screen.getByText(/Experimental voucher actions are available in the final column/)).toBeTruthy();
@@ -107,5 +110,44 @@ describe('weekly Bale through worker payroll: candidate UI and synthetic SQL',()
    fireEvent.click(screen.getByRole('button',{name:'Review approval'}));fireEvent.click(screen.getByRole('button',{name:'Confirm approval'}));await screen.findByText(/Saved status: approved/);
    await db.exec('RESET ROLE');expect((await db.query('SELECT status,bale_deduction::text bale,net_pay::text net FROM public.payroll WHERE id=$1',[voucher])).rows).toEqual([{status:'approved',bale:'100.25',net:'499.75'}]);expect((await db.query<{n:number}>('SELECT count(*)::int n FROM public.weekly_worker_paid_allocations WHERE payroll_id=$1',[voucher])).rows[0].n).toBe(0);
   }finally{cleanup();await db.close();}
+ },30000);
+ it('rejects old-client payroll insertion and preserves already-paid history',async()=>{
+  const db=await fixture();try{
+   await db.exec(`SET test.uid='${founder}'`);
+   const legacy='70000000-0000-4000-8000-000000000010';
+   const insert="INSERT INTO public.payroll(id,worker_id,period_start,period_end,status,days_worked,hours_worked,gross_pay,bale_deduction,other_deductions,net_pay) VALUES($1,$2,'2024-11-03','2024-11-09',$3,1,8,600,0,0,600)";
+   await expect(db.query(insert,[legacy,worker,'paid'])).rejects.toThrow(/must start as (drafts|a source-bound weekly draft)/);
+   await expect(db.query(insert,[legacy,worker,'draft'])).rejects.toThrow(/Legacy payroll insertion blocked/);
+   expect((await db.query<{n:number}>('SELECT count(*)::int n FROM public.payroll WHERE id=$1',[legacy])).rows[0].n).toBe(0);
+   await db.exec('RESET ROLE');await expect(db.query("UPDATE public.payroll SET status='draft' WHERE id=$1",[worker])).rejects.toThrow(/Legacy paid payroll status is preserved/);expect((await db.query('SELECT status FROM public.payroll WHERE id=$1',[worker])).rows).toEqual([{status:'paid'}]);
+   await expect(db.query("INSERT INTO public.advances(id,worker_id,project_id,date,amount,amount_deducted,status,reason) VALUES($1,$2,$3,'2024-11-06',100,0,'active','Legacy manual')",['70000000-0000-4000-8000-000000000012',worker,site])).rejects.toThrow(/Legacy Bale insertion blocked/);
+   expect((await db.query('SELECT count(*)::int n FROM public.advances WHERE worker_id=$1',[worker])).rows).toEqual([{n:0}]);
+   expect((await db.query("SELECT has_table_privilege('service_role','public.weekly_worker_draft_sources','INSERT') AS service_write,has_table_privilege('authenticated','public.weekly_worker_draft_sources','INSERT') AS client_write")).rows).toEqual([{service_write:false,client_write:false}]);
+  }finally{await db.close();}
+ },30000);
+ it('refuses Bale cutover while an old outstanding advance remains',async()=>{
+  const db=await fixture(false);try{
+   await db.exec("RESET ROLE; SET test.uid=''");await db.query("INSERT INTO public.advances(id,worker_id,project_id,date,amount,amount_deducted,status,reason) VALUES($1,$2,$3,'2024-10-30',100,0,'active','Legacy')",['70000000-0000-4000-8000-000000000013',worker,site]);
+   await expect(db.exec(`BEGIN; ${sql('supabase/drafts/weekly_bale_legacy_cutover_guard.sql')} COMMIT;`)).rejects.toThrow(/Unresolved legacy open requests or outstanding Bale/);
+   await db.exec('ROLLBACK');expect((await db.query("SELECT to_regprocedure('public.require_weekly_bale_source_on_insert()') IS NULL absent")).rows).toEqual([{absent:true}]);
+   expect((await db.query('SELECT status,amount_deducted::text FROM public.advances WHERE id=$1',['70000000-0000-4000-8000-000000000013'])).rows).toEqual([{status:'active',amount_deducted:'0.00'}]);
+   // Model a legacy pre-schedule request in this disposable fixture only.
+   await db.query('DELETE FROM public.advances WHERE id=$1',['70000000-0000-4000-8000-000000000013']);await db.exec('ALTER TABLE public.advance_requests DISABLE TRIGGER register_weekly_bale_submission');
+   await db.exec(`SET test.uid='${supervisor}';SET ROLE authenticated`);const old=(await db.query<{id:string}>('INSERT INTO public.advance_requests(worker_id,project_id,requested_amount,submitted_by) VALUES($1,$2,100,$3) RETURNING id',[worker,site,supervisor])).rows[0].id;
+   await db.exec('RESET ROLE; ALTER TABLE public.advance_requests ENABLE TRIGGER register_weekly_bale_submission');
+   await expect(db.exec(`BEGIN; ${sql('supabase/drafts/weekly_bale_legacy_cutover_guard.sql')} COMMIT;`)).rejects.toThrow(/Unresolved legacy open requests or outstanding Bale/);await db.exec('ROLLBACK');
+   expect((await db.query('SELECT status FROM public.advance_requests WHERE id=$1',[old])).rows).toEqual([{status:'pending_approval'}]);
+  }finally{await db.close();}
+ },30000);
+ it('requires unresolved old vouchers to be reconciled before the guard can be installed',async()=>{
+  const db=await fixture(false);try{
+   await db.exec('RESET ROLE');await db.query("INSERT INTO public.payroll(id,worker_id,period_start,period_end,status,days_worked,hours_worked,gross_pay,bale_deduction,other_deductions,net_pay) VALUES($1,$2,'2024-11-03','2024-11-09','draft',1,8,600,0,0,600)",['70000000-0000-4000-8000-000000000011',worker]);
+   for(const status of ['draft','reviewed','approved']){
+    await db.query('UPDATE public.payroll SET status=$1 WHERE id=$2',[status,'70000000-0000-4000-8000-000000000011']);
+    await expect(db.exec(`BEGIN; ${sql('supabase/drafts/weekly_worker_legacy_cutover_guard.sql')} COMMIT;`)).rejects.toThrow(/Unresolved legacy unpaid or unrecognized payroll/);
+    await db.exec('ROLLBACK');expect((await db.query("SELECT to_regprocedure('public.require_weekly_worker_source_on_insert()') IS NULL absent")).rows).toEqual([{absent:true}]);
+    expect((await db.query('SELECT status FROM public.payroll WHERE id=$1',['70000000-0000-4000-8000-000000000011'])).rows).toEqual([{status}]);
+   }
+  }finally{await db.close();}
  },30000);
 });

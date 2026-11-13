@@ -16,8 +16,13 @@ vi.mock('@/lib/data/store',()=>({useDataStore:()=>({
   ],workers:[{id:'w1',name:'Ada',position:'Mason',active:true},{id:'w2',name:'Ben',position:'Mason',active:true}],projects:[{id:'site',name:'Site',location:'Batangas, PH'}],createAdvance:state.createAdvance,recordAdvanceDeduction:vi.fn(),
 })}));
 import AdvancesPage from '@/app/advances/page';
-afterEach(()=>{cleanup();vi.useRealTimers();state.createAdvance.mockReset();});
+afterEach(()=>{cleanup();vi.useRealTimers();vi.unstubAllEnvs();state.createAdvance.mockReset();});
 describe('issued advance clarity',()=>{
+  it('holds manual Bale recording and deductions in experimental cutover mode',()=>{
+    vi.stubEnv('NEXT_PUBLIC_WEEKLY_WORKER_CUTOVER_PREVIEW','true');render(React.createElement(AdvancesPage));
+    expect(screen.queryByRole('button',{name:'Record Bale'})).toBeNull();expect(screen.queryByRole('button',{name:'Record Deduction'})).toBeNull();expect(screen.getByText(/hides legacy Bale recording and manual deductions/)).toBeTruthy();
+    act(()=>{window.dispatchEvent(new CustomEvent('asinta:mobile-quick-action',{detail:'bale'}));});expect(screen.queryByRole('dialog',{name:'Record Worker Advance (Bale)'})).toBeNull();expect(state.createAdvance).not.toHaveBeenCalled();
+  });
   it('opens the existing record Bale form without issuing an advance',()=>{
     render(React.createElement(AdvancesPage));
     act(()=>{window.dispatchEvent(new CustomEvent('asinta:mobile-quick-action',{detail:'bale'}));});
