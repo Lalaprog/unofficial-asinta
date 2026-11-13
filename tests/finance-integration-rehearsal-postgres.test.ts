@@ -44,6 +44,8 @@ suite('coordinated finance integration rehearsal, synthetic PostgreSQL only',()=
    await db.query(sql('20261107000006_guarded_worker_removal.sql'));
    for(const name of ['20261105000002_expense_breakdown.sql','20261102000000_atomic_payroll_payments.sql','20261013000000_advance_requests.sql','20261013000001_advance_request_notifications.sql','20261113000004_bale_request_site_guard.sql','20261113000000_weekly_worker_preview.sql'])await db.query(sql(name));
    await db.query(readFileSync('supabase/drafts/supervisor_table_foundation.sql','utf8'));
+   // Reproduce only the three observed explicit anonymous function grants.
+   await db.query('GRANT EXECUTE ON FUNCTION public.review_advance_request(uuid,text),public.approve_advance_requests(uuid[]),public.issue_advance_request(uuid) TO anon,service_role');
    const rehearsal=execFileSync('node',['scripts/build-finance-integration-rehearsal.mjs'],{encoding:'utf8'});
    await expect(db.query(rehearsal)).rejects.toThrow(/Synthetic disposable database and marker required/);await db.query('ROLLBACK');
    await db.query('CREATE TABLE app_private.synthetic_finance_rehearsal_marker (id integer)');
@@ -76,6 +78,10 @@ suite('coordinated finance integration rehearsal, synthetic PostgreSQL only',()=
    await db.query(readFileSync('supabase/drafts/project_assignment_history.sql','utf8'));
    await db.query(readFileSync('supabase/drafts/atomic_worker_move.sql','utf8'));
    await db.query(readFileSync('supabase/drafts/attendance_assignment_guard.sql','utf8'));
+   // Separate uninstalled legacy RPC ACL candidate; modeled grants return on rollback.
+   await db.query(readFileSync('supabase/drafts/legacy_bale_request_anon_acl.sql','utf8'));
+   const legacySignatures=['public.review_advance_request(uuid,text)','public.approve_advance_requests(uuid[])','public.issue_advance_request(uuid)'];
+   for(const signature of legacySignatures)expect((await db.query("SELECT has_function_privilege('anon',$1,'EXECUTE') anon,has_function_privilege('authenticated',$1,'EXECUTE') authenticated,has_function_privilege('service_role',$1,'EXECUTE') service",[signature])).rows[0]).toEqual({anon:false,authenticated:true,service:true});
    // Separate uninstalled assignment ACL candidate; this is not in the generated chain.
    await db.query(readFileSync('supabase/drafts/assignment_writer_acl_cutover.sql','utf8'));
    // Old-client payroll writes must not bypass the source-bound workflow.
@@ -234,6 +240,7 @@ suite('coordinated finance integration rehearsal, synthetic PostgreSQL only',()=
    await db.query('RESET ROLE');expect((await db.query('SELECT to_jsonb(p) v FROM public.payroll p WHERE id=$1',[voucher])).rows[0].v).toEqual(original);
    expect((await db.query('SELECT project_id,event_type FROM public.project_assignment_history WHERE worker_id=$1 ORDER BY event_type,project_id',[worker])).rows).toEqual([{project_id:site,event_type:'assigned'},{project_id:destination,event_type:'assigned'},{project_id:site,event_type:'unassigned'}]);
    await db.query('ROLLBACK');expect(await snapshot()).toEqual(before);
+   for(const signature of legacySignatures)expect((await db.query("SELECT has_function_privilege('anon',$1,'EXECUTE') allowed",[signature])).rows[0].allowed).toBe(true);
    expect((await db.query("SELECT to_regclass('public.weekly_worker_draft_sources') IS NULL absent,to_regprocedure('public.weekly_worker_preview_base_inputs(date)') IS NULL wrapper_absent,to_regprocedure('public.weekly_worker_preview_inputs(date)') IS NOT NULL base_present,to_regprocedure('public.weekly_bale_external_monitor_healthy()') IS NULL monitor_absent")).rows[0]).toEqual({absent:true,wrapper_absent:true,base_present:true,monitor_absent:true});
   }finally{await db.query('ROLLBACK').catch(()=>{});await db.end();}
  },60000);

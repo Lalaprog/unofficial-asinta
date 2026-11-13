@@ -44,6 +44,60 @@ const role=(db:PGlite,value:string)=>db.exec(`SET test.uid='${value}'`);
 const submit=async(db:PGlite)=> (await db.query<{id:string}>('INSERT INTO public.advance_requests(worker_id,project_id,requested_amount,submitted_by) VALUES($1,$2,100.25,$3) RETURNING id',[worker,site,supervisor])).rows[0].id;
 const status=(db:PGlite,request:string)=>db.query<{result:{effective_status:string;stored_status:string;period_start:string;release_date:string}}>('SELECT public.weekly_bale_effective_status($1) result',[request]);
 const release=(db:PGlite,request:string)=>db.query<{result:{outcome:string;advance_id:string}}>('SELECT public.record_weekly_bale_release($1) result',[request]);
+describe('legacy Bale anonymous RPC ACL candidate (not deployed)',()=>{
+ const candidate=()=>sql('supabase/drafts/legacy_bale_request_anon_acl.sql');
+ const grantLegacy=`GRANT EXECUTE ON FUNCTION public.review_advance_request(uuid,text),public.approve_advance_requests(uuid[]),public.issue_advance_request(uuid) TO anon,service_role;`;
+ it('removes anonymous grants while retaining Founder review, weekly guard and replacement release',async()=>{
+  const db=await fixture(true);try{
+   await db.exec(`RESET ROLE;${grantLegacy}`);
+   // This models the observed explicit ACL, not a hosted mutation.
+   expect((await db.query("SELECT has_function_privilege('anon','public.review_advance_request(uuid,text)','EXECUTE') allowed")).rows[0]).toEqual({allowed:true});
+   await db.exec("SET ROLE anon; SET test.uid=''; SET test.assurance='no'");
+   await expect(db.query("SELECT public.review_advance_request($1,'approve')",[id(99)])).rejects.toThrow(/Founder access is required/);
+   await db.exec('RESET ROLE');
+   await db.exec(`BEGIN;${candidate()} COMMIT;`);
+   for(const signature of ['public.review_advance_request(uuid,text)','public.approve_advance_requests(uuid[])','public.issue_advance_request(uuid)']){
+    const result=await db.query<{anon:boolean;authenticated:boolean;service:boolean}>(`SELECT has_function_privilege('anon',$1,'EXECUTE') anon,has_function_privilege('authenticated',$1,'EXECUTE') authenticated,has_function_privilege('service_role',$1,'EXECUTE') service`,[signature]);
+    expect(result.rows[0]).toEqual({anon:false,authenticated:true,service:true});
+   }
+   await db.exec("SET ROLE anon; SET test.uid=''; SET test.assurance='no'");
+   await expect(db.query("SELECT public.review_advance_request($1,'approve')",[id(99)])).rejects.toThrow(/permission denied/);
+   await db.exec(`SET ROLE authenticated;SET test.uid='${supervisor}';SET test.assurance='yes'`);
+   const request=await submit(db);await role(db,founder);await time(db,'2026-11-17T15:59:59Z');await db.query("SELECT public.review_advance_request($1,'approve')",[request]);
+   await time(db,'2026-11-18T04:00:00Z');
+   await expect(db.query('SELECT public.issue_advance_request($1)',[request])).rejects.toThrow(/controlled Wednesday external-release action/);
+   await role(db,supervisor);expect((await release(db,request)).rows[0].result.outcome).toBe('updated');
+  }finally{await db.close();}
+ },30000);
+ it('rolls back direct revokes when anon inherits EXECUTE',async()=>{
+  const db=await fixture();try{
+   await db.exec(`RESET ROLE;${grantLegacy} CREATE ROLE legacy_rpc_inherited; GRANT EXECUTE ON FUNCTION public.review_advance_request(uuid,text) TO legacy_rpc_inherited; GRANT legacy_rpc_inherited TO anon;`);
+   await expect(db.exec(`BEGIN;${candidate()} COMMIT;`)).rejects.toThrow(/Unexpected inherited anon access/);await db.exec('ROLLBACK');
+   expect((await db.query("SELECT has_function_privilege('anon','public.issue_advance_request(uuid)','EXECUTE') allowed")).rows[0]).toEqual({allowed:true});
+  }finally{await db.close();}
+ },30000);
+ it('fails without changing grants when authenticated access is missing',async()=>{
+  const db=await fixture();try{
+   await db.exec(`RESET ROLE;${grantLegacy} REVOKE EXECUTE ON FUNCTION public.issue_advance_request(uuid) FROM authenticated;`);
+   await expect(db.exec(`BEGIN;${candidate()} COMMIT;`)).rejects.toThrow(/missing or inaccessible/);await db.exec('ROLLBACK');
+   expect((await db.query("SELECT has_function_privilege('anon','public.review_advance_request(uuid,text)','EXECUTE') allowed")).rows[0]).toEqual({allowed:true});
+  }finally{await db.close();}
+ },30000);
+ it('rolls back when authenticated access depends only on PUBLIC',async()=>{
+  const db=await fixture();try{
+   await db.exec(`RESET ROLE;${grantLegacy} REVOKE EXECUTE ON FUNCTION public.issue_advance_request(uuid) FROM authenticated; GRANT EXECUTE ON FUNCTION public.issue_advance_request(uuid) TO PUBLIC;`);
+   await expect(db.exec(`BEGIN;${candidate()} COMMIT;`)).rejects.toThrow(/lost authenticated legacy Bale access/);await db.exec('ROLLBACK');
+   expect((await db.query("SELECT has_function_privilege('anon','public.review_advance_request(uuid,text)','EXECUTE') anon,has_function_privilege('authenticated','public.issue_advance_request(uuid)','EXECUTE') authenticated")).rows[0]).toEqual({anon:true,authenticated:true});
+  }finally{await db.close();}
+ },30000);
+ it('fails safely if a required legacy function is absent',async()=>{
+  const db=await fixture();try{
+   await db.exec(`RESET ROLE;${grantLegacy} DROP FUNCTION public.issue_advance_request(uuid);`);
+   await expect(db.exec(`BEGIN;${candidate()} COMMIT;`)).rejects.toThrow(/missing or inaccessible/);await db.exec('ROLLBACK');
+   expect((await db.query("SELECT has_function_privilege('anon','public.review_advance_request(uuid,text)','EXECUTE') allowed")).rows[0]).toEqual({allowed:true});
+  }finally{await db.close();}
+ },30000);
+});
 describe('experimental weekly Bale schedule (not deployed)',()=>{
  it('uses Manila time at Sunday/Tuesday/Wednesday boundaries and projects expiration without mutating history',async()=>{
   const db=await fixture();try{
