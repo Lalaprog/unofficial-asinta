@@ -48,6 +48,11 @@ export function projectPaidWorkerEvidencePreviewEnabled(): boolean {
   return financeFoundationEnabled() && process.env.NEXT_PUBLIC_PROJECT_PAID_WORKER_EVIDENCE_PREVIEW === 'true';
 }
 
+/** Temporary, unsaved project-cost reconciliation scratchpad; not a final accounting figure. */
+export function projectCostReconciliationPreviewEnabled(): boolean {
+  return financeFoundationEnabled() && process.env.NEXT_PUBLIC_PROJECT_COST_RECONCILIATION_PREVIEW === 'true';
+}
+
 /** Read-only experimental confirmed rental links; not a write UI or schema check. */
 export function confirmedRentalPreviewEnabled(): boolean {
   return financeFoundationEnabled() && process.env.NEXT_PUBLIC_CONFIRMED_RENTAL_PREVIEW === 'true';

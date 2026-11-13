@@ -3,6 +3,7 @@ import {readFileSync} from 'node:fs';
 import {Client} from 'pg';
 import {afterAll,beforeAll,describe,expect,it} from 'vitest';
 import {baseFixture} from './helpers/pr103-fixture';
+import {estimateProjectCost,parseCostSnapshot} from '@/lib/projects/projectCostReconciliation';
 const url=process.env.BALE_PAYROLL_CUTOVER_TEST_DATABASE_URL;
 const suite=url?describe:describe.skip;
 const founder='00000000-0000-0000-0000-000000000001',supervisor='00000000-0000-0000-0000-000000000002',site='00000000-0000-0000-0000-000000000004';
@@ -25,7 +26,8 @@ suite('real PostgreSQL combined weekly Bale and payroll candidate races',()=>{
   const existing=(await admin.query(`SELECT (SELECT count(*) FROM pg_class c JOIN pg_namespace n ON n.oid=c.relnamespace WHERE n.nspname='public' AND c.relkind IN ('r','p','v','m','S'))::int objects, (SELECT count(*) FROM pg_namespace WHERE nspname IN ('auth','app_private','storage'))::int schemas`)).rows[0];if(existing.objects||existing.schemas)throw Error('Database must be empty.');
   await admin.query(`DO $$BEGIN IF NOT EXISTS(SELECT 1 FROM pg_roles WHERE rolname='anon') THEN CREATE ROLE anon; END IF; IF NOT EXISTS(SELECT 1 FROM pg_roles WHERE rolname='authenticated') THEN CREATE ROLE authenticated; END IF; IF NOT EXISTS(SELECT 1 FROM pg_roles WHERE rolname='service_role') THEN CREATE ROLE service_role; END IF; END$$;`);
   const roles='CREATE ROLE anon; CREATE ROLE authenticated; CREATE ROLE service_role; ';if(!baseFixture.startsWith(roles))throw Error('Fixture role bootstrap changed');await admin.query(baseFixture.slice(roles.length));
-  await admin.query(`ALTER TABLE public.users ADD COLUMN email text; UPDATE public.users SET email='fixture@example.invalid'; ALTER TABLE public.payroll ADD COLUMN notes text;
+  await admin.query(`ALTER TABLE public.users ADD COLUMN email text; UPDATE public.users SET email='fixture@example.invalid'; ALTER TABLE public.payroll ADD COLUMN notes text; ALTER TABLE public.expenses ADD COLUMN ai_bale_detection boolean DEFAULT false;
+   INSERT INTO public.expenses(id,project_id,description,category,amount,expense_date,ai_bale_detection) VALUES ('${id(601)}','${site}','Excavator','equipment',1000,'2024-12-15',false),('${id(602)}','${site}','Bale expense','other',100.25,'2024-12-18',true);
    ALTER TABLE public.advances ADD COLUMN reason text, ADD COLUMN created_at timestamptz DEFAULT now(); ALTER TABLE public.advances ALTER COLUMN id SET DEFAULT gen_random_uuid();
    ALTER TABLE public.advance_requests ADD COLUMN approved_by uuid, ADD COLUMN approved_at timestamptz, ADD COLUMN rejected_by uuid, ADD COLUMN rejected_at timestamptz, ADD COLUMN issued_by uuid, ADD COLUMN updated_at timestamptz DEFAULT now();
    CREATE TABLE public.project_worker_assignments(project_id uuid,worker_id uuid,active boolean,primary key(project_id,worker_id));
@@ -44,7 +46,7 @@ suite('real PostgreSQL combined weekly Bale and payroll candidate races',()=>{
   for(const path of paths)await admin.query(readFileSync(path,'utf8'));
   // Rehearse coexistence of the Supervisor, historical-worker and original-period
   // assertion candidates with the weekly Bale/payroll chain in this fixture.
-  for(const name of ['supervisor_table_foundation','supervisor_rpc_rollout','supervisor_payroll_preview','historical_external_worker_payroll','supervisor_payroll_ledger','paid_period_assertion_adjustments'])await admin.query(`BEGIN; ${readFileSync(`supabase/drafts/${name}.sql`,'utf8')} COMMIT;`);
+  for(const name of ['supervisor_table_foundation','supervisor_rpc_rollout','supervisor_payroll_preview','historical_external_worker_payroll','supervisor_payroll_ledger','paid_period_assertion_adjustments','confirmed_rental_expense_link','project_cost_reconciliation_preview'])await admin.query(`BEGIN; ${readFileSync(`supabase/drafts/${name}.sql`,'utf8')} COMMIT;`);
   await admin.query(`INSERT INTO public.workers(id,name,position,contact_number,pay_rate,pay_rate_type,active) VALUES ('${supervisor}','Supervisor','Supervisor','none',600,'daily',true),('${id(105)}','Worker Five','Mason','none',600,'daily',true),('${id(106)}','Worker Six','Mason','none',600,'daily',true),('${id(107)}','Worker Seven','Mason','none',600,'daily',true),('${id(108)}','Worker Eight','Mason','none',600,'daily',true),('${id(109)}','Worker Nine','Mason','none',600,'daily',true);
    INSERT INTO public.project_worker_assignments VALUES ('${site}','${id(107)}',true),('${site}','${id(108)}',true);
    INSERT INTO public.attendance(id,worker_id,project_id,date,status,hours_worked,submitted_at) VALUES ('${id(206)}','${id(105)}','${site}','2024-11-03','present',8,'2024-11-03T08:00:00Z'),('${id(207)}','${id(106)}','${site}','2024-11-10','present',8,'2024-11-10T08:00:00Z'),('${id(209)}','${id(109)}','${site}','2024-09-15','present',8,'2024-09-15T08:00:00Z');
@@ -52,6 +54,7 @@ suite('real PostgreSQL combined weekly Bale and payroll candidate races',()=>{
   // Test-only clock; actual candidate uses the database clock, not caller input.
   await admin.query("CREATE OR REPLACE FUNCTION public.weekly_bale_clock() RETURNS timestamptz LANGUAGE sql VOLATILE SET search_path='' AS $$SELECT current_setting('test.clock')::timestamptz$$");
   await Promise.all([first.query(`SET ROLE authenticated; SET test.uid='${founder}'; SET test.assurance='yes'; SET lock_timeout='4s'`),second.query(`SET ROLE authenticated; SET test.uid='${supervisor}'; SET test.assurance='yes'; SET lock_timeout='4s'`)]);
+  await first.query("SELECT public.confirm_rental_expense($1,$2,$3,1000,'2024-12-15','Excavator','Excavator','Supplier',1,'2024-12-15','2024-12-21')",[id(603),id(601),site]);
  },30000);
  afterAll(async()=>{await Promise.all([admin?.end(),first?.end(),second?.end()]);});
  it('waits for a release that wins and refuses to approve the now-stale payroll draft',async()=>{
@@ -81,6 +84,7 @@ suite('real PostgreSQL combined weekly Bale and payroll candidate races',()=>{
   expect((await admin.query('SELECT status,amount_deducted::text FROM public.advances WHERE id=$1',[issued.advance_id])).rows).toEqual([{status:'fully_deducted',amount_deducted:'100.25'}]);
   expect((await admin.query('SELECT project_id,gross::text FROM public.weekly_worker_paid_allocations WHERE payroll_id=$1',[payroll])).rows).toEqual([{project_id:site,gross:'600.00'}]);
   expect((await admin.query<{n:number}>('SELECT count(*)::int n FROM public.payroll_payment_dates WHERE payroll_id=$1',[payroll])).rows[0].n).toBe(1);
+  const cost=parseCostSnapshot((await first.query('SELECT public.project_cost_reconciliation_preview($1) v',[site])).rows[0].v,site);expect(cost.paid).toHaveLength(1);expect(cost.expenses.find(e=>e.id===id(601))?.rental?.item).toBe('Excavator');const choices=Object.fromEntries(cost.expenses.map(e=>[e.id,e.id===id(602)?'exclude' as const:'include' as const]));expect(estimateProjectCost(cost,choices)).toEqual({expenses:101235n,excluded:10025n,payroll:60000n,total:161235n});
   const before=(await admin.query('SELECT to_jsonb(p) v FROM public.payroll p WHERE id=$1',[payroll])).rows[0].v;
   const snapshot=(await admin.query('SELECT app_private.paid_adjustment_voucher_snapshot(p) v FROM public.payroll p WHERE id=$1',[payroll])).rows[0].v;
   expect((await first.query("SELECT public.open_paid_payroll_adjustment($1,$2,$3,25.50,'Review missed time') v",[id(401),payroll,snapshot])).rows[0].v.status).toBe('pending');

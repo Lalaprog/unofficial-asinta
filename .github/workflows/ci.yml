@@ -173,6 +173,12 @@ jobs:
         run: |
           node -e "const {Client}=require('pg'); (async()=>{const c=new Client({connectionString:'postgresql://postgres@127.0.0.1:5433/asinta_test_pr103'}); await c.connect(); await c.query('CREATE DATABASE asinta_test_owned_equipment'); await c.end()})().catch(e=>{console.error(e); process.exit(1)})"
           npx vitest run tests/owned-equipment-postgres.test.ts
+      - name: Test project cost reconciliation snapshot in a separate empty database
+        env:
+          PROJECT_COST_RECONCILIATION_TEST_DATABASE_URL: postgresql://postgres@127.0.0.1:5433/asinta_test_project_cost_reconciliation
+        run: |
+          node -e "const {Client}=require('pg'); (async()=>{const c=new Client({connectionString:'postgresql://postgres@127.0.0.1:5433/asinta_test_pr103'}); await c.connect(); await c.query('CREATE DATABASE asinta_test_project_cost_reconciliation'); await c.end()})().catch(e=>{console.error(e); process.exit(1)})"
+          npx vitest run tests/project-cost-reconciliation-postgres.test.ts
       - name: Test draft confirmed rental concurrency in a separate empty database
         env:
           CONFIRMED_RENTAL_TEST_DATABASE_URL: postgresql://postgres@127.0.0.1:5433/asinta_test_confirmed_rental
