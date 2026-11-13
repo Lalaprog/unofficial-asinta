@@ -14,6 +14,10 @@ vi.mock('@/lib/auth/authContext',()=>({useAuth:()=>({user:{id:mock.actor},isFoun
 vi.mock('@/lib/data/store',()=>({useDataStore:()=>({projects:[{id:'00000000-0000-0000-0000-000000000004',name:'Site One'}]})}));
 import {WeeklyBaleReleasePanel} from '@/components/advances/WeeklyBaleReleasePanel';
 import {WeeklyWorkerPreview} from '@/components/payroll/WeeklyWorkerPreview';
+import {TimeDetailDialog} from '@/components/attendance/TimeDetailDialog';
+import {AllowanceDialog} from '@/components/attendance/AllowanceDialog';
+import {WorkerAllowanceQueue} from '@/components/payroll/WorkerAllowanceQueue';
+import type {HistoryRecord} from '@/lib/attendance/history';
 const founder='00000000-0000-0000-0000-000000000001',supervisor='00000000-0000-0000-0000-000000000002',worker='00000000-0000-0000-0000-000000000003',site='00000000-0000-0000-0000-000000000004';
 const attendance='70000000-0000-4000-8000-000000000001',voucher='70000000-0000-4000-8000-000000000002';
 const sql=(p:string)=>readFileSync(p,'utf8');
@@ -41,13 +45,15 @@ describe('weekly Bale through worker payroll: candidate UI and synthetic SQL',()
   for(const name of ['NEXT_PUBLIC_FINANCE_FOUNDATION_PREVIEW','NEXT_PUBLIC_WEEKLY_WORKER_ACTIONS_PREVIEW','NEXT_PUBLIC_WEEKLY_WORKER_CUTOVER_PREVIEW','NEXT_PUBLIC_WEEKLY_BALE_RELEASE_PREVIEW','NEXT_PUBLIC_WEEKLY_WORKER_REFRESH_PREVIEW','NEXT_PUBLIC_WEEKLY_WORKER_RETURN_PREVIEW'])vi.stubEnv(name,'true');
   mock.today='2024-11-06';mock.actor=supervisor;mock.supervisor=true;mock.founder=false;const db=await fixture();try{
    const req=(await db.query<{id:string}>('INSERT INTO public.advance_requests(worker_id,project_id,requested_amount,submitted_by) VALUES($1,$2,100.25,$3) RETURNING id',[worker,site,supervisor])).rows[0].id;
-   await db.exec(`SET test.uid='${founder}';SET test.clock='2024-11-05T04:00:00Z'`);await db.query("SELECT public.review_advance_request($1,'approve')",[req]);
-   await db.query("SELECT public.record_attendance_time_detail('70000000-0000-4000-8000-000000000003',$1,'2024-11-03T08:00:00Z',8,2,'Synthetic overtime')",[attendance]);
-   await db.query("SELECT public.submit_worker_allowance('70000000-0000-4000-8000-000000000004',$1,'2024-11-03T08:00:00Z',50.25,'Synthetic allowance')",[attendance]);
-   await db.exec(`SET test.uid='${supervisor}';SET test.clock='2024-11-06T04:00:00Z'`);
-   let loseRelease=true,losePayment=true;mock.rpc.mockReset();mock.rpc.mockImplementation(async(name:string,args:Record<string,unknown>)=>{
+   let loseTime=true,loseAllowance=true,loseRelease=true,losePayment=true;mock.rpc.mockReset();mock.rpc.mockImplementation(async(name:string,args:Record<string,unknown>={})=>{
     try{
      const calls:Record<string,{query:string;params:unknown[]}>= {
+      attendance_time_detail_latest:{query:'SELECT public.attendance_time_detail_latest($1) v',params:[args.p_attendance]},
+      record_attendance_time_detail:{query:'SELECT public.record_attendance_time_detail($1,$2,$3,$4,$5,$6) v',params:[args.p_request,args.p_attendance,args.p_expected_submitted_at,args.p_regular,args.p_overtime,args.p_note]},
+      worker_allowances_for_attendance:{query:'SELECT public.worker_allowances_for_attendance($1) v',params:[args.p_attendance]},
+      submit_worker_allowance:{query:'SELECT public.submit_worker_allowance($1,$2,$3,$4,$5) v',params:[args.p_id,args.p_attendance,args.p_expected_submitted_at,args.p_amount,args.p_description]},
+      worker_allowance_pending_queue:{query:'SELECT public.worker_allowance_pending_queue() v',params:[]},
+      review_worker_allowance:{query:'SELECT public.review_worker_allowance($1,$2) v',params:[args.p_id,args.p_decision]},
       weekly_bale_release_list:{query:'SELECT public.weekly_bale_release_list($1) v',params:[args.p_start]},
       record_weekly_bale_release:{query:'SELECT public.record_weekly_bale_release($1) v',params:[args.p_request_id]},
       weekly_worker_preview_inputs:{query:'SELECT public.weekly_worker_preview_inputs($1) v',params:[args.p_start]},
@@ -57,11 +63,25 @@ describe('weekly Bale through worker payroll: candidate UI and synthetic SQL',()
       record_weekly_worker_payment:{query:'SELECT public.record_weekly_worker_payment($1,$2,$3) v',params:[args.p_id,args.p_payment_date,args.p_expected_revision]},
      };
      const call=calls[name];if(!call)throw Error(`Unexpected RPC ${name}`);const data=(await db.query<{v:unknown}>(call.query,call.params)).rows[0].v;
+     if(name==='record_attendance_time_detail'&&loseTime){loseTime=false;return {data:null,error:Error('Synthetic lost response after commit')};}
+     if(name==='submit_worker_allowance'&&loseAllowance){loseAllowance=false;return {data:null,error:Error('Synthetic lost response after commit')};}
      if(name==='record_weekly_bale_release'&&loseRelease){loseRelease=false;return {data:null,error:Error('Synthetic lost response after commit')};}
      if(name==='record_weekly_worker_payment'&&losePayment){losePayment=false;return {data:null,error:Error('Synthetic lost response after commit')};}
      return {data,error:null};
     }catch(error){return {data:null,error};}
    });
+   // Actual attendance dialogs write the source records through their candidate RPCs.
+   const record:HistoryRecord={id:attendance,worker_id:worker,project_id:site,date:'2024-11-03',status:'present',hours_worked:8,notes:null,recorded_by:supervisor,is_founder_override:false,submitted_at:'2024-11-03T08:00:00Z',created_at:'2024-11-03T08:00:00Z',worker_name:'Test Worker',worker_position:'Mason',project_name:'Site One',is_supervisor:false};
+   render(React.createElement(TimeDetailDialog,{record,onClose:vi.fn()}));await screen.findByText(/No supplemental time details/);
+   fireEvent.change(screen.getByLabelText('Regular hours (maximum 8)'),{target:{value:'8'}});fireEvent.change(screen.getByLabelText('Overtime hours'),{target:{value:'2'}});fireEvent.change(screen.getByLabelText('Reason / source of hours'),{target:{value:'Synthetic overtime'}});fireEvent.click(screen.getByRole('button',{name:'Save time details'}));await screen.findByText(/Save not confirmed/);cleanup();
+   render(React.createElement(TimeDetailDialog,{record,onClose:vi.fn()}));await screen.findByText(/Latest saved: 8.00 regular \+ 2.00 OT/);fireEvent.click(screen.getByRole('button',{name:'Retry exact time details'}));await screen.findByText(/Time details saved/);cleanup();
+   render(React.createElement(AllowanceDialog,{record,isFounder:false,onClose:vi.fn()}));await screen.findByText('No allowances recorded.');fireEvent.change(screen.getByLabelText('Allowance amount (₱)'),{target:{value:'50.25'}});fireEvent.change(screen.getByLabelText('Allowance purpose'),{target:{value:'Synthetic allowance'}});fireEvent.click(screen.getByRole('button',{name:'Submit for approval'}));await screen.findByText(/Result not fully confirmed/);cleanup();
+   render(React.createElement(AllowanceDialog,{record,isFounder:false,onClose:vi.fn()}));await screen.findByText(/Request .*50.25/);await screen.findByText(/₱50.25 · pending/);fireEvent.click(screen.getByRole('button',{name:'Retry exact allowance'}));await screen.findByText(/Submitted for Founder approval/);cleanup();
+   // Founder decides the allowance and Bale; a pending allowance cannot silently become pay.
+   mock.actor=founder;mock.founder=true;mock.supervisor=false;mock.today='2024-11-05';await db.exec(`SET test.uid='${founder}';SET test.clock='2024-11-05T04:00:00Z'`);await db.query("SELECT public.review_advance_request($1,'approve')",[req]);
+   render(React.createElement(WeeklyWorkerPreview));fireEvent.click(screen.getByRole('button',{name:/Weekly worker planning preview/}));fireEvent.click(screen.getByRole('button',{name:'Load preview'}));await screen.findByText(/Allowance awaiting Founder decision/);expect(screen.queryByRole('button',{name:'Review new draft'})).toBeNull();cleanup();
+   render(React.createElement(WorkerAllowanceQueue));fireEvent.click(screen.getByRole('button',{name:/Worker allowance approvals/}));fireEvent.click(screen.getByRole('button',{name:'Load requests'}));await screen.findByText(/Test Worker ·/);fireEvent.click(screen.getByRole('button',{name:'Approve'}));fireEvent.click(screen.getByRole('button',{name:'Confirm approval'}));await screen.findByText(/Decision recorded/);cleanup();
+   mock.actor=supervisor;mock.founder=false;mock.supervisor=true;mock.today='2024-11-06';await db.exec(`SET test.uid='${supervisor}';SET test.clock='2024-11-06T04:00:00Z'`);
    // Supervisor records a release only after acknowledging the simulated cash handover.
    render(React.createElement(WeeklyBaleReleasePanel));fireEvent.click(screen.getByRole('button',{name:'Experimental weekly Bale release'}));fireEvent.click(screen.getByRole('button',{name:'Load releases'}));
    await screen.findByText(/Test Worker.*Site One.*100.25/);fireEvent.click(screen.getByRole('button',{name:'Review external release'}));fireEvent.click(screen.getByRole('checkbox',{name:/verified this external release/}));fireEvent.click(screen.getByRole('button',{name:'Record release'}));
@@ -78,6 +98,10 @@ describe('weekly Bale through worker payroll: candidate UI and synthetic SQL',()
    await db.exec('RESET ROLE');expect((await db.query('SELECT status,gross_pay::text gross,bale_deduction::text bale,net_pay::text net FROM public.payroll WHERE id=$1',[voucher])).rows).toEqual([{status:'paid',gross:'800.25',bale:'100.25',net:'700.00'}]);
    expect((await db.query('SELECT amount::text amount,amount_deducted::text deducted,status FROM public.advances WHERE worker_id=$1',[worker])).rows).toEqual([{amount:'100.25',deducted:'100.25',status:'fully_deducted'}]);
    expect((await db.query('SELECT project_id,gross::text gross FROM public.weekly_worker_paid_allocations WHERE payroll_id=$1',[voucher])).rows).toEqual([{project_id:site,gross:'800.25'}]);
+   expect((await db.query('SELECT amount::text amount,status FROM public.worker_allowances WHERE worker_id=$1',[worker])).rows).toEqual([{amount:'50.25',status:'approved'}]);
+   expect((await db.query('SELECT regular_hours::text regular,overtime_hours::text ot FROM public.attendance_time_details WHERE attendance_id=$1',[attendance])).rows).toEqual([{regular:'8.00',ot:'2.00'}]);
+   const timeWrites=mock.rpc.mock.calls.filter(c=>c[0]==='record_attendance_time_detail');expect(timeWrites).toHaveLength(2);expect(timeWrites[1][1]).toEqual(timeWrites[0][1]);
+   const submissions=mock.rpc.mock.calls.filter(c=>c[0]==='submit_worker_allowance');expect(submissions).toHaveLength(2);expect(submissions[1][1]).toEqual(submissions[0][1]);
    expect(mock.rpc.mock.calls.filter(c=>c[0]==='record_weekly_bale_release')).toHaveLength(1);expect(mock.rpc.mock.calls.filter(c=>c[0]==='record_weekly_worker_payment')).toHaveLength(1);
   }finally{cleanup();await db.close();}
  },30000);
