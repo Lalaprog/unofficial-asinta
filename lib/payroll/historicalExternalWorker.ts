@@ -1,6 +1,6 @@
 import {workerPayrollPeriod} from './periods';
 export type ExternalWorker={id:string;name:string;position:string;active:boolean};
-export type ExternalReview={worker:ExternalWorker;start:string;end:string;as_of:string;possible_supervisor:boolean;possible_worker_duplicate:boolean;overlapping_vouchers:number;period_advances:number;older_open_advances:number;existing_assertions:number};
+export type ExternalReview={worker:ExternalWorker;start:string;end:string;as_of:string;possible_supervisor:boolean;possible_worker_duplicate:boolean;supervisor_periods:number;overlapping_vouchers:number;period_advances:number;older_open_advances:number;existing_assertions:number};
 export type ExternalAttempt={request:string;actor:string;worker:ExternalWorker;start:string;paid_on:string;gross:string;bale:string;other:string;net:string;note:string};
 export type ExternalRow={request_id:string;worker_id:string;period_start:string;period_end:string;paid_on:string;gross:string;bale:string;other_deductions:string;net:string;evidence_note:string;worker_snapshot:ExternalWorker;recorded_by:string;recorded_at:string};
 const uuid=(x:unknown):x is string=>typeof x==='string'&&/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(x);
@@ -16,7 +16,7 @@ export function parseExternalCatalog(raw:unknown):ExternalWorker[]{
 }
 export function parseExternalReview(raw:unknown,worker:ExternalWorker,start:string):ExternalReview{
  if(!raw||typeof raw!=='object')throw Error('Invalid review');const r=raw as ExternalReview;const w=parseExternalWorker(r.worker),period=workerPayrollPeriod(start);
- if(period.start!==start||r.start!==start||r.end!==period.end||!date(r.as_of)||w.id!==worker.id||w.name!==worker.name||w.position!==worker.position||w.active!==worker.active||typeof r.possible_supervisor!=='boolean'||typeof r.possible_worker_duplicate!=='boolean'||![r.overlapping_vouchers,r.period_advances,r.older_open_advances,r.existing_assertions].every(count))throw Error('Worker or period changed; reload');return r;
+ if(period.start!==start||r.start!==start||r.end!==period.end||!date(r.as_of)||w.id!==worker.id||w.name!==worker.name||w.position!==worker.position||w.active!==worker.active||typeof r.possible_supervisor!=='boolean'||typeof r.possible_worker_duplicate!=='boolean'||![r.supervisor_periods,r.overlapping_vouchers,r.period_advances,r.older_open_advances,r.existing_assertions].every(count))throw Error('Worker or period changed; reload');return r;
 }
 export function parseExternalAttempt(raw:unknown,actor:string):ExternalAttempt{
  if(!raw||typeof raw!=='object'||Array.isArray(raw))throw Error('Invalid saved request');const x=raw as ExternalAttempt,w=parseExternalWorker(x.worker);

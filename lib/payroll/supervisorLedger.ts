@@ -1,6 +1,6 @@
 import {parseSupervisorPreview,parseDailyRate,type SupervisorPreviewInput} from './supervisorPreview';
 import {supervisorPayrollPeriod} from './periods';
-export type PreparedSupervisor={person:{id:string;name:string;role:'supervisor'};linked_worker:{id:string;name:string;position:string;active:boolean};input:SupervisorPreviewInput};
+export type PreparedSupervisor={person:{id:string;name:string;role:'supervisor'};linked_worker:{id:string;name:string;position:string;active:boolean};input:SupervisorPreviewInput;historical_worker_conflicts:number};
 export type SupervisorLedgerRow={id:string;supervisor_id:string;supervisor_name:string;period_start:string;period_end:string;daily_rate:string;half_day_units:number;gross:string;status:'draft'|'approved'|'paid';unmarked_dates:string[];paid_on:string|null;created_by:string;created_at:string;approved_by:string|null;approved_at:string|null;paid_by:string|null;recorded_paid_at:string|null;source_changed:boolean;as_of:string};
 export type SupervisorLedgerAttempt={kind:'create';actor:string;request:string;supervisor:string;start:string;rate:string;prepared:PreparedSupervisor}|{kind:'approved'|'recorded_paid';actor:string;request:string;supervisor:string;start:string;payroll:string;paid_on:string|null};
 export type CompanyEvidence={from:string;to:string;total:string;count:number;items:{id:string;supervisor_id:string;supervisor_name:string;period_start:string;period_end:string;paid_on:string;gross:string}[]};
@@ -13,7 +13,7 @@ const cents=(v:unknown,maxDigits=8)=>{if(typeof v!=='string'||!new RegExp(`^(?:0
 export function parseSupervisorPrepared(raw:unknown,id:string,start:string):PreparedSupervisor{
  if(!raw||typeof raw!=='object'||Array.isArray(raw))throw Error('Invalid Supervisor preparation');const v=raw as PreparedSupervisor;
  if(!v.person||v.person.id!==id||!uuid(id)||!text(v.person.name)||v.person.role!=='supervisor'||!v.linked_worker||v.linked_worker.id!==id||!text(v.linked_worker.name)||typeof v.linked_worker.position!=='string'||typeof v.linked_worker.active!=='boolean')throw Error('Invalid Supervisor identity');
- const input=parseSupervisorPreview(v.input,id,start);if(input.days.some(d=>!uuid(d.id))||input.leave.some(l=>!uuid(l.id)))throw Error('Invalid source identity');return {person:v.person,linked_worker:v.linked_worker,input};
+ const input=parseSupervisorPreview(v.input,id,start);if(!integer(v.historical_worker_conflicts)||input.days.some(d=>!uuid(d.id))||input.leave.some(l=>!uuid(l.id)))throw Error('Invalid source identity');return {person:v.person,linked_worker:v.linked_worker,input,historical_worker_conflicts:v.historical_worker_conflicts};
 }
 export function parseSupervisorLedgerRow(raw:unknown,id:string,start:string):SupervisorLedgerRow|null{
  if(raw===null)return null;if(!raw||typeof raw!=='object'||Array.isArray(raw))throw Error('Invalid Supervisor ledger');const r=raw as SupervisorLedgerRow;const period=supervisorPayrollPeriod(start),rate=cents(r.daily_rate),gross=cents(r.gross);

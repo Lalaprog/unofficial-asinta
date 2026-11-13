@@ -14,9 +14,8 @@ BEGIN
  OR to_regclass('public.users') IS NULL OR to_regclass('public.workers') IS NULL OR to_regclass('public.payroll') IS NULL OR to_regclass('public.advances') IS NULL THEN RAISE EXCEPTION 'Historical external payroll prerequisites missing'; END IF;
  IF to_regclass('public.historical_external_worker_payroll') IS NOT NULL OR to_regclass('public.historical_external_worker_events') IS NOT NULL
  OR to_regprocedure('public.record_historical_external_worker_payroll(uuid,uuid,date,date,numeric,numeric,numeric,numeric,text,jsonb,boolean)') IS NOT NULL THEN RAISE EXCEPTION 'Historical external payroll name collision'; END IF;
- -- No cross-ledger identity/lock coordination exists yet. Refuse both install
- -- orders rather than silently letting the two candidates claim the same pay.
- IF to_regclass('public.supervisor_period_payroll') IS NOT NULL THEN RAISE EXCEPTION 'Supervisor payroll ledger requires coordinated cross-ledger reconciliation'; END IF;
+ -- The optional Supervisor ledger is cross-checked at runtime. Both writers
+ -- must retain their common users -> workers table-lock order.
  IF EXISTS (SELECT 1 FROM pg_catalog.pg_class WHERE oid IN ('public.payroll'::regclass,'public.advances'::regclass) AND (relkind<>'r' OR NOT relrowsecurity)) THEN RAISE EXCEPTION 'Existing financial tables must have RLS'; END IF;
 END;
 $preflight$;
@@ -95,14 +94,20 @@ $$;
 
 CREATE FUNCTION public.historical_external_worker_review(p_worker uuid,p_start date) RETURNS jsonb
 LANGUAGE plpgsql STABLE SECURITY DEFINER SET search_path='' AS $$
-DECLARE v_worker jsonb; v_name text; v_position text; v_risk boolean;
+DECLARE v_worker jsonb; v_name text; v_position text; v_risk boolean; v_supervisor_periods bigint:=0;
 BEGIN
  IF auth.uid() IS NULL OR NOT coalesce(public.is_founder(),false) OR NOT coalesce(public.session_assurance_satisfied(),false) THEN RAISE EXCEPTION 'Founder access with required assurance is required' USING ERRCODE='42501'; END IF;
  IF p_worker IS NULL OR p_start IS NULL OR NOT isfinite(p_start) OR p_start<DATE '1900-01-01' OR p_start>DATE '9998-12-24' OR extract(dow FROM p_start)<>0 THEN RAISE EXCEPTION 'Choose a worker and Sunday' USING ERRCODE='22023'; END IF;
  SELECT jsonb_build_object('id',id,'name',name,'position',position,'active',active),name,position INTO v_worker,v_name,v_position FROM public.workers WHERE id=p_worker;
  IF NOT FOUND THEN RAISE EXCEPTION 'Worker unavailable' USING ERRCODE='P0002'; END IF;
  SELECT strpos(lower(coalesce(v_position,'')),'supervisor')>0 OR EXISTS(SELECT 1 FROM public.users WHERE role='supervisor' AND (id=p_worker OR lower(btrim(name))=lower(btrim(v_name)))) INTO v_risk;
- RETURN jsonb_build_object('worker',v_worker,'start',p_start,'end',p_start+6,'as_of',(statement_timestamp() AT TIME ZONE 'Asia/Manila')::date,'possible_supervisor',v_risk,
+ -- If the separate candidate is installed, compare both the stored and current
+ -- Supervisor names as conservative signals. Shared users/workers locks held by
+ -- both write paths serialize the final check; names are not proof of identity.
+ IF pg_catalog.to_regclass('public.supervisor_period_payroll') IS NOT NULL THEN
+  EXECUTE 'SELECT count(*) FROM public.supervisor_period_payroll p JOIN public.users u ON u.id=p.supervisor_id WHERE p.period_start<=$2+6 AND p.period_end>=$2 AND (p.supervisor_id=$1 OR lower(btrim(p.supervisor_name))=lower(btrim($3)) OR lower(btrim(u.name))=lower(btrim($3)))' INTO v_supervisor_periods USING p_worker,p_start,v_name;
+ END IF;
+ RETURN jsonb_build_object('worker',v_worker,'start',p_start,'end',p_start+6,'as_of',(statement_timestamp() AT TIME ZONE 'Asia/Manila')::date,'possible_supervisor',v_risk,'supervisor_periods',v_supervisor_periods,
   'possible_worker_duplicate',EXISTS(SELECT 1 FROM public.workers WHERE id<>p_worker AND lower(btrim(name))=lower(btrim(v_name))),
   'overlapping_vouchers',(SELECT count(*) FROM public.payroll WHERE worker_id=p_worker AND period_start<=p_start+6 AND period_end>=p_start),
   'period_advances',(SELECT count(*) FROM public.advances WHERE worker_id=p_worker AND date BETWEEN p_start AND p_start+6),
@@ -138,7 +143,7 @@ BEGIN
  v_review:=public.historical_external_worker_review(p_worker,p_start);
  IF v_review->'worker' IS DISTINCT FROM p_expected_worker THEN RAISE EXCEPTION 'Worker changed; review again' USING ERRCODE='40001'; END IF;
  IF coalesce((v_review->>'possible_supervisor')::boolean,true) OR coalesce((v_review->>'possible_worker_duplicate')::boolean,true) THEN RAISE EXCEPTION 'Possible Supervisor or duplicate worker identity requires separate review' USING ERRCODE='22023'; END IF;
- IF (v_review->>'overlapping_vouchers')::bigint>0 OR (v_review->>'period_advances')::bigint>0 OR (v_review->>'older_open_advances')::bigint>0 OR (v_review->>'existing_assertions')::bigint>0 THEN
+ IF (v_review->>'overlapping_vouchers')::bigint>0 OR (v_review->>'period_advances')::bigint>0 OR (v_review->>'older_open_advances')::bigint>0 OR (v_review->>'existing_assertions')::bigint>0 OR (v_review->>'supervisor_periods')::bigint>0 THEN
   RAISE EXCEPTION 'Existing voucher, Bale or historical evidence requires separate reconciliation' USING ERRCODE='22023'; END IF;
  INSERT INTO public.historical_external_worker_payroll(request_id,worker_id,period_start,period_end,paid_on,gross,bale,other_deductions,net,evidence_note,worker_snapshot,recorded_by)
  VALUES(p_request,p_worker,p_start,p_start+6,p_paid_on,p_gross,p_bale,p_other,p_net,v_note,p_expected_worker,auth.uid()) RETURNING * INTO v_row;

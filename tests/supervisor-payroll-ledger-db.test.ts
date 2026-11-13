@@ -54,9 +54,20 @@ describe('uninstalled Supervisor period payroll ledger',()=>{
    await db.exec('RESET ROLE');expect((await db.query<{n:number}>('SELECT count(*)::int n FROM public.supervisor_period_payroll_events')).rows[0].n).toBe(2);
   }finally{await db.close();}
  },30000);
- it('refuses both cross-ledger installation orders pending coordinated identity protection',async()=>{
-  const db=await setup();try{await db.exec('RESET ROLE');await expect(db.exec(`BEGIN; ${sql('historical_external_worker_payroll')} COMMIT;`)).rejects.toThrow(/cross-ledger reconciliation/);await db.exec('ROLLBACK');}finally{await db.close();}
-  const reverse=new PGlite();try{await reverse.exec(baseFixture);for(const name of ['supervisor_table_foundation','supervisor_rpc_rollout','supervisor_payroll_preview','historical_external_worker_payroll'])await reverse.exec(`BEGIN; ${sql(name)} COMMIT;`);await expect(reverse.exec(`BEGIN; ${sql('supervisor_payroll_ledger')} COMMIT;`)).rejects.toThrow(/cross-ledger reconciliation/);await reverse.exec('ROLLBACK');}finally{await reverse.close();}
+ it('installs both candidates in either order and blocks overlapping history after identity role changes',async()=>{
+  const db=await setup();try{
+   await seed(db);await create(db,id(70),await prepared(db));await db.exec(`RESET ROLE; BEGIN; ${sql('historical_external_worker_payroll')} COMMIT; UPDATE public.users SET role='founder' WHERE id='${sup}'; UPDATE public.workers SET position='Mason' WHERE id='${sup}'; SET ROLE authenticated`);
+   const result=(await db.query<{v:{worker:unknown;supervisor_periods:number;possible_supervisor:boolean}}>("SELECT public.historical_external_worker_review($1,'2024-12-01') v",[sup])).rows[0].v;expect(result.supervisor_periods).toBe(1);expect(result.possible_supervisor).toBe(false);
+   await expect(db.query("SELECT public.record_historical_external_worker_payroll($1,$2,'2024-12-01','2024-12-07',600,0,0,600,'Ledger',$3,true)",[id(71),sup,JSON.stringify(result.worker)])).rejects.toThrow(/reconciliation/);
+  }finally{await db.close();}
+  const reverse=new PGlite();try{
+   await reverse.exec(baseFixture);for(const name of ['supervisor_table_foundation','supervisor_rpc_rollout','supervisor_payroll_preview','historical_external_worker_payroll','supervisor_payroll_ledger'])await reverse.exec(`BEGIN; ${sql(name)} COMMIT;`);
+   await reverse.exec(`UPDATE public.users SET role='founder' WHERE id='${sup}'; INSERT INTO public.workers VALUES ('${sup}','Supervisor','Mason','none',600,'daily',true); SET ROLE authenticated; SET test.assurance='yes'; SET test.uid='${founder}'`);
+   const old=(await reverse.query<{v:{worker:unknown}}>("SELECT public.historical_external_worker_review($1,'2024-12-01') v",[sup])).rows[0].v;
+   await reverse.query("SELECT public.record_historical_external_worker_payroll($1,$2,'2024-12-01','2024-12-07',600,0,0,600,'Ledger',$3,true)",[id(72),sup,JSON.stringify(old.worker)]);
+   await reverse.exec(`RESET ROLE; UPDATE public.users SET role='supervisor' WHERE id='${sup}'; UPDATE public.workers SET position='Supervisor' WHERE id='${sup}'; INSERT INTO public.supervisor_daily_attendance(id,supervisor_id,work_date,work_status,status,submitted_at,reviewed_by,reviewed_at) VALUES ('${id(73)}','${sup}','2024-12-02','present','approved',now(),'${founder}',now()); SET ROLE authenticated`);
+   const plan=(await reverse.query<{v:{historical_worker_conflicts:number}}>("SELECT public.supervisor_period_prepare($1,'2024-12-01') v",[sup])).rows[0].v;expect(plan.historical_worker_conflicts).toBe(1);await expect(create(reverse,id(74),plan)).rejects.toThrow(/historical worker payroll overlap/);
+  }finally{await reverse.close();}
  },30000);
  it('rejects non-Founder, bad assurance and changed sources before approval or payment',async()=>{
   const db=await setup();try{await seed(db);const snapshot=await prepared(db);await create(db,id(30),snapshot);await db.exec(`SET test.uid='${sup}'`);await expect(transition(db,id(31),id(30),'approved')).rejects.toThrow(/Founder/);await expect(review(db)).rejects.toThrow(/Founder/);await db.exec(`SET test.uid='${founder}'; SET test.assurance='no'`);await expect(review(db)).rejects.toThrow(/Founder/);await db.exec(`SET test.assurance='yes'; SET test.uid='${sup}'`);await db.query("SELECT public.submit_supervisor_leave($1,'2024-12-04','2024-12-04','emergency','')",[id(32)]);await db.exec(`SET test.uid='${founder}'`);await expect(transition(db,id(31),id(30),'approved')).rejects.toThrow(/Pending/);expect((await review(db)).source_changed).toBe(true);

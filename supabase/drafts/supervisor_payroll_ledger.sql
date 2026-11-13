@@ -13,9 +13,8 @@ DO $preflight$
 BEGIN
  IF to_regprocedure('public.supervisor_payroll_preview_inputs(uuid,date)') IS NULL OR to_regprocedure('public.is_founder()') IS NULL OR to_regprocedure('public.session_assurance_satisfied()') IS NULL OR to_regprocedure('auth.uid()') IS NULL OR to_regclass('public.supervisor_daily_attendance') IS NULL OR to_regclass('public.supervisor_leave_requests') IS NULL OR to_regclass('public.users') IS NULL OR to_regclass('public.workers') IS NULL OR to_regclass('public.attendance') IS NULL OR to_regclass('public.payroll') IS NULL THEN RAISE EXCEPTION 'Supervisor ledger prerequisites missing'; END IF;
  IF to_regclass('public.supervisor_period_payroll') IS NOT NULL OR to_regclass('public.supervisor_period_payroll_events') IS NOT NULL OR to_regprocedure('public.create_supervisor_period_draft(uuid,uuid,date,numeric,jsonb)') IS NOT NULL THEN RAISE EXCEPTION 'Supervisor ledger name collision'; END IF;
- -- Cross-ledger historical identity/lock coordination is not implemented yet.
- -- Never silently permit both sources to claim an overlapping external payment.
- IF to_regclass('public.historical_external_worker_payroll') IS NOT NULL THEN RAISE EXCEPTION 'Historical external worker evidence requires coordinated cross-ledger reconciliation'; END IF;
+ -- The optional historical-worker candidate is cross-checked at runtime.
+ -- Its writer and this writer must both lock users -> workers first.
  IF EXISTS(SELECT 1 FROM pg_catalog.pg_class WHERE oid IN ('public.payroll'::regclass,'public.supervisor_daily_attendance'::regclass,'public.supervisor_leave_requests'::regclass) AND (relkind<>'r' OR NOT relrowsecurity)) THEN RAISE EXCEPTION 'Supervisor ledger prerequisites require RLS'; END IF;
 END;
 $preflight$;
@@ -81,11 +80,27 @@ $$;
 REVOKE ALL ON FUNCTION public.guard_legacy_supervisor_period_overlap() FROM PUBLIC,anon,authenticated,service_role;
 CREATE TRIGGER guard_legacy_supervisor_period_overlap BEFORE INSERT OR UPDATE ON public.payroll FOR EACH ROW EXECUTE FUNCTION public.guard_legacy_supervisor_period_overlap();
 
+-- Optional cross-ledger signal. This private helper is called after the common
+-- users -> workers write locks during creation/transition; it is also called in
+-- read-only preparation. UUID and names are risk signals, not proof of identity.
+CREATE FUNCTION public.supervisor_period_external_conflicts(p_supervisor uuid,p_start date,p_end date) RETURNS bigint
+LANGUAGE plpgsql STABLE SECURITY DEFINER SET search_path='' AS $$
+DECLARE v_count bigint:=0;v_name text;
+BEGIN
+ IF pg_catalog.to_regclass('public.historical_external_worker_payroll') IS NULL THEN RETURN 0; END IF;
+ SELECT name INTO v_name FROM public.users WHERE id=p_supervisor;
+ IF NOT FOUND THEN RAISE EXCEPTION 'Supervisor identity unavailable' USING ERRCODE='22023'; END IF;
+ EXECUTE 'SELECT count(*) FROM public.historical_external_worker_payroll h JOIN public.workers w ON w.id=h.worker_id WHERE h.period_start<=$3 AND h.period_end>=$2 AND (h.worker_id=$1 OR lower(btrim(h.worker_snapshot->>''name''))=lower(btrim($4)) OR lower(btrim(w.name))=lower(btrim($4)))' INTO v_count USING p_supervisor,p_start,p_end,v_name;
+ RETURN v_count;
+END;
+$$;
+REVOKE ALL ON FUNCTION public.supervisor_period_external_conflicts(uuid,date,date) FROM PUBLIC,anon,authenticated,service_role;
+
 -- Called only while the invoking writer holds all source locks. Capture identity
 -- and all relevant pending/approved day/leave records, not project assignments.
 CREATE FUNCTION public.supervisor_period_compute_locked(p_supervisor uuid,p_start date,p_rate numeric) RETURNS jsonb
 LANGUAGE plpgsql SECURITY DEFINER SET search_path='' AS $$
-DECLARE v_input jsonb; v_sources jsonb; v_day jsonb; v_date date; v_today date; v_approved integer; v_units integer:=0; v_known integer:=0; v_unmarked jsonb:='[]'::jsonb; v_gross numeric; v_person jsonb; v_worker jsonb;
+DECLARE v_input jsonb; v_sources jsonb; v_day jsonb; v_date date; v_today date; v_approved integer; v_units integer:=0; v_known integer:=0; v_unmarked jsonb:='[]'::jsonb; v_gross numeric; v_person jsonb; v_worker jsonb; v_external bigint;
 BEGIN
  v_input:=public.supervisor_payroll_preview_inputs(p_supervisor,p_start);
  v_today:=(clock_timestamp() AT TIME ZONE 'Asia/Manila')::date;
@@ -111,7 +126,9 @@ BEGIN
  SELECT jsonb_build_object('id',id,'name',name,'role',role) INTO v_person FROM public.users WHERE id=p_supervisor AND role='supervisor';
  SELECT jsonb_build_object('id',id,'name',name,'position',position,'active',active) INTO v_worker FROM public.workers WHERE id=p_supervisor;
  IF v_person IS NULL OR v_worker IS NULL OR NOT coalesce((v_worker->>'active')::boolean,false) OR lower(btrim(v_person->>'name')) IS DISTINCT FROM lower(btrim(v_worker->>'name')) THEN RAISE EXCEPTION 'Supervisor linked worker identity requires separate reconciliation' USING ERRCODE='22023'; END IF;
- v_sources:=jsonb_build_object('person',v_person,'linked_worker',v_worker,'input',v_input-'as_of');
+ v_external:=public.supervisor_period_external_conflicts(p_supervisor,p_start,(v_input->>'end')::date);
+ IF v_external<>0 THEN RAISE EXCEPTION 'Possible historical worker payroll overlap requires separate reconciliation' USING ERRCODE='22023'; END IF;
+ v_sources:=jsonb_build_object('person',v_person,'linked_worker',v_worker,'input',v_input-'as_of','historical_worker_conflicts',v_external);
  RETURN jsonb_build_object('input',v_input,'sources',v_sources,'unmarked',v_unmarked,'half_day_units',v_units,'gross',v_gross::numeric(10,2)::text);
 END;
 $$;
@@ -125,7 +142,7 @@ BEGIN
  v_input:=public.supervisor_payroll_preview_inputs(p_supervisor,p_start);
  SELECT jsonb_build_object('id',id,'name',name,'role',role) INTO v_person FROM public.users WHERE id=p_supervisor AND role='supervisor';
  SELECT jsonb_build_object('id',id,'name',name,'position',position,'active',active) INTO v_worker FROM public.workers WHERE id=p_supervisor;
- RETURN jsonb_build_object('person',v_person,'linked_worker',v_worker,'input',v_input);
+ RETURN jsonb_build_object('person',v_person,'linked_worker',v_worker,'input',v_input,'historical_worker_conflicts',public.supervisor_period_external_conflicts(p_supervisor,p_start,(v_input->>'end')::date));
 END;
 $$;
 
@@ -199,7 +216,7 @@ BEGIN
  v_input:=public.supervisor_payroll_preview_inputs(p_supervisor,p_start);
  SELECT jsonb_build_object('id',id,'name',name,'role',role) INTO v_person FROM public.users WHERE id=p_supervisor;
  SELECT jsonb_build_object('id',id,'name',name,'position',position,'active',active) INTO v_worker FROM public.workers WHERE id=p_supervisor;
- v_current:=jsonb_build_object('person',v_person,'linked_worker',v_worker,'input',v_input-'as_of');
+ v_current:=jsonb_build_object('person',v_person,'linked_worker',v_worker,'input',v_input-'as_of','historical_worker_conflicts',public.supervisor_period_external_conflicts(p_supervisor,p_start,v_row.period_end));
  RETURN jsonb_build_object('id',v_row.id,'supervisor_id',v_row.supervisor_id,'supervisor_name',v_row.supervisor_name,'period_start',v_row.period_start,'period_end',v_row.period_end,'daily_rate',v_row.daily_rate::text,'half_day_units',v_row.half_day_units,'gross',v_row.gross::text,'status',v_row.status,'unmarked_dates',v_row.unmarked_dates,'paid_on',v_row.paid_on,'created_by',v_row.created_by,'created_at',v_row.created_at,'approved_by',v_row.approved_by,'approved_at',v_row.approved_at,'paid_by',v_row.paid_by,'recorded_paid_at',v_row.recorded_paid_at,'source_changed',v_current IS DISTINCT FROM v_row.source_snapshot,'as_of',v_input->'as_of');
 END;
 $$;
@@ -261,7 +278,7 @@ BEGIN
   IF EXISTS(SELECT 1 FROM unnest(ARRAY['anon','authenticated','service_role']) r WHERE has_table_privilege(r,v,'SELECT,INSERT,UPDATE,DELETE,TRUNCATE,REFERENCES,TRIGGER'))
   OR EXISTS(SELECT 1 FROM pg_catalog.pg_attribute a CROSS JOIN unnest(ARRAY['anon','authenticated','service_role']) r WHERE a.attrelid=to_regclass(v) AND a.attnum>0 AND NOT a.attisdropped AND has_column_privilege(r,a.attrelid,a.attname,'SELECT,INSERT,UPDATE,REFERENCES')) THEN RAISE EXCEPTION 'Unexpected Supervisor ledger table privileges'; END IF;
  END LOOP;
- IF EXISTS(SELECT 1 FROM unnest(ARRAY['anon','authenticated','service_role']) r CROSS JOIN unnest(ARRAY['public.supervisor_leave_list_before_ledger(integer)','public.supervisor_day_list_before_ledger(integer)','public.supervisor_period_compute_locked(uuid,date,numeric)','public.guard_legacy_supervisor_period_overlap()','public.guard_supervisor_payroll_events_immutable()']) f WHERE has_function_privilege(r,f,'EXECUTE')) THEN RAISE EXCEPTION 'Unexpected internal Supervisor ledger privilege'; END IF;
+ IF EXISTS(SELECT 1 FROM unnest(ARRAY['anon','authenticated','service_role']) r CROSS JOIN unnest(ARRAY['public.supervisor_leave_list_before_ledger(integer)','public.supervisor_day_list_before_ledger(integer)','public.supervisor_period_compute_locked(uuid,date,numeric)','public.supervisor_period_external_conflicts(uuid,date,date)','public.guard_legacy_supervisor_period_overlap()','public.guard_supervisor_payroll_events_immutable()']) f WHERE has_function_privilege(r,f,'EXECUTE')) THEN RAISE EXCEPTION 'Unexpected internal Supervisor ledger privilege'; END IF;
  FOREACH v IN ARRAY ARRAY['public.supervisor_leave_list(integer)','public.supervisor_day_list(integer)','public.supervisor_paid_company_evidence(date,date)','public.supervisor_period_prepare(uuid,date)','public.create_supervisor_period_draft(uuid,uuid,date,numeric,jsonb)','public.transition_supervisor_period_payroll(uuid,uuid,text,date,boolean)','public.supervisor_period_payroll_review(uuid,date)'] LOOP
   IF has_function_privilege('anon',v,'EXECUTE') OR has_function_privilege('service_role',v,'EXECUTE') OR NOT has_function_privilege('authenticated',v,'EXECUTE') THEN RAISE EXCEPTION 'Unexpected Supervisor ledger RPC privilege'; END IF;
  END LOOP;

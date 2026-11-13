@@ -58,6 +58,11 @@ export function rentalConfirmationPreviewEnabled(): boolean {
   return confirmedRentalPreviewEnabled() && process.env.NEXT_PUBLIC_RENTAL_CONFIRMATION_PREVIEW === 'true';
 }
 
+/** Experimental cases for paid Supervisor or external-worker assertions; requires all coordinated backends. */
+export function paidPeriodAssertionCasesPreviewEnabled(): boolean {
+  return financeFoundationEnabled() && process.env.NEXT_PUBLIC_PAID_PERIOD_ASSERTION_CASES_PREVIEW === 'true';
+}
+
 /** Experimental Supervisor ledger; requires its full uninstalled backend and coordinated cutover. */
 export function supervisorPayrollLedgerPreviewEnabled(): boolean {
   return supervisorPayrollPreviewEnabled() && process.env.NEXT_PUBLIC_SUPERVISOR_PAYROLL_LEDGER_PREVIEW === 'true';
