@@ -13,7 +13,7 @@ vi.mock('@/components/attendance/SupervisorLeavePanel', () => ({ SupervisorLeave
 vi.mock('@/components/attendance/TimeDetailDialog', () => ({ TimeDetailDialog: () => React.createElement('div', null, 'Time dialog') }));
 vi.mock('@/components/attendance/AllowanceDialog', () => ({ AllowanceDialog: () => React.createElement('div', null, 'Allowance dialog') }));
 vi.mock('@/lib/attendance/useAttendanceHistory', () => ({ useAttendanceHistory: () => ({ items: mock.records, loading: false, error: null, hasMore: false }) }));
-import { financeFoundationEnabled } from '@/lib/finance/featureAvailability';
+import { financeFoundationEnabled, weeklyBaleReleasePreviewEnabled } from '@/lib/finance/featureAvailability';
 import { PayrollFoundationPanels } from '@/components/payroll/PayrollFoundationPanels';
 import { SupervisorFoundationPanels } from '@/components/attendance/SupervisorFoundationPanels';
 import { HistorySheetRecords } from '@/components/attendance/HistorySheetRecords';
@@ -36,6 +36,11 @@ describe('unfinished finance foundation UI release gate', () => {
     vi.stubEnv('NEXT_PUBLIC_FINANCE_FOUNDATION_PREVIEW','true');
     render(React.createElement(React.Fragment, null, React.createElement(PayrollFoundationPanels), React.createElement(SupervisorFoundationPanels)));
     expect(mock.mounts.mock.calls.map(([name]) => name)).toEqual(['allowance','weekly','review','day','leave']);
+  });
+  it('requires both switches for the experimental Bale release panel', () => {
+    vi.stubEnv('NEXT_PUBLIC_FINANCE_FOUNDATION_PREVIEW','false');vi.stubEnv('NEXT_PUBLIC_WEEKLY_BALE_RELEASE_PREVIEW','true');expect(weeklyBaleReleasePreviewEnabled()).toBe(false);
+    vi.stubEnv('NEXT_PUBLIC_FINANCE_FOUNDATION_PREVIEW','true');expect(weeklyBaleReleasePreviewEnabled()).toBe(true);
+    vi.stubEnv('NEXT_PUBLIC_WEEKLY_BALE_RELEASE_PREVIEW','false');expect(weeklyBaleReleasePreviewEnabled()).toBe(false);
   });
   it('requires both switches for the Supervisor payroll preview', () => {
     vi.stubEnv('NEXT_PUBLIC_FINANCE_FOUNDATION_PREVIEW','true');vi.stubEnv('NEXT_PUBLIC_SUPERVISOR_PAYROLL_PREVIEW','false');

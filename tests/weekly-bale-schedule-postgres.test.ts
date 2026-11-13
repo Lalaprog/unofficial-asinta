@@ -36,6 +36,7 @@ suite('weekly Bale schedule on disposable PostgreSQL',()=>{
   const guard=readFileSync('supabase/drafts/guard_legacy_bale_payment.sql','utf8');await admin.query(guard.slice(guard.indexOf('CREATE FUNCTION public.guard_new_advance_finalized_payroll()'),guard.indexOf('-- Keep the atomic implementation')));
   await admin.query(readFileSync('supabase/drafts/weekly_bale_schedule.sql','utf8'));
   await admin.query(readFileSync('supabase/drafts/weekly_bale_expiration.sql','utf8'));
+  await admin.query(readFileSync('supabase/drafts/weekly_bale_release_list.sql','utf8'));
   await admin.query(`CREATE OR REPLACE FUNCTION public.weekly_bale_clock() RETURNS timestamptz LANGUAGE sql VOLATILE SET search_path='' AS $$SELECT current_setting('test.clock')::timestamptz$$;`);
   await Promise.all([first.query(`SET ROLE authenticated; SET test.uid='${supervisor}'; SET test.assurance='yes'; SET test.clock='2026-11-15T04:00:00Z'; SET lock_timeout='4s'`),second.query(`SET ROLE authenticated; SET test.uid='${supervisor}'; SET test.assurance='yes'; SET test.clock='2026-11-18T04:00:00Z'; SET lock_timeout='4s'`)]);
  },30000);
@@ -49,6 +50,7 @@ suite('weekly Bale schedule on disposable PostgreSQL',()=>{
    expect((await admin.query<{n:number}>('SELECT count(*)::int n FROM public.advances')).rows[0].n).toBe(1);
    expect((await admin.query<{n:number}>("SELECT count(*)::int n FROM public.audit_log WHERE table_name='advances'")).rows[0].n).toBe(1);
    expect((await admin.query<{n:number}>("SELECT count(*)::int n FROM public.user_notifications WHERE event_type='advance_request_issued'")).rows[0].n).toBe(1);
+   expect((await second.query("SELECT public.weekly_bale_release_list('2026-11-15') result")).rows[0].result.items).toMatchObject([{request_id:request,status:'issued',issued_advance_id:issued.advance_id}]);
   }finally{await first.query('ROLLBACK');await second.query('ROLLBACK');}
  },15000);
  it('waits for an in-flight approval, then records a Wednesday release',async()=>{

@@ -4,6 +4,8 @@ import React, { Suspense, useState } from 'react';
 import { useRouter, useSearchParams } from 'next/navigation';
 import { AppShell } from '@/components/layout/AppShell';
 import { AdvanceRequestsPanel } from '@/components/advances/AdvanceRequestsPanel';
+import { WeeklyBaleReleasePanel } from '@/components/advances/WeeklyBaleReleasePanel';
+import { weeklyBaleReleasePreviewEnabled } from '@/lib/finance/featureAvailability';
 import { useAuth } from '@/lib/auth/authContext';
 import { useQuickAction } from '@/lib/mobile/quickActions';
 import { useDataStore } from '@/lib/data/store';
@@ -68,6 +70,8 @@ function AdvancesPageContent() {
         <p role="note" className="rounded-xl border border-status-warning/25 bg-status-warning-bg p-3 text-xs leading-relaxed text-ink-secondary">
           This version does not yet enforce the agreed Bale request and approval window, automatic rejection, Wednesday release, or same-week payroll deduction. Do not rely on it as the finished weekly Bale workflow; review the records before any real-world action.
         </p>
+
+        {weeklyBaleReleasePreviewEnabled() && <WeeklyBaleReleasePanel />}
 
         {isFounder && (
           <div data-page-guide="tabs" className="flex flex-wrap gap-2" role="group" aria-label="Bale request and advance views">

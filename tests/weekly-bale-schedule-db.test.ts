@@ -32,7 +32,7 @@ async function fixture(withExpiration=false){
  const guard=sql('supabase/drafts/guard_legacy_bale_payment.sql');
  await db.exec(guard.slice(guard.indexOf('CREATE FUNCTION public.guard_new_advance_finalized_payroll()'),guard.indexOf('-- Keep the atomic implementation')));
  await db.exec(sql('supabase/drafts/weekly_bale_schedule.sql'));
- if(withExpiration) await db.exec(sql('supabase/drafts/weekly_bale_expiration.sql'));
+ if(withExpiration){await db.exec(sql('supabase/drafts/weekly_bale_expiration.sql'));await db.exec(sql('supabase/drafts/weekly_bale_release_list.sql'));}
  // Test-only replacement by owner. Production clock accepts no user argument.
  await db.exec(`CREATE OR REPLACE FUNCTION public.weekly_bale_clock() RETURNS timestamptz LANGUAGE sql VOLATILE SET search_path='' AS $$SELECT current_setting('test.clock')::timestamptz$$;
   SET test.clock='2026-11-15T04:00:00Z'; SET test.uid='${supervisor}'; SET test.assurance='yes'; SET ROLE authenticated;`);
@@ -104,6 +104,16 @@ describe('experimental weekly Bale schedule (not deployed)',()=>{
    expect((await db.query("SELECT actor_id,actor_email FROM public.audit_log WHERE record_id=$1 AND action='update'",[overdue])).rows).toEqual([{actor_id:null,actor_email:null}]);
    expect((await db.query<{n:number}>("SELECT count(*)::int n FROM public.user_notifications WHERE advance_request_id=$1 AND event_type='advance_request_rejected'",[overdue])).rows[0].n).toBe(1);
    expect((await db.query('SELECT expiry_xid FROM public.weekly_bale_requests WHERE request_id=$1',[overdue])).rows).toEqual([{expiry_xid:null}]);
+  }finally{await db.close();}
+ },30000);
+ it('lists approved and issued requests only to the Founder or a currently assigned Supervisor',async()=>{
+  const db=await fixture(true);try{
+   const request=await submit(db);await role(db,founder);await db.query("SELECT public.review_advance_request($1,'approve')",[request]);
+   const get=()=>db.query<{result:{items:{request_id:string;status:string;amount:string;project_name:string}[]}}>("SELECT public.weekly_bale_release_list('2026-11-15') result");
+   expect((await get()).rows[0].result.items).toEqual([{request_id:request,worker_id:worker,worker_name:'Worker',project_id:site,project_name:'Site',amount:'100.25',status:'approved_pending_payment',release_date:'2026-11-18',issued_advance_id:null}]);
+   await role(db,supervisor);expect((await get()).rows[0].result.items).toHaveLength(1);
+   await role(db,outsider);expect((await get()).rows[0].result.items).toHaveLength(0);
+   await db.exec("SET test.assurance='no'");await expect(get()).rejects.toThrow(/Authorized access/);
   }finally{await db.close();}
  },30000);
  it('rolls back expiry and notification when audit fails and preserves manual Founder attribution',async()=>{
