@@ -259,6 +259,26 @@ describe('integrated weekly payment and gross site allocations (draft)',()=>{
    await db.exec('RESET ROLE');expect((await db.query('SELECT payment_actor,payment_xid FROM public.weekly_worker_draft_sources WHERE payroll_id=$1',[voucher])).rows).toEqual([{payment_actor:null,payment_xid:null}]);
   }finally{await db.close();}
  },30000);
+ it('connects a controlled Wednesday Bale release to full same-week payroll deduction',async()=>{
+  const db=await fixture(true,true);try{
+   await db.exec(`RESET ROLE; DELETE FROM public.advance_requests WHERE id='${request}'; DELETE FROM public.advances WHERE id='${advance}';
+    ALTER TABLE public.advances ALTER COLUMN id SET DEFAULT gen_random_uuid();
+    ALTER TABLE public.advance_requests ADD COLUMN approved_by uuid, ADD COLUMN approved_at timestamptz, ADD COLUMN rejected_by uuid, ADD COLUMN rejected_at timestamptz, ADD COLUMN issued_by uuid, ADD COLUMN updated_at timestamptz DEFAULT now();
+    CREATE TABLE public.project_worker_assignments(project_id uuid,worker_id uuid,active boolean,primary key(project_id,worker_id)); INSERT INTO public.project_worker_assignments VALUES('${site}','${worker}',true);`);
+   await db.exec(sql('supabase/migrations/20261013000000_advance_requests.sql'));
+   await db.exec(sql('supabase/migrations/20261013000001_advance_request_notifications.sql'));
+   await db.exec(sql('supabase/migrations/20261113000004_bale_request_site_guard.sql'));
+   await db.exec(sql('supabase/drafts/weekly_bale_schedule.sql'));
+   await db.exec(`CREATE OR REPLACE FUNCTION public.weekly_bale_clock() RETURNS timestamptz LANGUAGE sql VOLATILE SET search_path='' AS $$SELECT current_setting('test.clock')::timestamptz$$;
+    SET test.clock='2024-11-03T04:00:00Z'; SET test.uid='${supervisor}'; SET ROLE authenticated;`);
+   const req=(await db.query<{id:string}>('INSERT INTO public.advance_requests(worker_id,project_id,requested_amount,submitted_by) VALUES($1,$2,500.50,$3) RETURNING id',[worker,site,supervisor])).rows[0].id;
+   await db.exec(`SET test.uid='${founder}'; SET test.clock='2024-11-05T04:00:00Z'`);await db.query("SELECT public.review_advance_request($1,'approve')",[req]);
+   await db.exec(`SET test.uid='${supervisor}'; SET test.clock='2024-11-06T04:00:00Z'`);
+   const release=(await db.query<{result:{advance_id:string}}>('SELECT public.record_weekly_bale_release($1) result',[req])).rows[0].result;
+   await db.exec(`SET test.uid='${founder}'`);const calculation=(await generate(db)).rows[0].result.calculation;expect(calculation).toMatchObject({bale:'500.50',gross:'1197.46',net:'696.96'});
+   await approve(db);await pay(db);expect((await db.query('SELECT status,amount_deducted::text FROM public.advances WHERE id=$1',[release.advance_id])).rows).toEqual([{status:'fully_deducted',amount_deducted:'500.50'}]);
+  }finally{await db.close();}
+ },30000);
  it('allocates an indivisible centavo deterministically to the lower site ID',async()=>{
   const db=await fixture(true,true);try{
    await db.exec('RESET ROLE');await db.exec(`DELETE FROM public.attendance_time_details; DELETE FROM public.worker_allowances; DELETE FROM public.advance_requests WHERE id='${request}'; DELETE FROM public.advances WHERE id='${advance}'; UPDATE public.workers SET pay_rate=0.04 WHERE id='${worker}'; UPDATE public.attendance SET hours_worked=1 WHERE id IN ('${att1}','${att2}'); UPDATE public.attendance SET project_id='${other}' WHERE id='${att2}'; SET ROLE authenticated;`);
