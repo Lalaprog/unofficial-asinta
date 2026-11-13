@@ -15,7 +15,7 @@ describe('Supervisor leave UI',()=>{
   mock.rpc.mockImplementation(async(name:string,p:Record<string,string>)=>name==='supervisor_leave_list'?{data:{total:0,offset:0,items:[]},error:null}:mock.rpc.mock.calls.filter(c=>c[0]==='submit_supervisor_leave').length===1?{data:null,error:{message:'Connection lost'}}:{data:{id:p.p_id,status:'pending',replayed:true},error:null});
   const changed=vi.fn();window.addEventListener('asinta:supervisor-leave-changed',changed);
   render(React.createElement(SupervisorLeavePanel));fireEvent.click(screen.getByRole('button',{name:/Supervisor leave requests/}));
-  expect(screen.getByText(/does not update attendance or payroll yet/)).toBeTruthy();expect(screen.queryByRole('button',{name:'Submit leave request'})).toBeNull();
+  expect(screen.getByText(/does not change attendance or a finalized payroll record/)).toBeTruthy();expect(screen.queryByRole('button',{name:'Submit leave request'})).toBeNull();
   fireEvent.click(screen.getByRole('button',{name:'Load leave list'}));await screen.findByText('No leave requests found.');
   fireEvent.change(screen.getByLabelText('First day'),{target:{value:'2020-01-01'}});fireEvent.change(screen.getByLabelText('Last day'),{target:{value:'2020-01-02'}});fireEvent.change(screen.getByLabelText('Leave type'),{target:{value:'emergency'}});
   fireEvent.click(screen.getByRole('button',{name:'Submit leave request'}));await screen.findByText(/Submission not confirmed/);

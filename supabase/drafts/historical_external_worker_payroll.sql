@@ -14,6 +14,9 @@ BEGIN
  OR to_regclass('public.users') IS NULL OR to_regclass('public.workers') IS NULL OR to_regclass('public.payroll') IS NULL OR to_regclass('public.advances') IS NULL THEN RAISE EXCEPTION 'Historical external payroll prerequisites missing'; END IF;
  IF to_regclass('public.historical_external_worker_payroll') IS NOT NULL OR to_regclass('public.historical_external_worker_events') IS NOT NULL
  OR to_regprocedure('public.record_historical_external_worker_payroll(uuid,uuid,date,date,numeric,numeric,numeric,numeric,text,jsonb,boolean)') IS NOT NULL THEN RAISE EXCEPTION 'Historical external payroll name collision'; END IF;
+ -- No cross-ledger identity/lock coordination exists yet. Refuse both install
+ -- orders rather than silently letting the two candidates claim the same pay.
+ IF to_regclass('public.supervisor_period_payroll') IS NOT NULL THEN RAISE EXCEPTION 'Supervisor payroll ledger requires coordinated cross-ledger reconciliation'; END IF;
  IF EXISTS (SELECT 1 FROM pg_catalog.pg_class WHERE oid IN ('public.payroll'::regclass,'public.advances'::regclass) AND (relkind<>'r' OR NOT relrowsecurity)) THEN RAISE EXCEPTION 'Existing financial tables must have RLS'; END IF;
 END;
 $preflight$;
