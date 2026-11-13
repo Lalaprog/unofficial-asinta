@@ -19,9 +19,10 @@ const delay=()=>new Promise(resolve=>setTimeout(resolve,150));
  afterAll(async()=>{await Promise.all([admin?.end(),a?.end(),b?.end()]);});
  it('serializes confirmations and blocks an old expense change',async()=>{
   await a.query('BEGIN');await b.query('BEGIN');try{
-   await a.query(call,args(id(10)));let settled=false;
+   await a.query(call,args(id(10)));expect((await b.query('SELECT public.rental_confirmation_status($1) v',[id(10)])).rows[0].v).toEqual({found:false});let settled=false;
    const pending=b.query('UPDATE public.expenses SET amount=5 WHERE id=$1',[expense]).then(()=>({code:'success'}),(e:{code:string})=>({code:e.code})).finally(()=>{settled=true;});
    await delay();expect(settled).toBe(false);await a.query('COMMIT');expect((await pending).code).toBe('23514');await b.query('ROLLBACK');
+   expect((await b.query('SELECT public.rental_confirmation_status($1) v',[id(10)])).rows[0].v).toMatchObject({found:true,id:id(10),expense,amount:'1234.50'});
    await expect(b.query(call,args(id(11)))).rejects.toMatchObject({code:'23505'});expect((await b.query(call,args(id(10)))).rows[0].v.replayed).toBe(true);
   }finally{await a.query('ROLLBACK');await b.query('ROLLBACK');}
  },15000);

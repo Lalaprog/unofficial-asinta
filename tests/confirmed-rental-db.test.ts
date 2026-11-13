@@ -8,9 +8,13 @@ async function setup(){const db=new PGlite();await db.exec(fixture);await db.exe
 describe('confirmed rental expense link (uninstalled)',()=>{
  it('links exactly one existing expense once, preserves receipts, locks financial details and supports exact retries',async()=>{
   const db=await setup();try{
+   expect((await db.query<{v:object}>('SELECT public.rental_confirmation_status($1) v',[id(10)])).rows[0].v).toEqual({found:false});
    expect((await db.query<{v:object}>(call,args(id(10)))).rows[0].v).toEqual({id:id(10),expense_id:expense,replayed:false});
+   expect((await db.query<{v:object}>('SELECT public.rental_confirmation_status($1) v',[id(10)])).rows[0].v).toEqual({found:true,id:id(10),expense,project:site,amount:'1234.50',date:'2026-10-14',description:'Excavator hire',item:'Excavator',supplier:'Supplier',quantity:1,start:'2026-10-10',end:'2026-10-14'});
    expect((await db.query<{v:object}>(call,args(id(10)))).rows[0].v).toEqual({id:id(10),expense_id:expense,replayed:true});
    expect((await db.query<{revision:number}>('SELECT revision FROM public.expenses WHERE id=$1',[expense])).rows[0].revision).toBe(1);
+   await db.exec(`RESET ROLE; INSERT INTO public.users VALUES ('${id(99)}','founder'); SET ROLE authenticated; SET test.uid='${id(99)}'`);
+   expect((await db.query<{v:object}>('SELECT public.rental_confirmation_status($1) v',[id(10)])).rows[0].v).toEqual({found:false});await db.exec(`SET test.uid='${founder}'`);
    await expect(db.query(call,[...args(id(10)).slice(0,6),'Different',...args(id(10)).slice(7)])).rejects.toThrow(/different details/);
    await expect(db.query(call,args(id(11)))).rejects.toThrow(/already linked/);
    await expect(db.query('UPDATE public.expenses SET amount=1 WHERE id=$1',[expense])).rejects.toThrow(/locked/);
@@ -25,7 +29,7 @@ describe('confirmed rental expense link (uninstalled)',()=>{
  },30000);
  it('checks role, assurance, stale expense, dates, project, classification and direct access',async()=>{
   const db=await setup();try{
-   await db.exec(`SET test.uid='${supervisor}'`);await expect(db.query(call,args(id(12)))).rejects.toThrow(/Founder/);await expect(db.query('SELECT public.project_confirmed_rentals($1)',[site])).rejects.toThrow(/Founder/);await expect(db.query('SELECT * FROM public.confirmed_rental_expenses')).rejects.toThrow(/permission denied/);
+   await db.exec(`SET test.uid='${supervisor}'`);await expect(db.query(call,args(id(12)))).rejects.toThrow(/Founder/);await expect(db.query('SELECT public.rental_confirmation_status($1)',[id(12)])).rejects.toThrow(/Founder/);await expect(db.query('SELECT public.project_confirmed_rentals($1)',[site])).rejects.toThrow(/Founder/);await expect(db.query('SELECT * FROM public.confirmed_rental_expenses')).rejects.toThrow(/permission denied/);
    await db.exec(`SET test.uid='${founder}'; SET test.assurance='no'`);await expect(db.query(call,args(id(12)))).rejects.toThrow(/Founder/);await db.exec("SET test.assurance='yes'");
    await expect(db.query(call,args(id(12),expense,otherSite))).rejects.toThrow(/changed/);
    await expect(db.query(call,[...args(id(12)).slice(0,10),'2026-10-09'])).rejects.toThrow(/Invalid/);

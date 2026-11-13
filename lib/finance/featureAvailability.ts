@@ -28,6 +28,11 @@ export function confirmedRentalPreviewEnabled(): boolean {
   return financeFoundationEnabled() && process.env.NEXT_PUBLIC_CONFIRMED_RENTAL_PREVIEW === 'true';
 }
 
+/** Separate write-UI gate for the uninstalled rental confirmation candidate. */
+export function rentalConfirmationPreviewEnabled(): boolean {
+  return confirmedRentalPreviewEnabled() && process.env.NEXT_PUBLIC_RENTAL_CONFIRMATION_PREVIEW === 'true';
+}
+
 /** Independent gate for the uninstalled Supervisor payroll planning RPCs. */
 export function supervisorPayrollPreviewEnabled(): boolean {
   return financeFoundationEnabled() && process.env.NEXT_PUBLIC_SUPERVISOR_PAYROLL_PREVIEW === 'true';

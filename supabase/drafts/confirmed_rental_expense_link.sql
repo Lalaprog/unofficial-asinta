@@ -6,7 +6,7 @@ SET LOCAL lock_timeout='3s';
 SET LOCAL statement_timeout='30s';
 DO $$ BEGIN
  IF to_regclass('public.expenses') IS NULL OR to_regclass('public.projects') IS NULL OR to_regclass('public.users') IS NULL OR to_regprocedure('auth.uid()') IS NULL OR to_regprocedure('public.is_founder()') IS NULL OR to_regprocedure('public.session_assurance_satisfied()') IS NULL THEN RAISE EXCEPTION 'Rental prerequisites missing'; END IF;
- IF to_regclass('public.confirmed_rental_expenses') IS NOT NULL OR to_regprocedure('public.confirm_rental_expense(uuid,uuid,uuid,numeric,date,text,text,text,integer,date,date)') IS NOT NULL OR to_regprocedure('public.project_confirmed_rentals(uuid)') IS NOT NULL OR to_regprocedure('public.guard_confirmed_rental_expense()') IS NOT NULL OR to_regprocedure('public.guard_confirmed_rental_immutable()') IS NOT NULL THEN RAISE EXCEPTION 'Rental objects already exist'; END IF;
+ IF to_regclass('public.confirmed_rental_expenses') IS NOT NULL OR to_regprocedure('public.confirm_rental_expense(uuid,uuid,uuid,numeric,date,text,text,text,integer,date,date)') IS NOT NULL OR to_regprocedure('public.project_confirmed_rentals(uuid)') IS NOT NULL OR to_regprocedure('public.rental_confirmation_status(uuid)') IS NOT NULL OR to_regprocedure('public.guard_confirmed_rental_expense()') IS NOT NULL OR to_regprocedure('public.guard_confirmed_rental_immutable()') IS NOT NULL THEN RAISE EXCEPTION 'Rental objects already exist'; END IF;
  LOCK TABLE public.expenses IN SHARE MODE;
 END $$;
 
@@ -89,6 +89,20 @@ BEGIN
 END $$;
 REVOKE ALL ON FUNCTION public.project_confirmed_rentals(uuid) FROM PUBLIC,anon,authenticated,service_role;
 GRANT EXECUTE ON FUNCTION public.project_confirmed_rentals(uuid) TO authenticated;
+-- A missing row does not prove an in-flight transaction failed. Do not return
+-- another Founder's request even if its UUID is guessed.
+CREATE FUNCTION public.rental_confirmation_status(p_id uuid) RETURNS jsonb
+LANGUAGE plpgsql STABLE SECURITY DEFINER SET search_path='' AS $$
+DECLARE r public.confirmed_rental_expenses%ROWTYPE;
+BEGIN
+ IF auth.uid() IS NULL OR NOT coalesce(public.is_founder(),false) OR NOT coalesce(public.session_assurance_satisfied(),false) THEN RAISE EXCEPTION 'Founder access required' USING ERRCODE='42501'; END IF;
+ IF p_id IS NULL THEN RAISE EXCEPTION 'Invalid confirmation ID' USING ERRCODE='22023'; END IF;
+ SELECT * INTO r FROM public.confirmed_rental_expenses WHERE id=p_id AND confirmed_by=auth.uid();
+ IF NOT FOUND THEN RETURN jsonb_build_object('found',false); END IF;
+ RETURN jsonb_build_object('found',true,'id',r.id,'expense',r.expense_id,'project',r.project_id,'amount',r.expense_amount::text,'date',r.expense_date,'description',r.expense_description,'item',r.item_name,'supplier',r.supplier,'quantity',r.quantity,'start',r.rental_start,'end',r.rental_end);
+END $$;
+REVOKE ALL ON FUNCTION public.rental_confirmation_status(uuid) FROM PUBLIC,anon,authenticated,service_role;
+GRANT EXECUTE ON FUNCTION public.rental_confirmation_status(uuid) TO authenticated;
 DO $$ BEGIN
- IF EXISTS(SELECT 1 FROM unnest(ARRAY['anon','service_role']) r(role_name) WHERE has_function_privilege(r.role_name,'public.confirm_rental_expense(uuid,uuid,uuid,numeric,date,text,text,text,integer,date,date)','EXECUTE') OR has_function_privilege(r.role_name,'public.project_confirmed_rentals(uuid)','EXECUTE')) THEN RAISE EXCEPTION 'Unexpected inherited rental function privileges'; END IF;
+ IF EXISTS(SELECT 1 FROM unnest(ARRAY['anon','service_role']) r(role_name) WHERE has_function_privilege(r.role_name,'public.confirm_rental_expense(uuid,uuid,uuid,numeric,date,text,text,text,integer,date,date)','EXECUTE') OR has_function_privilege(r.role_name,'public.project_confirmed_rentals(uuid)','EXECUTE') OR has_function_privilege(r.role_name,'public.rental_confirmation_status(uuid)','EXECUTE')) THEN RAISE EXCEPTION 'Unexpected inherited rental function privileges'; END IF;
 END $$;
