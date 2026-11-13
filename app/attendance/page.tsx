@@ -54,6 +54,8 @@ import { HistorySheetRecords } from '@/components/attendance/HistorySheetRecords
 import { AttendanceHistoryCalendar } from '@/components/attendance/AttendanceHistoryCalendar';
 import { SupervisorFoundationPanels } from '@/components/attendance/SupervisorFoundationPanels';
 import { WorkerCategoryFoundation } from '@/components/workforce/WorkerCategoryFoundation';
+import { AssignmentHistory } from '@/components/workforce/AssignmentHistory';
+import { assignmentHistoryPreviewEnabled } from '@/lib/workforce/assignmentHistory';
 
 const EMPTY_ROLL_CALL: ProjectRollCallSnapshot = { workerIds: [], records: [] };
 
@@ -2274,7 +2276,7 @@ function AttendancePageInner() {
                       return (
                         <div
                           key={w.id}
-                          className="px-4 py-2.5 flex items-center justify-between gap-3 text-xs hover:bg-slate-50 transition-colors"
+                          className="px-4 py-2.5 flex flex-wrap items-center justify-between gap-3 text-xs hover:bg-slate-50 transition-colors"
                         >
                           <div className="flex items-center flex-wrap gap-2 min-w-0">
                             {isFounder && !w.removed_at && <label className="inline-flex min-h-11 min-w-11 items-center justify-center"><input type="checkbox" aria-label={`Select ${w.name}, ${w.position}, ${w.active ? 'active' : 'inactive'} for removal`} checked={selectedWorkers.includes(w.id)} disabled={workerRemovalPending || !isLoaded || Boolean(loadError)} onChange={(e) => {
@@ -2320,6 +2322,7 @@ function AttendancePageInner() {
                               Manage
                             </Button>
                           ))}
+                          {isFounder && user?.id && assurance === 'ready' && !authLoading && assignmentHistoryPreviewEnabled() && <AssignmentHistory key={`${user.id}:${w.id}`} workerId={w.id} workerName={w.name} />}
                         </div>
                       );
                     })}
