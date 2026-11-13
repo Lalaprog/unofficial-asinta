@@ -58,6 +58,11 @@ export function rentalConfirmationPreviewEnabled(): boolean {
   return confirmedRentalPreviewEnabled() && process.env.NEXT_PUBLIC_RENTAL_CONFIRMATION_PREVIEW === 'true';
 }
 
+/** Experimental historical external-payroll assertions; requires coordinated backend and cutover. */
+export function historicalExternalWorkerPreviewEnabled(): boolean {
+  return financeFoundationEnabled() && process.env.NEXT_PUBLIC_HISTORICAL_EXTERNAL_WORKER_PREVIEW === 'true';
+}
+
 /** Read-only time details in history/site logs; requires the uninstalled batch RPC. */
 export function attendanceTimeHistoryPreviewEnabled(): boolean {
   return financeFoundationEnabled() && process.env.NEXT_PUBLIC_ATTENDANCE_TIME_HISTORY_PREVIEW === 'true';

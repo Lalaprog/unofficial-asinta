@@ -29,6 +29,10 @@ The candidate also displays a warning to both roles that the agreed Bale schedul
 
 In a further read-only SQL simulation using the existing Supervisor's AAL2 claims, an unassigned project existed but was not visible via `visible_projects`, `is_supervisor_assigned` returned false for it, and no active assignment rows for that project were visible. The same simulated role saw zero payroll/advance rows and lacked execute privilege on the service-only available-worker and assignment functions. These are targeted negative checks, not actual Auth/PostgREST tests or exhaustive policy or privileged API verification.
 
+## Historical external worker-pay candidate is not a cutover
+
+The draft `historical_external_worker_payroll.sql` records assertions for already-paid worker weeks without vouchers; it creates no financial transaction, payslip or project cost. It adds globally acting payroll/advance triggers and broad table locks, cannot correct or void errors, and has only synthetic fixture and selected PG17 race coverage. The matching UI is independently default-off. Do not install or enable this candidate separately: identity and legacy-finance reconciliation, correction/settlement design, writer and lock compatibility, old clients, actual hosted Auth/PostgREST, recovery and coordinated rollout all remain open. See `CLIENT_CHANGE_PLAN.md` for details.
+
 ## Temporary deployment hold in this branch
 
 `vercel.json` configures `scripts/vercel-release-hold.sh` as Vercel's ignored build step. It permits preview/development builds and cancels production or unknown environments. Its effect is limited to deployments that actually include and execute this file. It is **not active on current main or the existing recovery deployment before this branch is merged**. A deployment from older commits, an edited/removed guard, or a forced redeploy/promotion may bypass it. The hold does not change database permissions or disable payments/messages. Vercel counts canceled builds against deployment quotas. Do not assume the existing site is protected by this branch alone.
