@@ -3,14 +3,12 @@
 import {useCallback, useEffect, useRef, useState} from 'react';
 import {HardHat} from 'lucide-react';
 import {createClient} from '@/lib/supabase/client';
-import {prepareSupervisorPortrait} from '@/lib/users/supervisorPortrait';
-
-type Portrait = {supervisor_id: string; version: string | null; has_photo: boolean; mime: string | null; data: string | null};
+import {parseSupervisorPortrait, prepareSupervisorPortrait, type SupervisorPortraitRecord} from '@/lib/users/supervisorPortrait';
 type Operation = {p_supervisor: string; p_operation: string; p_expected_version: string | null; p_mime: string | null; p_data: string | null};
 
 /** Experimental; only mount when the reviewed backend is installed. */
 export function SupervisorPortrait({id, name}: {id: string; name: string}) {
-  const [portrait,setPortrait]=useState<Portrait | null>(null);
+  const [portrait,setPortrait]=useState<SupervisorPortraitRecord | null>(null);
   const [message,setMessage]=useState('');
   const [busy,setBusy]=useState(false);
   const [pending,setPending]=useState<Operation | null>(null);
@@ -19,15 +17,17 @@ export function SupervisorPortrait({id, name}: {id: string; name: string}) {
   const load=useCallback(async()=>{
     const {data,error}=await createClient().rpc('supervisor_profile_photo',{p_supervisor:id});
     if (!mounted.current) return;
-    if(error || !data || data.supervisor_id!==id || typeof data.has_photo!=='boolean') {setPortrait(null);setMessage('Photo unavailable. Check access or try refreshing.');return false;}
-    setPortrait(data as Portrait);setMessage('');return true;
+    try {
+      if(error) throw error;
+      setPortrait(parseSupervisorPortrait(data,id));setMessage('');return true;
+    } catch {setPortrait(null);setMessage('Photo unavailable. Check access or try refreshing.');return false;}
   },[id]);
   useEffect(()=>{mounted.current=true;void load().catch(()=>{if(mounted.current)setMessage('Photo unavailable. Try refreshing.');});return()=>{mounted.current=false;};},[load]);
   const send=async(op:Operation)=>{
     const {error}=await createClient().rpc('set_supervisor_profile_photo',op);
     if(!mounted.current) return;
     if(error){
-      if(error.code==='40001' || error.code==='22023' || error.code==='42501') {setPending(null);setMessage('Photo was not saved. Refresh before making another change.');setPortrait(null);}
+      if(error.code==='40001' || error.code==='22023' || error.code==='42501') {setPending(null);setMessage('This attempt was refused. An earlier attempt may have succeeded; refresh and check before making another change.');setPortrait(null);}
       else {setPending(op);setMessage('Save outcome is unknown. Retry the same change or refresh to check.');}
       return;
     }

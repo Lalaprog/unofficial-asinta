@@ -3,6 +3,23 @@
 export const SUPERVISOR_PORTRAIT_MAX_BYTES = 256 * 1024;
 export const SUPERVISOR_PORTRAIT_SELECTION_MAX_BYTES = 20 * 1024 * 1024;
 const types = ['image/jpeg', 'image/png', 'image/webp'];
+const uuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+export type SupervisorPortraitRecord = {supervisor_id: string; version: string | null; has_photo: boolean; mime: string | null; data: string | null};
+
+/** Treat RPC responses as untrusted. Never render another account's photo. */
+export function parseSupervisorPortrait(raw: unknown, expectedId: string): SupervisorPortraitRecord {
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) throw new Error('Invalid portrait');
+  const v = raw as Record<string, unknown>;
+  if (!uuid.test(expectedId) || v.supervisor_id !== expectedId || !(v.version === null || typeof v.version === 'string' && uuid.test(v.version)) || typeof v.has_photo !== 'boolean') throw new Error('Invalid portrait');
+  if (v.has_photo) {
+    if (v.version === null || typeof v.mime !== 'string' || !types.includes(v.mime) || typeof v.data !== 'string' || !v.data.length || v.data.length > 349528 || v.data.length % 4 !== 0 || !/^[A-Za-z0-9+/]*={0,2}$/.test(v.data)) throw new Error('Invalid portrait');
+  } else if (v.mime !== null || v.data !== null) throw new Error('Invalid portrait');
+  return v as SupervisorPortraitRecord;
+}
+
+export function supervisorPortraitPreviewEnabled(): boolean {
+  return process.env.NEXT_PUBLIC_SUPERVISOR_PORTRAIT_PREVIEW === 'true';
+}
 
 /** Resize on the device; only the prepared image is uploaded. */
 export async function prepareSupervisorPortrait(file: File): Promise<{mime: string; data: string}> {

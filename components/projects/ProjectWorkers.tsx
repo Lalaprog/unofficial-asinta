@@ -8,12 +8,14 @@ import { Button } from '@/components/ui/Button';
 import { Input } from '@/components/ui/Input';
 import { ConfirmDialog } from '@/components/ui/ConfirmDialog';
 import type { Worker } from '@/types';
+import {ProjectWorkerMove} from './ProjectWorkerMove';
+import {workerMovePreviewEnabled} from '@/lib/workforce/atomicWorkerMove';
 
 type AvailableWorker = Pick<Worker, 'id' | 'name' | 'position' | 'contact_number'>;
 
 export function ProjectWorkers({ projectId }: { projectId: string }) {
-  const { workers, refresh, isLoaded, loadError } = useDataStore();
-  const { isFounder } = useAuth();
+  const { workers, users, projects, refresh, isLoaded, loadError } = useDataStore();
+  const { isFounder, user, assurance } = useAuth();
   const [ids, setIds] = useState<string[] | null>(null);
   const [availableWorkers, setAvailableWorkers] = useState<AvailableWorker[] | null>(null);
   const [availableLoading, setAvailableLoading] = useState(false);
@@ -115,6 +117,11 @@ export function ProjectWorkers({ projectId }: { projectId: string }) {
       <Button type="button" size="sm" variant="secondary" onClick={() => {if (!showAdd) void loadAvailable(); else {availabilitySequence.current += 1; setAvailableWorkers(null);} setShowAdd(!showAdd);setShowNew(false);}} disabled={loading || needsCheck || pending} leftIcon={<Plus className="h-4 w-4" />}>{showAdd ? 'Close' : 'Add worker'}</Button>
     </div>
     <p className="text-xs text-ink-secondary">This list starts empty; past attendance does not automatically assign workers. Roll Call uses the project team and keeps saved attendance visible for the selected date.</p>
+    {workerMovePreviewEnabled() && isFounder && user && assurance === 'ready' && !loading && ids && isLoaded && !loadError && !needsCheck && (
+      <ProjectWorkerMove key={`${user.id}:${projectId}`} actorId={user.id} projectId={projectId}
+        workers={current.filter((w): w is Worker => 'position' in w && w.active && !w.removed_at && !(users || []).some(u=>u.id===w.id && u.role==='supervisor')).map(w=>({id:w.id,name:`${w.name} · ${w.position} · ${w.id.slice(0,8)}`}))}
+        projects={(projects || []).map(p=>({id:p.id,name:`${p.name} · ${p.status} · ${p.id.slice(0,8)}`}))} onCompleted={()=>load(true)} />
+    )}
     {error && <div role="alert" className="rounded-xl border border-status-danger/20 bg-status-danger-bg p-3 text-xs text-status-danger">{error}</div>}
     {message && <p role="status" className="text-xs text-status-success">{message}</p>}
     {needsCheck && <Button type="button" variant="secondary" size="sm" disabled={pending} onClick={() => void load(true).then(ok => { if (ok && showAdd) void loadAvailable(); })}>Refresh and check team</Button>}

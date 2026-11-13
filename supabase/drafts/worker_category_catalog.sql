@@ -65,6 +65,12 @@ BEGIN
   IF v_actor IS NULL OR NOT coalesce(public.session_assurance_satisfied(),false) OR NOT coalesce(public.is_founder(),false)
     THEN RAISE EXCEPTION 'Founder access required' USING ERRCODE='42501'; END IF;
   IF current_setting('transaction_isolation') <> 'read committed' THEN RAISE EXCEPTION 'Category changes require read committed isolation' USING ERRCODE='P1002'; END IF;
+  -- Pin the actor before waiting for the catalog lock. A concurrent role
+  -- revocation must either commit first and be rechecked, or wait for this
+  -- operation to finish; checking only before the lock leaves a stale window.
+  PERFORM 1 FROM public.users WHERE id=v_actor AND role='founder' FOR SHARE;
+  IF NOT FOUND OR NOT coalesce(public.session_assurance_satisfied(),false) OR NOT coalesce(public.is_founder(),false)
+    THEN RAISE EXCEPTION 'Founder access required' USING ERRCODE='42501'; END IF;
   IF p_request_id IS NULL OR p_category_id IS NULL OR p_action IS NULL OR p_action NOT IN ('add','rename','archive','restore')
     THEN RAISE EXCEPTION 'Invalid category change' USING ERRCODE='22023'; END IF;
   IF p_action IN ('add','rename') THEN

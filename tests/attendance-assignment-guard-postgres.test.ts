@@ -54,6 +54,12 @@ const pending=async(p:Promise<unknown>,pid:number)=>{let settled=false;const out
    expect((await admin.query('SELECT count(*)::int n FROM public.attendance WHERE id=$1',[id(104)])).rows[0].n).toBe(0);
   }finally{await mover.query('ROLLBACK');await attendance.query('ROLLBACK');}
  },15000);
+ it('waits for Founder demotion and denies an unassigned former Founder',async()=>{
+  await setup(6);await mover.query('BEGIN');await attendance.query(`SET test.uid='${founder}'`);await attendance.query('BEGIN');try{
+   await mover.query("UPDATE public.users SET role='supervisor' WHERE id=$1",[founder]);const result=await pending(insert(6),attendancePid);await mover.query('COMMIT');expect((await result.outcome).code).toBe('42501');await attendance.query('ROLLBACK');
+   expect((await admin.query('SELECT count(*)::int n FROM public.attendance WHERE id=$1',[id(106)])).rows[0].n).toBe(0);
+  }finally{await mover.query('ROLLBACK');await attendance.query('ROLLBACK');await admin.query("UPDATE public.users SET role='founder' WHERE id=$1",[founder]);await attendance.query(`SET test.uid='${supervisor}'`);}
+ },15000);
  it('waits for site-access revocation and denies a stale write',async()=>{
   await setup(3);await mover.query('BEGIN');await attendance.query('BEGIN');try{
    await mover.query('DELETE FROM public.project_supervisors WHERE supervisor_id=$1 AND project_id=$2',[supervisor,site]);const result=await pending(insert(3),attendancePid);await mover.query('COMMIT');expect((await result.outcome).code).toBe('42501');await attendance.query('ROLLBACK');

@@ -83,6 +83,12 @@ jobs:
         run: |
           node -e "const {Client}=require('pg'); (async()=>{const c=new Client({connectionString:'postgresql://postgres@127.0.0.1:5433/asinta_test_pr103'}); await c.connect(); await c.query('CREATE DATABASE asinta_test_attendance_assignment_guard'); await c.end()})().catch(e=>{console.error(e); process.exit(1)})"
           npx vitest run tests/attendance-assignment-guard-postgres.test.ts
+      - name: Test private Supervisor portrait races in a separate empty database
+        env:
+          SUPERVISOR_PORTRAIT_TEST_DATABASE_URL: postgresql://postgres@127.0.0.1:5433/asinta_test_supervisor_portrait
+        run: |
+          node -e "const {Client}=require('pg'); (async()=>{const c=new Client({connectionString:'postgresql://postgres@127.0.0.1:5433/asinta_test_pr103'}); await c.connect(); await c.query('CREATE DATABASE asinta_test_supervisor_portrait'); await c.end()})().catch(e=>{console.error(e); process.exit(1)})"
+          npx vitest run tests/supervisor-profile-photo-postgres.test.ts
       - name: Test draft category catalog concurrency in a separate empty database
         env:
           WORKER_CATEGORY_TEST_DATABASE_URL: postgresql://postgres@127.0.0.1:5433/asinta_test_worker_categories

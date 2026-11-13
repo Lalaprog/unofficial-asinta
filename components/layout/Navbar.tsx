@@ -43,6 +43,7 @@ import { useManilaToday } from '@/lib/dates/useManilaToday';
 import { getNewestNotificationTimestamp } from '@/lib/notifications/time';
 import { supervisorLeaveNotificationsPreviewEnabled } from '@/lib/finance/featureAvailability';
 import { usePendingSupervisorLeave } from '@/lib/attendance/usePendingSupervisorLeave';
+import { useSupervisorPortrait } from '@/lib/users/useSupervisorPortrait';
 
 interface NavbarProps {
   onToggleMobileMenu?: () => void;
@@ -182,6 +183,7 @@ const SUPERVISOR_TOP_LINKS = [
 
 export const Navbar: React.FC<NavbarProps> = ({ showDesktopNavigation = true }) => {
   const { user, logout, isFounder, isSupervisor, assurance } = useAuth();
+  const supervisorPortrait = useSupervisorPortrait(user?.id, isSupervisor && assurance === 'ready');
   const pendingSupervisorLeave = usePendingSupervisorLeave(supervisorLeaveNotificationsPreviewEnabled() && isFounder && assurance === 'ready', user?.id);
   const {
     invoices,
@@ -950,6 +952,10 @@ export const Navbar: React.FC<NavbarProps> = ({ showDesktopNavigation = true }) 
               >
                 {isFounder ? (
                   <Compass className="w-4 h-4" />
+                ) : supervisorPortrait ? (
+                  // Decorative: the button already has an accessible name.
+                  // eslint-disable-next-line @next/next/no-img-element
+                  <img src={supervisorPortrait} alt="" className="h-11 w-11 rounded-full object-cover" />
                 ) : (
                   <HardHat className="w-4 h-4" />
                 )}
@@ -968,6 +974,9 @@ export const Navbar: React.FC<NavbarProps> = ({ showDesktopNavigation = true }) 
                     >
                       {isFounder ? (
                         <Compass className="w-5 h-5" />
+                      ) : supervisorPortrait ? (
+                        // eslint-disable-next-line @next/next/no-img-element
+                        <img src={supervisorPortrait} alt="" className="h-full w-full rounded-xl object-cover" />
                       ) : (
                         <HardHat className="w-5 h-5" />
                       )}

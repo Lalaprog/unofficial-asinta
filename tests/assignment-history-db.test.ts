@@ -51,6 +51,52 @@ describe('assignment history candidate',()=>{
    await expect(db.query('SELECT public.set_workers_removed_guarded($1,$2::uuid[],true)',[founder,[worker]])).rejects.toThrow(/SCHEMA_REVIEW/);
   }finally{await db.close();}
  },30000);
+ it('moves a worker atomically with history, safe retries and no stale overwrites',async()=>{
+  const db=await setup();try{
+   await db.exec(`BEGIN; ${sql('supabase/drafts/project_assignment_history.sql')} COMMIT`);
+   await db.exec(`BEGIN; ${sql('supabase/drafts/atomic_worker_move.sql')} COMMIT`);
+   const request='00000000-0000-0000-0000-000000000101',next='00000000-0000-0000-0000-000000000102';
+   const move=(r:string,w=worker,from=site,to=other)=>db.query<{v:{replayed:boolean}}>('SELECT public.move_worker_project($1,$2,$3,$4) v',[r,w,from,to]);
+   await db.exec(`SET ROLE authenticated;SET test.uid='${supervisor}';SET test.assurance='yes'`);await expect(move(request)).rejects.toThrow(/Founder/);
+   await db.exec(`SET test.uid='${founder}';SET test.assurance='no'`);await expect(move(request)).rejects.toThrow(/Founder/);
+   await db.exec("SET test.assurance='yes'");await expect(db.query('SELECT * FROM public.worker_move_requests')).rejects.toThrow(/permission denied/);
+   expect((await move(request)).rows[0].v.replayed).toBe(false);expect((await move(request)).rows[0].v.replayed).toBe(true);
+   await expect(move(request,worker,other,site)).rejects.toThrow(/already used/);
+   await expect(move(next)).rejects.toThrow(/assignment changed/);
+   expect((await move(next,worker,other,site)).rows[0].v.replayed).toBe(false);
+   // The original request remains an exact replay after a later move; it must not re-apply.
+   expect((await move(request)).rows[0].v.replayed).toBe(true);
+   await db.exec('RESET ROLE');
+   expect((await db.query('SELECT project_id FROM public.project_worker_assignments WHERE worker_id=$1 AND active',[worker])).rows).toEqual([{project_id:site}]);
+   expect((await db.query('SELECT event_type,project_id FROM public.project_assignment_history ORDER BY occurred_at,id')).rows).toEqual([
+    {event_type:'baseline_active',project_id:site},{event_type:'unassigned',project_id:site},{event_type:'assigned',project_id:other},{event_type:'unassigned',project_id:other},{event_type:'assigned',project_id:site}]);
+   expect((await db.query('SELECT count(*)::int n FROM public.worker_move_requests')).rows[0]).toEqual({n:2});
+   await db.exec('ALTER TABLE public.project_worker_assignments DISABLE TRIGGER record_project_assignment_history');
+   await db.exec('SET ROLE authenticated');await expect(move('00000000-0000-0000-0000-000000000103')).rejects.toThrow(/history trigger unavailable/);
+  }finally{await db.close();}
+ },30000);
+ it('refuses ambiguous assignments and linked Supervisor identities without changing teams',async()=>{
+  const db=await setup();try{
+   await db.exec(`BEGIN; ${sql('supabase/drafts/project_assignment_history.sql')} COMMIT;BEGIN;${sql('supabase/drafts/atomic_worker_move.sql')} COMMIT`);
+   // Owner-seeded duplicates emulate legacy data; the guarded writer forbids creating these.
+   await db.query('INSERT INTO public.project_worker_assignments VALUES($1,$2,true,now(),$3)',[other,worker,founder]);
+   await db.query("INSERT INTO public.workers(id,name,active) VALUES($1,'Linked Supervisor',true)",[supervisor]);await db.query('INSERT INTO public.project_worker_assignments VALUES($1,$2,true,now(),$3)',[site,supervisor,founder]);
+   await db.exec(`SET ROLE authenticated;SET test.uid='${founder}';SET test.assurance='yes'`);
+   await expect(db.query('SELECT public.move_worker_project($1,$2,$3,$4)',['00000000-0000-0000-0000-000000000105',worker,site,other])).rejects.toThrow(/assignment changed/);
+   await expect(db.query('SELECT public.move_worker_project($1,$2,$3,$4)',['00000000-0000-0000-0000-000000000106',supervisor,site,other])).rejects.toThrow(/Regular active worker/);
+   await db.exec('RESET ROLE');expect((await db.query('SELECT count(*)::int n FROM public.worker_move_requests')).rows[0]).toEqual({n:0});
+   expect((await db.query('SELECT count(*)::int n FROM public.project_worker_assignments WHERE worker_id=$1 AND active',[worker])).rows[0]).toEqual({n:2});
+  }finally{await db.close();}
+ },30000);
+ it('rolls back both sides of an atomic move if the destination history write fails',async()=>{
+  const db=await setup();try{
+   await db.exec(`BEGIN; ${sql('supabase/drafts/project_assignment_history.sql')} COMMIT;BEGIN;${sql('supabase/drafts/atomic_worker_move.sql')} COMMIT`);
+   await db.exec(`CREATE FUNCTION public.fail_destination_history() RETURNS trigger LANGUAGE plpgsql AS $$BEGIN IF NEW.event_type='assigned' THEN RAISE EXCEPTION 'history failed'; END IF; RETURN NEW; END$$; CREATE TRIGGER fail_destination_history BEFORE INSERT ON public.project_assignment_history FOR EACH ROW EXECUTE FUNCTION public.fail_destination_history();SET ROLE authenticated;SET test.uid='${founder}';SET test.assurance='yes'`);
+   await expect(db.query('SELECT public.move_worker_project($1,$2,$3,$4)',['00000000-0000-0000-0000-000000000104',worker,site,other])).rejects.toThrow(/history failed/);
+   await db.exec('RESET ROLE');expect((await db.query('SELECT project_id FROM public.project_worker_assignments WHERE worker_id=$1 AND active',[worker])).rows).toEqual([{project_id:site}]);
+   expect((await db.query('SELECT count(*)::int n FROM public.project_assignment_history')).rows[0]).toEqual({n:1});expect((await db.query('SELECT count(*)::int n FROM public.worker_move_requests')).rows[0]).toEqual({n:0});
+  }finally{await db.close();}
+ },30000);
  it('aborts installation with unfamiliar removal guard or other existing triggers',async()=>{
   const db=await setup();try{
    await db.exec(`CREATE FUNCTION public.extra_trigger() RETURNS trigger LANGUAGE plpgsql AS $$BEGIN RETURN NEW; END$$;CREATE TRIGGER extra_trigger BEFORE UPDATE ON public.workers FOR EACH ROW EXECUTE FUNCTION public.extra_trigger()`);

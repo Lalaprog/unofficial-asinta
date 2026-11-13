@@ -50,4 +50,18 @@ suite('category catalog concurrency on disposable PostgreSQL',()=>{
   await first.query('BEGIN ISOLATION LEVEL REPEATABLE READ');
   try{await expect(change(first,id(6),category,'archive',null,2)).rejects.toMatchObject({code:'P1002'});}finally{await first.query('ROLLBACK');}
  });
+ it('rechecks Founder authorization after a concurrent role revocation',async()=>{
+  await admin.query('BEGIN');await first.query('BEGIN');
+  try {
+   await admin.query("UPDATE public.users SET role='supervisor' WHERE id=$1",[founder]);
+   const pid=(await first.query('SELECT pg_backend_pid() pid')).rows[0].pid;
+   let settled=false;const pending=change(first,id(7),category,'archive',null,2).then(()=>({code:'success'}),(err:{code:string})=>({code:err.code})).finally(()=>{settled=true;});
+   await pause();expect(settled).toBe(false);
+   // The independent second session verifies that the actor lock is actually waiting.
+   expect((await second.query('SELECT cardinality(pg_blocking_pids($1))::int n',[pid])).rows[0].n).toBeGreaterThan(0);
+   await admin.query('COMMIT');expect((await pending).code).toBe('42501');await first.query('ROLLBACK');
+   expect((await admin.query('SELECT archived,revision FROM public.worker_categories WHERE id=$1',[category])).rows[0]).toEqual({archived:false,revision:2});
+   expect((await admin.query('SELECT count(*)::int n FROM public.worker_category_events')).rows[0].n).toBe(2);
+  }finally{await admin.query('ROLLBACK');await first.query('ROLLBACK');await admin.query("UPDATE public.users SET role='founder' WHERE id=$1",[founder]);}
+ },15000);
 });
