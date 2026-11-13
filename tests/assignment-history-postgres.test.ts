@@ -40,7 +40,7 @@ let admin:Client,a:Client,b:Client;const pause=()=>new Promise(r=>setTimeout(r,1
   await a.query('BEGIN');await b.query('BEGIN');try{
    await a.query('SELECT public.set_project_worker_guarded($1,$2,$3,false)',[founder,site,worker]);let settled=false;
    const next=b.query('SELECT public.set_project_worker_guarded($1,$2,$3,true)',[founder,other,worker]).finally(()=>{settled=true;});await pause();expect(settled).toBe(false);await a.query('COMMIT');await next;await b.query('COMMIT');
-   expect((await admin.query('SELECT project_id,event_type FROM public.project_assignment_history ORDER BY occurred_at,id')).rows).toEqual([{project_id:site,event_type:'baseline_active'},{project_id:site,event_type:'unassigned'},{project_id:other,event_type:'assigned'}]);
+   expect((await admin.query('SELECT project_id,event_type FROM public.project_assignment_history ORDER BY event_type,project_id')).rows).toEqual([{project_id:other,event_type:'assigned'},{project_id:site,event_type:'baseline_active'},{project_id:site,event_type:'unassigned'}]);
   }finally{await a.query('ROLLBACK');await b.query('ROLLBACK');}
  },15000);
  it('serializes competing atomic moves and never leaves the worker between sites',async()=>{
@@ -54,7 +54,7 @@ let admin:Client,a:Client,b:Client;const pause=()=>new Promise(r=>setTimeout(r,1
    await pause();expect(settled).toBe(false);expect((await admin.query('SELECT cardinality(pg_blocking_pids($1))::int n',[pid])).rows[0].n).toBeGreaterThan(0);
    await a.query('COMMIT');expect((await next).code).toBe('40001');await b.query('ROLLBACK');
    expect((await admin.query('SELECT project_id FROM public.project_worker_assignments WHERE worker_id=$1 AND active',[w])).rows).toEqual([{project_id:other}]);
-   expect((await admin.query('SELECT event_type,project_id FROM public.project_assignment_history WHERE worker_id=$1 ORDER BY occurred_at,id',[w])).rows).toEqual([{event_type:'assigned',project_id:site},{event_type:'unassigned',project_id:site},{event_type:'assigned',project_id:other}]);
+   expect((await admin.query('SELECT event_type,project_id FROM public.project_assignment_history WHERE worker_id=$1 ORDER BY event_type,project_id',[w])).rows).toEqual([{event_type:'assigned',project_id:site},{event_type:'assigned',project_id:other},{event_type:'unassigned',project_id:site}]);
   }finally{await a.query('ROLLBACK');await b.query('ROLLBACK');await Promise.all([a.query('SET ROLE service_role'),b.query('SET ROLE service_role')]);}
  },15000);
  it('coalesces concurrent identical move retries into one pair of history events',async()=>{

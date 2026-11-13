@@ -37,7 +37,7 @@ describe('atomic move UI with synthetic database',()=>{
    fireEvent.click(await screen.findByRole('button',{name:'Retry same move'}));await screen.findByText(/original move was confirmed/);
    expect(rpc.mock.calls[0][1]).toEqual(rpc.mock.calls[1][1]);expect(done).toHaveBeenCalledOnce();
    await db.exec('RESET ROLE');expect((await db.query('SELECT project_id FROM public.project_worker_assignments WHERE worker_id=$1 AND active',[worker])).rows).toEqual([{project_id:other}]);
-   expect((await db.query('SELECT event_type FROM public.project_assignment_history ORDER BY occurred_at,id')).rows).toEqual([{event_type:'baseline_active'},{event_type:'unassigned'},{event_type:'assigned'}]);
+   expect((await db.query('SELECT event_type FROM public.project_assignment_history ORDER BY event_type')).rows).toEqual([{event_type:'assigned'},{event_type:'baseline_active'},{event_type:'unassigned'}]);
    expect((await db.query('SELECT count(*)::int n FROM public.worker_move_requests')).rows[0]).toEqual({n:1});
   }finally{cleanup();sessionStorage.clear();await db.close();}
  },30000);

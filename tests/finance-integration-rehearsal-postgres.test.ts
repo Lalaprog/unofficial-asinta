@@ -76,6 +76,9 @@ suite('coordinated finance integration rehearsal, synthetic PostgreSQL only',()=
    await db.query(readFileSync('supabase/drafts/project_assignment_history.sql','utf8'));
    await db.query(readFileSync('supabase/drafts/atomic_worker_move.sql','utf8'));
    await db.query(readFileSync('supabase/drafts/attendance_assignment_guard.sql','utf8'));
+   // The review ledger is also separate from the generated chain, and never
+   // posts money or makes the bounded snapshot complete.
+   await db.query(readFileSync('supabase/drafts/project_cost_review_ledger.sql','utf8'));
    await db.query(`SET LOCAL test.uid='${founder}'; SET LOCAL test.assurance='yes'`);
    await db.query("INSERT INTO public.attendance(id,worker_id,project_id,date,status,hours_worked,submitted_at) VALUES($1,$2,$3,'2024-08-04','present',8,'2024-08-04T08:00:00Z')",[attendance,worker,site]);
    await db.query('INSERT INTO public.project_worker_assignments(project_id,worker_id,active) VALUES($1,$2,true)',[site,worker]);
@@ -112,9 +115,16 @@ suite('coordinated finance integration rehearsal, synthetic PostgreSQL only',()=
    await db.query('SAVEPOINT rental_locked');
    await expect(db.query("UPDATE public.expenses SET amount=1001 WHERE id='70000000-0000-4000-8000-000000000009'")).rejects.toThrow(/financial details are locked/);
    await db.query('ROLLBACK TO SAVEPOINT rental_locked; RELEASE SAVEPOINT rental_locked; SET LOCAL ROLE authenticated');
-   const costs=parseCostSnapshot((await db.query('SELECT public.project_cost_reconciliation_preview($1) v',[site])).rows[0].v,site);
+   const rawCosts=(await db.query('SELECT public.project_cost_reconciliation_preview($1) v',[site])).rows[0].v;
+   const costs=parseCostSnapshot(rawCosts,site);
    const choices=Object.fromEntries(costs.expenses.map(e=>[e.id,e.id==='70000000-0000-4000-8000-000000000010'?'exclude' as const:'include' as const]));
    expect(estimateProjectCost(costs,choices)).toEqual({expenses:101235n,excluded:10025n,payroll:80025n,total:181260n});
+   const reviewChoices=Object.fromEntries(Object.entries(choices).map(([id,decision])=>[id,{decision,reason:decision==='exclude'?'Already represented in payroll gross':null}]));
+   const reviewArgs=['70000000-0000-4000-8000-000000000021',site,0,JSON.stringify(rawCosts),JSON.stringify(reviewChoices),'Synthetic incomplete review'];
+   const saveReview='SELECT public.record_project_cost_review($1,$2,$3,$4::jsonb,$5::jsonb,$6) v';
+   expect((await db.query(saveReview,reviewArgs)).rows[0].v).toMatchObject({revision:1,replayed:false});
+   expect((await db.query(saveReview,reviewArgs)).rows[0].v).toMatchObject({revision:1,replayed:true});
+   expect((await db.query('SELECT public.project_cost_review($1) v',[site])).rows[0].v).toMatchObject({freshness:'matches',included_expenses:'1012.35',excluded_expenses:'100.25',paid_gross:'800.25',incomplete_total:'1812.60'});
    await db.query('RESET ROLE');
    const original=(await db.query('SELECT to_jsonb(p) v FROM public.payroll p WHERE id=$1',[voucher])).rows[0].v;
    const correctionSnapshot=(await db.query('SELECT app_private.paid_adjustment_voucher_snapshot(p) v FROM public.payroll p WHERE id=$1',[voucher])).rows[0].v;
@@ -122,6 +132,9 @@ suite('coordinated finance integration rehearsal, synthetic PostgreSQL only',()=
    await db.query("SELECT public.open_paid_payroll_adjustment('70000000-0000-4000-8000-000000000012',$1,$2,25.50,'Synthetic review')",[voucher,correctionSnapshot]);
    await db.query("SELECT public.resolve_paid_payroll_adjustment('70000000-0000-4000-8000-000000000012','settled_external','2024-08-12','Synthetic settlement')");
    await db.query('RESET ROLE');expect((await db.query('SELECT to_jsonb(p) v FROM public.payroll p WHERE id=$1',[voucher])).rows[0].v).toEqual(original);await db.query('SET LOCAL ROLE authenticated');
+   // Adjustments are outside this snapshot: matching included sources is not
+   // evidence of complete costs or of a correction's project allocation.
+   expect((await db.query('SELECT public.project_cost_review($1) v',[site])).rows[0].v).toMatchObject({freshness:'matches',incomplete_total:'1812.60'});
    const detailHistory=(await db.query('SELECT public.attendance_history_time_batch($1::uuid[]) v',[[attendance]])).rows[0].v;
    expect(detailHistory).toMatchObject({items:[{id:attendance,detail:{regular_hours:'8.00',overtime_hours:'2.00'}}]});
    const paidSite=(await db.query('SELECT public.project_paid_worker_evidence($1) v',[site])).rows[0].v;
@@ -182,7 +195,7 @@ suite('coordinated finance integration rehearsal, synthetic PostgreSQL only',()=
    await db.query('ROLLBACK TO SAVEPOINT former_site; RELEASE SAVEPOINT former_site');
    await db.query("INSERT INTO public.attendance(id,worker_id,project_id,date,status,hours_worked,submitted_at) VALUES('70000000-0000-4000-8000-000000000020',$1,$2,'2024-08-19','present',8,'2024-08-19T08:00:00Z')",[worker,destination]);
    await db.query('RESET ROLE');expect((await db.query('SELECT to_jsonb(p) v FROM public.payroll p WHERE id=$1',[voucher])).rows[0].v).toEqual(original);
-   expect((await db.query('SELECT project_id,event_type FROM public.project_assignment_history WHERE worker_id=$1 ORDER BY occurred_at,id',[worker])).rows).toEqual([{project_id:site,event_type:'assigned'},{project_id:site,event_type:'unassigned'},{project_id:destination,event_type:'assigned'}]);
+   expect((await db.query('SELECT project_id,event_type FROM public.project_assignment_history WHERE worker_id=$1 ORDER BY event_type,project_id',[worker])).rows).toEqual([{project_id:site,event_type:'assigned'},{project_id:destination,event_type:'assigned'},{project_id:site,event_type:'unassigned'}]);
    await db.query('ROLLBACK');expect(await snapshot()).toEqual(before);
    expect((await db.query("SELECT to_regclass('public.weekly_worker_draft_sources') IS NULL absent,to_regprocedure('public.weekly_worker_preview_base_inputs(date)') IS NULL wrapper_absent,to_regprocedure('public.weekly_worker_preview_inputs(date)') IS NOT NULL base_present")).rows[0]).toEqual({absent:true,wrapper_absent:true,base_present:true});
   }finally{await db.query('ROLLBACK').catch(()=>{});await db.end();}

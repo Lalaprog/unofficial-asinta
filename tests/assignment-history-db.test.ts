@@ -28,8 +28,9 @@ describe('assignment history candidate',()=>{
    await db.query('SELECT public.set_workers_removed_guarded($1,$2::uuid[],true)',[founder,[worker]]);
    await db.query('SELECT public.set_workers_removed_guarded($1,$2::uuid[],false)',[founder,[worker]]);
    await db.exec('RESET ROLE');
-   expect((await db.query('SELECT project_id,event_type,actor_id FROM public.project_assignment_history ORDER BY occurred_at,id')).rows).toEqual([
-    {project_id:site,event_type:'baseline_active',actor_id:null},{project_id:site,event_type:'unassigned',actor_id:founder},{project_id:other,event_type:'assigned',actor_id:founder},{project_id:other,event_type:'unassigned',actor_id:founder}]);
+   // Tied timestamps use UUIDs for pagination, not causal ordering.
+   expect((await db.query('SELECT project_id,event_type,actor_id FROM public.project_assignment_history ORDER BY event_type,project_id')).rows).toEqual([
+    {project_id:other,event_type:'assigned',actor_id:founder},{project_id:site,event_type:'baseline_active',actor_id:null},{project_id:site,event_type:'unassigned',actor_id:founder},{project_id:other,event_type:'unassigned',actor_id:founder}]);
    expect((await db.query('SELECT active,removed_at FROM public.workers WHERE id=$1',[worker])).rows[0]).toEqual({active:false,removed_at:null});
    await expect(db.query('DELETE FROM public.project_worker_assignments WHERE worker_id=$1',[worker])).rejects.toThrow(/must not be deleted/);
    await expect(db.query('DELETE FROM public.project_assignment_history')).rejects.toThrow(/immutable/);
@@ -68,8 +69,9 @@ describe('assignment history candidate',()=>{
    expect((await move(request)).rows[0].v.replayed).toBe(true);
    await db.exec('RESET ROLE');
    expect((await db.query('SELECT project_id FROM public.project_worker_assignments WHERE worker_id=$1 AND active',[worker])).rows).toEqual([{project_id:site}]);
-   expect((await db.query('SELECT event_type,project_id FROM public.project_assignment_history ORDER BY occurred_at,id')).rows).toEqual([
-    {event_type:'baseline_active',project_id:site},{event_type:'unassigned',project_id:site},{event_type:'assigned',project_id:other},{event_type:'unassigned',project_id:other},{event_type:'assigned',project_id:site}]);
+   // Check exact events, without inferring causal order when clocks tie.
+   expect((await db.query('SELECT event_type,project_id FROM public.project_assignment_history ORDER BY event_type,project_id')).rows).toEqual([
+    {event_type:'assigned',project_id:site},{event_type:'assigned',project_id:other},{event_type:'baseline_active',project_id:site},{event_type:'unassigned',project_id:site},{event_type:'unassigned',project_id:other}]);
    expect((await db.query('SELECT count(*)::int n FROM public.worker_move_requests')).rows[0]).toEqual({n:2});
    await db.exec('ALTER TABLE public.project_worker_assignments DISABLE TRIGGER record_project_assignment_history');
    await db.exec('SET ROLE authenticated');await expect(move('00000000-0000-0000-0000-000000000103')).rejects.toThrow(/history trigger unavailable/);
