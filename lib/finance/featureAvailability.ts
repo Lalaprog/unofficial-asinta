@@ -23,6 +23,11 @@ export function weeklyWorkerActionsPreviewEnabled(): boolean {
   return financeFoundationEnabled() && process.env.NEXT_PUBLIC_WEEKLY_WORKER_ACTIONS_PREVIEW === 'true';
 }
 
+/** Requires the reviewed refresh backend and the base weekly action gates; not authorization. */
+export function weeklyWorkerRefreshPreviewEnabled(): boolean {
+  return weeklyWorkerActionsPreviewEnabled() && process.env.NEXT_PUBLIC_WEEKLY_WORKER_REFRESH_PREVIEW === 'true';
+}
+
 /** Read-only paid allocation evidence; not a complete project cost or schema check. */
 export function projectPaidWorkerEvidencePreviewEnabled(): boolean {
   return financeFoundationEnabled() && process.env.NEXT_PUBLIC_PROJECT_PAID_WORKER_EVIDENCE_PREVIEW === 'true';

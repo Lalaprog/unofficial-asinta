@@ -12,8 +12,8 @@ const input={start,end,workers:[{id:worker,name:'Ada',position:'Mason',active:tr
 const row=buildWeeklyPreview(parseWeeklyInput(input,start),'2026-11-21').rows[0];
 const details=(status:'draft'|'approved'|'paid')=>({payroll_id:id,worker_id:worker,period_start:start,period_end:end,status,calculation:{regular_hours:'8.00',overtime_hours:'0.00',wage:'600.00',allowance:'0.00',gross:'600.00',bale:'0.00',net:'600.00',unmarked_dates:['2026-11-16','2026-11-17','2026-11-18','2026-11-19','2026-11-20','2026-11-21']},gross:'600.00',bale:'0.00',other:'0.00',net:'600.00',payment_date:status==='paid'?end:null,approved:status!=='draft',allocations:status==='paid'?[{project_id:site,hours:'8.00',wage:'600.00',allowance:'0.00',gross:'600.00'}]:[]});
 const props={row,start,end,previewDate:'2026-11-21',userId:'founder',projects:[{id:site,name:'Site One'}]};
-beforeEach(()=>{mock.rpc.mockReset();mock.today='2026-11-21';localStorage.clear();vi.spyOn(crypto,'randomUUID').mockReturnValue(id);});
-afterEach(()=>{cleanup();vi.restoreAllMocks();});
+beforeEach(()=>{mock.rpc.mockReset();mock.today='2026-11-21';localStorage.clear();sessionStorage.clear();vi.spyOn(crypto,'randomUUID').mockReturnValue(id);});
+afterEach(()=>{cleanup();vi.restoreAllMocks();vi.unstubAllEnvs();});
 
 describe('experimental source-bound weekly action UI',()=>{
  it('requires separate confirmations and explicit externally-paid date, then displays saved attribution',async()=>{
@@ -78,5 +78,64 @@ describe('experimental source-bound weekly action UI',()=>{
   const overlap={...row,vouchers:[{id,worker_id:worker,status:'paid' as const,period_start:'2026-11-14',period_end:end}]};
   const view=render(React.createElement(WeeklyWorkerActions,{...props,row:overlap}));expect(screen.queryByRole('button',{name:'Review new draft'})).toBeNull();
   view.rerender(React.createElement(WeeklyWorkerActions,{...props,row:{...row,days:row.days.map(d=>({...d,entries:[]}))}}));expect(screen.queryByRole('button',{name:'Review new draft'})).toBeNull();
+ });
+});
+
+
+describe('revision-aware draft refresh UI (independent gate)',()=>{
+ const existing={...row,vouchers:[{id,worker_id:worker,status:'draft' as const,period_start:start,period_end:end}]};
+ const request='20000000-0000-4000-8000-000000000008';
+ const version=(n:number)=>({...details('draft'),draft_revision:n});
+ function enable(){vi.stubEnv('NEXT_PUBLIC_FINANCE_FOUNDATION_PREVIEW','true');vi.stubEnv('NEXT_PUBLIC_WEEKLY_WORKER_ACTIONS_PREVIEW','true');vi.stubEnv('NEXT_PUBLIC_WEEKLY_WORKER_REFRESH_PREVIEW','true');}
+ it('requires all three gates and a valid server revision',async()=>{
+  const {weeklyWorkerRefreshPreviewEnabled}=await import('@/lib/finance/featureAvailability');enable();expect(weeklyWorkerRefreshPreviewEnabled()).toBe(true);
+  vi.stubEnv('NEXT_PUBLIC_WEEKLY_WORKER_ACTIONS_PREVIEW','false');expect(weeklyWorkerRefreshPreviewEnabled()).toBe(false);vi.stubEnv('NEXT_PUBLIC_WEEKLY_WORKER_ACTIONS_PREVIEW','true');vi.stubEnv('NEXT_PUBLIC_FINANCE_FOUNDATION_PREVIEW','false');expect(weeklyWorkerRefreshPreviewEnabled()).toBe(false);
+  enable();mock.rpc.mockResolvedValue({data:details('draft'),error:null});render(React.createElement(WeeklyWorkerActions,{...props,row:existing}));fireEvent.click(screen.getByRole('button',{name:'Load voucher details'}));await screen.findByText(/Invalid weekly draft revision/);expect(screen.queryByRole('button',{name:'Review approval'})).toBeNull();
+ });
+ it('refreshes only after confirmation, checks the saved revision, and approves precisely that revision',async()=>{
+  enable();vi.spyOn(crypto,'randomUUID').mockReturnValue(request);let revision=0,status:'draft'|'approved'='draft';
+  const refreshed=()=>({...details(status),draft_revision:revision,gross:'1200.00',net:'1200.00',calculation:{...details(status).calculation,regular_hours:'16.00',wage:'1200.00',gross:'1200.00',net:'1200.00'}});
+  mock.rpc.mockImplementation(async(name:string)=>{
+   if(name==='weekly_worker_draft_details')return {data:revision?refreshed():{...details(status),draft_revision:revision},error:null};
+   if(name==='refresh_weekly_worker_draft'){revision=1;return {data:{payroll_id:id,replayed:false,revision,calculation:refreshed().calculation},error:null};}
+   if(name==='approve_weekly_worker_draft'){status='approved';return {data:{outcome:'updated',payroll:{id,status}},error:null};}throw Error(name);
+  });
+  render(React.createElement(WeeklyWorkerActions,{...props,row:existing}));fireEvent.click(screen.getByRole('button',{name:'Load voucher details'}));await screen.findByText(/revision 0/);
+  fireEvent.click(screen.getByRole('button',{name:'Review draft refresh'}));expect(mock.rpc).toHaveBeenCalledTimes(1);expect(screen.getByText(/previous snapshot is retained/)).toBeTruthy();fireEvent.click(screen.getByRole('button',{name:'Refresh draft'}));
+  await screen.findByText(/revision 1/);expect(screen.getByText(/gross ₱1200.00/)).toBeTruthy();expect(mock.rpc).toHaveBeenCalledWith('refresh_weekly_worker_draft',{p_request:request,p_id:id,p_expected_revision:0});expect(sessionStorage.length).toBe(0);
+  fireEvent.click(screen.getByRole('button',{name:'Review approval'}));expect(screen.getByText(/approving revision 1/)).toBeTruthy();fireEvent.click(screen.getByRole('button',{name:'Confirm approval'}));await screen.findByText(/Saved status: approved/);
+  expect(mock.rpc).toHaveBeenCalledWith('approve_weekly_worker_draft',{p_id:id,p_expected_revision:1});expect(screen.queryByRole('button',{name:'Review draft refresh'})).toBeNull();
+ });
+ it('preserves and retries the exact uncertain request across reloads before enabling approval',async()=>{
+  enable();vi.spyOn(crypto,'randomUUID').mockReturnValue(request);let first=true;
+  mock.rpc.mockImplementation(async(name:string)=>{
+   if(name==='weekly_worker_draft_details')return {data:version(first?0:1),error:null};
+   if(name==='refresh_weekly_worker_draft'){if(first){first=false;throw Error('connection lost');}return {data:{payroll_id:id,replayed:true,revision:1,calculation:details('draft').calculation},error:null};}throw Error(name);
+  });
+  const view=render(React.createElement(WeeklyWorkerActions,{...props,row:existing}));fireEvent.click(screen.getByRole('button',{name:'Load voucher details'}));await screen.findByText(/revision 0/);fireEvent.click(screen.getByRole('button',{name:'Review draft refresh'}));fireEvent.click(screen.getByRole('button',{name:'Refresh draft'}));
+  await screen.findByText(/Refresh outcome not confirmed/);expect(screen.queryByRole('button',{name:'Review approval'})).toBeNull();expect(sessionStorage.length).toBe(1);view.unmount();
+  render(React.createElement(WeeklyWorkerActions,{...props,row:existing}));expect(screen.getByRole('button',{name:'Retry exact refresh'})).toBeTruthy();expect(screen.queryByRole('button',{name:'Load voucher details'})).toBeNull();fireEvent.click(screen.getByRole('button',{name:'Retry exact refresh'}));
+  await screen.findByText(/revision 1/);expect(mock.rpc.mock.calls.filter(c=>c[0]==='refresh_weekly_worker_draft').map(c=>c[1])).toEqual(Array(2).fill({p_request:request,p_id:id,p_expected_revision:0}));expect(sessionStorage.length).toBe(0);
+ });
+ it('blocks approval if a concurrent revision wins after refresh and preserves the retry record',async()=>{
+  enable();vi.spyOn(crypto,'randomUUID').mockReturnValue(request);let count=0;
+  mock.rpc.mockImplementation(async(name:string)=>name==='weekly_worker_draft_details'?{data:version(count++<2?0:2),error:null}:{data:{payroll_id:id,replayed:false,revision:1,calculation:details('draft').calculation},error:null});
+  render(React.createElement(WeeklyWorkerActions,{...props,row:existing}));fireEvent.click(screen.getByRole('button',{name:'Load voucher details'}));await screen.findByText(/revision 0/);fireEvent.click(screen.getByRole('button',{name:'Review draft refresh'}));fireEvent.click(screen.getByRole('button',{name:'Refresh draft'}));
+  await screen.findByText(/Refresh outcome not confirmed/);expect(screen.queryByRole('button',{name:'Review approval'})).toBeNull();expect(sessionStorage.length).toBe(1);
+ });
+ it('fails closed if retry storage cannot be written, before sending',async()=>{
+  enable();vi.spyOn(crypto,'randomUUID').mockReturnValue(request);mock.rpc.mockResolvedValue({data:version(0),error:null});
+  render(React.createElement(WeeklyWorkerActions,{...props,row:existing}));fireEvent.click(screen.getByRole('button',{name:'Load voucher details'}));await screen.findByText(/revision 0/);fireEvent.click(screen.getByRole('button',{name:'Review draft refresh'}));
+  vi.spyOn(Storage.prototype,'setItem').mockImplementation(()=>{throw Error('unavailable');});fireEvent.click(screen.getByRole('button',{name:'Refresh draft'}));await screen.findByText(/Retry storage could not be verified/);
+  expect(mock.rpc.mock.calls.filter(c=>c[0]==='refresh_weekly_worker_draft')).toHaveLength(0);expect(screen.queryByRole('button',{name:'Review approval'})).toBeNull();
+ });
+ it('checks the worker and period before replaying a stored request',async()=>{
+  enable();sessionStorage.setItem(JSON.stringify(['weekly-worker-refresh-v1','founder',worker,start]),JSON.stringify({request,payroll:id,revision:0}));mock.rpc.mockResolvedValue({data:{...version(0),worker_id:'another'},error:null});
+  render(React.createElement(WeeklyWorkerActions,{...props,row:existing}));fireEvent.click(screen.getByRole('button',{name:'Retry exact refresh'}));await screen.findByText(/Refresh outcome not confirmed/);
+  expect(mock.rpc.mock.calls.filter(c=>c[0]==='refresh_weekly_worker_draft')).toHaveLength(0);expect(sessionStorage.length).toBe(1);
+ });
+ it('fails closed on corrupt or unavailable retry storage without sending a refresh',async()=>{
+  enable();sessionStorage.setItem(JSON.stringify(['weekly-worker-refresh-v1','founder',worker,start]),'broken');
+  render(React.createElement(WeeklyWorkerActions,{...props,row:existing}));expect(await screen.findByText(/Refresh may have been sent/)).toBeTruthy();expect(screen.queryByRole('button',{name:'Load voucher details'})).toBeNull();expect(mock.rpc).not.toHaveBeenCalled();
  });
 });
