@@ -17,12 +17,12 @@ import { buildWeeklyPreview, parseWeeklyInput, regularDayEquivalent, summarizeWe
 type Result={key:string;loading:boolean;error:string|null;rows:WeeklyRow[]|null;excluded:number};
 const empty=(key:string):Result=>({key,loading:false,error:null,rows:null,excluded:0});
 
-/** Planning aid only: it cannot save a voucher or establish amounts owed. */
+/** The preview is a planning aid; separately gated voucher controls can record finance events. */
 export function WeeklyWorkerPreview() {
  const [open,setOpen]=useState(false);
  return <section className="overflow-hidden rounded-2xl border border-surface-border bg-white">
   <button type="button" aria-expanded={open} onClick={()=>setOpen(v=>!v)} className="flex min-h-11 w-full items-center justify-between gap-3 p-4 text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-brand sm:p-5">
-   <span><span className="block text-sm font-semibold text-navy">Weekly worker planning preview</span><span className="mt-1 block text-xs text-ink-secondary">Sunday–Saturday · read-only, not a payroll run</span></span><ChevronDown aria-hidden="true" className={`h-4 w-4 shrink-0 ${open?'rotate-180':''}`} />
+   <span><span className="block text-sm font-semibold text-navy">Weekly worker planning preview</span><span className="mt-1 block text-xs text-ink-secondary">{weeklyWorkerActionsPreviewEnabled()?'Sunday–Saturday · experimental voucher actions available':'Sunday–Saturday · read-only, not a payroll run'}</span></span><ChevronDown aria-hidden="true" className={`h-4 w-4 shrink-0 ${open?'rotate-180':''}`} />
   </button>
   {open && <Contents />}
  </section>;
@@ -66,7 +66,7 @@ function Contents(){
    <p className="text-xs text-ink-secondary">Includes active workers and inactive workers with logs this week, regardless of current site. {current.excluded} UUID-linked Supervisor profile(s) excluded; identity matching for other profiles is only a warning and can miss cases. Missing past days may not have been scheduled work. Today and future days are not treated as missing past records. Dates use the device’s Philippine-time clock; if the day changes, reload this snapshot. Future-dated source records require review rather than inclusion in an estimate. OT uses daily rate ÷ 8 (or hourly rate), with no Sunday/holiday premium under the requested rule; seek payroll/legal advice before use.</p>
    {current.rows.length>0&&(()=>{const totals=summarizeWeeklyColumns(current.rows);return <p className="rounded-xl bg-surface-inset p-3 text-xs text-ink-secondary">Partial subtotal of {totals.count} row(s) with an illustrative net: {totals.regularHours} regular hrs · {totals.otHours} OT hrs · wages ₱{totals.wage} · allowances ₱{totals.allowance} · Bale ₱{totals.bale} · gross ₱{totals.gross} · net ₱{totals.net}. Excludes {totals.excluded} worker row(s), plus {current.excluded} linked Supervisor profile(s); unmarked days can still make included rows incomplete. Not a payroll total or payment authorization.</p>;})()}
    {current.rows.length===0?<p className="text-sm text-ink-secondary">No worker profiles in this preview.</p>:<div role="region" aria-label="Weekly worker preview, scroll horizontally" tabIndex={0} className="max-w-full overflow-x-auto rounded-xl border border-surface-border focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand">
-    <table className="w-full border-collapse text-xs"><caption className="sr-only">Read-only worker planning preview for {start} to {end}. Days without records are unmarked, not absent.</caption>
+    <table className="w-full border-collapse text-xs"><caption className="sr-only">Worker planning preview for {start} to {end}. Days without records are unmarked, not absent.{weeklyWorkerActionsPreviewEnabled()?' Experimental voucher actions are available in the final column.':' The preview is read-only.'}</caption>
     <thead className="bg-surface-inset"><tr>
      <th scope="col" className="min-w-40 p-3 text-left">Worker / current rate</th>
      {weekDates(start).map((day,i)=><th key={day} scope="col" className="min-w-28 p-3 text-left">{['Sun','Mon','Tue','Wed','Thu','Fri','Sat'][i]}<br />{day}</th>)}
