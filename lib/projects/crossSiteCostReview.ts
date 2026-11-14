@@ -43,11 +43,11 @@ export function parseCrossSiteContext(raw:unknown,projectId:string,c:CorrectedCa
 }
 /** Require actual saved original-site revisions, their explicit decisions and
  * the same correction evidence; metadata alone is never treated as inclusion. */
-export function verifyCrossSiteSources(context:CrossSiteContext,c:CorrectedCase,reviews:unknown):void{
+function verifySources(context:CrossSiteContext,c:CorrectedCase,reviews:unknown,requireCurrent:boolean):void{
  if(!obj(reviews)||bytes(reviews)>CROSS_SITE_SOURCE_REVIEW_BYTES||Object.keys(reviews).length!==context.sources.length||context.caseKey!==c.key)throw Error('Missing original reviews');
  for(const source of context.sources){
   const saved=parseCorrectedSaved(reviews[source.projectId],source.projectId);
-  if(!saved.found||saved.revision!==source.revision||saved.requestId!==source.requestId||saved.actorId!==source.actorId||saved.recordedAt!==source.recordedAt||saved.freshness!=='matches'||saved.latestRevision!==saved.revision)throw Error('Original review changed');
+  if(!saved.found||saved.revision!==source.revision||saved.requestId!==source.requestId||saved.actorId!==source.actorId||saved.recordedAt!==source.recordedAt||(requireCurrent&&(saved.freshness!=='matches'||saved.latestRevision!==saved.revision)))throw Error('Original review changed');
   const own=saved.inventory.cases.find(x=>x.key===c.key);
   if(!own||!own.sourceInSnapshot||own.sourceId!==c.sourceId||own.siteChange!==source.grossChange||!sameAttributionEvidence(own.review,c.review)||saved.choices.corrections[c.key]?.decision!=='include')throw Error('Original correction inclusion differs');
   if(c.kind==='voucher'){
@@ -59,13 +59,17 @@ export function verifyCrossSiteSources(context:CrossSiteContext,c:CorrectedCase,
   }
  }
 }
+/** Current evidence is mandatory for a new review. */
+export function verifyCrossSiteSources(context:CrossSiteContext,c:CorrectedCase,reviews:unknown):void{
+ verifySources(context,c,reviews,true);
+}
 /** Apply the existing complete decision checks with incoming cases temporarily
  * excluded; add back only individually verified positive incoming effects. */
-export function calculateCrossSite(inv:CorrectedInventory,rawChoices:unknown,contexts:unknown,sourceReviews:unknown):{choices:CorrectedChoices;totals:CrossSiteTotals;contexts:Record<string,CrossSiteContext>}{
+function calculate(inv:CorrectedInventory,rawChoices:unknown,contexts:unknown,sourceReviews:unknown,requireCurrent:boolean):{choices:CorrectedChoices;totals:CrossSiteTotals;contexts:Record<string,CrossSiteContext>}{
  if(!obj(rawChoices)||!obj(rawChoices.corrections)||!obj(contexts)||!obj(sourceReviews)||bytes(sourceReviews)>CROSS_SITE_SOURCE_REVIEW_BYTES||bytes(contexts)>500000)throw Error('Invalid incoming choices');
  const choices=structuredClone(rawChoices),baseCorrections=choices.corrections as Record<string,unknown>,verified:Record<string,CrossSiteContext>={};let incoming=0n,count=0;
  for(const c of inv.cases){const decision=baseCorrections[c.key];if(c.sourceInSnapshot||!obj(decision)||decision.decision!=='include')continue;
-  const context=parseCrossSiteContext(contexts[c.key],inv.historical.base.projectId,c);verifyCrossSiteSources(context,c,sourceReviews[c.key]);verified[c.key]=context;incoming+=context.incoming;count++;
+  const context=parseCrossSiteContext(contexts[c.key],inv.historical.base.projectId,c);verifySources(context,c,sourceReviews[c.key],requireCurrent);verified[c.key]=context;incoming+=context.incoming;count++;
   baseCorrections[c.key]={...decision,decision:'exclude'};
  }
  if(Object.keys(contexts).length!==count||Object.keys(sourceReviews).length!==count)throw Error('Unexpected or missing incoming context');
@@ -74,6 +78,14 @@ export function calculateCrossSite(inv:CorrectedInventory,rawChoices:unknown,con
  const total=base.totals.total+incoming,correction=base.totals.correction+incoming,excludedCases=base.totals.excludedCases-count;
  if(total<0n||total>=10000000000000000n||correction<=-10000000000000000n||correction>=10000000000000000n||excludedCases<0)throw Error('Invalid incoming total');
  return {choices:normalized,totals:{...base.totals,total,correction,excludedCases,crossSiteGross:incoming,crossSiteCases:count},contexts:verified};
+}
+export function calculateCrossSite(inv:CorrectedInventory,rawChoices:unknown,contexts:unknown,sourceReviews:unknown){
+ return calculate(inv,rawChoices,contexts,sourceReviews,true);
+}
+/** Only for immutable historical reads and checking an already-sent attempt.
+ * A validated historical result MUST NOT be used to authorize a new write. */
+export function calculateHistoricalCrossSite(inv:CorrectedInventory,rawChoices:unknown,contexts:unknown,sourceReviews:unknown){
+ return calculate(inv,rawChoices,contexts,sourceReviews,false);
 }
 export function verifyCrossSiteTotals(raw:unknown,projectId:string,expected:CrossSiteTotals):CrossSiteTotals{
  verifyCorrectedTotals(raw,projectId,expected);

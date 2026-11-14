@@ -2,6 +2,7 @@
 import React,{useEffect,useRef,useState} from 'react';
 import {Button} from '@/components/ui/Button';
 import {CrossSiteSourceEvidence} from './CrossSiteSourceEvidence';
+import {CrossSiteReviewLedger} from './CrossSiteReviewLedger';
 import {crossSiteSourceReviewPreviewEnabled} from '@/lib/finance/featureAvailability';
 import {calculateCrossSite,verifyCrossSiteTotals,type CrossSiteTotals} from '@/lib/projects/crossSiteCostReview';
 import {useAuth} from '@/lib/auth/authContext';
@@ -90,6 +91,7 @@ function Contents({projectId,userId}:{projectId:string;userId:string}){
     {crossSiteSourceReviewPreviewEnabled()&&incoming.length>0&&<div className="space-y-2 rounded-lg border border-surface-border p-3"><p>Separate incoming cross-site preview only. It does not save a destination review or change the ordinary corrected review. Reload all source reviews and verify again after any change.</p><label className="flex items-start gap-2"><input type="checkbox" disabled={busy||!crossCalculated} checked={!!crossCalculated&&crossAck===crossFingerprint} onChange={e=>{setCrossAck(e.target.checked?crossFingerprint:'');setCrossPreview(null);}}/> I reviewed all destination decisions and original-site reviews; this preview is incomplete and does not save or post a cost.</label><Button type="button" size="sm" variant="secondary" disabled={busy||!crossCalculated||crossAck!==crossFingerprint} onClick={()=>void runCrossPreview()}>Verify incoming cross-site preview</Button>{!crossCalculated&&<p>Complete all destination decisions and inspect every included original-site review first.</p>}{crossVerified&&<div role="status">{totals(crossVerified)}<p>Incoming cross-site gross {money(crossVerified.crossSiteGross)} · cases {crossVerified.crossSiteCases}. This is incomplete, unsaved and may already be stale.</p></div>}</div>}
     <p>Saving temporarily stores this review and its sensitive payroll and cost evidence in this browser tab for an exact retry. Same-origin scripts can read it; browser storage can be lost. It is removed after verification or a deliberate clear.</p><label className="block">Corrected review note<input className="block min-h-11 w-full rounded-lg border p-2" maxLength={500} value={note} disabled={busy} onChange={e=>{setNote(e.target.value);setAck('');}}/></label><label className="flex items-start gap-2"><input type="checkbox" disabled={busy||!saved||!verified||!validReviewNote(note)} checked={ack===fingerprint} onChange={e=>setAck(e.target.checked?fingerprint:'')}/> I reviewed the evidence and decisions; this is incomplete, not a payment or posting.</label><Button type="submit" size="sm" disabled={busy||!saved||!verified||ack!==fingerprint||!validReviewNote(note)}>Save corrected review</Button>{!saved&&<p>Load corrected reviews before saving.</p>}
    </form>}
+   <CrossSiteReviewLedger projectId={projectId} userId={userId} onVerified={()=>{setCrossPreview(null);setCrossAck('');}} prepared={inventory&&crossCalculated&&crossVerified&&crossAck===crossFingerprint&&!busy&&!pending&&!blocked?{raw:inventory.raw,choices:crossCalculated.choices,contexts:crossContexts,sourceReviews:crossSources}:null}/>
   </div>}
  </section>;
 }

@@ -183,6 +183,11 @@ export function crossSiteSourceReviewPreviewEnabled(): boolean {
   return correctedProjectCostReviewPreviewEnabled() && process.env.NEXT_PUBLIC_CROSS_SITE_SOURCE_REVIEW_PREVIEW === 'true';
 }
 
+/** Independent opt-in for the unfinished cross-site ledger writer and history. */
+export function crossSiteLedgerPreviewEnabled(): boolean {
+  return crossSiteSourceReviewPreviewEnabled() && process.env.NEXT_PUBLIC_CROSS_SITE_LEDGER_PREVIEW === 'true';
+}
+
 /** Separate opt-in for correction-inclusive reviews; neither finance cutover nor
  * correction evidence alone enables this unfinished UI or verifies its backend. */
 export function correctedProjectCostReviewPreviewEnabled(): boolean {
