@@ -1,0 +1,39 @@
+// @vitest-environment jsdom
+import React from 'react';
+import {cleanup,fireEvent,render,screen,within} from '@testing-library/react';
+import {afterEach,beforeEach,describe,expect,it,vi} from 'vitest';
+const mock=vi.hoisted(()=>({rpc:vi.fn()}));vi.mock('@/lib/supabase/client',()=>({createClient:()=>({rpc:mock.rpc})}));
+import {ProjectCostReconciliation} from '@/components/projects/ProjectCostReconciliation';
+import {projectCostReconciliationPreviewEnabled} from '@/lib/finance/featureAvailability';
+import {costCents,estimateProjectCost,parseCostSnapshot} from '@/lib/projects/projectCostReconciliation';
+import {baleExpense,founder,materialExpense,other,payroll,rentalExpense,rentalId,site,worker} from './helpers/project-cost-reconciliation-fixture';
+const expenses=[{id:materialExpense,project_id:site,description:'Sand',category:'materials',amount:'50.00',expense_date:'2024-11-04',ai_bale_detection:false},{id:baleExpense,project_id:site,description:'Bale given',category:'other',amount:'100.00',expense_date:'2024-11-03',ai_bale_detection:true},{id:rentalExpense,project_id:site,description:'Excavator hire',category:'equipment',amount:'1000.00',expense_date:'2024-11-02',ai_bale_detection:false}];
+const rentals=[{id:rentalId,expense_id:rentalExpense,project_id:site,expense_amount:'1000.00',expense_date:'2024-11-02',expense_description:'Excavator hire',item_name:'Excavator',supplier:'Supplier',quantity:1,rental_start:'2024-11-01',rental_end:'2024-11-02',confirmed_at:'2024-11-02T00:00:00Z'}];
+const paid=[{payroll_id:payroll,worker_id:worker,worker_name:'Worker A',period_start:'2024-11-03',period_end:'2024-11-09',payment_date:'2024-11-09',hours:'8.00',wage:'550.00',allowance:'50.00',gross:'600.00',voucher_gross:'750.00',voucher_bale:'100.00',voucher_other:'0.00',voucher_net:'650.00'}];
+const response={project_id:site,captured_at:'2024-11-10T00:00:00Z',expenses,rentals,paid_allocations:paid,adjustment_cases:[]};
+const panel=()=>React.createElement(ProjectCostReconciliation,{projectId:site,userId:founder});
+async function load(){mock.rpc.mockResolvedValue({data:response,error:null});render(panel());fireEvent.click(screen.getByRole('button',{name:'Load review snapshot'}));await screen.findByText(/Snapshot captured/);}
+function choose(id:string,choice:'Include expense'|'Exclude from this preview'){fireEvent.click(within(screen.getByRole('group',{name:`Expense ${id}`})).getByLabelText(choice));}
+beforeEach(()=>mock.rpc.mockReset());afterEach(()=>{cleanup();vi.unstubAllEnvs();});
+describe('temporary project-cost review',()=>{
+ it('requires an independent default-off gate',()=>{vi.stubEnv('NEXT_PUBLIC_FINANCE_FOUNDATION_PREVIEW','true');vi.stubEnv('NEXT_PUBLIC_PROJECT_COST_RECONCILIATION_PREVIEW','false');expect(projectCostReconciliationPreviewEnabled()).toBe(false);vi.stubEnv('NEXT_PUBLIC_PROJECT_COST_RECONCILIATION_PREVIEW','true');expect(projectCostReconciliationPreviewEnabled()).toBe(true);vi.stubEnv('NEXT_PUBLIC_FINANCE_FOUNDATION_PREVIEW','false');expect(projectCostReconciliationPreviewEnabled()).toBe(false);});
+ it('mounts separate historical evidence only with its gate, without requesting it automatically',()=>{
+  vi.stubEnv('NEXT_PUBLIC_FINANCE_FOUNDATION_PREVIEW','true');vi.stubEnv('NEXT_PUBLIC_PROJECT_COST_RECONCILIATION_PREVIEW','true');vi.stubEnv('NEXT_PUBLIC_HISTORICAL_WORKER_ATTRIBUTION_PREVIEW','false');const view=render(panel());expect(screen.queryByRole('button',{name:'Load historical evidence'})).toBeNull();
+  vi.stubEnv('NEXT_PUBLIC_HISTORICAL_WORKER_ATTRIBUTION_PREVIEW','true');view.rerender(panel());expect(screen.getByRole('button',{name:'Load historical evidence'})).toBeTruthy();expect(mock.rpc).not.toHaveBeenCalled();
+ });
+ it('requires every manual choice and acknowledgement before a temporary result, without adding rentals twice',async()=>{await load();expect(screen.getByText(/not an extra amount/)).toBeTruthy();expect(screen.getByText(/AI flagged possible Bale/)).toBeTruthy();expect(screen.getByText(/Whole worker-week voucher: gross/).textContent).toMatch(/Bale ₱100.00/);expect(screen.queryByText(/Temporary, incomplete estimate/)).toBeNull();
+  choose(materialExpense,'Include expense');choose(baleExpense,'Exclude from this preview');expect((screen.getByRole('checkbox') as HTMLInputElement).disabled).toBe(true);choose(rentalExpense,'Include expense');fireEvent.click(screen.getByRole('checkbox'));expect(screen.getByText('Temporary, incomplete estimate: ₱1,650.00')).toBeTruthy();expect(screen.getByText(/Expenses excluded from this preview: ₱100.00/)).toBeTruthy();expect(mock.rpc).toHaveBeenCalledTimes(1);
+  fireEvent.click(screen.getByRole('button',{name:'Reload review snapshot'}));await screen.findByText(/Snapshot captured/);expect(screen.queryByText(/Temporary, incomplete estimate/)).toBeNull();expect((screen.getByRole('checkbox') as HTMLInputElement).disabled).toBe(true);
+ });
+ it('shows original-voucher correction signals without adding or assigning them to the site',async()=>{
+  const correction={case_id:'20000000-0000-0000-0000-000000000010',payroll_id:payroll,worker_id:worker,difference:'-20.25',reason:'Overpayment review',status:'settled_external',created_by:founder,created_at:'2024-11-10T01:00:00Z',resolved_by:founder,resolved_at:'2024-11-11T01:00:00Z',settled_on:'2024-11-11',resolution_note:'Recorded separately'};
+  mock.rpc.mockResolvedValue({data:{...response,adjustment_cases:[correction]},error:null});render(panel());fireEvent.click(screen.getByRole('button',{name:'Load review snapshot'}));await screen.findByText(/Original-period adjustment cases/);expect(screen.getByText(/whole-voucher difference −₱20.25/)).toBeTruthy();expect(screen.getByText(/A case can appear at multiple sites/)).toBeTruthy();expect(screen.getByText(/Recorded separately/)).toBeTruthy();
+  choose(materialExpense,'Include expense');choose(baleExpense,'Exclude from this preview');choose(rentalExpense,'Include expense');fireEvent.click(screen.getByRole('checkbox'));expect(screen.getByText('Temporary, incomplete estimate: ₱1,650.00')).toBeTruthy();
+  for(const c of [{...correction,payroll_id:other},{...correction,worker_id:other},{...correction,difference:'0.00'},{...correction,status:'pending'},{...correction,settled_on:null}])expect(()=>parseCostSnapshot({...response,adjustment_cases:[c]},site)).toThrow();
+  expect(()=>parseCostSnapshot({...response,adjustment_cases:[correction,correction]},site)).toThrow();expect(()=>parseCostSnapshot({...response,adjustment_cases:undefined},site)).toThrow();
+ });
+ it('does not assume empty data on errors or display a late response after scope changes',async()=>{let resolve!:(v:unknown)=>void;mock.rpc.mockReturnValueOnce(new Promise(r=>{resolve=r;})).mockResolvedValueOnce({data:null,error:Error('offline')});const view=render(panel());fireEvent.click(screen.getByRole('button',{name:'Load review snapshot'}));view.rerender(React.createElement(ProjectCostReconciliation,{projectId:other,userId:founder}));resolve({data:response,error:null});fireEvent.click(screen.getByRole('button',{name:'Load review snapshot'}));await screen.findByRole('alert');expect(screen.queryByText(/Worker A/)).toBeNull();expect(screen.queryByText(/Temporary, incomplete estimate/)).toBeNull();});
+ it('rejects cross-site, malformed, duplicate and incomplete evidence and uses exact cents',()=>{const good=parseCostSnapshot(response,site);expect(costCents('0.01')).toBe(1n);expect(estimateProjectCost(good,{[rentalExpense]:'include',[baleExpense]:'exclude',[materialExpense]:'include'}).total).toBe(165000n);
+  for(const bad of [{...response,project_id:other},{...response,expenses:[...expenses,expenses[0]]},{...response,rentals:[{...rentals[0],expense_amount:'999.00'}]},{...response,paid_allocations:[{...paid[0],gross:'601.00'}]},{...response,paid_allocations:[{...paid[0],voucher_bale:'100.01'}]},{...response,expenses:expenses.slice(0,2)}])expect(()=>parseCostSnapshot(bad,site)).toThrow();
+ });
+});

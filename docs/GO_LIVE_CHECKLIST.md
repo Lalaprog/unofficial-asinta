@@ -1,5 +1,7 @@
 # Go-live checklist
 
+> **STOP — historical checklist, not a current release procedure.** SQL bundles are stale, production was temporarily recovered after a mismatched deployment, and no verified recovery backup exists. The GitHub repository is public; do not configure or run the old export workflow with real data. Follow `CLIENT_CHANGE_PLAN.md` and `SECURITY.md` for current limitations.
+
 Short, ordered, and written to be worked through in the Supabase dashboard.
 Every SQL file it names lives in `supabase/apply/` unless it says otherwise.
 
@@ -145,7 +147,7 @@ These live outside the code and will silently disagree with the app if skipped.
 | Vercel → Environment Variables | `NEXT_PUBLIC_SESSION_IDLE_TIMEOUT_MINUTES=20`<br>`NEXT_PUBLIC_SESSION_ABSOLUTE_TIMEOUT_HOURS=8`<br>`NEXT_PUBLIC_SESSION_WARNING_SECONDS=120` | **Rebuild** after setting | `NEXT_PUBLIC_*` is baked in at build time — redeploying an old build artifact is not enough. Verify by leaving a tab idle and confirming the warning dialog appears at ~18 min |
 | Supabase → Authentication → Rate Limits | `sign_in_sign_ups` | `30 → 10` per 5 min per IP | No account lockout (DoS vector against the firm). `/api/auth/login` also enforces 10/5m per IP via `lib/rateLimit.ts` (mitigating Supabase issue #41947) |
 | Supabase → Authentication → Attack Protection | CAPTCHA on sign-in | hCaptcha or Cloudflare Turnstile | Stops distributed credential stuffing across multiple IPs |
-| GitHub Actions → `Automated database backup` | `.github/workflows/backup.yml` | Weekly cron + manual run | Supabase Free has no PITR. Run the workflow, download the `pg_dump` artifact, and test-restore into a throwaway project ([`SECURITY.md` §10](./SECURITY.md)). Copy `receipts` Storage photos separately |
+| Recovery | Current export workflow | **Do not run with real data** | This public repository could expose unencrypted financial and personal data. Establish a secure, verified recovery plan, including Auth and Storage, before deployment ([`SECURITY.md` §10](./SECURITY.md)). |
 
 ---
 

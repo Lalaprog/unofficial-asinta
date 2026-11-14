@@ -8,7 +8,7 @@ vi.mock('next/navigation', () => ({useRouter:()=>({replace:vi.fn()}),useSearchPa
 vi.mock('@/lib/auth/authContext',()=>({useAuth:()=>({user:{id:'sup'},isFounder:false,isSupervisor:true})}));
 vi.mock('@/components/ui/Toast',()=>({useToast:()=>({showToast:vi.fn()})}));
 vi.mock('@/components/ui/Modal',()=>({Modal:({isOpen,title,children}:{isOpen:boolean;title:string;children:React.ReactNode})=>isOpen?React.createElement('div',{role:'dialog','aria-label':title},children):null}));
-vi.mock('@/lib/attendance/useProjectTeam',()=>({useProjectTeam:(_user:string,project:string,enabled:boolean)=>({status:enabled&&project?mock.mode:'idle',ids:project==='a'?['w1']:['w2'],reload:mock.reload})}));
+vi.mock('@/lib/attendance/useBaleProjectWorkers',()=>({useBaleProjectWorkers:(_user:string,project:string,enabled:boolean)=>({status:enabled&&project?mock.mode:'idle',workers:project==='a'?[{id:'w1',name:'Ada',position:'Mason'}]:[{id:'w2',name:'Ben',position:'Carpenter'}],someDetailsUnavailable:false,reload:mock.reload})}));
 const projects=[{id:'a',name:'Site A'},{id:'b',name:'Site B'}];
 vi.mock('@/lib/data/store',()=>({useDataStore:()=>({advanceRequests:[],projects,workers:[{id:'w1',name:'Ada',position:'Mason',active:true},{id:'w2',name:'Ben',position:'Carpenter',active:true}],users:[],getProjectsForSupervisor:()=>projects,createAdvanceRequest:mock.submit,reviewAdvanceRequest:vi.fn(),approveAdvanceRequests:vi.fn(),issueAdvanceRequest:vi.fn()})}));
 import { AdvanceRequestsPanel } from '@/components/advances/AdvanceRequestsPanel';

@@ -29,6 +29,7 @@ import { useToast } from '@/components/ui/Toast';
 import { generateTemporaryPassword, validatePasswordStrength } from '@/lib/users/admin';
 import { WorkspaceHeader } from '@/components/ui/WorkspaceHeader';
 import { WorkspaceFilters } from '@/components/ui/WorkspaceFilters';
+import { SupervisorPortrait } from '@/components/users/SupervisorPortrait';
 
 export default function UsersPage() {
   const { user: currentUser } = useAuth();
@@ -441,6 +442,9 @@ export default function UsersPage() {
                     </Badge>
                   </div>
 
+                  {u.role === 'supervisor' && process.env.NEXT_PUBLIC_SUPERVISOR_PORTRAIT_PREVIEW === 'true' && (
+                    <SupervisorPortrait key={`${currentUser?.id ?? 'none'}:${u.id}`} id={u.id} name={u.name} />
+                  )}
                   {/* Permissions Description */}
                   <div className="p-3.5 rounded-2xl bg-surface-inset/50 border border-surface-border/70 text-xs space-y-2">
                     <div className="flex items-center justify-between gap-2">
@@ -601,10 +605,10 @@ export default function UsersPage() {
                   />
                   <div className="space-y-0.5">
                     <div className="font-bold text-navy">
-                      Include Supervisor in Daily Attendance &amp; Payroll Engine
+                      Link Supervisor to the legacy workforce roster
                     </div>
                     <div className="text-[11px] text-ink-secondary">
-                      Automatically adds this Supervisor to the site workforce roster so their daily attendance, cash advances (bale), and salary are computed in payroll runs.
+                      Creates a linked workforce profile and rate for existing attendance and payroll screens. This does not enable the planned separate 1–15 / 16–month-end Supervisor payroll; that workflow is not yet live.
                     </div>
                   </div>
                 </label>
@@ -778,10 +782,10 @@ export default function UsersPage() {
                       />
                       <div className="space-y-0.5">
                         <div className="font-bold text-navy">
-                          Include Supervisor in Daily Attendance &amp; Payroll Engine
+                          Link Supervisor to the legacy workforce roster
                         </div>
                         <div className="text-[11px] text-ink-secondary">
-                          Keeps a linked Site Supervisor entry in the workforce roster so their daily attendance, cash advances (bale), and salary are computed in payroll runs.
+                          Maintains a linked workforce profile and rate for existing screens. This does not enable the planned separate 1–15 / 16–month-end Supervisor payroll; that workflow is not yet live.
                         </div>
                       </div>
                     </label>

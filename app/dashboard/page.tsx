@@ -17,6 +17,9 @@ import { Textarea } from '@/components/ui/Input';
 import { buildReminderSMS, estimateSMSSegments } from '@/lib/sms/templates';
 import { loadSMSTemplate } from '@/lib/sms/loadTemplate';
 import { formatDatePH, formatPeso } from '@/lib/email/format';
+import { ownedEquipmentPreviewEnabled } from '@/lib/tools/ownedEquipment';
+import { weeklyWorkerCutoverMode } from '@/lib/finance/featureAvailability';
+import { manilaDateISO } from '@/lib/dates/manila';
 
 const TOOL_CONDITION_LABELS: Record<ToolCondition, string> = {
   excellent: 'Excellent',
@@ -409,6 +412,7 @@ function TrendUpGlyph({ className = 'h-3.5 w-3.5' }: { className?: string }) {
 // ---------------------------------------------------------------------------
 
 function renderToolConditionSummary(project: ProjectFinancialSummary) {
+  if (ownedEquipmentPreviewEnabled()) return <span className="text-ink-muted">See site equipment for current recorded allocations.</span>;
   if (project.toolUnits === 0) {
     return <span className="text-ink-muted">No tools assigned</span>;
   }
@@ -525,17 +529,23 @@ export default function FounderDashboard() {
     projects,
     isLoaded,
     loadError,
+    refresh,
     sendSMS,
   } = useDataStore();
 
   const [selectedProjectId, setSelectedProjectId] = useState<string | null>(null);
 
-  const now = new Date();
-  const asOfDate = [
-    now.getFullYear(),
-    String(now.getMonth() + 1).padStart(2, '0'),
-    String(now.getDate()).padStart(2, '0'),
-  ].join('-');
+  // Business dates are Philippine calendar dates, not the device's local date.
+  // Recheck periodically and when a sleeping tab regains focus.
+  const [asOfDate,setAsOfDate] = useState(() => manilaDateISO());
+  useEffect(() => {
+    const update = () => setAsOfDate(manilaDateISO());
+    update();
+    const timer=window.setInterval(update,60_000);
+    window.addEventListener('focus',update);
+    document.addEventListener('visibilitychange',update);
+    return () => {window.clearInterval(timer);window.removeEventListener('focus',update);document.removeEventListener('visibilitychange',update);};
+  }, []);
 
   const metrics = useMemo(
     () =>
@@ -573,6 +583,10 @@ export default function FounderDashboard() {
   const [smsDraft, setSmsDraft] = useState('');
   const [smsPreparing, setSmsPreparing] = useState(false);
   const [smsTemplateError, setSmsTemplateError] = useState(false);
+  const [smsNeedsRecheck, setSmsNeedsRecheck] = useState(false);
+  useEffect(() => {
+    if (smsModalOpen && (!isLoaded || loadError)) setSmsNeedsRecheck(true);
+  }, [smsModalOpen, isLoaded, loadError]);
   const smsPrepareVersion = useRef(0);
   const smsSendLock = useRef(false);
   const [smsSuccessMessage, setSmsSuccessMessage] = useState<string | null>(null);
@@ -580,9 +594,10 @@ export default function FounderDashboard() {
   const formatPHP = formatPeso;
 
   const handleOpenSMSModal = async (invoice: Invoice) => {
+    if (!isLoaded || loadError || (smsModalOpen && smsNeedsRecheck)) return;
     const version = ++smsPrepareVersion.current;
     setSelectedInvoiceForSMS(invoice);
-    setSmsDraft(''); setSmsSuccessMessage(null); setSmsTemplateError(false); setSmsPreparing(true); setSmsModalOpen(true);
+    setSmsDraft(''); setSmsSuccessMessage(null); setSmsTemplateError(false); setSmsNeedsRecheck(false); setSmsPreparing(true); setSmsModalOpen(true);
     try {
       const template = await loadSMSTemplate();
       if (version === smsPrepareVersion.current) setSmsDraft(buildSmsPreviewMessage(invoice, template));
@@ -608,7 +623,7 @@ export default function FounderDashboard() {
   };
 
   const handleSendInvoiceSMS = async () => {
-    if (!selectedInvoiceForSMS || smsPreparing || smsTemplateError || !smsDraft.trim() || smsDraft.length > 1000 || smsSendLock.current) return;
+    if (!isLoaded || loadError || smsNeedsRecheck || !selectedInvoiceForSMS || smsPreparing || smsTemplateError || !smsDraft.trim() || smsDraft.length > 1000 || smsSendLock.current) return;
     smsSendLock.current = true;
     setSmsSending(true);
     try {
@@ -643,16 +658,17 @@ export default function FounderDashboard() {
   const projectsWithoutEstimateCount = scopedProjects.filter(
     (project) => project.budgetEstimate <= 0
   ).length;
+  const cutoverMode = weeklyWorkerCutoverMode();
   const pendingAdvanceRequestCount = metrics.baleRequests.pendingApprovalCount;
   const approvedAdvanceRequestCount = metrics.baleRequests.approvedPendingPaymentCount;
 
   const attentionItemCount =
     Number(metrics.receivables.overdueInvoiceCount > 0) +
-    Number(metrics.payroll.needsReviewCount > 0) +
-    Number(pendingAdvanceRequestCount > 0) +
-    Number(approvedAdvanceRequestCount > 0) +
+    Number(!cutoverMode && metrics.payroll.needsReviewCount > 0) +
+    Number(!cutoverMode && pendingAdvanceRequestCount > 0) +
+    Number(!cutoverMode && approvedAdvanceRequestCount > 0) +
     Number(metrics.projectsOverEstimate.length > 0) +
-    Number(metrics.tools.attentionUnits > 0);
+    Number(!ownedEquipmentPreviewEnabled() && metrics.tools.attentionUnits > 0);
 
   // Receivables split percentages for the health bar in Card 1
   const overdueSharePercent =
@@ -676,6 +692,13 @@ export default function FounderDashboard() {
 
   return (
     <AppShell requireFounder={true}>
+      {!isLoaded || loadError ? (
+        <div role="status" className="rounded-xl border border-status-warning/20 bg-status-warning-bg p-4 text-sm text-ink-secondary">
+          <p className="font-semibold text-navy">Dashboard figures unavailable</p>
+          <p className="mt-1">{loadError || 'Waiting for ledger data to load.'} Do not treat missing figures as zero.</p>
+          {loadError && <Button type="button" variant="secondary" size="sm" className="mt-3" onClick={() => void refresh()}>Retry dashboard data</Button>}
+        </div>
+      ) : <>
       <div className="dashboard-workspace w-full space-y-6 lg:space-y-7">
         {/* Header with subtle entrance */}
         <header
@@ -711,7 +734,7 @@ export default function FounderDashboard() {
                 : 'Client balances, workforce payments, project costs, and site scope—all in one place.'}
             </p>
             <p className="mt-2 text-[11px] font-medium text-ink-muted">
-              Snapshot as of {formatDatePH(metrics.asOfDate)}
+              Loaded view dated {formatDatePH(metrics.asOfDate)} (Philippine time). Reads are not a transaction and may be limited or become stale; verify records in their ledgers before acting.
             </p>
             <div className="mt-4 inline-flex w-full max-w-sm items-center gap-3 rounded-xl border border-[#e3dccd] bg-white/75 px-3 py-1 shadow-sm transition-colors focus-within:border-brand/50 focus-within:ring-2 focus-within:ring-brand/15 sm:w-auto lg:hidden">
               <label htmlFor="dashboard-project-scope" className="shrink-0 text-[10px] font-bold uppercase tracking-wider text-ink-muted">Project</label>
@@ -915,6 +938,17 @@ export default function FounderDashboard() {
             <WorkforcePayWatermark />
 
             <div key={`workforce-${scopeKey}`} className="animate-scope-refresh relative z-10 flex h-full flex-col justify-between">
+              {cutoverMode ? (
+                <div>
+                  <h2 className="break-words text-[10px] font-bold uppercase tracking-[0.13em] text-ink-secondary">Workforce &amp; pay</h2>
+                  <p className="mt-3 text-sm font-semibold text-navy">Weekly payroll and Bale are not summarized here.</p>
+                  <p className="mt-1 text-xs text-ink-secondary">The legacy dashboard figures do not include the weekly workflow or Supervisor payroll. Review each ledger directly; this is not a zero balance.</p>
+                  <div className="mt-3 flex flex-wrap gap-3 text-xs font-semibold text-brand">
+                    <Link href="/payroll">Open payroll <ArrowGlyph /></Link>
+                    <Link href="/advances?tab=requests">Review Bale <ArrowGlyph /></Link>
+                  </div>
+                </div>
+              ) : <>
               {/* TOP SECTION: Payroll */}
               <div>
                 <div className="flex items-start justify-between gap-2">
@@ -934,6 +968,7 @@ export default function FounderDashboard() {
                   </Link>
                 </div>
 
+                <p className="mt-2 text-[11px] leading-relaxed text-ink-secondary">Legacy vouchers only; weekly and Supervisor payroll are not included.{activeProject && ' Approximate matches use attendance, notes or past advances. Full vouchers may appear at multiple sites; not a site cost or complete list.'}</p>
                 <div className="mt-2.5 flex items-baseline justify-between gap-2">
                   <p className="break-words text-2xl font-semibold tracking-tight text-navy sm:text-[28px]">
                     <AnimatedPeso amount={metrics.payroll.approvedUnpaid} className="font-serif" />
@@ -1009,6 +1044,7 @@ export default function FounderDashboard() {
                   </Link>
                 </div>
               </div>
+              </>}
             </div>
           </Card>
 
@@ -1320,6 +1356,7 @@ export default function FounderDashboard() {
                     Follow-up board {activeProject ? `· ${activeProject.name}` : ''}
                   </p>
                   <h2 className="mt-0.5 text-base font-semibold text-navy">Needs attention</h2>
+                  {cutoverMode && <p className="mt-1 text-xs text-ink-secondary">Weekly payroll, Supervisor payroll and Bale are not checked on this board.</p>}
                   <p className="mt-1 text-xs leading-relaxed text-ink-secondary">
                     {attentionItemCount > 0
                       ? `${attentionItemCount} ${attentionItemCount === 1 ? 'area has' : 'areas have'} an item to review`
@@ -1371,7 +1408,7 @@ export default function FounderDashboard() {
                 </div>
               )}
 
-              {metrics.payroll.needsReviewCount > 0 && (
+              {!cutoverMode && metrics.payroll.needsReviewCount > 0 && (
                 <Link
                   href="/payroll"
                   className="group/link flex min-h-14 items-center justify-between gap-3 py-3 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand"
@@ -1395,7 +1432,7 @@ export default function FounderDashboard() {
                 </Link>
               )}
 
-              {pendingAdvanceRequestCount > 0 && (
+              {!cutoverMode && pendingAdvanceRequestCount > 0 && (
                 <Link
                   href="/advances?tab=requests"
                   className="group/link flex min-h-14 items-center justify-between gap-3 py-3 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand"
@@ -1419,7 +1456,7 @@ export default function FounderDashboard() {
                 </Link>
               )}
 
-              {approvedAdvanceRequestCount > 0 && (
+              {!cutoverMode && approvedAdvanceRequestCount > 0 && (
                 <Link
                   href="/advances?tab=requests"
                   className="group/link flex min-h-14 items-center justify-between gap-3 py-3 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand"
@@ -1472,7 +1509,7 @@ export default function FounderDashboard() {
               )}
 
               {/* Tools needing attention integrated into Needs Attention board */}
-              {metrics.tools.attentionUnits > 0 && (
+              {!ownedEquipmentPreviewEnabled() && metrics.tools.attentionUnits > 0 && (
                 <Link
                   href="/tools"
                   className="group/link flex min-h-14 items-center justify-between gap-3 py-3 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand"
@@ -1516,10 +1553,10 @@ export default function FounderDashboard() {
                       className="mt-1 h-2 w-2 shrink-0 rounded-full bg-status-success"
                     />
                     <div>
-                      <p className="text-sm font-semibold text-navy">All clear for now</p>
+                      <p className="text-sm font-semibold text-navy">No listed follow-ups in this snapshot</p>
                       <p className="mt-1 text-xs leading-relaxed text-ink-secondary">
-                        No overdue invoices, payroll reviews, open Bale requests, over-estimate
-                        projects, or tool-service items.
+                        {cutoverMode ? 'Weekly payroll, Supervisor payroll and Bale are not checked here. Review those ledgers directly. ' : 'Legacy payroll and Bale figures may be incomplete, especially when scoped to a site. '}
+                        {ownedEquipmentPreviewEnabled() && 'Tool-service status is not summarized here.'}
                       </p>
                     </div>
                   </div>
@@ -1529,8 +1566,7 @@ export default function FounderDashboard() {
               {/* Quiet Tools & Inventory Footer so inventory remains accessible even when 0 need repair */}
               <div className="flex items-center justify-between gap-2 py-3 text-xs text-ink-secondary">
                 <span>
-                  Tools &amp; inventory: <strong className="text-navy">{metrics.tools.totalUnits}</strong>{' '}
-                  units ({metrics.tools.depotUnits} in central depot)
+                  {ownedEquipmentPreviewEnabled() ? 'Tools & inventory: allocations are not summarized here.' : <>Tools &amp; inventory: <strong className="text-navy">{metrics.tools.totalUnits}</strong>{' '}units ({metrics.tools.depotUnits} in central depot)</>}
                 </span>
                 <Link
                   href="/tools"
@@ -1658,9 +1694,9 @@ export default function FounderDashboard() {
                               </div>
                             </td>
                             <td className="px-3 py-3.5">
-                              <div className="mb-1 text-[11px] text-ink-secondary">
+                              {!ownedEquipmentPreviewEnabled() && <div className="mb-1 text-[11px] text-ink-secondary">
                                 {project.toolUnits} total · {project.toolUnitsNeedingAttention} need service
-                              </div>
+                              </div>}
                               {renderToolConditionSummary(project)}
                             </td>
                           </tr>
@@ -1730,7 +1766,7 @@ export default function FounderDashboard() {
                           <div className="min-w-0">
                             <p className="text-[11px] text-ink-secondary">Tools</p>
                             <p className="mt-0.5 text-sm font-semibold tabular-nums text-navy">
-                              {project.toolUnits} units · {project.toolUnitsNeedingAttention} need service
+                              {ownedEquipmentPreviewEnabled() ? 'See site equipment' : `${project.toolUnits} units · ${project.toolUnitsNeedingAttention} need service`}
                             </p>
                           </div>
                         </div>
@@ -1752,6 +1788,7 @@ export default function FounderDashboard() {
       </div>
 
       <DashboardWalkthrough />
+      </>}
 
       <Modal
         isOpen={smsModalOpen}
@@ -1769,7 +1806,7 @@ export default function FounderDashboard() {
                 {smsSuccessMessage}
                 <div className="mt-3"><Button type="button" variant="secondary" size="sm" onClick={() => setSmsModalOpen(false)}>Done</Button></div>
               </div>
-            ) : smsPreparing ? <p role="status">Preparing message…</p> : smsTemplateError ? <div role="alert" className="space-y-3"><p>Could not load the saved SMS template.</p><Button type="button" variant="secondary" onClick={() => void handleOpenSMSModal(selectedInvoiceForSMS)}>Try again</Button></div> : (
+            ) : smsPreparing ? <p role="status">Preparing message…</p> : smsTemplateError ? <div role="alert" className="space-y-3"><p>Could not load the saved SMS template.</p><Button type="button" variant="secondary" disabled={!isLoaded || Boolean(loadError) || smsNeedsRecheck} onClick={() => void handleOpenSMSModal(selectedInvoiceForSMS)}>Try again</Button></div> : (
               <>
                 <div className="space-y-2 rounded-xl border border-surface-border bg-surface-inset p-3.5">
                   <div className="flex justify-between gap-3">
@@ -1796,6 +1833,7 @@ export default function FounderDashboard() {
                   <Textarea label="SMS message" rows={5} value={smsDraft} maxLength={1000} disabled={smsSending} onChange={(event) => setSmsDraft(event.target.value)} />
                   {smsDraft.length > 1000 && <p role="alert" className="text-status-danger">This message is longer than 1,000 characters. Edit it before sending.</p>}
                   <p className="text-ink-secondary">Changes apply only to this message. {estimateSMSSegments(smsDraft).segments} SMS segment{estimateSMSSegments(smsDraft).segments === 1 ? '' : 's'} estimated.</p>
+                  {(!isLoaded || loadError || smsNeedsRecheck) && <p role="alert">Ledger sync was unavailable. Close this reminder, sync and check the invoice again before preparing a new message.</p>}
                 </div>
 
                 <p className="text-ink-secondary">If sending is unconfirmed, check the dispatch log and provider before retrying; it may have been sent.</p>
@@ -1807,7 +1845,7 @@ export default function FounderDashboard() {
                     type="button"
                     variant="primary"
                     onClick={handleSendInvoiceSMS}
-                    disabled={!smsDraft.trim() || smsDraft.length > 1000 || smsSending}
+                    disabled={!isLoaded || Boolean(loadError) || smsNeedsRecheck || !smsDraft.trim() || smsDraft.length > 1000 || smsSending}
                     isLoading={smsSending}
                   >
                     Send PhilSMS Now

@@ -1,0 +1,48 @@
+// @vitest-environment jsdom
+import React from 'react';
+import {act,cleanup,fireEvent,render,screen,waitFor} from '@testing-library/react';
+import {afterEach,beforeEach,describe,expect,it,vi} from 'vitest';
+const {rpc,prepare}=vi.hoisted(()=>({rpc:vi.fn(),prepare:vi.fn()}));
+vi.mock('@/lib/supabase/client',()=>({createClient:()=>({rpc})}));
+vi.mock('@/lib/users/supervisorPortrait',async(importOriginal)=>({...await importOriginal<typeof import('@/lib/users/supervisorPortrait')>(),prepareSupervisorPortrait:prepare}));
+import {SupervisorPortrait} from '@/components/users/SupervisorPortrait';
+const id='10000000-0000-4000-8000-000000000002';
+const absent={supervisor_id:id,version:null,has_photo:false,mime:null,data:null};
+beforeEach(()=>{rpc.mockReset();prepare.mockReset();rpc.mockResolvedValue({data:absent,error:null});prepare.mockResolvedValue({mime:'image/png',data:'image'});});
+afterEach(()=>cleanup());
+describe('experimental Supervisor portrait UI',()=>{
+ it('shows fallback and sends only resized content with a version and operation id',async()=>{
+  render(React.createElement(SupervisorPortrait,{id,name:'Test'}));const input=await screen.findByLabelText('Choose photo');
+  expect(screen.getByText(/Default icon/)).toBeTruthy();
+  const file=new File(['original'],'image.png',{type:'image/png'});fireEvent.change(input,{target:{files:[file]}});
+  await waitFor(()=>expect(rpc).toHaveBeenCalledWith('set_supervisor_profile_photo',expect.objectContaining({p_supervisor:id,p_expected_version:null,p_mime:'image/png',p_data:'image',p_operation:expect.any(String)})));
+  expect(prepare).toHaveBeenCalledWith(file);
+ });
+ it('retries the same operation after ambiguous upload failure',async()=>{
+  rpc.mockImplementation(async(name:string)=>name==='set_supervisor_profile_photo'?{data:null,error:{code:'NETWORK'}}:{data:absent,error:null});
+  render(React.createElement(SupervisorPortrait,{id,name:'Test'}));fireEvent.change(await screen.findByLabelText('Choose photo'),{target:{files:[new File(['x'],'a.png',{type:'image/png'})]}});
+  fireEvent.click(await screen.findByRole('button',{name:'Retry same change'}));
+  await waitFor(()=>expect(rpc.mock.calls.filter(c=>c[0]==='set_supervisor_profile_photo')).toHaveLength(2));
+  const writes=rpc.mock.calls.filter(c=>c[0]==='set_supervisor_profile_photo');expect(writes[0][1]).toEqual(writes[1][1]);
+ });
+ it('does not upload if preparation fails and displays an error',async()=>{
+  prepare.mockRejectedValue(new Error('Bad photo'));
+  render(React.createElement(SupervisorPortrait,{id,name:'Test'}));fireEvent.change(await screen.findByLabelText('Choose photo'),{target:{files:[new File(['x'],'a.png',{type:'image/png'})]}});
+  await screen.findByText('Bad photo');expect(rpc.mock.calls.every(c=>c[0]!=='set_supervisor_profile_photo')).toBe(true);
+ });
+ it('discards a late response and never shows one Supervisor photo for another',async()=>{
+  const other='10000000-0000-4000-8000-000000000003',version='20000000-0000-4000-8000-000000000001';
+  let resolveOld!:(value:unknown)=>void;
+  rpc.mockImplementation((name:string,params:{p_supervisor:string})=>params.p_supervisor===id?new Promise(resolve=>{resolveOld=resolve;}):Promise.resolve({data:{supervisor_id:other,version:null,has_photo:false,mime:null,data:null},error:null}));
+  const view=render(React.createElement(SupervisorPortrait,{id,name:'First'}));
+  view.rerender(React.createElement(SupervisorPortrait,{id:other,name:'Second'}));await screen.findByLabelText('Choose photo');
+  await act(async()=>resolveOld({data:{supervisor_id:id,version,has_photo:true,mime:'image/png',data:'YWJj'},error:null}));
+  expect(screen.queryByAltText('First profile photo')).toBeNull();expect(screen.queryByAltText('Second profile photo')).toBeNull();
+ });
+ it('shows the private image and removal sends its version',async()=>{
+  const version='20000000-0000-4000-8000-000000000001';
+  rpc.mockResolvedValue({data:{supervisor_id:id,version,has_photo:true,mime:'image/png',data:'YWJj'},error:null});
+  render(React.createElement(SupervisorPortrait,{id,name:'Test'}));await screen.findByAltText('Test profile photo');fireEvent.click(screen.getByRole('button',{name:'Remove photo'}));
+  await waitFor(()=>expect(rpc).toHaveBeenCalledWith('set_supervisor_profile_photo',expect.objectContaining({p_expected_version:version,p_mime:null,p_data:null})));
+ });
+});

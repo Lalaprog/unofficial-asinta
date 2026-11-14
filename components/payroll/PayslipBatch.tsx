@@ -61,7 +61,7 @@ export function PayslipBatch({ onClose }: { onClose: () => void }) {
           {page.map(pay => <article key={pay.id} className="payslip-batch-card flex flex-col gap-1 rounded-lg border border-slate-300 bg-white p-2 text-xs text-black">
             <div className="font-bold">WORKER PAYSLIP · {pay.status.toUpperCase()}</div>
             <div className="font-bold break-words">{pay.worker_name}</div>
-            <div className="break-words">{pay.worker_position}</div>
+            <div className="break-words">{pay.recorded_craft ? <>Craft at voucher entry: {pay.recorded_craft.label} (may differ from work date)</> : <>Current craft: {pay.worker_position} (not a historical snapshot)</>}</div>
             <div>Period: {pay.period_start} to {pay.period_end}</div>
             <div>Days: {formatRecordedWork(pay.days_worked, 'days')} · Hours: {formatRecordedWork(pay.hours_worked, 'hours')}</div>
             <div className="payslip-batch-amounts border-t border-slate-200 pt-1">

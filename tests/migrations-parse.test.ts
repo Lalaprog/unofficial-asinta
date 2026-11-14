@@ -389,11 +389,8 @@ describe('audit_log stays append-only', () => {
 });
 
 describe('the generated bundles are valid SQL too', () => {
-  // The bundles are what the founder actually pastes into the SQL editor, so
-  // they get the same guarantee as their sources — plus a staleness check,
-  // because a bundle that was never regenerated after a migration change would
-  // otherwise sail through every migration-level assertion below while being
-  // the wrong file to paste.
+  // These are historical, deliberately blocked bundles. Parsing and matching
+  // the listed source hashes does NOT establish completeness or deployment safety.
   for (const name of ['fresh-install.sql', 'upgrade-hardening.sql']) {
     it(`parses supabase/apply/${name}`, async () => {
       const sql = readFileSync(join(APPLY_DIR, name), 'utf8');
@@ -412,7 +409,7 @@ describe('the generated bundles are valid SQL too', () => {
         expect(
           sourceDigest(source.name),
           `${name} is STALE — it was generated from a different ${source.name}. ` +
-            `Run \`npm run build:apply-sql\` and commit the regenerated bundle.`
+            `Do not run or regenerate historical bundles; see supabase/apply/README.md.`
         ).toBe(source.digest);
       }
     });

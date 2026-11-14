@@ -4,7 +4,15 @@ import React, { useEffect, useMemo, useState } from 'react';
 import { useRouter, useSearchParams } from 'next/navigation';
 import { useAuth } from '@/lib/auth/authContext';
 import { useDataStore } from '@/lib/data/store';
-import { useProjectTeam } from '@/lib/attendance/useProjectTeam';
+import { useBaleProjectWorkers } from '@/lib/attendance/useBaleProjectWorkers';
+import { useBaleRequestSubmissionGuard } from '@/lib/attendance/useBaleRequestSubmissionGuard';
+import { getManilaClock } from '@/lib/reminders/scheduler';
+import { workerPayrollPeriod } from '@/lib/payroll/periods';
+import { useWeeklyBaleStatuses } from '@/lib/attendance/useWeeklyBaleStatuses';
+import { useBaleReviewGuard } from '@/lib/attendance/useBaleReviewGuard';
+import { selectedBaleDuplicateSignals } from '@/lib/attendance/baleDuplicateSignals';
+import { weeklyBaleExpiryHealthPreviewEnabled, weeklyBaleReleasePreviewEnabled, weeklyBaleIdempotentSubmissionPreviewEnabled, weeklyWorkerCutoverMode } from '@/lib/finance/featureAvailability';
+import { WeeklyBaleExpiryHealth } from '@/components/advances/WeeklyBaleExpiryHealth';
 import type { AdvanceRequest, AdvanceRequestStatus } from '@/types';
 import { formatDatePH, formatPeso, formatPesoCompact } from '@/lib/email/format';
 import { useToast } from '@/components/ui/Toast';
@@ -67,8 +75,10 @@ export function AdvanceRequestsPanel() {
   const submitLock = React.useRef(false);
   const batchLock = React.useRef(false);
   const actionLock = React.useRef(false);
+  const reviewLock = React.useRef(false);
   const {
     advanceRequests,
+    baleRequestCoverage,
     projects,
     workers,
     users,
@@ -109,9 +119,41 @@ export function AdvanceRequestsPanel() {
     () => (isFounder ? projects : user ? getProjectsForSupervisor(user.id) : []),
     [isFounder, projects, user, getProjectsForSupervisor]
   );
-  const team = useProjectTeam(user?.id, selectedProjectId, isSupervisor && requestModalOpen);
-  const teamIds = new Set(team.ids);
-  const activeWorkers = workers.filter((worker) => worker.active && team.status === 'ready' && teamIds.has(worker.id));
+  const team = useBaleProjectWorkers(user?.id, selectedProjectId, isSupervisor && requestModalOpen);
+  const weeklyMode = weeklyBaleReleasePreviewEnabled();
+  const idempotentSubmission = weeklyBaleIdempotentSubmissionPreviewEnabled();
+  const cutoverMode = weeklyWorkerCutoverMode();
+  const submissionGuard = useBaleRequestSubmissionGuard(user?.id, weeklyMode && isSupervisor);
+  const reviewGuard = useBaleReviewGuard(user?.id, weeklyMode && isFounder);
+  const [reviewedUncertainDecision, setReviewedUncertainDecision] = useState(false);
+  const reviewScope = JSON.stringify([user?.id,isFounder,weeklyMode]);
+  const activeReviewScope = React.useRef(reviewScope); activeReviewScope.current=reviewScope;
+  const panelMounted = React.useRef(false);
+  useEffect(()=>{panelMounted.current=true;return()=>{panelMounted.current=false;};},[]);
+  useEffect(()=>{setReviewedUncertainDecision(false);},[reviewScope,reviewGuard.raw]);
+  const submissionScope = JSON.stringify([user?.id, isSupervisor, weeklyMode]);
+  const activeSubmissionScope = React.useRef(submissionScope);
+  activeSubmissionScope.current = submissionScope;
+  const [reviewedUncertainSubmission, setReviewedUncertainSubmission] = useState(false);
+  useEffect(() => { setReviewedUncertainSubmission(false); }, [user?.id, weeklyMode]);
+  const weeklyStatuses = useWeeklyBaleStatuses(weeklyMode, user?.id, isFounder ? 'founder' : isSupervisor ? 'supervisor' : 'other', isFounder ? advanceRequests : advanceRequests.filter(r => r.submitted_by === user?.id));
+  const statusFor = (request: AdvanceRequest) => weeklyStatuses.data?.items.find(item => item.id === request.id && item.stored_status === request.status);
+  const canReview = (request: AdvanceRequest) => request.status === 'pending_approval' && (weeklyMode ? reviewGuard.status === 'ready' && statusFor(request)?.can_review === true : !cutoverMode);
+  // Statuses are a point-in-time server snapshot; only the Supervisor's own
+  // loaded rows can be checked here, and another request may still be in flight.
+  const snapshotTime = weeklyStatuses.data?.as_of;
+  const snapshotWeek = snapshotTime && Number.isFinite(Date.parse(snapshotTime))
+    ? workerPayrollPeriod(getManilaClock(new Date(snapshotTime)).dateIso).start
+    : null;
+  const ownSameWeekRequests = weeklyMode && isSupervisor && selectedWorkerId && snapshotWeek
+    ? advanceRequests.filter(request => {
+      const status = statusFor(request);
+      return request.submitted_by === user?.id && request.worker_id === selectedWorkerId && status?.kind === 'weekly' &&
+        status.period_start === snapshotWeek && status.effective_status !== 'rejected' && status.effective_status !== 'expired_unapproved';
+    })
+    : [];
+  const activeWorkers = team.status === 'ready' ? team.workers : [];
+  const missingWorkerDetails = team.status === 'ready' && team.someDetailsUnavailable;
   const pendingApprovalRequests = advanceRequests.filter(
     (request) => request.status === 'pending_approval'
   );
@@ -181,13 +223,19 @@ export function AdvanceRequestsPanel() {
 
   const selectedRequestIds = new Set(requestSelection.ids);
   const selectedRequests = advanceRequests.filter(
-    (request) => selectedRequestIds.has(request.id) && request.status === 'pending_approval'
+    (request) => selectedRequestIds.has(request.id) && canReview(request)
   );
   const selectedRequestTotal = selectedRequests.reduce(
     (sum, request) => sum + request.requested_amount,
     0
   );
   const selectedSiteName = projects.find((project) => project.id === requestSelection.siteId)?.name || 'this site';
+  const duplicateSignals = weeklyMode && isFounder && weeklyStatuses.data
+    ? selectedBaleDuplicateSignals(advanceRequests, weeklyStatuses.data.items, new Set(advanceRequests.map(request => request.id)))
+    : [];
+  const possibleDuplicates = duplicateSignals.filter(signal => selectedRequests.some(request =>
+    request.worker_id === signal.workerId && statusFor(request)?.period_start === signal.periodStart
+  ));
 
   useEffect(() => {
     if (!focusedRequestId || !visibleRequests.some((request) => request.id === focusedRequestId)) return;
@@ -207,13 +255,14 @@ export function AdvanceRequestsPanel() {
           (request) =>
             request.id === id &&
             request.status === 'pending_approval' &&
+            (weeklyMode ? weeklyStatuses.data?.items.some(item => item.id === request.id && item.stored_status === request.status && item.can_review) : !cutoverMode) &&
             request.project_id === previous.siteId
         )
       );
       if (validIds.length === previous.ids.length) return previous;
       return { siteId: validIds.length > 0 ? previous.siteId : null, ids: validIds };
     });
-  }, [advanceRequests]);
+  }, [advanceRequests, cutoverMode, weeklyMode, weeklyStatuses.data]);
 
   const clearRequestFocus = () => {
     if (!focusedRequestId) return;
@@ -252,7 +301,7 @@ export function AdvanceRequestsPanel() {
   };
 
   const toggleRequestSelection = (request: AdvanceRequest, checked: boolean) => {
-    if (request.status !== 'pending_approval') return;
+    if (!canReview(request)) return;
     setRequestSelection((previous) => {
       if (checked) {
         if (previous.siteId && previous.siteId !== request.project_id) return previous;
@@ -267,7 +316,7 @@ export function AdvanceRequestsPanel() {
 
   const toggleSiteRequestSelection = (group: SiteRequestGroup, checked: boolean) => {
     const pendingIds = group.requests
-      .filter((request) => request.status === 'pending_approval')
+      .filter((request) => canReview(request))
       .map((request) => request.id);
     setRequestSelection((previous) => {
       if (!checked) {
@@ -286,22 +335,27 @@ export function AdvanceRequestsPanel() {
 
   const handleApproveSelected = async () => {
     const requestIds = selectedRequests.map((request) => request.id);
-    if (batchLock.current || requestIds.length === 0 || requestIds.length > MAX_BATCH_APPROVAL_SIZE) return;
+    if (batchLock.current || reviewLock.current || requestIds.length === 0 || requestIds.length > MAX_BATCH_APPROVAL_SIZE) return;
+    reviewLock.current = true;
+    const marker = weeklyMode ? reviewGuard.begin('approve',requestIds) : null;
+    if (weeklyMode && !marker) { reviewLock.current=false; return; }
     batchLock.current = true;
     setIsApprovingBatch(true);
+    setIsBatchApprovalOpen(false);
     try {
       const approved = await approveAdvanceRequests(requestIds);
-      if (approved) {
-        setIsBatchApprovalOpen(false);
+      if (!panelMounted.current || activeReviewScope.current!==reviewScope) return;
+      if (approved && (!weeklyMode || (marker && reviewGuard.confirmed(marker)))) {
         setRequestSelection({ siteId: null, ids: [] });
       } else {
-        showToast('error', 'Approval not confirmed. Check the request statuses before retrying.');
+        showToast('error', 'Approval not confirmed. Check every request status before retrying.');
       }
     } catch {
-      showToast('error', 'Approval not confirmed. Check the request statuses before retrying.');
+      if (panelMounted.current && activeReviewScope.current===reviewScope) showToast('error', 'Approval not confirmed. Check every request status before retrying.');
     } finally {
+      reviewLock.current = false;
       batchLock.current = false;
-      setIsApprovingBatch(false);
+      if (panelMounted.current && activeReviewScope.current===reviewScope) setIsApprovingBatch(false);
     }
   };
 
@@ -315,42 +369,79 @@ export function AdvanceRequestsPanel() {
   const handleSubmitRequest = async (event: React.FormEvent) => {
     event.preventDefault();
     const amount = Number(requestedAmount);
-    if (submitLock.current || team.status !== 'ready' || !activeWorkers.some((worker) => worker.id === selectedWorkerId) || !selectedProjectId || !Number.isFinite(amount) || amount <= 0) return;
+    if ((cutoverMode && !weeklyMode) || (weeklyMode && submissionGuard.status !== 'ready') || submitLock.current || team.status !== 'ready' || !activeWorkers.some((worker) => worker.id === selectedWorkerId) || !selectedProjectId || !Number.isFinite(amount) || amount <= 0) return;
     submitLock.current = true;
+    const marker = weeklyMode ? submissionGuard.begin(idempotentSubmission ? {worker:selectedWorkerId,project:selectedProjectId,amount:(Math.round(amount*100)/100).toFixed(2),period:workerPayrollPeriod(getManilaClock().dateIso).start} : undefined) : null;
+    if (weeklyMode && !marker) { submitLock.current = false; return; }
+    const requestId = idempotentSubmission && marker ? (JSON.parse(marker) as {request:string}).request : undefined;
     setIsSubmitting(true);
     try {
       const created = await createAdvanceRequest({
         worker_id: selectedWorkerId,
         project_id: selectedProjectId,
         requested_amount: amount,
+        ...(requestId && marker ? {request_id:requestId,request_period_start:(JSON.parse(marker) as {period:string}).period} : {}),
       });
-      if (created) setRequestModalOpen(false);
-      else showToast('error', 'Request submission not confirmed. Check the request list before retrying.');
+      const verified = created && (!weeklyMode || (typeof created.id === 'string' && !!created.id && (!requestId || created.id===requestId) && created.worker_id === selectedWorkerId && created.project_id === selectedProjectId && created.submitted_by === user?.id && created.requested_amount === Math.round(amount * 100) / 100));
+      const confirmed = panelMounted.current && activeSubmissionScope.current === submissionScope && verified && (!weeklyMode || (marker && submissionGuard.confirmed(marker)));
+      if (panelMounted.current && activeSubmissionScope.current === submissionScope) {
+        if (confirmed) setRequestModalOpen(false);
+        else {
+          if (weeklyMode) setRequestModalOpen(false);
+          showToast('error', 'Request submission not confirmed. Check the request list before retrying.');
+        }
+      }
     } catch {
-      showToast('error', 'Request submission not confirmed. Check the request list before retrying.');
+      if (panelMounted.current && activeSubmissionScope.current === submissionScope) {
+        if (weeklyMode) setRequestModalOpen(false);
+        showToast('error', 'Request submission not confirmed. Check the request list before retrying.');
+      }
     } finally {
       submitLock.current = false;
-      setIsSubmitting(false);
+      if (panelMounted.current && activeSubmissionScope.current === submissionScope) setIsSubmitting(false);
     }
   };
 
+  const retryUncertainRequest = async () => {
+    if (!idempotentSubmission || !isSupervisor || submitLock.current) return;
+    submitLock.current = true;
+    const saved = submissionGuard.retry();
+    if (!saved) { submitLock.current = false; return; }
+    setIsSubmitting(true);
+    try {
+      const {attempt,marker} = saved;
+      const created = await createAdvanceRequest({worker_id:attempt.worker,project_id:attempt.project,requested_amount:Number(attempt.amount),request_id:attempt.request,request_period_start:attempt.period});
+      const verified = created && created.id===attempt.request && created.worker_id===attempt.worker && created.project_id===attempt.project && created.submitted_by===attempt.actor && created.requested_amount===Number(attempt.amount);
+      const confirmed = panelMounted.current && activeSubmissionScope.current===submissionScope && verified && submissionGuard.confirmed(marker);
+      if (!confirmed && panelMounted.current && activeSubmissionScope.current===submissionScope) showToast('error','Request outcome is still unconfirmed. Investigate before sending another.');
+    } catch {
+      if (panelMounted.current && activeSubmissionScope.current===submissionScope) showToast('error','Request outcome is still unconfirmed. Investigate before sending another.');
+    } finally { submitLock.current=false; if (panelMounted.current && activeSubmissionScope.current===submissionScope) setIsSubmitting(false); }
+  };
+
   const handleReview = async (id: string, decision: 'approve' | 'reject') => {
-    if (actionLock.current) return;
+    const request = advanceRequests.find(item => item.id === id);
+    if (actionLock.current || reviewLock.current || !request || !canReview(request)) return;
+    reviewLock.current = true;
+    const marker = weeklyMode ? reviewGuard.begin(decision,[id]) : null;
+    if (weeklyMode && !marker) { reviewLock.current=false; return; }
     actionLock.current = true;
     setActioningRequestId(id);
     try {
       const success = await reviewAdvanceRequest(id, decision);
-      if (!success) showToast('error', 'Review not confirmed. Check the request status before retrying.');
+      if (!panelMounted.current || activeReviewScope.current!==reviewScope) return;
+      if (!success || (weeklyMode && (!marker || !reviewGuard.confirmed(marker)))) showToast('error', 'Review not confirmed. Check the request status before retrying.');
     } catch {
-      showToast('error', 'Review not confirmed. Check the request status before retrying.');
+      if (panelMounted.current && activeReviewScope.current===reviewScope) showToast('error', 'Review not confirmed. Check the request status before retrying.');
     } finally {
+      reviewLock.current = false;
       actionLock.current = false;
-      setActioningRequestId(null);
+      if (panelMounted.current && activeReviewScope.current===reviewScope) setActioningRequestId(null);
     }
   };
 
   const handleIssue = async () => {
-    if (!requestToIssue || actionLock.current) return;
+    if (cutoverMode || weeklyMode || !requestToIssue || actionLock.current) return;
     actionLock.current = true;
     setActioningRequestId(requestToIssue);
     try {
@@ -371,8 +462,10 @@ export function AdvanceRequestsPanel() {
     const submitter = users.find((item) => item.id === request.submitted_by);
     const isActioning = actioningRequestId === request.id;
     const isSelected = selectedRequestIds.has(request.id);
+    const weeklyStatus = weeklyMode ? statusFor(request) : undefined;
+    const duplicateSignal = weeklyStatus && duplicateSignals.find(signal => signal.workerId === request.worker_id && signal.periodStart === weeklyStatus.period_start);
     const selectionDisabled =
-      request.status !== 'pending_approval' ||
+      !canReview(request) ||
       (Boolean(requestSelection.siteId) && requestSelection.siteId !== request.project_id) ||
       (!isSelected && requestSelection.ids.length >= MAX_BATCH_APPROVAL_SIZE);
 
@@ -403,7 +496,7 @@ export function AdvanceRequestsPanel() {
                 {worker?.name || 'Worker'}
               </span>
               <Badge size="sm" variant={requestStatusVariant(request.status)}>
-                {requestStatusLabel(request.status)}
+                {weeklyStatus?.effective_status === 'expired_unapproved' ? 'Expired · awaiting recorded rejection' : weeklyStatus?.auto_expired ? 'Automatically rejected' : requestStatusLabel(request.status)}
               </Badge>
             </div>
             <p className="break-words text-xs text-ink-secondary">
@@ -414,7 +507,10 @@ export function AdvanceRequestsPanel() {
                 Submitted by {submitter?.name || 'Supervisor'}
               </p>
             )}
-            <p className="max-w-lg text-xs leading-relaxed text-ink-secondary">{requestStatusDescription(request.status)}</p>
+            <p className="max-w-lg text-xs leading-relaxed text-ink-secondary">{weeklyStatus?.effective_status === 'expired_unapproved' ? 'The approval window ended after Tuesday. This request cannot be approved; recorded rejection may be pending the expiry job.' : weeklyStatus?.auto_expired ? 'Automatically rejected after the approval window; no Bale was issued.' : requestStatusDescription(request.status)}</p>
+            {weeklyMode && !weeklyStatus && <p className="text-xs text-status-warning">Weekly status unavailable or changed. Reload the request list and weekly status before taking action.</p>}
+            {weeklyMode && weeklyStatus?.kind === 'legacy' && <p className="text-xs text-status-warning">Legacy request: review separately; weekly actions are unavailable.</p>}
+            {isFounder && weeklyStatus?.effective_status !== 'rejected' && weeklyStatus?.effective_status !== 'expired_unapproved' && duplicateSignal && <p className="text-xs text-status-warning">Possible repeated requests: {duplicateSignal.requestCount} non-rejected requests are visible for this worker and week. Check whether they are intentional; this list may be incomplete.</p>}
             <details className="group/activity text-xs">
               <summary className="inline-flex min-h-11 cursor-pointer items-center gap-1.5 rounded-md font-semibold text-brand focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand">
                 Status dates <span className="sr-only">for {worker?.name || 'worker'} · {formatPeso(request.requested_amount)}</span>
@@ -440,7 +536,7 @@ export function AdvanceRequestsPanel() {
                 type="button"
                 size="sm"
                 variant="secondary"
-                disabled={isActioning}
+                disabled={isActioning || !canReview(request)}
                 onClick={() => handleReview(request.id, 'reject')}
                 leftIcon={<X className="h-3.5 w-3.5" />}
               >
@@ -450,7 +546,7 @@ export function AdvanceRequestsPanel() {
                 type="button"
                 size="sm"
                 variant="primary"
-                disabled={isActioning}
+                disabled={isActioning || !canReview(request)}
                 onClick={() => handleReview(request.id, 'approve')}
                 leftIcon={<Check className="h-3.5 w-3.5" />}
               >
@@ -458,7 +554,7 @@ export function AdvanceRequestsPanel() {
               </Button>
             </div>
           )}
-          {isFounder && request.status === 'approved_pending_payment' && (
+          {isFounder && !weeklyMode && !cutoverMode && request.status === 'approved_pending_payment' && (
             <Button
               type="button"
               size="sm"
@@ -477,6 +573,33 @@ export function AdvanceRequestsPanel() {
 
   return (
     <div className="space-y-4">
+      {cutoverMode && !weeklyMode && <p role="alert" className="rounded-xl bg-status-warning-bg p-3 text-xs text-ink-secondary">Weekly Bale controls are not enabled. Requests and decisions are held until the configuration is reviewed.</p>}
+      {weeklyMode && isFounder && reviewGuard.status === 'pending' && <section role="alert" className="space-y-2 rounded-xl bg-status-warning-bg p-3 text-xs text-ink-secondary">
+        <p>A Bale review may have been recorded. Check each affected request and its history before another decision. An empty list does not prove failure; the earlier action may still be processing.</p>
+        {reviewGuard.marker && <p className="break-all">{reviewGuard.marker.decision === 'approve' ? 'Approval' : 'Rejection'} · request IDs: {reviewGuard.marker.ids.join(', ')}</p>}
+        <p>This warning exists only in this browser tab. It can be lost if storage is cleared, does not lock other devices, and clearing it does not cancel a request.</p>
+        <label className="flex items-start gap-2"><input type="checkbox" checked={reviewedUncertainDecision} onChange={event=>setReviewedUncertainDecision(event.target.checked)} />I investigated each request and understand this does not cancel the earlier decision.</label>
+        <Button type="button" size="sm" variant="secondary" disabled={!reviewedUncertainDecision || Boolean(actioningRequestId) || isApprovingBatch} onClick={()=>{if(reviewGuard.clearAfterReview())setReviewedUncertainDecision(false);}}>Clear Bale review warning</Button>
+      </section>}
+      {weeklyMode && isFounder && reviewGuard.status === 'unavailable' && <p role="alert" className="rounded-xl bg-status-warning-bg p-3 text-xs text-ink-secondary">This tab cannot safely check its Bale review warning. Decisions are held; investigate the request history and restore browser storage before continuing.</p>}
+      {weeklyMode && isSupervisor && submissionGuard.status === 'pending' && <section role="alert" className="space-y-2 rounded-xl bg-status-warning-bg p-3 text-xs text-ink-secondary">
+        <p>A Bale request may have been sent, but its result was not confirmed. Refresh and check the request list with the Founder before submitting another. An empty list does not prove the request failed; it may still be processing. Do not give or request money again based on this warning.</p>
+        <p>This warning is only in this browser tab. Closing it or clearing storage may erase the warning; another tab or device can still send a request.</p>
+        {idempotentSubmission && submissionGuard.pendingAttempt && <div className="space-y-2">
+          <p>Exact retry: worker {submissionGuard.pendingAttempt.worker} · site {submissionGuard.pendingAttempt.project} · ₱{submissionGuard.pendingAttempt.amount} · week starting {submissionGuard.pendingAttempt.period}. This may confirm a previous save or send it if it was not saved; check the request list first.</p>
+          <Button type="button" size="sm" variant="secondary" disabled={isSubmitting} onClick={()=>void retryUncertainRequest()}>Retry exact Bale request</Button>
+        </div>}
+        <label className="flex items-start gap-2"><input type="checkbox" checked={reviewedUncertainSubmission} onChange={e=>setReviewedUncertainSubmission(e.target.checked)} />I investigated the earlier request and understand that clearing this warning does not cancel it.</label>
+        <Button type="button" size="sm" variant="secondary" disabled={!reviewedUncertainSubmission || isSubmitting} onClick={()=>{if(submissionGuard.clearAfterReview())setReviewedUncertainSubmission(false);}}>Clear warning after review</Button>
+      </section>}
+      {weeklyMode && isSupervisor && submissionGuard.status === 'unavailable' && <p role="alert" className="rounded-xl bg-status-warning-bg p-3 text-xs text-ink-secondary">This tab cannot safely check its request warning. New requests are held; investigate the request list and restore browser storage before trying again.</p>}
+      {isFounder && user?.id && weeklyBaleExpiryHealthPreviewEnabled() && <WeeklyBaleExpiryHealth userId={user.id} />}
+      {weeklyMode && <div className="rounded-xl border border-surface-border bg-white p-3 text-xs text-ink-secondary">
+        <p>Weekly decision status is checked against the server in bounded batches, not one transaction. Results can change immediately; decisions are checked again by the server. Existing list totals and filters reflect stored statuses, which may lag automatic expiry. Release is handled in the separate experimental panel.</p>
+        {weeklyStatuses.loading && <p role="status">Checking weekly request status…</p>}
+        {weeklyStatuses.error && <p role="alert">Weekly status unavailable: {weeklyStatuses.error}</p>}
+        <Button type="button" size="sm" variant="secondary" disabled={weeklyStatuses.loading} onClick={() => void weeklyStatuses.refresh()}>Refresh weekly status</Button>
+      </div>}
       <div
         className={`animate-mobile-lift flex flex-col gap-3 rounded-2xl border p-4 sm:flex-row sm:items-center sm:justify-between sm:p-5 ${
           isSupervisor
@@ -509,7 +632,7 @@ export function AdvanceRequestsPanel() {
             size="sm"
             className="w-full shrink-0 sm:w-auto"
             onClick={openRequestModal}
-            disabled={accessibleProjects.length === 0}
+            disabled={accessibleProjects.length === 0 || (weeklyMode && submissionGuard.status !== 'ready')}
           >
             New Bale Request
           </Button>
@@ -646,6 +769,10 @@ export function AdvanceRequestsPanel() {
       )}
 
       <p className="text-xs leading-relaxed text-ink-secondary">The list shows loaded requests only; older requests may not appear and statuses can change. Check the records before retrying an unconfirmed action.</p>
+      {baleRequestCoverage===null && <p role="status" className="rounded-lg bg-status-warning-bg p-3 text-xs text-ink-secondary">Bale list coverage needs a fresh sync after a change. The list and duplicate hints may be incomplete.</p>}
+      {baleRequestCoverage && (baleRequestCoverage.openOmitted>0 || baleRequestCoverage.historyOmitted>0) && <p role="alert" className="rounded-lg bg-status-warning-bg p-3 text-xs text-ink-secondary">
+        At the last sync, {baleRequestCoverage.openOmitted} open and {baleRequestCoverage.historyOmitted} historical requests were outside this loaded view. Open requests take priority. These counts may already have changed; filters and duplicate hints cannot find omitted records. Investigate separately before deciding or retrying.
+      </p>}
 
       {focusedRequestId && (
         <div className="flex flex-wrap items-center justify-between gap-2 rounded-lg border border-surface-border bg-white px-3 py-2 text-xs text-ink-secondary">
@@ -716,9 +843,7 @@ export function AdvanceRequestsPanel() {
           )}
 
           {siteGroups.map((group) => {
-            const pendingGroupRequests = group.requests.filter(
-              (request) => request.status === 'pending_approval'
-            );
+            const pendingGroupRequests = group.requests.filter((request) => canReview(request));
             const approvedGroupCount = group.requests.filter(
               (request) => request.status === 'approved_pending_payment'
             ).length;
@@ -763,7 +888,7 @@ export function AdvanceRequestsPanel() {
                     </div>
                   </div>
                   <p className="ml-6 break-words text-[11px] leading-relaxed text-ink-secondary">
-                    {group.requests.length} shown · {pendingGroupRequests.length} awaiting approval · {approvedGroupCount} awaiting payment
+                    {group.requests.length} shown · {pendingGroupRequests.length} {weeklyMode ? 'verified for review' : 'awaiting approval'} · {approvedGroupCount} awaiting payment
                   </p>
 
                   <p className="ml-6 text-[11px] leading-relaxed text-ink-muted">Shown total adds requested amounts in this view, including any issued or rejected requests; it is not an amount due.</p>
@@ -866,6 +991,21 @@ export function AdvanceRequestsPanel() {
                 )}
               </div>
             </div>
+            {possibleDuplicates.length > 0 && (
+              <div role="alert" className="rounded-lg border border-status-warning/30 bg-status-warning-bg/50 px-3 py-2.5 leading-relaxed text-ink-secondary">
+                <p className="font-semibold text-navy">Check possible repeated requests before approval</p>
+                <p>Multiple non-rejected requests are visible for the same worker and week. They may be intentional; check their details and status before approving.</p>
+                <ul className="mt-1 list-inside list-disc">
+                  {possibleDuplicates.slice(0, 5).map(signal => (
+                    <li key={`${signal.workerId}:${signal.periodStart}`} className="break-words">
+                      {workers.find(worker => worker.id === signal.workerId)?.name || 'Worker unavailable'} · week of {signal.periodStart} · {signal.requestCount} requests
+                    </li>
+                  ))}
+                </ul>
+                {possibleDuplicates.length > 5 && <p>And {possibleDuplicates.length - 5} more worker-week groups.</p>}
+                <p className="mt-1">This hint only uses loaded, verified weekly statuses and cannot rule out other requests.</p>
+              </div>
+            )}
             <p className="rounded-lg border border-status-warning/20 bg-status-warning-bg/50 px-3 py-2.5 leading-relaxed text-ink-secondary">
               Approval is separate from payment. These requests will remain approved and awaiting payment; confirm payment later, one request at a time.
             </p>
@@ -946,7 +1086,23 @@ export function AdvanceRequestsPanel() {
           {selectedProjectId && team.status === 'error' && (
             <p role="alert">Could not load the site team. <button type="button" className="font-semibold text-brand underline" onClick={team.reload}>Try again</button></p>
           )}
-          {selectedProjectId && team.status === 'ready' && activeWorkers.length === 0 && <p>No assigned active workers are in the loaded worker list. Refresh or ask the Founder to check the site team if someone is missing.</p>}
+          {selectedProjectId && missingWorkerDetails && <p role="status">Some assigned worker details are unavailable. They may be inactive or not visible to this account. Ask the Founder to check the site team if someone is missing.</p>}
+          {selectedProjectId && team.status === 'ready' && !missingWorkerDetails && activeWorkers.length === 0 && <p>No active workers are assigned to this site. Ask the Founder to check the site team if someone is missing.</p>}
+
+          {weeklyMode && isSupervisor && selectedWorkerId && (
+            <div className="rounded-lg border border-status-warning/20 bg-status-warning-bg/50 px-3 py-2.5 text-ink-secondary">
+              {ownSameWeekRequests.length > 0 && <>
+                <p role="alert" className="font-semibold text-navy">Check earlier requests for this worker</p>
+                <p>Your loaded list includes {ownSameWeekRequests.length} non-rejected request{ownSameWeekRequests.length === 1 ? '' : 's'} for the week starting {snapshotWeek}. Confirm whether another request is intended before sending.</p>
+                <ul className="mt-1 list-inside list-disc">
+                  {ownSameWeekRequests.slice(0, 3).map(request => <li key={request.id} className="break-words">{formatPeso(request.requested_amount)} · {requestStatusLabel(request.status)} · {projects.find(project => project.id === request.project_id)?.name || 'Site unavailable'}</li>)}
+                </ul>
+                {ownSameWeekRequests.length > 3 && <p>And {ownSameWeekRequests.length - 3} more in the loaded list.</p>}
+              </>}
+              {!snapshotWeek && <p>Weekly status is unavailable; this check is incomplete.</p>}
+              <p className={ownSameWeekRequests.length > 0 ? 'mt-1' : ''}>Only your loaded requests with verified weekly status at the last check can be compared. Other Supervisors, old records or in-flight requests may not appear; an empty list does not prove there is no earlier request. Ask the Founder when unsure.</p>
+            </div>
+          )}
 
           <Input
             label="Requested amount (₱)"
@@ -959,15 +1115,16 @@ export function AdvanceRequestsPanel() {
             required
           />
 
+          {weeklyMode && submissionGuard.status !== 'ready' && <p role="alert">This request cannot be sent while the earlier submission or browser storage is unconfirmed. Close this form and investigate the warning.</p>}
           <p className="rounded-lg bg-surface-inset px-3 py-2 text-[11px] leading-relaxed text-ink-secondary">
-            This submits a request only. It does not add an issued advance or change payroll until the Founder confirms payment.
+            This submits a request only. It does not release money. An approved release must be separately recorded by an authorized person.
           </p>
 
           <div className="flex flex-col-reverse gap-2 pt-2 sm:flex-row sm:justify-end">
             <Button type="button" variant="secondary" onClick={() => setRequestModalOpen(false)} disabled={isSubmitting}>
               Cancel
             </Button>
-            <Button type="submit" variant="primary" isLoading={isSubmitting} disabled={team.status !== 'ready' || !activeWorkers.some((worker) => worker.id === selectedWorkerId)}>
+            <Button type="submit" variant="primary" isLoading={isSubmitting} disabled={(cutoverMode && !weeklyMode) || (weeklyMode && submissionGuard.status !== 'ready') || team.status !== 'ready' || !activeWorkers.some((worker) => worker.id === selectedWorkerId)}>
               {isSubmitting ? 'Sending request…' : 'Send to Founder'}
             </Button>
           </div>
@@ -975,7 +1132,7 @@ export function AdvanceRequestsPanel() {
       </Modal>
 
       <Modal
-        isOpen={Boolean(requestToIssue)}
+        isOpen={!cutoverMode && !weeklyMode && Boolean(requestToIssue)}
         onClose={() => setRequestToIssue(null)}
         dismissOnBackdrop={!actioningRequestId}
         dismissOnEscape={!actioningRequestId}

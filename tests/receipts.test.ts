@@ -1,8 +1,11 @@
+import { createClient } from '@supabase/supabase-js';
 import { describe, expect, it, vi } from 'vitest';
 import {
   RECEIPT_ALLOWED_MIME_TYPES,
   RECEIPT_MAX_BYTES,
   buildReceiptObjectPath,
+  canonicalReceiptMime,
+  canonicalReceiptUpload,
   createReceiptSignedUrl,
   receiptPathFromStoredValue,
   validateReceiptFile,
@@ -20,12 +23,21 @@ describe('receipt file validation', () => {
     expect(validateReceiptFile({ type: 'image/jpeg', size: 1024 })).toEqual({ ok: true, extension: 'jpg' });
     expect(validateReceiptFile({ type: 'image/png', size: 1024 })).toEqual({ ok: true, extension: 'png' });
     expect(validateReceiptFile({ type: 'image/webp', size: 1024 })).toEqual({ ok: true, extension: 'webp' });
+    expect(canonicalReceiptMime('image/jpg')).toBe('image/jpeg');
+    expect(canonicalReceiptMime('IMAGE/JPEG')).toBe('image/jpeg');
+    expect(canonicalReceiptMime('image/gif')).toBeNull();
+    const file = new File(['abc'], 'sample.jpg', {type:'image/jpg', lastModified:123});
+    const canonical = canonicalReceiptUpload(file);
+    expect(canonical.type).toBe('image/jpeg'); expect(canonical.size).toBe(3); expect(canonical.lastModified).toBe(123);
+    expect(canonicalReceiptUpload(canonical)).toBe(canonical);
+    expect(() => canonicalReceiptUpload(new File(['abc'], 'sample.gif', {type:'image/gif'}))).toThrow(/Unsupported/);
   });
 
   it('rejects anything outside the allowlist', () => {
     expect(validateReceiptFile({ type: 'image/gif', size: 10 }).ok).toBe(false);
     expect(validateReceiptFile({ type: 'application/pdf', size: 10 }).ok).toBe(false);
     expect(validateReceiptFile({ type: 'image/svg+xml', size: 10 }).ok).toBe(false);
+    expect(validateReceiptFile({ type: 'constructor', size: 10 }).ok).toBe(false);
     // Only the three bucket-allowed types (plus the jpg alias) may appear.
     expect([...RECEIPT_ALLOWED_MIME_TYPES].sort()).toEqual([
       'image/jpeg',
@@ -37,9 +49,25 @@ describe('receipt file validation', () => {
 
   it('rejects empty and oversized files with a usable message', () => {
     expect(validateReceiptFile({ type: 'image/jpeg', size: 0 }).ok).toBe(false);
+    for (const size of [Number.NaN, Number.POSITIVE_INFINITY, 1.5, -1]) expect(validateReceiptFile({ type: 'image/jpeg', size }).ok).toBe(false);
+    expect(validateReceiptFile({ type: 'image/jpeg', size: RECEIPT_MAX_BYTES }).ok).toBe(true);
     const big = validateReceiptFile({ type: 'image/jpeg', size: RECEIPT_MAX_BYTES + 1 });
     expect(big.ok).toBe(false);
     expect(big.error).toMatch(/5 MB/);
+  });
+});
+
+describe('receipt Storage SDK multipart behavior', () => {
+  it('sends the canonical MIME in the actual multipart File part', async () => {
+    const transport = vi.fn(async (_url: RequestInfo | URL, _init?: RequestInit) => new Response(JSON.stringify({Key:'receipts/path.jpg',Id:'test'}), {status:200,headers:{'content-type':'application/json'}}));
+    const client = createClient('https://fixture.supabase.co','non-secret-fixture-key',{global:{fetch:transport}});
+    const file=canonicalReceiptUpload(new File(['abc'],'receipt.jpg',{type:'image/jpg'}));
+    const result=await client.storage.from('receipts').upload('path.jpg',file,{contentType:'image/jpeg'});
+    expect(result.error).toBeNull();
+    const init=transport.mock.calls[0][1] as RequestInit;
+    expect(init.body).toBeInstanceOf(FormData);
+    const part=(init.body as FormData).get('') as File;
+    expect(part.type).toBe('image/jpeg');expect(await part.text()).toBe('abc');
   });
 });
 
@@ -80,6 +108,7 @@ describe('stored value → storage path', () => {
   it('refuses traversal and foreign URLs', () => {
     expect(receiptPathFromStoredValue('user-1/../../etc/passwd')).toBeNull();
     expect(receiptPathFromStoredValue('https://evil.example.com/receipts/x.jpg')).toBeNull();
+    expect(receiptPathFromStoredValue('https://xyz.supabase.co/storage/v1/object/public/project-photos/user-1/a.jpg')).toBeNull();
     expect(receiptPathFromStoredValue('')).toBeNull();
     expect(receiptPathFromStoredValue(null)).toBeNull();
   });

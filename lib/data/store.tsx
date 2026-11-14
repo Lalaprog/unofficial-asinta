@@ -2,6 +2,9 @@
 
 import { isInvoiceOverdue } from '@/lib/invoices/overdue';
 import { manilaDateISO } from '@/lib/dates/manila';
+import { verifyBaleReviewRows } from '@/lib/attendance/baleReview';
+import { loadBaleRequests, mergeLoadedBaleRequest, type BaleRequestCoverage } from '@/lib/attendance/loadBaleRequests';
+import { loadFinancialRows } from '@/lib/data/loadFinancialRows';
 
 import React, { createContext, useContext, useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import type { SupabaseClient, PostgrestError } from '@supabase/supabase-js';
@@ -40,6 +43,8 @@ interface DataStoreContextType {
   clients: Client[];
   advances: Advance[];
   advanceRequests: AdvanceRequest[];
+  /** Omitted from the most recent successful loaded view; not live counts. */
+  baleRequestCoverage: BaleRequestCoverage | null;
   userNotifications: UserNotification[];
   attendance: Attendance[];
   payroll: Payroll[];
@@ -90,6 +95,8 @@ interface DataStoreContextType {
     worker_id: string;
     project_id: string;
     requested_amount: number;
+    request_id?: string;
+    request_period_start?: string;
   }) => Promise<AdvanceRequest | null>;
   reviewAdvanceRequest: (id: string, decision: 'approve' | 'reject') => Promise<boolean>;
   approveAdvanceRequests: (ids: string[]) => Promise<boolean>;
@@ -258,6 +265,7 @@ export const DataStoreProvider: React.FC<{ children: React.ReactNode }> = ({ chi
   const [clients, setClients] = useState<Client[]>([]);
   const [advances, setAdvances] = useState<Advance[]>([]);
   const [advanceRequests, setAdvanceRequests] = useState<AdvanceRequest[]>([]);
+  const [baleRequestCoverage, setBaleRequestCoverage] = useState<BaleRequestCoverage | null>(null);
   const [userNotifications, setUserNotifications] = useState<UserNotification[]>([]);
   const [attendance, setAttendance] = useState<Attendance[]>([]);
   const [payroll, setPayroll] = useState<Payroll[]>([]);
@@ -290,12 +298,12 @@ export const DataStoreProvider: React.FC<{ children: React.ReactNode }> = ({ chi
       try {
         const results = await Promise.all([
           supabase.rpc('visible_projects').order('created_at', { ascending: false }),
-          supabase.from('invoices').select('*').order('created_at', { ascending: false }),
-          supabase.from('expenses').select('*').order('created_at', { ascending: false }),
+          loadFinancialRows(supabase,'invoices').then(result=>({...result,error:null})),
+          loadFinancialRows(supabase,'expenses').then(result=>({...result,error:null})),
           supabase.from('workers').select('*').order('created_at', { ascending: true }),
           supabase.from('clients').select('*').order('created_at', { ascending: true }),
           supabase.from('advances').select('*').order('created_at', { ascending: false }),
-          supabase.from('advance_requests').select('*').order('created_at', { ascending: false }),
+          loadBaleRequests(supabase).then(result => ({...result,error:null})),
           supabase.from('attendance').select('*').order('date', { ascending: false }),
           supabase.from('payroll').select('*').order('created_at', { ascending: false }),
           supabase.from('tools').select('*').order('created_at', { ascending: true }),
@@ -311,14 +319,14 @@ export const DataStoreProvider: React.FC<{ children: React.ReactNode }> = ({ chi
         const firstError = results.find((r) => r.error)?.error as PostgrestError | undefined;
         if (firstError) {
           console.error('Supabase data load failed:', firstError.message);
-          if (!options?.silent) {
-            setLoadError(
-              `Could not load BALE ledger data from Supabase: ${firstError.message}. ` +
-                'Check your connection and Row Level Security policies, then retry.'
-            );
-          }
-        } else {
-          setLoadError(null);
+          setLoadError('The latest ledger sync failed. Previously loaded data may be stale; check the connection and retry before relying on it.');
+          return;
+        }
+        // A null or malformed SELECT response is not evidence of an empty table.
+        // Do not publish or cache any part of this batch unless all reads succeeded.
+        if (results.some((result) => !Array.isArray(result.data))) {
+          setLoadError('The latest ledger sync returned incomplete data. Previously loaded data may be stale; retry before relying on it.');
+          return;
         }
 
         const nextProjects = (results[0].data ?? []).map(mapProject);
@@ -343,6 +351,7 @@ export const DataStoreProvider: React.FC<{ children: React.ReactNode }> = ({ chi
         setClients(nextClients);
         setAdvances(nextAdvances);
         setAdvanceRequests(nextAdvanceRequests);
+        setBaleRequestCoverage(results[6].coverage);
         setUserNotifications(nextUserNotifications);
         setAttendance(nextAttendance);
         setPayroll(nextPayroll);
@@ -351,11 +360,15 @@ export const DataStoreProvider: React.FC<{ children: React.ReactNode }> = ({ chi
         setProjectSupervisors(nextProjectSupervisors);
         setUsers(nextUsers);
         setIsLoaded(true);
+        const omittedInvoices=results[1].omitted, omittedExpenses=results[2].omitted;
+        setLoadError(omittedInvoices || omittedExpenses
+          ? `The last sync omitted ${omittedInvoices} invoice(s) and ${omittedExpenses} expense(s) beyond the shared-list limit. Totals and lists may be incomplete; investigate separately.`
+          : null);
 
         if (user?.id && typeof window !== 'undefined') {
           try {
             window.sessionStorage.setItem(
-              `bale-ledger-cache:v2:${user.id}:${user.role}`,
+              `bale-ledger-cache:v4:${user.id}:${user.role}`,
               JSON.stringify({
                 projects: nextProjects,
                 invoices: nextInvoices,
@@ -364,6 +377,7 @@ export const DataStoreProvider: React.FC<{ children: React.ReactNode }> = ({ chi
                 clients: nextClients,
                 advances: nextAdvances,
                 advanceRequests: nextAdvanceRequests,
+                baleRequestCoverage: results[6].coverage,
                 userNotifications: nextUserNotifications,
                 attendance: nextAttendance,
                 payroll: nextPayroll,
@@ -380,12 +394,7 @@ export const DataStoreProvider: React.FC<{ children: React.ReactNode }> = ({ chi
       } catch (e: any) {
         if (inFlightRef.current !== token || activeSessionRef.current !== requestSession) return;
         console.error('Unexpected error while loading BALE data:', e);
-        if (!options?.silent) {
-          setLoadError(
-            e?.message ||
-              'Unexpected network error while contacting Supabase. Please check your connection and retry.'
-          );
-        }
+        setLoadError('The latest ledger sync failed. Previously loaded data may be stale; check the connection and retry before relying on it.');
       } finally {
         if (inFlightRef.current === token) {
           setIsLoading(false);
@@ -404,6 +413,7 @@ export const DataStoreProvider: React.FC<{ children: React.ReactNode }> = ({ chi
     setClients([]);
     setAdvances([]);
     setAdvanceRequests([]);
+    setBaleRequestCoverage(null);
     setUserNotifications([]);
     setAttendance([]);
     setPayroll([]);
@@ -426,7 +436,7 @@ export const DataStoreProvider: React.FC<{ children: React.ReactNode }> = ({ chi
     }
     // A shared tab must not leave a previous user's cached ledger available
     // after sign-out or when another account/role signs in.
-    const currentCacheKey = user ? `bale-ledger-cache:v2:${user.id}:${user.role}` : null;
+    const currentCacheKey = user ? `bale-ledger-cache:v4:${user.id}:${user.role}` : null;
     if (typeof window !== 'undefined') {
       try {
         const staleKeys = Array.from({ length: window.sessionStorage.length }, (_, i) => window.sessionStorage.key(i))
@@ -446,22 +456,28 @@ export const DataStoreProvider: React.FC<{ children: React.ReactNode }> = ({ chi
         const cachedRaw = currentCacheKey ? window.sessionStorage.getItem(currentCacheKey) : null;
         if (cachedRaw) {
           const cached = JSON.parse(cachedRaw);
-          if (cached && Array.isArray(cached.projects)) {
+          const fields = ['projects','invoices','expenses','workers','clients','advances','advanceRequests','userNotifications','attendance','payroll','tools','smsLogs','projectSupervisors','users'];
+          const coverage = cached?.baleRequestCoverage;
+          if (cached && fields.every((field) => Array.isArray(cached[field])) && coverage &&
+              Number.isSafeInteger(coverage.openOmitted) && coverage.openOmitted >= 0 &&
+              Number.isSafeInteger(coverage.historyOmitted) && coverage.historyOmitted >= 0) {
             setProjects(cached.projects);
-            setInvoices(cached.invoices ?? []);
-            setExpenses(cached.expenses ?? []);
-            setWorkers(cached.workers ?? []);
-            setClients(cached.clients ?? []);
-            setAdvances(cached.advances ?? []);
-            setAdvanceRequests(cached.advanceRequests ?? []);
-            setUserNotifications(cached.userNotifications ?? []);
-            setAttendance(cached.attendance ?? []);
-            setPayroll(cached.payroll ?? []);
-            setTools(cached.tools ?? []);
-            setSmsLogs(cached.smsLogs ?? []);
-            setProjectSupervisors(cached.projectSupervisors ?? []);
-            setUsers(cached.users ?? []);
+            setInvoices(cached.invoices);
+            setExpenses(cached.expenses);
+            setWorkers(cached.workers);
+            setClients(cached.clients);
+            setAdvances(cached.advances);
+            setAdvanceRequests(cached.advanceRequests);
+            setBaleRequestCoverage(coverage);
+            setUserNotifications(cached.userNotifications);
+            setAttendance(cached.attendance);
+            setPayroll(cached.payroll);
+            setTools(cached.tools);
+            setSmsLogs(cached.smsLogs);
+            setProjectSupervisors(cached.projectSupervisors);
+            setUsers(cached.users);
             setIsLoaded(true);
+            setLoadError('Showing a saved tab snapshot while the ledger syncs. It may be stale; wait for verification before relying on it.');
           }
         }
       } catch {
@@ -926,15 +942,19 @@ export const DataStoreProvider: React.FC<{ children: React.ReactNode }> = ({ chi
     worker_id: string;
     project_id: string;
     requested_amount: number;
+    request_id?: string;
+    request_period_start?: string;
   }): Promise<AdvanceRequest | null> => {
-    if (!user?.id || !Number.isFinite(data.requested_amount) || data.requested_amount <= 0) {
+    if (!user?.id || (Boolean(data.request_id) !== Boolean(data.request_period_start)) || !Number.isFinite(data.requested_amount) || data.requested_amount <= 0) {
       showToast('error', 'Enter a valid requested amount before submitting.');
       return null;
     }
 
-    const row = await runMutation('Submit Bale request', (db) =>
-      db
-        .from('advance_requests')
+    const requestSession=activeSessionRef.current;
+    if (!requestSession) return null;
+    const response = await runMutation('Submit Bale request', (db) => data.request_id
+      ? db.rpc('submit_weekly_bale_request', {p_request:data.request_id, p_worker:data.worker_id, p_project:data.project_id, p_amount:round2(data.requested_amount), p_period_start:data.request_period_start})
+      : db.from('advance_requests')
         .insert({
           worker_id: data.worker_id,
           project_id: data.project_id,
@@ -942,13 +962,23 @@ export const DataStoreProvider: React.FC<{ children: React.ReactNode }> = ({ chi
           submitted_by: user.id,
         })
         .select()
-        .single()
+        .single(),
+      'Bale request not confirmed. Check the request list before retrying.'
     );
+    if (activeSessionRef.current!==requestSession) return null;
+    const row = data.request_id ? (response && typeof response.replayed === 'boolean' ? response.request : null) : response;
     const mapped = row ? mapAdvanceRequest(row) : null;
-    if (mapped) {
-      setAdvanceRequests((prev) => [mapped, ...prev]);
-      showToast('success', 'Bale request sent to the Founder for approval.');
-    }
+    if (!mapped || typeof mapped.id !== 'string' || !mapped.id || (data.request_id && mapped.id !== data.request_id) || mapped.worker_id !== data.worker_id ||
+        mapped.project_id !== data.project_id || mapped.submitted_by !== user.id ||
+        mapped.requested_amount !== round2(data.requested_amount)) return null;
+    setAdvanceRequests((prev) => mergeLoadedBaleRequest(prev,mapped));
+    // A locally merged response can shift the bounded view; only a fresh
+    // count-backed load can establish its omission warning again.
+    setBaleRequestCoverage(null);
+    // Supersede any load started before the write so it cannot republish an
+    // older queue after this response. A failed reread stays visibly stale.
+    void refresh();
+    showToast('success', data.request_id && response?.replayed ? 'Existing Bale request confirmed. Check its current status.' : 'Bale request sent to the Founder for approval.');
     return mapped;
   };
 
@@ -956,17 +986,29 @@ export const DataStoreProvider: React.FC<{ children: React.ReactNode }> = ({ chi
     id: string,
     decision: 'approve' | 'reject'
   ): Promise<boolean> => {
-    const row = await runMutation('Review Bale request', (db) =>
+    const expected = advanceRequests.find(request => request.id === id);
+    const actor = user?.id;
+    const requestSession = activeSessionRef.current;
+    if (!expected || !actor || !requestSession || expected.status !== 'pending_approval') return false;
+    const row = await runMutation<unknown>('Review Bale request', (db) =>
       db.rpc('review_advance_request', {
         p_request_id: id,
         p_decision: decision,
-      })
+      }),
+      'Review not confirmed. Check the request status before retrying.'
     );
-    const returnedRequest = Array.isArray(row) ? row[0] : row;
-    const mapped = returnedRequest ? mapAdvanceRequest(returnedRequest) : null;
-    if (!mapped) return false;
+    if (activeSessionRef.current !== requestSession) return false;
+    let mapped: AdvanceRequest;
+    try {
+      mapped = verifyBaleReviewRows(Array.isArray(row) ? row : [row], [expected], decision, actor)[0];
+    } catch {
+      showToast('error', 'Review not confirmed. It may have been recorded; check the request status before retrying.');
+      return false;
+    }
 
-    setAdvanceRequests((prev) => prev.map((request) => (request.id === id ? mapped : request)));
+    setAdvanceRequests((prev) => prev.map((request) =>
+      request.id === id && request.status === expected.status && request.updated_at === expected.updated_at ? mapped : request
+    ));
     showToast(
       'success',
       decision === 'approve'
@@ -983,22 +1025,30 @@ export const DataStoreProvider: React.FC<{ children: React.ReactNode }> = ({ chi
       return false;
     }
 
-    const rows = await runMutation<unknown[]>('Approve selected Bale requests', (db) =>
-      db.rpc('approve_advance_requests', { p_request_ids: requestIds })
+    const actor = user?.id;
+    const requestSession = activeSessionRef.current;
+    const expected = requestIds.map(id => advanceRequests.find(request => request.id === id));
+    if (!actor || !requestSession || expected.some(request => !request || request.status !== 'pending_approval') || new Set(expected.map(request => request?.project_id)).size !== 1) return false;
+    const rows = await runMutation<unknown>('Approve selected Bale requests', (db) =>
+      db.rpc('approve_advance_requests', { p_request_ids: requestIds }),
+      'Batch approval not confirmed. Check every request status before retrying.'
     );
-    if (!rows) return false;
-
-    const mappedRows = rows.map(mapAdvanceRequest);
-    if (mappedRows.length !== requestIds.length) {
-      showToast('error', 'The batch could not be fully confirmed. Refresh the request list and try again.');
-      await refresh();
+    if (activeSessionRef.current !== requestSession) return false;
+    let mappedRows: AdvanceRequest[];
+    try {
+      mappedRows = verifyBaleReviewRows(rows, expected as AdvanceRequest[], 'approve', actor);
+    } catch {
+      showToast('error', 'Batch approval not confirmed. It may have been recorded; check every request status before retrying.');
       return false;
     }
 
     const updatedById = new Map(mappedRows.map((request) => [request.id, request]));
-    setAdvanceRequests((prev) =>
-      prev.map((request) => updatedById.get(request.id) ?? request)
-    );
+    const expectedById = new Map((expected as AdvanceRequest[]).map(request => [request.id, request]));
+    setAdvanceRequests((prev) => prev.map((request) => {
+      const prior = expectedById.get(request.id);
+      return prior && request.status === prior.status && request.updated_at === prior.updated_at
+        ? updatedById.get(request.id) ?? request : request;
+    }));
     showToast(
       'success',
       `${mappedRows.length} request${mappedRows.length === 1 ? '' : 's'} approved. Payment is still awaiting confirmation.`
@@ -1627,6 +1677,7 @@ export const DataStoreProvider: React.FC<{ children: React.ReactNode }> = ({ chi
         clients,
         advances,
         advanceRequests,
+        baleRequestCoverage,
         userNotifications,
         attendance,
         payroll,

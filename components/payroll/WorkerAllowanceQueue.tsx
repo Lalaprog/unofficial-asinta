@@ -6,6 +6,7 @@ import {Modal} from '@/components/ui/Modal';
 import {useAuth} from '@/lib/auth/authContext';
 import {createClient} from '@/lib/supabase/client';
 import {parsePendingAllowances,type AllowancePending} from '@/lib/payroll/workerAllowances';
+import {weeklyWorkerActionsPreviewEnabled} from '@/lib/finance/featureAvailability';
 
 type State={key:string;loading:boolean;error:string;items:AllowancePending[]|null};
 const empty=(key:string):State=>({key,loading:false,error:'',items:null});
@@ -38,7 +39,7 @@ function Contents(){
   finally{if(token===seq.current){lock.current=false;setSaving(false);}}
  }
  return <div className="space-y-4 border-t border-surface-border p-4 sm:p-5">
-  <p className="text-xs leading-relaxed text-ink-secondary">Load pending worker allowances across sites. Approval does not pay a worker or update any payroll voucher. Existing payroll cannot use these entries yet; dates covered by an approved/paid voucher or changed attendance must be reviewed separately.</p>
+  <p className="text-xs leading-relaxed text-ink-secondary">Load pending worker allowances across sites. Approval does not pay a worker or update any existing voucher. {weeklyWorkerActionsPreviewEnabled()?'The experimental weekly draft can use approved allowances when generated or refreshed; review the saved draft before approval.':'The legacy payroll generator cannot use these entries.'} Dates covered by an approved/paid voucher or changed attendance must be reviewed separately.</p>
   <Button type="button" variant="secondary" size="sm" onClick={load} disabled={!isFounder||!user?.id||saving} isLoading={current.loading}>{current.items?'Refresh requests':'Load requests'}</Button>
   {current.error&&<p role="status" className="text-sm text-ink-secondary">{current.error}</p>}{current.loading&&<p role="status" className="text-sm text-ink-secondary">Loading requests…</p>}
   {current.items&&(!current.items.length?<p className="text-xs text-ink-secondary">No pending allowances at the last check.</p>:<ul className="space-y-2">{current.items.map(item=><li key={item.id} className="flex flex-col gap-3 rounded-xl border border-surface-border p-3 text-xs sm:flex-row sm:items-center sm:justify-between"><div className="space-y-1"><p className="font-semibold text-navy">{item.worker_name} · {item.worker_position}</p><p>{item.project_name} · {item.date} · ₱{item.amount}</p><p className="break-words text-ink-secondary">{item.description}</p>{(item.stale||item.finalized)&&<p className="font-semibold text-status-warning">{item.stale?'Attendance changed. ':''}{item.finalized?'Approved/paid payroll covers this date. ':''}Approval requires separate review.</p>}</div><div className="flex flex-wrap gap-2"><Button type="button" variant="secondary" size="sm" disabled={saving} onClick={()=>setDecision({item,status:'rejected'})}>Reject</Button><Button type="button" variant="primary" size="sm" disabled={saving||item.stale||item.finalized} onClick={()=>setDecision({item,status:'approved'})}>Approve</Button></div></li>)}</ul>)}

@@ -1,4 +1,5 @@
 'use client';
+import {RecordedCraftLabel} from '@/components/workforce/RecordedCraftLabel';
 
 import React, { useEffect, useRef, useState } from 'react';
 import Link from 'next/link';
@@ -10,6 +11,7 @@ import { formatDatePH } from '@/lib/email/format';
 import { manilaDateISO, shiftCalendarDate } from '@/lib/dates/manila';
 import { firstOfMonth, monthDates, parseCalendarCounts, shiftMonth, weekDates } from '@/lib/attendance/calendar';
 import { useAttendanceHistory } from '@/lib/attendance/useAttendanceHistory';
+import {AttendanceTimeDetails,AttendanceTimeLabel} from '@/components/attendance/AttendanceTimeDetails';
 import { createClient } from '@/lib/supabase/client';
 import type { HistoryRecord } from '@/lib/attendance/history';
 
@@ -83,10 +85,12 @@ export function ProjectWorkforceLogs({ projectId, userId }: { projectId:string; 
       {records.loading && <p role="status" className="text-xs text-ink-secondary">Loading attendance records…</p>}
       {records.error && <div role="alert" className="space-y-2 text-xs text-status-danger">Could not load day records. <Button type="button" variant="secondary" size="sm" onClick={records.retry}>Retry records</Button></div>}
       {!records.loading && !records.error && records.items.length===0 && <p className="text-xs text-ink-secondary">{search ? 'No records match this search for the selected date.' : 'No records found for this date. Unmarked is not absent.'}</p>}
+      <AttendanceTimeDetails records={records.items} userId={userId} revision={revision} loading={records.loading||Boolean(records.error)}>
       <div className="divide-y divide-surface-border/70">{records.items.map(rec=><div key={rec.id} className="flex flex-wrap items-start justify-between gap-2 py-3 text-xs">
-        <div className="min-w-0 flex-1"><div className="break-words font-semibold text-navy">{rec.worker_name || 'Worker (details unavailable)'}</div>{rec.worker_position && <div className="text-ink-secondary">{rec.worker_position}</div>}{rec.notes && <div className="mt-1 whitespace-pre-wrap break-words text-ink-secondary">{rec.notes}</div>}</div>
-        <div className="flex items-center gap-2"><span className="text-ink-secondary">{rec.hours_worked} hrs recorded</span><Badge variant={rec.status==='present'?'success':rec.status==='half_day'?'warning':rec.status==='leave'?'info':'danger'} size="sm">{rec.status==='half_day'?'Half day':rec.status==='present'?'Present':rec.status==='leave'?'Leave':'Absent'}</Badge></div>
+        <div className="min-w-0 flex-1"><div className="break-words font-semibold text-navy">{rec.worker_name || 'Worker (details unavailable)'}</div><RecordedCraftLabel record={rec}/>{rec.notes && <div className="mt-1 whitespace-pre-wrap break-words text-ink-secondary">{rec.notes}</div>}</div>
+        <div className="flex flex-wrap items-center gap-2"><span className="text-ink-secondary">{rec.hours_worked} hrs recorded</span>{!rec.is_supervisor&&<AttendanceTimeLabel id={rec.id}/>}<Badge variant={rec.status==='present'?'success':rec.status==='half_day'?'warning':rec.status==='leave'?'info':'danger'} size="sm">{rec.status==='half_day'?'Half day':rec.status==='present'?'Present':rec.status==='leave'?'Leave':'Absent'}</Badge></div>
       </div>)}</div>
+      </AttendanceTimeDetails>
       {records.hasMore && !records.error && <Button type="button" variant="secondary" size="sm" disabled={records.loading} onClick={records.loadMore}>Show more day records</Button>}
       </div>
     </details>

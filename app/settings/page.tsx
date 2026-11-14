@@ -15,6 +15,7 @@ import { TestEmailCard } from '@/components/email/TestEmailCard';
 import { MfaCard } from '@/components/auth/MfaCard';
 import { WorkspaceHeader } from '@/components/ui/WorkspaceHeader';
 import { ReminderPreferences } from '@/components/reminders/ReminderPreferences';
+import { useSupervisorPortrait } from '@/lib/users/useSupervisorPortrait';
 
 interface IntegrationStatus {
   mfaEnforcedForFounders?: boolean;
@@ -31,7 +32,8 @@ interface IntegrationStatus {
 }
 
 export default function SettingsPage() {
-  const { user, isFounder, isSupervisor } = useAuth();
+  const { user, isFounder, isSupervisor, assurance } = useAuth();
+  const supervisorPortrait = useSupervisorPortrait(user?.id, isSupervisor && assurance === 'ready');
   const { refresh, isLoading, isLoaded, loadError, workers, getProjectsForSupervisor } = useDataStore();
 
   const assignedProjects = isSupervisor && user ? getProjectsForSupervisor(user.id) : [];
@@ -119,7 +121,10 @@ export default function SettingsPage() {
             <CardHeader>
               <div className="flex items-center justify-between gap-2">
                 <div className="flex items-center space-x-2.5">
-                  <HardHat className="w-5 h-5 text-status-warning" />
+                  {supervisorPortrait ? (
+                    // eslint-disable-next-line @next/next/no-img-element
+                    <img src={supervisorPortrait} alt="" className="h-12 w-12 rounded-xl object-cover" />
+                  ) : <HardHat className="w-5 h-5 text-status-warning" />}
                   <CardTitle>Supervisor Field Profile</CardTitle>
                 </div>
                 <Badge variant="warning" size="sm">

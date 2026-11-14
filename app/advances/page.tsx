@@ -4,6 +4,8 @@ import React, { Suspense, useState } from 'react';
 import { useRouter, useSearchParams } from 'next/navigation';
 import { AppShell } from '@/components/layout/AppShell';
 import { AdvanceRequestsPanel } from '@/components/advances/AdvanceRequestsPanel';
+import { WeeklyBaleReleasePanel } from '@/components/advances/WeeklyBaleReleasePanel';
+import { weeklyBaleReleasePreviewEnabled, weeklyWorkerCutoverMode } from '@/lib/finance/featureAvailability';
 import { useAuth } from '@/lib/auth/authContext';
 import { useQuickAction } from '@/lib/mobile/quickActions';
 import { useDataStore } from '@/lib/data/store';
@@ -24,6 +26,7 @@ import { Input } from '@/components/ui/Input';
 import { Select } from '@/components/ui/Select';
 import { Modal } from '@/components/ui/Modal';
 import { formatPeso, formatPesoCompact } from '@/lib/email/format';
+import { manilaDateISO } from '@/lib/dates/manila';
 
 export default function AdvancesPage() {
   return (
@@ -46,7 +49,7 @@ function AdvancesPageContent() {
   const searchParams = useSearchParams();
   const activeTab = isFounder && searchParams?.get('tab') === 'issued' ? 'issued' : 'requests';
   const [quickBale, setQuickBale] = useState(false);
-  useQuickAction('/advances', ['bale'], isFounder && assurance === 'ready' && !authLoading && isLoaded, () => {
+  useQuickAction('/advances', ['bale'], !weeklyWorkerCutoverMode() && isFounder && assurance === 'ready' && !authLoading && isLoaded, () => {
     setQuickBale(true);
     router.replace('/advances?tab=issued', { scroll: false });
   });
@@ -63,6 +66,12 @@ function AdvancesPageContent() {
           title={isFounder ? 'Bale Requests & Advances' : 'Bale Requests'}
           description={isFounder ? 'Review worker requests and keep issued advance balances separate.' : 'Submit a worker’s requested amount for Founder review.'}
         />
+
+        <p role="note" className="rounded-xl border border-status-warning/25 bg-status-warning-bg p-3 text-xs leading-relaxed text-ink-secondary">
+          {weeklyWorkerCutoverMode() ? 'Experimental weekly cutover mode hides legacy Bale recording and manual deductions. Reconcile existing records; these UI controls do not prove the weekly guards or expiry scheduler are installed or working.' : 'This version does not yet enforce the agreed Bale request and approval window, automatic rejection, Wednesday release, or same-week payroll deduction. Do not rely on it as the finished weekly Bale workflow; review the records before any real-world action.'}
+        </p>
+
+        {weeklyBaleReleasePreviewEnabled() && <WeeklyBaleReleasePanel />}
 
         {isFounder && (
           <div data-page-guide="tabs" className="flex flex-wrap gap-2" role="group" aria-label="Bale request and advance views">
@@ -115,6 +124,7 @@ function AdvancesPageContent() {
 
 function IssuedAdvancesPanel({ openQuick, onQuickOpened }: { openQuick: boolean; onQuickOpened: () => void }) {
   const { showToast } = useToast();
+  const cutoverMode = weeklyWorkerCutoverMode();
   const [isAdding, setIsAdding] = useState(false);
   const [isDeducting, setIsDeducting] = useState(false);
   const addLock = React.useRef(false);
@@ -133,19 +143,27 @@ function IssuedAdvancesPanel({ openQuick, onQuickOpened }: { openQuick: boolean;
 
   // Modals
   const [isAddModalOpen, setIsAddModalOpen] = useState(false);
-  React.useEffect(() => { if (openQuick) { setIsAddModalOpen(true); onQuickOpened(); } }, [openQuick, onQuickOpened]);
+  const dateEdited = React.useRef(false);
   const [isDeductModalOpen, setIsDeductModalOpen] = useState(false);
   const [selectedAdvance, setSelectedAdvance] = useState<Advance | null>(null);
   const [deductionAmount, setDeductionAmount] = useState('');
 
   // Form State
-  const [formData, setFormData] = useState({
+  const [formData, setFormData] = useState(() => ({
     worker_id: '',
     project_id: '',
     amount: '',
     reason: '',
-    date: new Date().toISOString().split('T')[0],
-  });
+    date: manilaDateISO(),
+  }));
+  const openAddModal = React.useCallback(() => {
+    if (cutoverMode) return;
+    // Refresh an untouched default when opening after midnight. A deliberately
+    // edited historical date remains part of the unsaved draft.
+    if (!dateEdited.current) setFormData((previous) => ({ ...previous, date: manilaDateISO() }));
+    setIsAddModalOpen(true);
+  }, [cutoverMode]);
+  React.useEffect(() => { if (openQuick) { openAddModal(); onQuickOpened(); } }, [openQuick, onQuickOpened, openAddModal]);
 
   const formatPHP = formatPesoCompact;
 
@@ -173,7 +191,7 @@ function IssuedAdvancesPanel({ openQuick, onQuickOpened }: { openQuick: boolean;
 
   const handleAddSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (addLock.current || !formData.worker_id || !formData.project_id || !formData.amount) return;
+    if (cutoverMode || addLock.current || !formData.worker_id || !formData.project_id || !formData.amount) return;
     addLock.current = true;
     setIsAdding(true);
     try {
@@ -188,12 +206,13 @@ function IssuedAdvancesPanel({ openQuick, onQuickOpened }: { openQuick: boolean;
       if (created) {
         showToast('success', 'Advance recorded.');
         setIsAddModalOpen(false);
+        dateEdited.current = false;
         setFormData({
           worker_id: '',
           project_id: '',
           amount: '',
           reason: '',
-          date: new Date().toISOString().split('T')[0],
+          date: manilaDateISO(),
         });
       } else {
         showToast('error', 'Advance not confirmed. Check the ledger before trying again.');
@@ -208,7 +227,7 @@ function IssuedAdvancesPanel({ openQuick, onQuickOpened }: { openQuick: boolean;
 
   const handleDeductSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (deductLock.current || !selectedAdvance || !deductionAmount) return;
+    if (cutoverMode || deductLock.current || !selectedAdvance || !deductionAmount) return;
     deductLock.current = true;
     setIsDeducting(true);
     try {
@@ -241,14 +260,14 @@ function IssuedAdvancesPanel({ openQuick, onQuickOpened }: { openQuick: boolean;
             </p>
           </div>
 
-          <Button
+          {!cutoverMode && <Button
             variant="primary"
             size="sm"
-            onClick={() => setIsAddModalOpen(true)}
+            onClick={openAddModal}
             leftIcon={<Plus className="w-4 h-4" />}
           >
             Record Bale
-          </Button>
+          </Button>}
         </div>
 
         {/* Bale Overview Cards */}
@@ -383,7 +402,7 @@ function IssuedAdvancesPanel({ openQuick, onQuickOpened }: { openQuick: boolean;
 
                   {/* Right Actions */}
                   <div className="flex items-center space-x-2">
-                    {canRecordDeduction && (
+                    {!cutoverMode && canRecordDeduction && (
                       <Button
                         variant="soft"
                         size="sm"
@@ -410,7 +429,7 @@ function IssuedAdvancesPanel({ openQuick, onQuickOpened }: { openQuick: boolean;
 
       {/* RECORD BALE MODAL */}
       <Modal
-        isOpen={isAddModalOpen}
+        isOpen={!cutoverMode && isAddModalOpen}
         onClose={() => setIsAddModalOpen(false)}
         dismissOnBackdrop={!isAdding}
         dismissOnEscape={!isAdding}
@@ -464,7 +483,7 @@ function IssuedAdvancesPanel({ openQuick, onQuickOpened }: { openQuick: boolean;
               label="Disbursement Date"
               type="date"
               value={formData.date}
-              onChange={(e) => setFormData({ ...formData, date: e.target.value })}
+              onChange={(e) => { dateEdited.current = true; setFormData({ ...formData, date: e.target.value }); }}
               required
             />
           </div>
@@ -490,7 +509,7 @@ function IssuedAdvancesPanel({ openQuick, onQuickOpened }: { openQuick: boolean;
 
       {/* MANUAL DEDUCTION MODAL */}
       <Modal
-        isOpen={isDeductModalOpen}
+        isOpen={!cutoverMode && isDeductModalOpen}
         onClose={() => setIsDeductModalOpen(false)}
         dismissOnBackdrop={!isDeducting}
         dismissOnEscape={!isDeducting}

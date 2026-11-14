@@ -32,13 +32,17 @@ import { ProjectPhotoManager } from '@/components/projects/ProjectPhotoManager';
 import { ProjectWorkers } from '@/components/projects/ProjectWorkers';
 import { ProjectExpenseLedger } from '@/components/projects/ProjectExpenseLedger';
 import { useExpenseTotals } from '@/lib/projects/useExpenseTotals';
+import { ownedEquipmentPreviewEnabled } from '@/lib/tools/ownedEquipment';
+import { ProjectSiteEquipment } from '@/components/projects/ProjectSiteEquipment';
+import { ProjectPaidPayrollSummary } from '@/components/projects/ProjectPaidPayrollSummary';
+import { projectCostReconciliationPreviewEnabled } from '@/lib/finance/featureAvailability';
 
 export default function ProjectDetailPage() {
   const params = useParams();
   const router = useRouter();
   const id = params?.id as string;
 
-  const { isFounder, user } = useAuth();
+  const { isFounder, isSupervisor, user, assurance } = useAuth();
   const { showToast } = useToast();
   const {
     projects,
@@ -231,7 +235,7 @@ export default function ProjectDetailPage() {
             { id: 'overview', label: 'Overview & Summary' },
             ...(isFounder ? [{ id: 'invoices', label: `Invoices (${projInvoices.length})` }] : []),
             ...(isFounder ? [{ id: 'expenses', label: `Expenses${expenseTotals.totals.get(id) ? ` (${expenseTotals.totals.get(id)!.count})` : ''}` }] : []),
-            { id: 'tools', label: `Site Tools (${projTools.length})` },
+            { id: 'tools', label: ownedEquipmentPreviewEnabled() ? 'Site Tools' : `Site Tools (${projTools.length})` },
             { id: 'workers', label: 'Project Workers' },
             { id: 'attendance', label: 'Workforce Logs' },
           ].map((tab) => (
@@ -288,6 +292,7 @@ export default function ProjectDetailPage() {
 
             {isFounder && expenseTotals.status === 'error' && <div role="alert" className="text-xs text-status-danger">Expense totals could not be loaded. <Button type="button" variant="secondary" size="sm" onClick={expenseTotals.refresh}>Retry expense totals</Button></div>}
             {isFounder && <p className="text-xs text-ink-secondary">Expense totals cover recorded expense entries only; payroll and rentals are not yet integrated automatically. <Button type="button" variant="secondary" size="sm" onClick={expenseTotals.refresh}>Refresh expense totals</Button></p>}
+            {isFounder && assurance === 'ready' && user?.id && projectCostReconciliationPreviewEnabled() && <ProjectPaidPayrollSummary projectId={id} userId={user.id} onReview={()=>setActiveTab('expenses')} />}
 
             {/* Project Site Details */}
             <div className={`grid grid-cols-1 gap-6 ${isFounder ? 'lg:grid-cols-2' : ''}`}>
@@ -436,7 +441,7 @@ export default function ProjectDetailPage() {
               )}
             </div>
 
-            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
+            {ownedEquipmentPreviewEnabled() ? <ProjectSiteEquipment projectId={id} userId={user?.id} isFounder={isFounder} isSupervisor={isSupervisor} assurance={assurance} /> : <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
               {projTools.length > 0 ? (
                 projTools.map((tool) => (
                   <div key={tool.id} className="p-4 rounded-xl bg-white border border-surface-border space-y-2">
@@ -457,7 +462,7 @@ export default function ProjectDetailPage() {
                   No heavy machinery or special tools logged on this site.
                 </div>
               )}
-            </div>
+            </div>}
           </div>
         )}
 

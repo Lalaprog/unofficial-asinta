@@ -10,8 +10,12 @@ import {useExpenseTotals} from '@/lib/projects/useExpenseTotals';
 const row={id:'bb',project_id:'site',description:'Newest',category:'materials',amount:'12.35',expense_date:'2026-10-01',notes:null};
 const page=(items:unknown[],has_more:boolean)=>({data:{items,has_more},error:null});
 const deferred=()=>{let resolve!:(value:unknown)=>void;const promise=new Promise(r=>{resolve=r});return {promise,resolve}};
-beforeEach(()=>mocks.rpc.mockReset());afterEach(()=>cleanup());
+beforeEach(()=>mocks.rpc.mockReset());afterEach(()=>{cleanup();vi.unstubAllEnvs();});
 describe('project expense display',()=>{
+ it('keeps project-cost review separately disabled and does not load it automatically',async()=>{
+  vi.stubEnv('NEXT_PUBLIC_FINANCE_FOUNDATION_PREVIEW','true');vi.stubEnv('NEXT_PUBLIC_PROJECT_COST_RECONCILIATION_PREVIEW','false');mocks.rpc.mockResolvedValue(page([],false));const view=render(React.createElement(ProjectExpenseLedger,{projectId:'site',userId:'founder',onRefreshTotals:vi.fn()}));await screen.findByText(/No recorded expenses/);expect(screen.queryByText('Experimental project-cost review')).toBeNull();
+  vi.stubEnv('NEXT_PUBLIC_PROJECT_COST_RECONCILIATION_PREVIEW','true');view.rerender(React.createElement(ProjectExpenseLedger,{projectId:'site',userId:'founder',onRefreshTotals:vi.fn()}));expect(screen.getByText('Experimental project-cost review')).toBeTruthy();expect(mocks.rpc.mock.calls.some(([name])=>name==='project_cost_reconciliation_preview')).toBe(false);
+ });
  it('shows server records in centavos and loads older pages',async()=>{
   mocks.rpc.mockResolvedValueOnce(page([row],true)).mockResolvedValueOnce(page([{...row,id:'aa',description:'Old invoice',amount:'99.99',expense_date:'2020-01-01'}],false));
   render(React.createElement(ProjectExpenseLedger,{projectId:'site',userId:'founder',onRefreshTotals:vi.fn()}));

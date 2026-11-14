@@ -17,6 +17,8 @@ export interface ActionNotification {
   actionable?: boolean;
   priority?: number;
   dismissOnClick?: boolean;
+  /** A live queue remains visible until its underlying condition clears. */
+  dismissible?: boolean;
   notificationIds?: string[];
   /** Only a stored event timestamp belongs here, not Date.now() at render. */
   occurredAt?: string | null;
@@ -103,7 +105,7 @@ const NotificationCard: React.FC<{
           <ArrowRight className="h-3.5 w-3.5 shrink-0" aria-hidden="true" />
         </span>
       </button>
-      <button
+      {item.dismissible !== false && <button
         type="button"
         onClick={() => onDismiss(item)}
         className="inline-flex min-h-11 min-w-11 shrink-0 items-center justify-center rounded-full text-ink-muted transition-colors hover:bg-white/80 hover:text-navy focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand"
@@ -111,7 +113,7 @@ const NotificationCard: React.FC<{
         title="Dismiss notification"
       >
         <X className="h-4 w-4" aria-hidden="true" />
-      </button>
+      </button>}
     </li>
   );
 };

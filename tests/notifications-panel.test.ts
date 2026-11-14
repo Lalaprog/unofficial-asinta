@@ -13,6 +13,7 @@ const mocks = vi.hoisted(() => ({
   compact: true,
   path: '/dashboard',
   tab: '',
+  rpc: vi.fn(),
 }));
 vi.mock('next/navigation', () => ({
   usePathname: () => mocks.path,
@@ -25,6 +26,7 @@ vi.mock('next/link', () => ({
 }));
 vi.mock('@/lib/auth/authContext', () => ({ useAuth: () => mocks.auth }));
 vi.mock('@/lib/data/store', () => ({ useDataStore: () => mocks.store }));
+vi.mock('@/lib/supabase/client', () => ({ createClient: () => ({ rpc: mocks.rpc }) }));
 import { Navbar } from '@/components/layout/Navbar';
 
 const NOW = Date.parse('2026-11-03T12:00:00.000Z');
@@ -76,6 +78,7 @@ beforeEach(() => {
   setStore();
   mocks.push.mockClear();
   mocks.replace.mockClear();
+  mocks.rpc.mockReset();
   window.matchMedia = vi.fn().mockImplementation((query: string) => ({
     matches: query.includes('max-width') ? mocks.compact : false,
     addEventListener: vi.fn(), removeEventListener: vi.fn(),
@@ -101,6 +104,7 @@ afterEach(() => {
   vi.useRealTimers();
   vi.restoreAllMocks();
   vi.unstubAllGlobals();
+  vi.unstubAllEnvs();
 });
 
 describe('notification timestamp provenance', () => {
@@ -197,6 +201,33 @@ describe('notification timestamp provenance', () => {
 });
 
 describe('bell-anchored notification controls', () => {
+  it('shows the gated live leave queue until resolved, even after clear all', async () => {
+    vi.stubEnv('NEXT_PUBLIC_FINANCE_FOUNDATION_PREVIEW', 'true');
+    vi.stubEnv('NEXT_PUBLIC_SUPERVISOR_LEAVE_NOTIFICATIONS_PREVIEW', 'true');
+    mocks.auth.assurance = 'ready';
+    mocks.rpc.mockResolvedValue({data:{pending_count:2},error:null});
+    render(React.createElement(Navbar));
+    await waitFor(() => expect(mocks.rpc).toHaveBeenCalledWith('supervisor_leave_pending_summary'));
+    const panel = await openPanel();
+    const item = itemByTitle(panel, '2 Supervisor leave requests pending');
+    expect(within(item).queryByRole('button', {name:/Dismiss/})).toBeNull();
+    fireEvent.click(within(panel).getByRole('button', {name:'Clear all'}));
+    expect(itemByTitle(panel, '2 Supervisor leave requests pending')).toBeTruthy();
+    fireEvent.click(within(item).getByRole('button', {name:/Open Attendance/}));
+    expect(mocks.push).toHaveBeenCalledWith('/attendance?tab=terminal');
+  });
+  it('does not query leave when either flag is off or assurance is not ready', async () => {
+    vi.stubEnv('NEXT_PUBLIC_FINANCE_FOUNDATION_PREVIEW', 'true');
+    vi.stubEnv('NEXT_PUBLIC_SUPERVISOR_LEAVE_NOTIFICATIONS_PREVIEW', 'false');
+    mocks.auth.assurance = 'ready';
+    const view = render(React.createElement(Navbar));
+    await act(async () => {}); expect(mocks.rpc).not.toHaveBeenCalled();
+    vi.stubEnv('NEXT_PUBLIC_SUPERVISOR_LEAVE_NOTIFICATIONS_PREVIEW', 'true');
+    mocks.auth.assurance = 'checking'; view.rerender(React.createElement(Navbar));
+    await act(async () => {}); expect(mocks.rpc).not.toHaveBeenCalled();
+    mocks.auth.isFounder = false; mocks.auth.isSupervisor = true; mocks.auth.assurance = 'ready';
+    view.rerender(React.createElement(Navbar)); await act(async () => {}); expect(mocks.rpc).not.toHaveBeenCalled();
+  });
   it('uses one non-modal popover, keeps the bell connected, and returns focus on Escape', async () => {
     mocks.compact = false;
     setStore([storedEvent('one', age(60_000))]);

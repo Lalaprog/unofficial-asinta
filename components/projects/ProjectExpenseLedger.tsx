@@ -6,9 +6,15 @@ import { Button } from '@/components/ui/Button';
 import { Badge } from '@/components/ui/Badge';
 import { formatPeso } from '@/lib/email/format';
 import { useExpenseLedger } from '@/lib/projects/useExpenseLedger';
+import { confirmedRentalPreviewEnabled, projectPaidWorkerEvidencePreviewEnabled, rentalConfirmationPreviewEnabled, projectCostReconciliationPreviewEnabled } from '@/lib/finance/featureAvailability';
+import { PaidWorkerEvidence } from '@/components/projects/PaidWorkerEvidence';
+import { ProjectCostReconciliation } from '@/components/projects/ProjectCostReconciliation';
+import { ConfirmedRentals } from '@/components/projects/ConfirmedRentals';
+import { RentalConfirmation } from '@/components/projects/RentalConfirmation';
 
 export function ProjectExpenseLedger({projectId,userId,onRefreshTotals}:{projectId:string;userId:string|undefined;onRefreshTotals:()=>void}) {
  const ledger=useExpenseLedger(userId,true,projectId,true);
+ const [rentalRevision,setRentalRevision]=React.useState(0);
  if(!userId) return <p role="status" className="text-xs text-ink-secondary">Sign in to view recorded expenses.</p>;
  return <div className="animate-panel-enter animate-panel-lift space-y-4">
   <div className="flex flex-wrap items-center justify-between gap-2">
@@ -16,6 +22,10 @@ export function ProjectExpenseLedger({projectId,userId,onRefreshTotals}:{project
    <div className="flex flex-wrap gap-2"><Button variant="secondary" size="sm" onClick={()=>{ledger.reload();onRefreshTotals()}}>Refresh ledger</Button><Link href="/expenses"><Button variant="primary" size="sm" leftIcon={<Sparkles className="w-3.5 h-3.5" />}>Record Expense</Button></Link></div>
   </div>
   <p className="text-xs text-ink-secondary">Recorded expense entries only, newest first. Payroll and rentals appear only if already recorded as expenses; their automatic integration is not yet implemented. Pages and totals can change as records are edited; refresh to review the latest data.</p>
+  {projectCostReconciliationPreviewEnabled() && <ProjectCostReconciliation key={`${projectId}:${userId}`} projectId={projectId} userId={userId} />}
+  {projectPaidWorkerEvidencePreviewEnabled() && <PaidWorkerEvidence key={`${projectId}:${userId}`} projectId={projectId} userId={userId} />}
+  {confirmedRentalPreviewEnabled() && <ConfirmedRentals key={`${projectId}:${userId}:${rentalRevision}`} projectId={projectId} userId={userId} />}
+  {rentalConfirmationPreviewEnabled() && <RentalConfirmation key={`${projectId}:${userId}`} projectId={projectId} userId={userId} expenses={ledger.error||ledger.loading?[]:ledger.items} onRecorded={()=>{ledger.reload();onRefreshTotals();setRentalRevision(n=>n+1);}} />}
   <div className="bg-white rounded-xl border border-surface-border overflow-hidden">
    <div className="divide-y divide-surface-border/70">
     {ledger.items.map(exp=><div key={exp.id} className="p-4 flex flex-col sm:flex-row sm:items-center justify-between gap-3">

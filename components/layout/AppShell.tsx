@@ -238,7 +238,7 @@ export const AppShell: React.FC<AppShellProps> = ({ children, requireFounder = f
           <div className="p-3 rounded-2xl bg-status-warning-bg border border-status-warning/20 text-status-warning text-xs flex items-center justify-between gap-3">
             <span className="flex items-center gap-2 font-semibold">
               <AlertTriangle className="w-4 h-4 shrink-0" />
-              Some Supabase queries failed: {loadError}
+              Ledger data needs attention: {loadError}
             </span>
             <Button variant="outline" size="sm" onClick={() => refresh()}>
               Retry

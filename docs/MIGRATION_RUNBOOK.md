@@ -1,5 +1,7 @@
 # Applying the BALE migrations to a live Supabase project
 
+> **STOP — historical runbook, not a current deployment procedure.** The generator and checked-in bundles are deliberately blocked in this draft; the older instructions below to regenerate or apply them must not be followed. The checked-in SQL bundles are stale and regenerating them has not been validated as a safe clean install or upgrade. Hosted migration history uses different versions and combined migrations; never blindly run these bundles or `supabase db push` against the connected database. The PR #103 Bale site guard and the preliminary weekly read-only base function are installed under different hosted versions; three other PR #103 migrations remain uninstalled, and the Supervisor leave/day migrations have only their locked table foundations installed. The old instructions below must be reviewed and replaced after an isolated schema rehearsal, catalog/ACL comparison and recovery plan. See `CLIENT_CHANGE_PLAN.md` for the current status. In particular, the old statement below that a committed change is reversible by the bundle transaction is not a recovery plan.
+
 > **Team accounts:** the current bundles also include the Founder guard. Follow [TEAM_ACCOUNT_OPERATIONS.md](TEAM_ACCOUNT_OPERATIONS.md) for maintenance, deployment order, staging and recovery.
 
 > **Payroll/Bale deployment:** the current bundles include a breaking financial-write migration. Follow [ATOMIC_PAYROLL_ROLLOUT.md](ATOMIC_PAYROLL_ROLLOUT.md) for staging, maintenance, reconciliation and recovery before applying them. A committed migration is not undone by the bundle transaction.
@@ -327,14 +329,16 @@ app if skipped:
 | Vercel → Environment Variables | `NEXT_PUBLIC_SESSION_*` (`20`, `8`, `120`) | **Rebuild** | `NEXT_PUBLIC_*` is inlined at build time; redeploying without rebuilding keeps old values |
 | Authentication → Rate Limits | `sign_in_sign_ups` | `30 → 10` per 5 min per IP | Per-IP only (no account lockout). `/api/auth/login` also enforces 10/5m per IP in the app (docs/SECURITY.md §7) |
 | Authentication → Attack Protection | CAPTCHA | hCaptcha / Turnstile | Defends sign-in against distributed IPs |
-| GitHub Actions | `.github/workflows/backup.yml` | Weekly `pg_dump` + restore test | Supabase Free has no PITR; receipt photos in Storage still need a separate copy (docs/SECURITY.md §10) |
+| Recovery | Current export workflow | **Do not run with real data** | This public repository could expose its unencrypted artifact; the old default-branch workflow lacks the draft public-repo guard. A complete, verified private recovery process is still needed (docs/SECURITY.md §10). |
 
 `supabase/config.toml` only configures the local stack; the managed project is
 configured in the dashboard. When you change one, change the other.
 
 ---
 
-## 8. Path C — GitHub Actions (no local setup)
+## 8. Path C — GitHub Actions (historical; disabled)
+
+> **Disabled:** the workflow on this branch fails closed before accessing secrets or a database. The following instructions are historical and must not be used. Older workflow revisions may still exist, so do not dispatch them either.
 
 `.github/workflows/apply-migrations.yml` is already in the repository. It is
 **manual only** (`workflow_dispatch`) — nothing migrates a database on a push.
