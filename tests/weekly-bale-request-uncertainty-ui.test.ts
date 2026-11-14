@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 import React from 'react';
 import {PGlite} from '@electric-sql/pglite';
-import {cleanup,fireEvent,render,screen,waitFor,within} from '@testing-library/react';
+import {act,cleanup,fireEvent,render,screen,waitFor,within} from '@testing-library/react';
 import {afterEach,beforeEach,describe,expect,it,vi} from 'vitest';
 
 const mock=vi.hoisted(()=>({submit:vi.fn(),idempotent:false}));
@@ -59,6 +59,22 @@ describe('weekly Bale submission uncertainty',()=>{
   fireEvent.click(await screen.findByRole('button',{name:'Retry exact Bale request'}));
   await waitFor(()=>expect(mock.submit).toHaveBeenCalledTimes(2));expect(mock.submit.mock.calls[1][0]).toEqual(original);
   await waitFor(()=>expect(sessionStorage.getItem(markerKey)).toBeNull());expect(screen.queryByText(/A Bale request may have been sent/)).toBeNull();
+ });
+ it('retains the warning when a successful submission response arrives after unmount',async()=>{
+  let resolve!:(value:unknown)=>void;mock.submit.mockReturnValue(new Promise(r=>{resolve=r}));
+  const view=render(React.createElement(AdvanceRequestsPanel));await submit();
+  const raw=sessionStorage.getItem(markerKey);expect(raw).toBeTruthy();view.unmount();
+  await act(async()=>resolve({id:'request',worker_id:'w1',project_id:'a',submitted_by:'sup',requested_amount:125.5}));
+  expect(sessionStorage.getItem(markerKey)).toBe(raw);
+  render(React.createElement(AdvanceRequestsPanel));await screen.findByText(/A Bale request may have been sent/);
+ });
+ it('retains exact retry evidence when the panel closes before its response',async()=>{
+  mock.idempotent=true;mock.submit.mockResolvedValueOnce(null);const first=render(React.createElement(AdvanceRequestsPanel));await submit();await screen.findByRole('button',{name:'Retry exact Bale request'});first.unmount();
+  let resolve!:(value:unknown)=>void;mock.submit.mockReturnValueOnce(new Promise(r=>{resolve=r}));
+  const next=render(React.createElement(AdvanceRequestsPanel));fireEvent.click(await screen.findByRole('button',{name:'Retry exact Bale request'}));
+  const raw=sessionStorage.getItem(markerKey),attempt=JSON.parse(raw!);next.unmount();
+  await act(async()=>resolve({id:attempt.request,worker_id:'w1',project_id:'a',submitted_by:'sup',requested_amount:125.5}));
+  expect(sessionStorage.getItem(markerKey)).toBe(raw);
  });
  it('does not offer an exact retry for an old opaque warning',async()=>{
   mock.idempotent=true;sessionStorage.setItem(markerKey,'old-warning-only');render(React.createElement(AdvanceRequestsPanel));

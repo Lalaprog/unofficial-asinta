@@ -3,6 +3,7 @@
 import { isInvoiceOverdue } from '@/lib/invoices/overdue';
 import { manilaDateISO } from '@/lib/dates/manila';
 import { verifyBaleReviewRows } from '@/lib/attendance/baleReview';
+import { loadBaleRequests, mergeLoadedBaleRequest, type BaleRequestCoverage } from '@/lib/attendance/loadBaleRequests';
 
 import React, { createContext, useContext, useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import type { SupabaseClient, PostgrestError } from '@supabase/supabase-js';
@@ -41,6 +42,8 @@ interface DataStoreContextType {
   clients: Client[];
   advances: Advance[];
   advanceRequests: AdvanceRequest[];
+  /** Omitted from the most recent successful loaded view; not live counts. */
+  baleRequestCoverage: BaleRequestCoverage | null;
   userNotifications: UserNotification[];
   attendance: Attendance[];
   payroll: Payroll[];
@@ -261,6 +264,7 @@ export const DataStoreProvider: React.FC<{ children: React.ReactNode }> = ({ chi
   const [clients, setClients] = useState<Client[]>([]);
   const [advances, setAdvances] = useState<Advance[]>([]);
   const [advanceRequests, setAdvanceRequests] = useState<AdvanceRequest[]>([]);
+  const [baleRequestCoverage, setBaleRequestCoverage] = useState<BaleRequestCoverage | null>(null);
   const [userNotifications, setUserNotifications] = useState<UserNotification[]>([]);
   const [attendance, setAttendance] = useState<Attendance[]>([]);
   const [payroll, setPayroll] = useState<Payroll[]>([]);
@@ -298,7 +302,7 @@ export const DataStoreProvider: React.FC<{ children: React.ReactNode }> = ({ chi
           supabase.from('workers').select('*').order('created_at', { ascending: true }),
           supabase.from('clients').select('*').order('created_at', { ascending: true }),
           supabase.from('advances').select('*').order('created_at', { ascending: false }),
-          supabase.from('advance_requests').select('*').order('created_at', { ascending: false }),
+          loadBaleRequests(supabase).then(result => ({...result,error:null})),
           supabase.from('attendance').select('*').order('date', { ascending: false }),
           supabase.from('payroll').select('*').order('created_at', { ascending: false }),
           supabase.from('tools').select('*').order('created_at', { ascending: true }),
@@ -346,6 +350,7 @@ export const DataStoreProvider: React.FC<{ children: React.ReactNode }> = ({ chi
         setClients(nextClients);
         setAdvances(nextAdvances);
         setAdvanceRequests(nextAdvanceRequests);
+        setBaleRequestCoverage(results[6].coverage);
         setUserNotifications(nextUserNotifications);
         setAttendance(nextAttendance);
         setPayroll(nextPayroll);
@@ -359,7 +364,7 @@ export const DataStoreProvider: React.FC<{ children: React.ReactNode }> = ({ chi
         if (user?.id && typeof window !== 'undefined') {
           try {
             window.sessionStorage.setItem(
-              `bale-ledger-cache:v3:${user.id}:${user.role}`,
+              `bale-ledger-cache:v4:${user.id}:${user.role}`,
               JSON.stringify({
                 projects: nextProjects,
                 invoices: nextInvoices,
@@ -368,6 +373,7 @@ export const DataStoreProvider: React.FC<{ children: React.ReactNode }> = ({ chi
                 clients: nextClients,
                 advances: nextAdvances,
                 advanceRequests: nextAdvanceRequests,
+                baleRequestCoverage: results[6].coverage,
                 userNotifications: nextUserNotifications,
                 attendance: nextAttendance,
                 payroll: nextPayroll,
@@ -403,6 +409,7 @@ export const DataStoreProvider: React.FC<{ children: React.ReactNode }> = ({ chi
     setClients([]);
     setAdvances([]);
     setAdvanceRequests([]);
+    setBaleRequestCoverage(null);
     setUserNotifications([]);
     setAttendance([]);
     setPayroll([]);
@@ -425,7 +432,7 @@ export const DataStoreProvider: React.FC<{ children: React.ReactNode }> = ({ chi
     }
     // A shared tab must not leave a previous user's cached ledger available
     // after sign-out or when another account/role signs in.
-    const currentCacheKey = user ? `bale-ledger-cache:v3:${user.id}:${user.role}` : null;
+    const currentCacheKey = user ? `bale-ledger-cache:v4:${user.id}:${user.role}` : null;
     if (typeof window !== 'undefined') {
       try {
         const staleKeys = Array.from({ length: window.sessionStorage.length }, (_, i) => window.sessionStorage.key(i))
@@ -446,7 +453,10 @@ export const DataStoreProvider: React.FC<{ children: React.ReactNode }> = ({ chi
         if (cachedRaw) {
           const cached = JSON.parse(cachedRaw);
           const fields = ['projects','invoices','expenses','workers','clients','advances','advanceRequests','userNotifications','attendance','payroll','tools','smsLogs','projectSupervisors','users'];
-          if (cached && fields.every((field) => Array.isArray(cached[field]))) {
+          const coverage = cached?.baleRequestCoverage;
+          if (cached && fields.every((field) => Array.isArray(cached[field])) && coverage &&
+              Number.isSafeInteger(coverage.openOmitted) && coverage.openOmitted >= 0 &&
+              Number.isSafeInteger(coverage.historyOmitted) && coverage.historyOmitted >= 0) {
             setProjects(cached.projects);
             setInvoices(cached.invoices);
             setExpenses(cached.expenses);
@@ -454,6 +464,7 @@ export const DataStoreProvider: React.FC<{ children: React.ReactNode }> = ({ chi
             setClients(cached.clients);
             setAdvances(cached.advances);
             setAdvanceRequests(cached.advanceRequests);
+            setBaleRequestCoverage(coverage);
             setUserNotifications(cached.userNotifications);
             setAttendance(cached.attendance);
             setPayroll(cached.payroll);
@@ -935,6 +946,8 @@ export const DataStoreProvider: React.FC<{ children: React.ReactNode }> = ({ chi
       return null;
     }
 
+    const requestSession=activeSessionRef.current;
+    if (!requestSession) return null;
     const response = await runMutation('Submit Bale request', (db) => data.request_id
       ? db.rpc('submit_weekly_bale_request', {p_request:data.request_id, p_worker:data.worker_id, p_project:data.project_id, p_amount:round2(data.requested_amount), p_period_start:data.request_period_start})
       : db.from('advance_requests')
@@ -948,12 +961,19 @@ export const DataStoreProvider: React.FC<{ children: React.ReactNode }> = ({ chi
         .single(),
       'Bale request not confirmed. Check the request list before retrying.'
     );
+    if (activeSessionRef.current!==requestSession) return null;
     const row = data.request_id ? (response && typeof response.replayed === 'boolean' ? response.request : null) : response;
     const mapped = row ? mapAdvanceRequest(row) : null;
     if (!mapped || typeof mapped.id !== 'string' || !mapped.id || (data.request_id && mapped.id !== data.request_id) || mapped.worker_id !== data.worker_id ||
         mapped.project_id !== data.project_id || mapped.submitted_by !== user.id ||
         mapped.requested_amount !== round2(data.requested_amount)) return null;
-    setAdvanceRequests((prev) => [mapped, ...prev.filter(request => request.id !== mapped.id)]);
+    setAdvanceRequests((prev) => mergeLoadedBaleRequest(prev,mapped));
+    // A locally merged response can shift the bounded view; only a fresh
+    // count-backed load can establish its omission warning again.
+    setBaleRequestCoverage(null);
+    // Supersede any load started before the write so it cannot republish an
+    // older queue after this response. A failed reread stays visibly stale.
+    void refresh();
     showToast('success', data.request_id && response?.replayed ? 'Existing Bale request confirmed. Check its current status.' : 'Bale request sent to the Founder for approval.');
     return mapped;
   };
@@ -1653,6 +1673,7 @@ export const DataStoreProvider: React.FC<{ children: React.ReactNode }> = ({ chi
         clients,
         advances,
         advanceRequests,
+        baleRequestCoverage,
         userNotifications,
         attendance,
         payroll,

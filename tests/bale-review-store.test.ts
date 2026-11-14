@@ -8,7 +8,13 @@ vi.mock('@/lib/auth/authContext',()=>({useAuth:()=>({user:m.user,assurance:m.ass
 vi.mock('@/components/ui/Toast',()=>({useToast:()=>({showToast:m.toast})}));
 vi.mock('@/lib/supabase/client',()=>({createClient:()=>({
  rpc:(name:string,args:unknown)=>name==='visible_projects'?{order:async()=>({data:[],error:null})}:m.decision(name,args),
- from:(table:string)=>({select:()=>{const read=async()=>({data:table==='advance_requests'?m.rows:[],error:null});return {order:read,then:(resolve:(x:unknown)=>void,reject:(x:unknown)=>void)=>read().then(resolve,reject)};}}),
+ from:(table:string)=>({select:()=>{
+  if(table==='advance_requests'){
+   let statuses:readonly string[]=[];
+   const builder={in:(_field:string,value:string[])=>{statuses=value;return builder;},order:()=>builder,range:async(from:number,to:number)=>{const rows=m.rows.filter(row=>statuses.includes(row.status));return {data:rows.slice(from,to+1),count:rows.length,error:null};}};return builder;
+  }
+  const read=async()=>({data:[],error:null});return {order:read,then:(resolve:(x:unknown)=>void,reject:(x:unknown)=>void)=>read().then(resolve,reject)};
+ }}),
 })}));
 import {DataStoreProvider,useDataStore} from '@/lib/data/store';
 let store:ReturnType<typeof useDataStore>;
@@ -46,6 +52,22 @@ describe('Bale review store confirmations',()=>{
   await act(async()=>store.refresh());
   await act(async()=>{resolve({data:approved('a'),error:null});await pending});
   expect(store.advanceRequests.find(row=>row.id==='a')?.status).toBe('issued');
+ });
+ it('rereads a confirmed exact submission and restores count-backed coverage',async()=>{
+  await setup();const created={...request('new'),submitted_by:'founder'};
+  m.decision.mockImplementationOnce(async()=>{m.rows=[created,...m.rows];return {data:{request:created,replayed:false},error:null}});
+  await act(async()=>expect(await store.createAdvanceRequest({worker_id:'worker',project_id:'site',requested_amount:100,request_id:'new',request_period_start:'2026-11-15'})).not.toBeNull());
+  await waitFor(()=>expect(store.baleRequestCoverage).toEqual({openOmitted:0,historyOmitted:0}));
+  expect(store.advanceRequests.map(row=>row.id)).toContain('new');
+ });
+ it('does not merge a submission response into a different account',async()=>{
+  const view=render(React.createElement(DataStoreProvider,null,React.createElement(Probe)));await waitFor(()=>expect(store.isLoaded).toBe(true));
+  let resolve!:(x:unknown)=>void;m.decision.mockReturnValueOnce(new Promise(r=>{resolve=r}));let pending!:ReturnType<typeof store.createAdvanceRequest>;
+  act(()=>{pending=store.createAdvanceRequest({worker_id:'worker',project_id:'site',requested_amount:100,request_id:'new',request_period_start:'2026-11-15'})});
+  m.user={id:'other',role:'founder'};m.rows=[];view.rerender(React.createElement(DataStoreProvider,null,React.createElement(Probe)));
+  await waitFor(()=>expect(store.isLoaded && store.advanceRequests.length===0).toBe(true));
+  await act(async()=>{resolve({data:{request:{...request('new'),submitted_by:'founder'},replayed:false},error:null});expect(await pending).toBeNull()});
+  expect(store.advanceRequests).toHaveLength(0);
  });
  it('does not update the new session from an old response',async()=>{
   const view=render(React.createElement(DataStoreProvider,null,React.createElement(Probe)));await waitFor(()=>expect(store.isLoaded).toBe(true));

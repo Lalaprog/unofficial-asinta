@@ -2,19 +2,19 @@
 import React from 'react';
 import {act,cleanup,fireEvent,render,screen,within} from '@testing-library/react';
 import {afterEach,beforeEach,describe,expect,it,vi} from 'vitest';
-const mock=vi.hoisted(()=>({rpc:vi.fn(),review:vi.fn(),batch:vi.fn(),issue:vi.fn(),rows:[] as object[]}));
+const mock=vi.hoisted(()=>({rpc:vi.fn(),review:vi.fn(),batch:vi.fn(),issue:vi.fn(),rows:[] as object[],coverage:null as null | {openOmitted:number;historyOmitted:number}}));
 vi.mock('next/navigation',()=>({useRouter:()=>({replace:vi.fn()}),useSearchParams:()=>new URLSearchParams('tab=requests')}));
 vi.mock('@/lib/auth/authContext',()=>({useAuth:()=>({user:{id:'founder'},isFounder:true,isSupervisor:false})}));
 vi.mock('@/lib/supabase/client',()=>({createClient:()=>({rpc:mock.rpc})}));
 vi.mock('@/components/ui/Toast',()=>({useToast:()=>({showToast:vi.fn()})}));
 vi.mock('@/lib/attendance/useBaleProjectWorkers',()=>({useBaleProjectWorkers:()=>({status:'idle',workers:[]})}));
 const projects=[{id:'site',name:'Test Site'}],workers=[{id:'worker',name:'Ada',position:'Mason',active:true}],users=[{id:'sup',name:'Supervisor'}];
-vi.mock('@/lib/data/store',()=>({useDataStore:()=>({advanceRequests:mock.rows,projects,workers,users,getProjectsForSupervisor:()=>projects,createAdvanceRequest:vi.fn(),reviewAdvanceRequest:mock.review,approveAdvanceRequests:mock.batch,issueAdvanceRequest:mock.issue})}));
+vi.mock('@/lib/data/store',()=>({useDataStore:()=>({advanceRequests:mock.rows,baleRequestCoverage:mock.coverage,projects,workers,users,getProjectsForSupervisor:()=>projects,createAdvanceRequest:vi.fn(),reviewAdvanceRequest:mock.review,approveAdvanceRequests:mock.batch,issueAdvanceRequest:mock.issue})}));
 import {AdvanceRequestsPanel} from '@/components/advances/AdvanceRequestsPanel';
 const request=(id:string,status='pending_approval')=>({id,worker_id:'worker',project_id:'site',requested_amount:100,submitted_by:'sup',status,created_at:'2026-11-15T04:00:00Z',updated_at:'2026-11-15T04:00:00Z',approved_at:null,rejected_at:status==='rejected'?'2026-11-18T00:00:00Z':null,issued_at:null});
 const status=(id:string,stored_status:string,effective_status:string,can_review:boolean,auto_expired=false)=>({id,kind:'weekly',period_start:'2026-11-15',stored_status,effective_status,can_review,auto_expired});
 const response=(items:object[])=>({data:{as_of:'2026-11-18T00:00:00Z',items},error:null});
-beforeEach(()=>{sessionStorage.clear();mock.rpc.mockReset();mock.review.mockReset();mock.batch.mockReset();mock.issue.mockReset();mock.rows=[request('r1')];vi.stubEnv('NEXT_PUBLIC_FINANCE_FOUNDATION_PREVIEW','true');vi.stubEnv('NEXT_PUBLIC_WEEKLY_BALE_RELEASE_PREVIEW','true');vi.stubEnv('NEXT_PUBLIC_WEEKLY_WORKER_ACTIONS_PREVIEW','true');vi.stubEnv('NEXT_PUBLIC_WEEKLY_WORKER_CUTOVER_PREVIEW','true');});
+beforeEach(()=>{sessionStorage.clear();mock.rpc.mockReset();mock.review.mockReset();mock.batch.mockReset();mock.issue.mockReset();mock.coverage=null;mock.rows=[request('r1')];vi.stubEnv('NEXT_PUBLIC_FINANCE_FOUNDATION_PREVIEW','true');vi.stubEnv('NEXT_PUBLIC_WEEKLY_BALE_RELEASE_PREVIEW','true');vi.stubEnv('NEXT_PUBLIC_WEEKLY_WORKER_ACTIONS_PREVIEW','true');vi.stubEnv('NEXT_PUBLIC_WEEKLY_WORKER_CUTOVER_PREVIEW','true');});
 afterEach(()=>{cleanup();sessionStorage.clear();vi.restoreAllMocks();vi.unstubAllEnvs();});
 describe('weekly request status in legacy list',()=>{
  it('labels expired pending requests and blocks all approval paths',async()=>{
@@ -53,6 +53,12 @@ describe('weekly request status in legacy list',()=>{
   await screen.findAllByText(/Possible repeated requests: 2/);const row=document.getElementById('advance-request-r1')!;
   fireEvent.click(within(row).getByRole('checkbox'));fireEvent.click(screen.getByRole('button',{name:'Approve selected (1)'}));
   const dialog=screen.getByRole('dialog',{name:'Approve selected Bale requests?'});expect(within(dialog).getByText('Check possible repeated requests before approval')).toBeTruthy();expect(within(dialog).getByText(/Ada · week of 2026-11-15 · 2 requests/)).toBeTruthy();expect(mock.batch).not.toHaveBeenCalled();
+ });
+ it('warns when the loaded queue omits open or historical requests',async()=>{
+  mock.coverage={openOmitted:8,historyOmitted:600};mock.rpc.mockResolvedValue(response([status('r1','pending_approval','pending_approval',true)]));
+  render(React.createElement(AdvanceRequestsPanel));
+  expect(screen.getByText(/8 open and 600 historical requests were outside this loaded view/)).toBeTruthy();
+  expect(screen.getByText(/filters and duplicate hints cannot find omitted records/)).toBeTruthy();
  });
  it('checks more than 500 loaded requests and holds every decision if a later batch fails',async()=>{
   mock.rows=Array.from({length:501},(_,i)=>request(`r${String(i).padStart(3,'0')}`,i===500?'pending_approval':i===0?'approved_pending_payment':'rejected'));

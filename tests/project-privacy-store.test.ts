@@ -8,7 +8,7 @@ const mock = vi.hoisted(() => ({
   assurance: 'ready' as 'ready' | 'required' | 'checking' | 'unavailable',
   projects: [] as any[], calls: [] as Array<{kind:string;table?:string;selection?:string;payload?:any}>,
   reloadError: false, nextLoad: null as null | Promise<{data:any[] | null; error:{message:string} | null}>, toast: vi.fn(),
-  tableFailure: null as null | {table:string; type:'error'|'throw'|'null'},
+  tableFailure: null as null | {table:string; type:'error'|'throw'|'null'}, baleRows: [] as any[],
   founder: {id:'user', email:'founder@example.test', role:'founder'},
   supervisor: {id:'user', email:'founder@example.test', role:'supervisor'},
 }));
@@ -34,6 +34,14 @@ vi.mock('@/lib/supabase/client', () => ({createClient: () => ({
         }
         return {data:[],error:null};
       };
+      if(table==='advance_requests') {
+        let statuses:readonly string[]=[];
+        const builder={in:(_column:string,selected:string[])=>{statuses=selected;return builder;},order:()=>builder,range:async(from:number,to:number)=>{
+          const response=await result();if(response.error || response.data===null)return {...response,count:null};
+          const rows=mock.baleRows.filter(row=>statuses.includes(row.status));return {data:rows.slice(from,to+1),count:rows.length,error:null};
+        }};
+        return builder;
+      }
       return {order:result,then:(resolve:(x:unknown)=>void, reject:(e:unknown)=>void)=>result().then(resolve,reject)};
     },
     insert: (payload:any) => ({select:(selection:string) => ({single:async()=>{mock.calls.push({kind:'insert',table,selection,payload});return {data:{id:'p'},error:null}}})}),
@@ -45,7 +53,7 @@ let store:ReturnType<typeof useDataStore>;
 function Probe(){store=useDataStore();return null;}
 const project = {id:'p',name:'Site',client_id:'private-client',location:'Lipa',budget_estimate:'90000',status:'active' as const,start_date:'2026-01-01',target_completion_date:'2026-12-31',created_at:'2026-01-01T00:00:00Z'};
 const setup = async () => {render(React.createElement(DataStoreProvider,null,React.createElement(Probe)));await waitFor(()=>expect(store.isLoaded).toBe(true));};
-beforeEach(()=>{mock.role='founder';mock.assurance='ready';mock.projects=[project];mock.calls=[];mock.reloadError=false;mock.nextLoad=null;mock.tableFailure=null;mock.toast.mockReset();sessionStorage.clear();});
+beforeEach(()=>{mock.role='founder';mock.assurance='ready';mock.projects=[project];mock.calls=[];mock.reloadError=false;mock.nextLoad=null;mock.tableFailure=null;mock.baleRows=[];mock.toast.mockReset();sessionStorage.clear();});
 afterEach(()=>cleanup());
 
 describe('project privacy in the shared store',()=>{
@@ -106,15 +114,15 @@ describe('project privacy in the shared store',()=>{
   it('clears the cached ledger on sign-out in the same tab',async()=>{
     const view=render(React.createElement(DataStoreProvider,null,React.createElement(Probe)));
     await waitFor(()=>expect(store.projects).toHaveLength(1));
-    expect(sessionStorage.getItem('bale-ledger-cache:v3:user:founder')).not.toBeNull();
+    expect(sessionStorage.getItem('bale-ledger-cache:v4:user:founder')).not.toBeNull();
     mock.role='signedout';
     view.rerender(React.createElement(DataStoreProvider,null,React.createElement(Probe)));
     await waitFor(()=>expect(store.projects).toHaveLength(0));
-    expect(sessionStorage.getItem('bale-ledger-cache:v3:user:founder')).toBeNull();
+    expect(sessionStorage.getItem('bale-ledger-cache:v4:user:founder')).toBeNull();
   });
   it.each(['error','throw','null'] as const)('keeps the last complete batch and warns after a %s silent sync, then recovers',async(type)=>{
     await setup();
-    const cacheKey='bale-ledger-cache:v3:user:founder';
+    const cacheKey='bale-ledger-cache:v4:user:founder';
     const before=sessionStorage.getItem(cacheKey);
     mock.projects=[{...project,name:'Changed'}];
     mock.tableFailure={table:'payroll',type};
@@ -128,13 +136,22 @@ describe('project privacy in the shared store',()=>{
     expect(store.projects[0].name).toBe('Changed');
     expect(sessionStorage.getItem(cacheKey)).not.toBe(before);
   });
+  it('loads open Bale records ahead of capped history and records explicit coverage',async()=>{
+    mock.baleRows=[...Array.from({length:2100},(_,i)=>({id:`history-${i}`,status:'rejected',requested_amount:10})),{id:'old-open',status:'pending_approval',requested_amount:100}];
+    await setup();
+    expect(store.advanceRequests).toHaveLength(2000);
+    expect(store.advanceRequests[0].id).toBe('old-open');
+    expect(store.baleRequestCoverage).toEqual({openOmitted:0,historyOmitted:101});
+    const cached=JSON.parse(sessionStorage.getItem('bale-ledger-cache:v4:user:founder')!);
+    expect(cached.baleRequestCoverage).toEqual({openOmitted:0,historyOmitted:101});
+  });
   it('does not open the workspace or cache a partial initial batch',async()=>{
     mock.tableFailure={table:'advance_requests',type:'error'};
     render(React.createElement(DataStoreProvider,null,React.createElement(Probe)));
     await waitFor(()=>expect(store.loadError).toMatch(/sync failed/));
     expect(store.isLoaded).toBe(false);
     expect(store.projects).toHaveLength(0);
-    expect(sessionStorage.getItem('bale-ledger-cache:v3:user:founder')).toBeNull();
+    expect(sessionStorage.getItem('bale-ledger-cache:v4:user:founder')).toBeNull();
     mock.tableFailure=null;
     await act(async()=>{await store.refresh()});
     expect(store.isLoaded).toBe(true);
@@ -144,11 +161,13 @@ describe('project privacy in the shared store',()=>{
     mock.tableFailure={table:'payroll',type:'error'};
     sessionStorage.setItem('bale-ledger-cache:v2:user:founder',JSON.stringify({projects:[project]}));
     sessionStorage.setItem('bale-ledger-cache:v3:user:founder',JSON.stringify({projects:[project]}));
+    sessionStorage.setItem('bale-ledger-cache:v4:user:founder',JSON.stringify({projects:[project]}));
     render(React.createElement(DataStoreProvider,null,React.createElement(Probe)));
     await waitFor(()=>expect(store.loadError).toMatch(/sync failed/));
     expect(store.isLoaded).toBe(false);
     expect(store.projects).toHaveLength(0);
     expect(sessionStorage.getItem('bale-ledger-cache:v2:user:founder')).toBeNull();
+    expect(sessionStorage.getItem('bale-ledger-cache:v3:user:founder')).toBeNull();
   });
   it('marks a complete tab snapshot stale until the first live sync completes',async()=>{
     await setup();

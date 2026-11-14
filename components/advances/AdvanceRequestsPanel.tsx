@@ -78,6 +78,7 @@ export function AdvanceRequestsPanel() {
   const reviewLock = React.useRef(false);
   const {
     advanceRequests,
+    baleRequestCoverage,
     projects,
     workers,
     users,
@@ -127,8 +128,8 @@ export function AdvanceRequestsPanel() {
   const [reviewedUncertainDecision, setReviewedUncertainDecision] = useState(false);
   const reviewScope = JSON.stringify([user?.id,isFounder,weeklyMode]);
   const activeReviewScope = React.useRef(reviewScope); activeReviewScope.current=reviewScope;
-  const reviewMounted = React.useRef(false);
-  useEffect(()=>{reviewMounted.current=true;return()=>{reviewMounted.current=false;};},[]);
+  const panelMounted = React.useRef(false);
+  useEffect(()=>{panelMounted.current=true;return()=>{panelMounted.current=false;};},[]);
   useEffect(()=>{setReviewedUncertainDecision(false);},[reviewScope,reviewGuard.raw]);
   const submissionScope = JSON.stringify([user?.id, isSupervisor, weeklyMode]);
   const activeSubmissionScope = React.useRef(submissionScope);
@@ -343,18 +344,18 @@ export function AdvanceRequestsPanel() {
     setIsBatchApprovalOpen(false);
     try {
       const approved = await approveAdvanceRequests(requestIds);
-      if (!reviewMounted.current || activeReviewScope.current!==reviewScope) return;
+      if (!panelMounted.current || activeReviewScope.current!==reviewScope) return;
       if (approved && (!weeklyMode || (marker && reviewGuard.confirmed(marker)))) {
         setRequestSelection({ siteId: null, ids: [] });
       } else {
         showToast('error', 'Approval not confirmed. Check every request status before retrying.');
       }
     } catch {
-      if (reviewMounted.current && activeReviewScope.current===reviewScope) showToast('error', 'Approval not confirmed. Check every request status before retrying.');
+      if (panelMounted.current && activeReviewScope.current===reviewScope) showToast('error', 'Approval not confirmed. Check every request status before retrying.');
     } finally {
       reviewLock.current = false;
       batchLock.current = false;
-      if (reviewMounted.current && activeReviewScope.current===reviewScope) setIsApprovingBatch(false);
+      if (panelMounted.current && activeReviewScope.current===reviewScope) setIsApprovingBatch(false);
     }
   };
 
@@ -382,8 +383,8 @@ export function AdvanceRequestsPanel() {
         ...(requestId && marker ? {request_id:requestId,request_period_start:(JSON.parse(marker) as {period:string}).period} : {}),
       });
       const verified = created && (!weeklyMode || (typeof created.id === 'string' && !!created.id && (!requestId || created.id===requestId) && created.worker_id === selectedWorkerId && created.project_id === selectedProjectId && created.submitted_by === user?.id && created.requested_amount === Math.round(amount * 100) / 100));
-      const confirmed = verified && (!weeklyMode || (marker && submissionGuard.confirmed(marker)));
-      if (activeSubmissionScope.current === submissionScope) {
+      const confirmed = panelMounted.current && activeSubmissionScope.current === submissionScope && verified && (!weeklyMode || (marker && submissionGuard.confirmed(marker)));
+      if (panelMounted.current && activeSubmissionScope.current === submissionScope) {
         if (confirmed) setRequestModalOpen(false);
         else {
           if (weeklyMode) setRequestModalOpen(false);
@@ -391,13 +392,13 @@ export function AdvanceRequestsPanel() {
         }
       }
     } catch {
-      if (activeSubmissionScope.current === submissionScope) {
+      if (panelMounted.current && activeSubmissionScope.current === submissionScope) {
         if (weeklyMode) setRequestModalOpen(false);
         showToast('error', 'Request submission not confirmed. Check the request list before retrying.');
       }
     } finally {
       submitLock.current = false;
-      setIsSubmitting(false);
+      if (panelMounted.current && activeSubmissionScope.current === submissionScope) setIsSubmitting(false);
     }
   };
 
@@ -411,11 +412,11 @@ export function AdvanceRequestsPanel() {
       const {attempt,marker} = saved;
       const created = await createAdvanceRequest({worker_id:attempt.worker,project_id:attempt.project,requested_amount:Number(attempt.amount),request_id:attempt.request,request_period_start:attempt.period});
       const verified = created && created.id===attempt.request && created.worker_id===attempt.worker && created.project_id===attempt.project && created.submitted_by===attempt.actor && created.requested_amount===Number(attempt.amount);
-      const confirmed = verified && submissionGuard.confirmed(marker);
-      if (!confirmed && activeSubmissionScope.current===submissionScope) showToast('error','Request outcome is still unconfirmed. Investigate before sending another.');
+      const confirmed = panelMounted.current && activeSubmissionScope.current===submissionScope && verified && submissionGuard.confirmed(marker);
+      if (!confirmed && panelMounted.current && activeSubmissionScope.current===submissionScope) showToast('error','Request outcome is still unconfirmed. Investigate before sending another.');
     } catch {
-      if (activeSubmissionScope.current===submissionScope) showToast('error','Request outcome is still unconfirmed. Investigate before sending another.');
-    } finally { submitLock.current=false; setIsSubmitting(false); }
+      if (panelMounted.current && activeSubmissionScope.current===submissionScope) showToast('error','Request outcome is still unconfirmed. Investigate before sending another.');
+    } finally { submitLock.current=false; if (panelMounted.current && activeSubmissionScope.current===submissionScope) setIsSubmitting(false); }
   };
 
   const handleReview = async (id: string, decision: 'approve' | 'reject') => {
@@ -428,14 +429,14 @@ export function AdvanceRequestsPanel() {
     setActioningRequestId(id);
     try {
       const success = await reviewAdvanceRequest(id, decision);
-      if (!reviewMounted.current || activeReviewScope.current!==reviewScope) return;
+      if (!panelMounted.current || activeReviewScope.current!==reviewScope) return;
       if (!success || (weeklyMode && (!marker || !reviewGuard.confirmed(marker)))) showToast('error', 'Review not confirmed. Check the request status before retrying.');
     } catch {
-      if (reviewMounted.current && activeReviewScope.current===reviewScope) showToast('error', 'Review not confirmed. Check the request status before retrying.');
+      if (panelMounted.current && activeReviewScope.current===reviewScope) showToast('error', 'Review not confirmed. Check the request status before retrying.');
     } finally {
       reviewLock.current = false;
       actionLock.current = false;
-      if (reviewMounted.current && activeReviewScope.current===reviewScope) setActioningRequestId(null);
+      if (panelMounted.current && activeReviewScope.current===reviewScope) setActioningRequestId(null);
     }
   };
 
@@ -768,6 +769,10 @@ export function AdvanceRequestsPanel() {
       )}
 
       <p className="text-xs leading-relaxed text-ink-secondary">The list shows loaded requests only; older requests may not appear and statuses can change. Check the records before retrying an unconfirmed action.</p>
+      {baleRequestCoverage===null && <p role="status" className="rounded-lg bg-status-warning-bg p-3 text-xs text-ink-secondary">Bale list coverage needs a fresh sync after a change. The list and duplicate hints may be incomplete.</p>}
+      {baleRequestCoverage && (baleRequestCoverage.openOmitted>0 || baleRequestCoverage.historyOmitted>0) && <p role="alert" className="rounded-lg bg-status-warning-bg p-3 text-xs text-ink-secondary">
+        At the last sync, {baleRequestCoverage.openOmitted} open and {baleRequestCoverage.historyOmitted} historical requests were outside this loaded view. Open requests take priority. These counts may already have changed; filters and duplicate hints cannot find omitted records. Investigate separately before deciding or retrying.
+      </p>}
 
       {focusedRequestId && (
         <div className="flex flex-wrap items-center justify-between gap-2 rounded-lg border border-surface-border bg-white px-3 py-2 text-xs text-ink-secondary">
