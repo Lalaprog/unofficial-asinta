@@ -269,6 +269,7 @@ suite('coordinated finance integration rehearsal, synthetic PostgreSQL only',()=
    expect(correctionInventory.corrections).toEqual(expect.arrayContaining([
     expect.objectContaining({kind:'voucher',case_id:voucherCase,source_in_snapshot:true,site_gross_change:null}),
     expect.objectContaining({kind:'external_worker',case_id:historicalCase,source_in_snapshot:true,site_gross_change:null})]));
+   expect(originalContext.case_snapshot).toEqual(correctionInventory.corrections.find((x:{case_id:string})=>x.case_id===voucherCase).evidence.case);
    for(const [kind,caseId,request,gross,split] of [
     ['voucher',voucherCase,'70000000-0000-4000-8000-000000000098','0.00',[]],
     ['external_worker',historicalCase,'70000000-0000-4000-8000-000000000099','-20.00',[{project_id:site,gross_change:'-20.00'}]],

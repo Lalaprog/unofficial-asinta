@@ -26,7 +26,7 @@ async function setup(){
 async function get(db:PGlite,kind:string,cid:string){return (await db.query<{v:unknown}>('SELECT public.project_cost_correction_original_context($1,$2) v',[kind,cid])).rows[0].v;}
 describe('original-site context for later cross-site review (synthetic candidate)',()=>{
  it('returns all validated original sites in deterministic order, without posting anything',async()=>{const db=await setup();try{
-  for(const [kind,cid,source] of [['voucher',voucherCase,voucher],['external_worker',historicalCase,historical]])expect(await get(db,kind,cid)).toEqual({source_kind:kind,case_id:cid,source_id:source,worker_id:worker,period_start:'2026-10-25',period_end:'2026-10-31',original_gross:'600.00',case_fingerprint:expect.stringMatching(/^[0-9a-f]{64}$/),sites:[{project_id:site,gross:'400.00'},{project_id:other,gross:'200.00'}]});
+  for(const [kind,cid,source] of [['voucher',voucherCase,voucher],['external_worker',historicalCase,historical]])expect(await get(db,kind,cid)).toEqual({source_kind:kind,case_id:cid,source_id:source,worker_id:worker,period_start:'2026-10-25',period_end:'2026-10-31',original_gross:'600.00',case_snapshot:expect.any(Object),case_fingerprint:expect.stringMatching(/^[0-9a-f]{64}$/),sites:[{project_id:site,gross:'400.00'},{project_id:other,gross:'200.00'}]});
   await db.exec('RESET ROLE');expect((await db.query('SELECT status,gross_pay::text gross FROM public.payroll WHERE id=$1',[worker])).rows).toEqual([{status:'paid',gross:'600'}]);expect((await db.query<{n:number}>('SELECT count(*)::int n FROM public.advances')).rows[0].n).toBe(0);
  }finally{await db.close();}},30000);
  it('changes its source fingerprint when sibling case evidence changes even if gross is unchanged',async()=>{const db=await setup();try{

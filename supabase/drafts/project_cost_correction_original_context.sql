@@ -16,7 +16,7 @@ BEGIN
  IF p_kind IS NULL OR p_kind NOT IN ('voucher','external_worker') OR p_case IS NULL THEN RAISE EXCEPTION 'Invalid original-site context request' USING ERRCODE='22023'; END IF;
  -- This verified case reader refuses missing/changed source or sibling evidence.
  v_case:=app_private.project_cost_correction_case(p_kind,p_case);
- IF jsonb_typeof(v_case) IS DISTINCT FROM 'object' OR jsonb_typeof(v_case->'related_cases') IS DISTINCT FROM 'array' THEN RAISE EXCEPTION 'Original case evidence unavailable' USING ERRCODE='22023'; END IF;
+ IF jsonb_typeof(v_case) IS DISTINCT FROM 'object' OR jsonb_typeof(v_case->'related_cases') IS DISTINCT FROM 'array' OR octet_length(v_case::text)>65536 THEN RAISE EXCEPTION 'Original case evidence unavailable' USING ERRCODE='22023'; END IF;
  IF p_kind='voucher' THEN
   v_original:=v_case->'original_voucher';v_source:=(v_case->>'payroll_id')::uuid;v_worker:=(v_case->>'worker_id')::uuid;
   v_start:=(v_original->>'period_start')::date;v_end:=(v_original->>'period_end')::date;v_gross:=(v_original->>'gross_pay')::numeric;
@@ -55,8 +55,8 @@ BEGIN
  IF v_sum IS DISTINCT FROM v_gross THEN RAISE EXCEPTION 'Original site total differs from source' USING ERRCODE='22023'; END IF;
  -- The fingerprint ties this context to the entire verified case and sibling
  -- snapshot. It is a freshness signal, not proof of correctness or payment.
- v_result:=jsonb_build_object('source_kind',p_kind,'case_id',p_case,'source_id',v_source,'worker_id',v_worker,'period_start',v_start,'period_end',v_end,'original_gross',v_gross::numeric(12,2)::text,'case_fingerprint',encode(sha256(convert_to(v_case::text,'UTF8')),'hex'),'sites',v_items);
- IF octet_length(v_result::text)>16384 THEN RAISE EXCEPTION 'Original site context too large' USING ERRCODE='54000'; END IF;
+ v_result:=jsonb_build_object('source_kind',p_kind,'case_id',p_case,'source_id',v_source,'worker_id',v_worker,'period_start',v_start,'period_end',v_end,'original_gross',v_gross::numeric(12,2)::text,'case_snapshot',v_case,'case_fingerprint',encode(sha256(convert_to(v_case::text,'UTF8')),'hex'),'sites',v_items);
+ IF octet_length(v_result::text)>131072 THEN RAISE EXCEPTION 'Original site context too large' USING ERRCODE='54000'; END IF;
  RETURN v_result;
 END $$;
 REVOKE ALL ON FUNCTION public.project_cost_correction_original_context(text,uuid) FROM PUBLIC,anon,authenticated,service_role;
