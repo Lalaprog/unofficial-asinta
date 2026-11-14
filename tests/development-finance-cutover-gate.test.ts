@@ -17,7 +17,7 @@ describe('coordinated development build configuration',()=>{
   expect(ownedEquipmentPreviewEnabled()).toBe(false);
  });
  it('enables the complete coordinated surfaces but not unrelated categories or portraits',()=>{
-  vi.stubEnv('NEXT_PUBLIC_DEVELOPMENT_FINANCE_CUTOVER','true');
+  vi.stubEnv('NEXT_PUBLIC_DEVELOPMENT_FINANCE_CUTOVER','true');vi.stubEnv('NEXT_PUBLIC_DEVELOPMENT_CORRECTION_SUPABASE_REF','abcdefghijklmnopqrst');vi.stubEnv('NEXT_PUBLIC_SUPABASE_URL','https://abcdefghijklmnopqrst.supabase.co');
   for(const [name,fn] of Object.entries(finance)){
    expect(fn(),name).toBe(!['supervisorPayrollRevisionPreviewEnabled','projectCostCorrectionPreviewEnabled','correctedProjectCostReviewPreviewEnabled'].includes(name));
   }
@@ -33,5 +33,24 @@ describe('coordinated development build configuration',()=>{
   expect(workerMovePreviewEnabled()).toBe(true);
   expect(categoryPreviewEnabled()).toBe(false);
   expect(supervisorPortraitPreviewEnabled()).toBe(false);
+ });
+});
+
+describe('development correction target guard',()=>{
+ it('fails closed for missing, mismatched or unsafe URLs and enables only the configured exact project',()=>{
+  vi.stubEnv('NEXT_PUBLIC_DEVELOPMENT_FINANCE_CUTOVER','true');
+  vi.stubEnv('NEXT_PUBLIC_PROJECT_COST_CORRECTION_PREVIEW','true');
+  vi.stubEnv('NEXT_PUBLIC_CORRECTED_PROJECT_COST_REVIEW_PREVIEW','true');
+  vi.stubEnv('NEXT_PUBLIC_DEVELOPMENT_CORRECTION_SUPABASE_REF','abcdefghijklmnopqrst');
+  for(const url of ['', 'not a url','http://abcdefghijklmnopqrst.supabase.co','https://other.supabase.co','https://abcdefghijklmnopqrst.supabase.co.evil.test','https://user@abcdefghijklmnopqrst.supabase.co','https://abcdefghijklmnopqrst.supabase.co/path','https://abcdefghijklmnopqrst.supabase.co/?x=1','https://abcdefghijklmnopqrst.supabase.co/#x']){
+   vi.stubEnv('NEXT_PUBLIC_SUPABASE_URL',url);
+   expect(finance.projectCostCorrectionPreviewEnabled(),url).toBe(false);
+   expect(finance.correctedProjectCostReviewPreviewEnabled(),url).toBe(false);
+  }
+  vi.stubEnv('NEXT_PUBLIC_SUPABASE_URL','https://abcdefghijklmnopqrst.supabase.co');
+  expect(finance.projectCostCorrectionPreviewEnabled()).toBe(true);
+  expect(finance.correctedProjectCostReviewPreviewEnabled()).toBe(true);
+  vi.stubEnv('NEXT_PUBLIC_DEVELOPMENT_CORRECTION_SUPABASE_REF','');
+  expect(finance.projectCostCorrectionPreviewEnabled()).toBe(false);
  });
 });

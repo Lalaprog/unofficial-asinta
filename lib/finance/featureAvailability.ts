@@ -154,9 +154,23 @@ export function paidAdjustmentsPreviewEnabled(): boolean {
   return financeFoundationEnabled() && (process.env.NEXT_PUBLIC_PAID_ADJUSTMENTS_PREVIEW === 'true' || developmentFinanceCutoverEnabled());
 }
 
+/** The development preview must point at the explicitly configured Supabase
+ * project before exposing these controls. This is not an Auth, schema or
+ * backend-health check; a different release must make its own decision. */
+function developmentCorrectionTargetMatches(): boolean {
+  const ref = process.env.NEXT_PUBLIC_DEVELOPMENT_CORRECTION_SUPABASE_REF;
+  if (!ref || !/^[a-z0-9]{20}$/.test(ref)) return false;
+  try {
+    const url = new URL(process.env.NEXT_PUBLIC_SUPABASE_URL || '');
+    return url.protocol === 'https:' && url.hostname === `${ref}.supabase.co` &&
+      !url.port && !url.username && !url.password && url.pathname === '/' && !url.search && !url.hash;
+  } catch { return false; }
+}
+
 /** Separate opt-in for correction evidence; installed only on development and never enabled by the development cutover flag alone. */
 export function projectCostCorrectionPreviewEnabled(): boolean {
-  return financeFoundationEnabled() && process.env.NEXT_PUBLIC_PROJECT_COST_CORRECTION_PREVIEW === 'true';
+  return financeFoundationEnabled() && process.env.NEXT_PUBLIC_PROJECT_COST_CORRECTION_PREVIEW === 'true' &&
+    (!developmentFinanceCutoverEnabled() || developmentCorrectionTargetMatches());
 }
 
 /** Separate opt-in for correction-inclusive reviews; neither finance cutover nor
