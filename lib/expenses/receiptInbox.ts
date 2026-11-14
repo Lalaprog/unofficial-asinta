@@ -12,12 +12,21 @@ export function parseReceiptItem(value:unknown):ReceiptInboxItem {
  if(!x.object_path.endsWith(`/inbox/${x.id}.${ext}`) || (x.saved_by && !x.object_path.startsWith(`${x.saved_by}/`))) throw new Error('Invalid saved photo');
  return x as unknown as ReceiptInboxItem;
 }
+// PostgreSQL orders timestamptz at microsecond precision; Date.parse alone
+// truncates to milliseconds and cannot safely check consecutive cursor rows.
+function timestampMicros(value:string):bigint {
+ const match=/^(\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2})(?:\.(\d{1,6}))?(Z|[+-]\d{2}:\d{2})$/.exec(value);
+ if(!match)throw new Error('Invalid photo timestamp');
+ const local=Date.parse(`${match[1]}Z`),utc=Date.parse(`${match[1]}${match[3]}`);
+ if(!Number.isFinite(local)||!Number.isFinite(utc)||new Date(local).toISOString().slice(0,19)!==match[1])throw new Error('Invalid photo timestamp');
+ return BigInt(utc)*1000n+BigInt((match[2]??'').padEnd(6,'0'));
+}
 export function parseReceiptPage(value:unknown,cursor?:ReceiptInboxItem):ReceiptInboxPage {
  if(!value||typeof value!=='object') throw new Error('Invalid photo page');
  const page=value as {items?:unknown;has_more?:unknown};
  if(!Array.isArray(page.items)||page.items.length>20||typeof page.has_more!=='boolean'||(page.has_more&&page.items.length===0)) throw new Error('Invalid photo page');
- let previous=cursor;
- const items=page.items.map(raw=>{const item=parseReceiptItem(raw);if(previous && (Date.parse(item.created_at)>Date.parse(previous.created_at)||(item.created_at===previous.created_at && item.id>=previous.id))) throw new Error('Invalid photo cursor');previous=item;return item;});
+ let previous=cursor,previousTime=cursor?timestampMicros(cursor.created_at):null;const ids=new Set<string>(cursor?[cursor.id]:[]);
+ const items=page.items.map(raw=>{const item=parseReceiptItem(raw),time=timestampMicros(item.created_at);if(ids.has(item.id)||(previous && previousTime!==null && (time>previousTime||(time===previousTime && item.id>=previous.id)))) throw new Error('Invalid photo cursor');ids.add(item.id);previous=item;previousTime=time;return item;});
  return {items,hasMore:page.has_more};
 }
 export async function receiptDigest(file:File):Promise<string> {
@@ -39,7 +48,10 @@ export function matchesReceiptFile(item:ReceiptInboxItem,file:File,digest:string
 /** Upload may succeed even if its response is lost. Finish by checking the object in the database. */
 export async function uploadAndFinishInbox(client:SupabaseClient,item:ReceiptInboxItem,file:File):Promise<boolean> {
  if(!matchesReceiptFile(item,file,await receiptDigest(file))) throw new Error('Choose the same photo that started this upload.');
- try {await client.storage.from(RECEIPT_BUCKET).upload(item.object_path,canonicalReceiptUpload(file),{upsert:false,contentType:item.mime_type});} catch { /* completion check below handles ambiguous upload */ }
+ try {await client.storage.from(RECEIPT_BUCKET).upload(item.object_path,canonicalReceiptUpload(file),{upsert:false,contentType:item.mime_type});} catch { /* An upload may have succeeded despite a lost response. */ }
+ // Object existence alone does not establish that the bytes are the selected
+ // photo. Verify before marking ready, including after a duplicate/timeout.
+ await verifyInboxObject(client,item);
  try {
   const {data,error}=await client.from('receipt_photo_inbox').update({status:'ready'}).eq('id',item.id).eq('status','pending').select('*').maybeSingle();
   const matchesReady=(value:unknown)=>{const saved=parseReceiptItem(value);return saved.status==='ready' && saved.id===item.id && saved.object_path===item.object_path && saved.sha256===item.sha256 && saved.file_size===item.file_size && saved.mime_type===item.mime_type;};
@@ -54,13 +66,18 @@ export class ReceiptInboxMismatchError extends Error {
  constructor() { super('The saved photo no longer matches its inbox record.'); this.name='ReceiptInboxMismatchError'; }
 }
 
-/** Download only the selected private object; verify its bytes before sending to AI. */
-export async function downloadInboxPhoto(client:SupabaseClient,item:ReceiptInboxItem):Promise<File> {
- if(item.status!=='ready') throw new Error('This photo upload is not ready.');
+/** Verify the actual private object. This is a point-in-time check, not an object lock. */
+export async function verifyInboxObject(client:SupabaseClient,item:ReceiptInboxItem):Promise<File> {
  const {data,error}=await client.storage.from(RECEIPT_BUCKET).download(item.object_path);
- if(error || !data) throw new Error('The saved photo could not be downloaded.');
+ if(error || !data) throw new Error('The saved photo could not be downloaded for verification. Retry or check the inbox.');
  if(data.size!==item.file_size) throw new ReceiptInboxMismatchError();
  const file=new File([data],item.file_name,{type:item.mime_type});
  if(!matchesReceiptFile(item,file,await receiptDigest(file))) throw new ReceiptInboxMismatchError();
  return file;
+}
+
+/** Download only a ready private object and verify its bytes before sending to AI. */
+export async function downloadInboxPhoto(client:SupabaseClient,item:ReceiptInboxItem):Promise<File> {
+ if(item.status!=='ready') throw new Error('This photo upload is not ready.');
+ return verifyInboxObject(client,item);
 }
