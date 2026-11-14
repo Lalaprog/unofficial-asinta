@@ -19,8 +19,10 @@ describe('coordinated development build configuration',()=>{
  it('enables the complete coordinated surfaces but not unrelated categories or portraits',()=>{
   vi.stubEnv('NEXT_PUBLIC_DEVELOPMENT_FINANCE_CUTOVER','true');
   for(const [name,fn] of Object.entries(finance)){
-   expect(fn(),name).toBe(true);
+   expect(fn(),name).toBe(name !== 'supervisorPayrollRevisionPreviewEnabled');
   }
+  vi.stubEnv('NEXT_PUBLIC_SUPERVISOR_PAYROLL_REVISION_PREVIEW','true');
+  expect(finance.supervisorPayrollRevisionPreviewEnabled()).toBe(true);
   expect(ownedEquipmentPreviewEnabled()).toBe(true);
   expect(assignmentHistoryPreviewEnabled()).toBe(true);
   expect(workerMovePreviewEnabled()).toBe(true);
