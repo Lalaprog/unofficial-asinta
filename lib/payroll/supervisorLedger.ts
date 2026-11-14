@@ -1,8 +1,10 @@
 import {parseSupervisorPreview,parseDailyRate,type SupervisorPreviewInput} from './supervisorPreview';
 import {supervisorPayrollPeriod} from './periods';
 export type PreparedSupervisor={person:{id:string;name:string;role:'supervisor'};linked_worker:{id:string;name:string;position:string;active:boolean};input:SupervisorPreviewInput;historical_worker_conflicts:number};
-export type SupervisorLedgerRow={id:string;supervisor_id:string;supervisor_name:string;period_start:string;period_end:string;daily_rate:string;half_day_units:number;gross:string;status:'draft'|'approved'|'paid';unmarked_dates:string[];source_fingerprint:string;paid_on:string|null;created_by:string;created_at:string;approved_by:string|null;approved_at:string|null;paid_by:string|null;recorded_paid_at:string|null;source_changed:boolean;as_of:string};
-export type SupervisorLedgerAttempt={kind:'create';actor:string;request:string;supervisor:string;start:string;rate:string;prepared:PreparedSupervisor}|{kind:'approved'|'recorded_paid';actor:string;request:string;supervisor:string;start:string;payroll:string;paid_on:string|null};
+export type SupervisorLedgerRow={id:string;supervisor_id:string;supervisor_name:string;period_start:string;period_end:string;daily_rate:string;half_day_units:number;gross:string;status:'draft'|'approved'|'paid';unmarked_dates:string[];source_fingerprint:string;paid_on:string|null;created_by:string;created_at:string;approved_by:string|null;approved_at:string|null;paid_by:string|null;recorded_paid_at:string|null;source_changed:boolean;as_of:string;revision?:string};
+type Scope={actor:string;request:string;supervisor:string;start:string};
+export type SupervisorLedgerAttempt=({kind:'create';rate:string;prepared:PreparedSupervisor}&Scope)|({kind:'approved'|'recorded_paid';payroll:string;paid_on:string|null}&Scope)|({version:2;kind:'refresh'|'return_to_draft'|'approved'|'recorded_paid';payroll:string;revision:string;rate:string|null;prepared:PreparedSupervisor|null;reason:string|null;paid_on:string|null}&Scope);
+export const validSupervisorRevision=(v:unknown):v is string=>typeof v==='string'&&/^(0|[1-9][0-9]{0,18})$/.test(v)&&BigInt(v)<9223372036854775807n;
 export type CompanyEvidence={from:string;to:string;total:string;count:number;items:{id:string;supervisor_id:string;supervisor_name:string;period_start:string;period_end:string;paid_on:string;gross:string}[]};
 const uuid=(v:unknown):v is string=>typeof v==='string'&&/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(v);
 const text=(v:unknown):v is string=>typeof v==='string'&&v.trim().length>0;
@@ -15,9 +17,10 @@ export function parseSupervisorPrepared(raw:unknown,id:string,start:string):Prep
  if(!v.person||v.person.id!==id||!uuid(id)||!text(v.person.name)||v.person.role!=='supervisor'||!v.linked_worker||v.linked_worker.id!==id||!text(v.linked_worker.name)||typeof v.linked_worker.position!=='string'||typeof v.linked_worker.active!=='boolean')throw Error('Invalid Supervisor identity');
  const input=parseSupervisorPreview(v.input,id,start);if(!integer(v.historical_worker_conflicts)||input.days.some(d=>!uuid(d.id))||input.leave.some(l=>!uuid(l.id)))throw Error('Invalid source identity');return {person:v.person,linked_worker:v.linked_worker,input,historical_worker_conflicts:v.historical_worker_conflicts};
 }
-export function parseSupervisorLedgerRow(raw:unknown,id:string,start:string):SupervisorLedgerRow|null{
+export function parseSupervisorLedgerRow(raw:unknown,id:string,start:string,revisionRequired=false):SupervisorLedgerRow|null{
  if(raw===null)return null;if(!raw||typeof raw!=='object'||Array.isArray(raw))throw Error('Invalid Supervisor ledger');const r=raw as SupervisorLedgerRow;const period=supervisorPayrollPeriod(start),rate=cents(r.daily_rate),gross=cents(r.gross);
  if(!uuid(r.id)||!uuid(id)||r.supervisor_id!==id||!text(r.supervisor_name)||period.start!==start||r.period_start!==start||r.period_end!==period.end||rate<=0n||!integer(r.half_day_units)||r.half_day_units>62||gross!==(rate*BigInt(r.half_day_units)+1n)/2n||!['draft','approved','paid'].includes(r.status)||!Array.isArray(r.unmarked_dates)||new Set(r.unmarked_dates).size!==r.unmarked_dates.length||r.unmarked_dates.some(d=>!date(d)||d<start||d>period.end)||typeof r.source_fingerprint!=='string'||!/^[0-9a-f]{64}$/.test(r.source_fingerprint)||!uuid(r.created_by)||!stamp(r.created_at)||typeof r.source_changed!=='boolean'||!date(r.as_of))throw Error('Invalid Supervisor ledger');
+ if(revisionRequired&&!validSupervisorRevision(r.revision))throw Error('Invalid Supervisor revision');
  if(r.status==='draft'&&(r.approved_by!==null||r.approved_at!==null||r.paid_on!==null||r.paid_by!==null||r.recorded_paid_at!==null))throw Error('Invalid draft');
  if(r.status!=='draft'&&(!uuid(r.approved_by)||!stamp(r.approved_at)))throw Error('Invalid approval');
  if(r.status==='approved'&&(r.paid_on!==null||r.paid_by!==null||r.recorded_paid_at!==null))throw Error('Invalid payment');
@@ -29,9 +32,25 @@ export function parseSupervisorLedgerAttempt(raw:unknown,actor:string):Superviso
  if(a.kind==='create'){
   const p=parseSupervisorPrepared(a.prepared,a.supervisor,a.start);if(parseDailyRate(a.rate)===null||cents(a.rate)<=0n||!p.linked_worker.active||p.person.name.trim().toLowerCase()!==p.linked_worker.name.trim().toLowerCase())throw Error('Invalid saved draft');return {kind:a.kind,actor:a.actor,request:a.request,supervisor:a.supervisor,start:a.start,rate:a.rate,prepared:p};
  }
+ if('version' in a){
+  if(a.version!==2||!uuid(a.payroll)||!validSupervisorRevision(a.revision)||!['refresh','return_to_draft','approved','recorded_paid'].includes(a.kind))throw Error('Invalid revision action');
+  if(a.kind==='refresh'){
+   if(typeof a.rate!=='string'||parseDailyRate(a.rate)===null||cents(a.rate)<=0n||typeof a.reason!=='string'||!a.reason.trim()||a.reason.trim().length>500||a.paid_on!==null)throw Error('Invalid refresh');
+   const prepared=parseSupervisorPrepared(a.prepared,a.supervisor,a.start);return {...a,prepared};
+  }
+  if(a.rate!==null||a.prepared!==null)throw Error('Unexpected revision arguments');
+  if(a.kind==='return_to_draft'){
+   if(typeof a.reason!=='string'||!a.reason.trim()||a.reason.trim().length>500||a.paid_on!==null)throw Error('Invalid return');
+  }else if(a.reason!==null||(a.kind==='approved'&&a.paid_on!==null)||(a.kind==='recorded_paid'&&(!date(a.paid_on)||a.paid_on<a.start)))throw Error('Invalid revision decision');
+  return a;
+ }
  if(!['approved','recorded_paid'].includes(a.kind)||!uuid(a.payroll)||(a.kind==='approved'&&a.paid_on!==null)||(a.kind==='recorded_paid'&&(!date(a.paid_on)||a.paid_on<a.start)))throw Error('Invalid saved decision');return {kind:a.kind,actor:a.actor,request:a.request,supervisor:a.supervisor,start:a.start,payroll:a.payroll,paid_on:a.paid_on};
 }
-export function supervisorLedgerArguments(a:SupervisorLedgerAttempt){return a.kind==='create'?{p_id:a.request,p_supervisor:a.supervisor,p_start:a.start,p_rate:a.rate,p_expected:a.prepared}:{p_request:a.request,p_id:a.payroll,p_action:a.kind,p_paid_on:a.paid_on,p_ack:true};}
+export function supervisorLedgerArguments(a:SupervisorLedgerAttempt){
+ if(a.kind==='create')return {p_id:a.request,p_supervisor:a.supervisor,p_start:a.start,p_rate:a.rate,p_expected:a.prepared};
+ if('version' in a)return {p_request:a.request,p_id:a.payroll,p_revision:a.revision,p_action:a.kind,p_rate:a.rate,p_expected:a.prepared,p_reason:a.reason,p_paid_on:a.paid_on,p_ack:true};
+ return {p_request:a.request,p_id:a.payroll,p_action:a.kind,p_paid_on:a.paid_on,p_ack:true};
+}
 export function parseCompanyEvidence(raw:unknown,from:string,to:string):CompanyEvidence{
  if(!raw||typeof raw!=='object'||Array.isArray(raw)||!date(from)||!date(to)||to<from||(Date.parse(`${to}T00:00:00Z`)-Date.parse(`${from}T00:00:00Z`))/86400000>365)throw Error('Invalid evidence range');const r=raw as CompanyEvidence;
  if(r.from!==from||r.to!==to||!integer(r.count)||r.count>500||!Array.isArray(r.items)||r.items.length!==r.count)throw Error('Incomplete evidence');let sum=0n;const ids=new Set<string>();

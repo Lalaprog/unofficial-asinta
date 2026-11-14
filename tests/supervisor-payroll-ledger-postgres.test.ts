@@ -49,4 +49,22 @@ suite('Supervisor ledger concurrency on isolated PostgreSQL',()=>{
   await first.query('BEGIN ISOLATION LEVEL REPEATABLE READ');try{await expect(create(first,id(24),start,expected)).rejects.toMatchObject({code:'P1002'});}finally{await first.query('ROLLBACK');}
   await second.query('BEGIN ISOLATION LEVEL REPEATABLE READ');try{await expect(legacy(second,id(34),start)).rejects.toMatchObject({code:'P1002'});}finally{await second.query('ROLLBACK');}
  });
+ it('serializes revision actions and exact retries after the coordinated upgrade',async()=>{
+  const start='2024-12-16',expected=await prep(start),key=id(80);await create(first,key,start,expected);
+  await admin.query(`BEGIN; ${sql('supervisor_payroll_revision')} COMMIT;`);
+  await second.query(`SET ROLE authenticated; SET test.uid='${founder}'; SET test.assurance='yes'`);
+  const act=(c:Client,request:string,revision:string,kind:string,rate:string|null=null,snapshot:unknown=null,reason:string|null=null)=>c.query<{v:{revision:string;replayed:boolean}}>('SELECT public.supervisor_payroll_revision_action($1,$2,$3,$4,$5,$6::jsonb,$7,NULL,true) v',[request,key,revision,kind,rate,snapshot===null?null:JSON.stringify(snapshot),reason]);
+  await first.query('BEGIN');await second.query('BEGIN');try{
+   await act(first,id(81),'0','approved');let done=false;
+   const stale=act(second,id(82),'0','refresh','700',expected,'Rate review').then(()=>({code:'success'}),(e:{code:string})=>({code:e.code})).finally(()=>{done=true;});
+   await pause();expect(done).toBe(false);await first.query('COMMIT');expect((await stale).code).toBe('40001');await second.query('ROLLBACK');
+  }finally{await first.query('ROLLBACK');await second.query('ROLLBACK');}
+  await first.query('BEGIN');await second.query('BEGIN');try{
+   const initial=await act(first,id(83),'1','return_to_draft',null,null,'No payment made');let done=false;
+   const retry=act(second,id(83),'1','return_to_draft',null,null,'No payment made').finally(()=>{done=true;});await pause();expect(done).toBe(false);await first.query('COMMIT');
+   expect(initial.rows[0].v).toMatchObject({revision:'2',replayed:false});expect((await retry).rows[0].v).toMatchObject({revision:'2',replayed:true});await second.query('COMMIT');
+   expect((await admin.query<{n:number}>('SELECT count(*)::int n FROM public.supervisor_payroll_revision_events WHERE request_id=$1',[id(83)])).rows[0].n).toBe(1);
+  }finally{await first.query('ROLLBACK');await second.query('ROLLBACK');await second.query('RESET ROLE');}
+ },15000);
+
 });
