@@ -53,7 +53,9 @@ BEGIN
   v_sum:=v_sum+v_value;v_items:=v_items||jsonb_build_array(jsonb_build_object('project_id',v_site,'gross',v_value::numeric(12,2)::text));
  END LOOP;
  IF v_sum IS DISTINCT FROM v_gross THEN RAISE EXCEPTION 'Original site total differs from source' USING ERRCODE='22023'; END IF;
- v_result:=jsonb_build_object('source_kind',p_kind,'case_id',p_case,'source_id',v_source,'worker_id',v_worker,'period_start',v_start,'period_end',v_end,'original_gross',v_gross::numeric(12,2)::text,'sites',v_items);
+ -- The fingerprint ties this context to the entire verified case and sibling
+ -- snapshot. It is a freshness signal, not proof of correctness or payment.
+ v_result:=jsonb_build_object('source_kind',p_kind,'case_id',p_case,'source_id',v_source,'worker_id',v_worker,'period_start',v_start,'period_end',v_end,'original_gross',v_gross::numeric(12,2)::text,'case_fingerprint',encode(sha256(convert_to(v_case::text,'UTF8')),'hex'),'sites',v_items);
  IF octet_length(v_result::text)>16384 THEN RAISE EXCEPTION 'Original site context too large' USING ERRCODE='54000'; END IF;
  RETURN v_result;
 END $$;

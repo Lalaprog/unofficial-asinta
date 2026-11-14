@@ -262,7 +262,8 @@ suite('coordinated finance integration rehearsal, synthetic PostgreSQL only',()=
    const voucherCase='70000000-0000-4000-8000-000000000012';
    // Original sites are validated through the real bounded readers; this is
    // context, not proof of a human decision or a cross-site posting.
-   expect((await db.query("SELECT public.project_cost_correction_original_context('voucher',$1) v",[voucherCase])).rows[0].v).toMatchObject({source_id:voucher,original_gross:'800.25',sites:[{project_id:site,gross:'800.25'}]});
+   const originalContext=(await db.query("SELECT public.project_cost_correction_original_context('voucher',$1) v",[voucherCase])).rows[0].v;
+   expect(originalContext).toMatchObject({source_id:voucher,original_gross:'800.25',case_fingerprint:expect.stringMatching(/^[0-9a-f]{64}$/),sites:[{project_id:site,gross:'800.25'}]});
    expect((await db.query("SELECT public.project_cost_correction_original_context('external_worker',$1) v",[historicalCase])).rows[0].v).toMatchObject({source_id:historicalId,original_gross:'600.00',sites:[{project_id:site,gross:'400.25'},{project_id:siteTwo,gross:'199.75'}]});
    let correctionInventory=(await db.query('SELECT public.project_cost_correction_inventory($1) v',[site])).rows[0].v;
    expect(correctionInventory.corrections).toEqual(expect.arrayContaining([
@@ -303,6 +304,8 @@ suite('coordinated finance integration rehearsal, synthetic PostgreSQL only',()=
    const secondVoucherCase='70000000-0000-4000-8000-000000000094';
    await db.query("SELECT public.open_paid_payroll_adjustment($1,$2,$3,10,'Separate synthetic correction')",[secondVoucherCase,voucher,correctionSnapshot]);
    await db.query("SELECT public.resolve_paid_payroll_adjustment($1,'no_transfer',NULL,'Separate synthetic resolution')",[secondVoucherCase]);
+   const changedContext=(await db.query("SELECT public.project_cost_correction_original_context('voucher',$1) v",[voucherCase])).rows[0].v;
+   expect(changedContext.sites).toEqual(originalContext.sites);expect(changedContext.case_fingerprint).not.toBe(originalContext.case_fingerprint);
    for(const [caseId,requestId,revision,gross,split] of [
     [voucherCase,'70000000-0000-4000-8000-000000000095',1,'0.00',[]],
     [secondVoucherCase,'70000000-0000-4000-8000-000000000096',0,'-10.00',[{project_id:site,gross_change:'-10.00'}]],
