@@ -7,7 +7,7 @@
 -- not a complete accounting report and requires a coordinated review before use.
 SET LOCAL lock_timeout='3s'; SET LOCAL statement_timeout='30s';
 DO $preflight$ BEGIN
- IF to_regclass('public.projects') IS NULL OR to_regclass('public.users') IS NULL OR to_regclass('public.workers') IS NULL OR to_regclass('public.payroll') IS NULL OR to_regclass('public.historical_external_worker_payroll') IS NULL OR to_regclass('public.paid_payroll_adjustment_cases') IS NULL OR to_regclass('public.paid_period_assertion_cases') IS NULL OR to_regprocedure('app_private.paid_adjustment_voucher_snapshot(public.payroll)') IS NULL OR to_regprocedure('public.paid_period_assertion_snapshot(text,uuid)') IS NULL OR to_regprocedure('public.is_founder()') IS NULL OR to_regprocedure('public.session_assurance_satisfied()') IS NULL OR to_regprocedure('auth.uid()') IS NULL THEN RAISE EXCEPTION 'Correction attribution prerequisites missing'; END IF;
+ IF to_regclass('public.projects') IS NULL OR to_regclass('public.users') IS NULL OR to_regclass('public.workers') IS NULL OR to_regclass('public.payroll') IS NULL OR to_regclass('public.historical_external_worker_payroll') IS NULL OR to_regclass('public.supervisor_period_payroll') IS NULL OR to_regclass('public.paid_period_assertion_case_events') IS NULL OR to_regclass('public.paid_payroll_adjustment_cases') IS NULL OR to_regclass('public.paid_period_assertion_cases') IS NULL OR to_regprocedure('app_private.paid_adjustment_voucher_snapshot(public.payroll)') IS NULL OR to_regprocedure('public.paid_period_assertion_snapshot(text,uuid)') IS NULL OR to_regprocedure('public.is_founder()') IS NULL OR to_regprocedure('public.session_assurance_satisfied()') IS NULL OR to_regprocedure('auth.uid()') IS NULL THEN RAISE EXCEPTION 'Correction attribution prerequisites missing'; END IF;
  IF to_regclass('public.project_cost_correction_attributions') IS NOT NULL OR to_regclass('public.project_cost_correction_sites') IS NOT NULL OR to_regprocedure('public.project_cost_correction_attribution(text,uuid,integer)') IS NOT NULL OR to_regprocedure('public.record_project_cost_correction_attribution(uuid,text,uuid,integer,jsonb,numeric,jsonb,text,boolean)') IS NOT NULL OR to_regprocedure('public.project_cost_correction_attribution_sites(uuid)') IS NOT NULL OR to_regprocedure('app_private.project_cost_correction_case(text,uuid)') IS NOT NULL OR to_regprocedure('app_private.guard_project_cost_correction_immutable()') IS NOT NULL THEN RAISE EXCEPTION 'Correction attribution name collision'; END IF;
 END $preflight$;
 CREATE TABLE public.project_cost_correction_attributions (
@@ -45,16 +45,27 @@ CREATE TRIGGER guard_project_cost_correction_sites_immutable BEFORE UPDATE OR DE
 -- binding an attribution to a different voucher or assertion.
 CREATE FUNCTION app_private.project_cost_correction_case(p_kind text,p_case uuid) RETURNS jsonb
 LANGUAGE plpgsql STABLE SECURITY DEFINER SET search_path='' AS $$
-DECLARE v jsonb;v_original jsonb;v_current jsonb;
+DECLARE v jsonb;v_original jsonb;v_current jsonb;v_source uuid;v_related jsonb;v_count bigint;
 BEGIN
  IF p_kind='voucher' THEN
-  SELECT to_jsonb(c)||jsonb_build_object('difference',c.difference::text),c.original_voucher,app_private.paid_adjustment_voucher_snapshot(p) INTO v,v_original,v_current
+  SELECT to_jsonb(c)||jsonb_build_object('difference',c.difference::text),c.original_voucher,app_private.paid_adjustment_voucher_snapshot(p),c.payroll_id INTO v,v_original,v_current,v_source
   FROM public.paid_payroll_adjustment_cases c JOIN public.payroll p ON p.id=c.payroll_id AND p.worker_id=c.worker_id AND p.status='paid' WHERE c.id=p_case;
  ELSIF p_kind='external_worker' THEN
-  SELECT to_jsonb(c)||jsonb_build_object('difference',c.difference::text),c.original_snapshot,public.paid_period_assertion_snapshot('external_worker',c.external_worker_id) INTO v,v_original,v_current
+  SELECT to_jsonb(c)||jsonb_build_object('difference',c.difference::text),c.original_snapshot,public.paid_period_assertion_snapshot('external_worker',c.external_worker_id),c.external_worker_id INTO v,v_original,v_current,v_source
   FROM public.paid_period_assertion_cases c WHERE c.id=p_case AND c.source_kind='external_worker';
  ELSE RAISE EXCEPTION 'Invalid worker correction kind' USING ERRCODE='22023'; END IF;
  IF v IS NULL OR v_original IS DISTINCT FROM v_current THEN RAISE EXCEPTION 'Original paid-period evidence unavailable or changed' USING ERRCODE='40001'; END IF;
+ -- Bind the decision to every known case on the same original period, not only
+ -- this case. An added or resolved case invalidates an earlier review. A hash
+ -- binds each sibling's original source without repeating large snapshots.
+ IF p_kind='voucher' THEN
+  SELECT count(*),coalesce(jsonb_agg((to_jsonb(c)-'original_voucher')||jsonb_build_object('difference',c.difference::text,'original_fingerprint',encode(sha256(convert_to(c.original_voucher::text,'UTF8')),'hex')) ORDER BY c.id),'[]'::jsonb) INTO v_count,v_related FROM public.paid_payroll_adjustment_cases c WHERE c.payroll_id=v_source;
+ ELSE
+  SELECT count(*),coalesce(jsonb_agg((to_jsonb(c)-'original_snapshot')||jsonb_build_object('difference',c.difference::text,'original_fingerprint',encode(sha256(convert_to(c.original_snapshot::text,'UTF8')),'hex')) ORDER BY c.id),'[]'::jsonb) INTO v_count,v_related FROM public.paid_period_assertion_cases c WHERE c.source_kind='external_worker' AND c.external_worker_id=v_source;
+ END IF;
+ IF v_count>100 THEN RAISE EXCEPTION 'More than 100 related cases; separate reconciliation required' USING ERRCODE='54000'; END IF;
+ v:=v||jsonb_build_object('related_cases',v_related);
+ IF octet_length(v::text)>65536 THEN RAISE EXCEPTION 'Correction case evidence too large' USING ERRCODE='54000'; END IF;
  RETURN v;
 END $$;
 REVOKE ALL ON FUNCTION app_private.project_cost_correction_case(text,uuid) FROM PUBLIC,anon,authenticated,service_role;
@@ -96,6 +107,13 @@ BEGIN
  END LOOP;
  IF v_sum<>p_gross_change THEN RAISE EXCEPTION 'Site changes must equal the reviewed gross change' USING ERRCODE='22023'; END IF;
  SELECT coalesce(jsonb_agg(value ORDER BY (value->>'project_id')::uuid),'[]'::jsonb) INTO v_split FROM jsonb_array_elements(v_split);
+ -- The external case writers use this global order. Acquire the same locks
+ -- before row/advisory locks, so a sibling case cannot change between the
+ -- evidence check and commit. Voucher writers already serialize on the worker
+ -- and payroll rows acquired below.
+ IF p_kind='external_worker' THEN
+  LOCK TABLE public.users,public.workers,public.supervisor_period_payroll,public.historical_external_worker_payroll,public.paid_period_assertion_cases,public.paid_period_assertion_case_events IN SHARE ROW EXCLUSIVE MODE;
+ END IF;
  -- Same request and case locks in stable order; rows remain immutable.
  PERFORM 1 FROM public.users WHERE id=v_actor AND role='founder' FOR SHARE;
  IF NOT FOUND OR NOT coalesce(public.is_founder(),false) OR NOT coalesce(public.session_assurance_satisfied(),false) THEN RAISE EXCEPTION 'Founder access with required assurance required' USING ERRCODE='42501'; END IF;
@@ -122,6 +140,7 @@ BEGIN
  END IF;
  IF v_case IS DISTINCT FROM p_expected_case THEN RAISE EXCEPTION 'Correction case changed; reload and review' USING ERRCODE='40001'; END IF;
  IF v_case->>'status' NOT IN ('settled_external','no_transfer') THEN RAISE EXCEPTION 'Resolve the original-period case before attributing project cost' USING ERRCODE='22023'; END IF;
+ IF EXISTS(SELECT 1 FROM jsonb_array_elements(v_case->'related_cases') c WHERE c->>'status'='pending') THEN RAISE EXCEPTION 'Resolve all pending cases for the original period before attributing project cost' USING ERRCODE='22023'; END IF;
  SELECT coalesce(max(revision),0) INTO v_latest FROM public.project_cost_correction_attributions WHERE source_kind=p_kind AND coalesce(voucher_case_id,external_case_id)=p_case;
  IF v_latest<>p_expected_revision THEN RAISE EXCEPTION 'Correction attribution changed; reload and review' USING ERRCODE='40001'; END IF;
  IF (SELECT count(*) FROM public.projects WHERE id=ANY(v_ids))<>cardinality(v_ids) THEN RAISE EXCEPTION 'Correction project unavailable' USING ERRCODE='22023'; END IF;

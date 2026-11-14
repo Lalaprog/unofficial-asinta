@@ -1,4 +1,4 @@
-import {parseAdjustmentList,type PaidAdjustment} from './paidAdjustments';
+import {parseAdjustmentList,validDifference,type PaidAdjustment} from './paidAdjustments';
 import {parsePeriodCases,type PeriodCase} from './paidPeriodCases';
 import {sameAttributionEvidence} from './historicalAttribution';
 
@@ -24,9 +24,19 @@ export function correctionSplit(raw:unknown,gross:string):CorrectionSplit[]{
   const amount=correctionAmount(item.gross_change);if(amount.cents===0n)throw Error('Remove zero-value site entries');ids.add(item.project_id.toLowerCase());sum+=amount.cents;return {project_id:item.project_id.toLowerCase(),gross_change:amount.text};});
  if(sum!==correctionAmount(gross).cents)throw Error('Site changes must add up to the total gross change');return values.sort((a,b)=>a.project_id.localeCompare(b.project_id));
 }
+export type RelatedCorrectionCase={id:string;status:string;difference:string;reason:string;resolution_note:string|null};
+export function relatedCorrectionCases(raw:Record<string,unknown>):RelatedCorrectionCase[]{
+ if(!Array.isArray(raw.related_cases)||raw.related_cases.length<1||raw.related_cases.length>100)throw Error('Incomplete related case history');
+ const ids=new Set<string>();const cases=raw.related_cases.map((c:unknown)=>{
+  if(!obj(c)||!uuid(c.id)||ids.has(c.id.toLowerCase())||typeof c.status!=='string'||!['pending','settled_external','no_transfer'].includes(c.status)||typeof c.difference!=='string'||!validDifference(c.difference)||typeof c.reason!=='string'||!c.reason.trim()||c.reason.length>500||typeof c.original_fingerprint!=='string'||!/^[a-f0-9]{64}$/.test(c.original_fingerprint)||(c.resolution_note!==null&&(typeof c.resolution_note!=='string'||!c.resolution_note.trim()||c.resolution_note.length>500)))throw Error('Invalid related case');
+  ids.add(c.id.toLowerCase());return {id:c.id,status:c.status,difference:c.difference,reason:c.reason,resolution_note:c.resolution_note as string|null};
+ });
+ const own=cases.find(c=>c.id===raw.id);if(!own||own.status!==raw.status||own.difference!==raw.difference||own.reason!==raw.reason||own.resolution_note!==raw.resolution_note)throw Error('Related case differs');return cases;
+}
 /** Check backend evidence against the exact parent case being reviewed. */
 export function correctionCase(raw:unknown,kind:CorrectionKind,expected:CorrectionCase):Record<string,unknown>{
  if(!obj(raw)||JSON.stringify(raw).length>65536||raw.id!==expected.id)throw Error('Invalid correction case');
+ relatedCorrectionCases(raw);
  if(kind==='voucher'){
   const e=expected as PaidAdjustment;
   const parsed=parseAdjustmentList({total:1,offset:0,items:[raw]},e.payroll_id,0).items[0];

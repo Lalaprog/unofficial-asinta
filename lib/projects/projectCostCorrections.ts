@@ -1,4 +1,4 @@
-import {correctionAmount,correctionCase,correctionSplit,type CorrectionKind} from '@/lib/payroll/projectCostCorrection';
+import {correctionAmount,correctionCase,correctionSplit,relatedCorrectionCases,type CorrectionKind} from '@/lib/payroll/projectCostCorrection';
 import {parseAdjustmentList} from '@/lib/payroll/paidAdjustments';
 import {parsePeriodCases,parsePeriodSnapshot} from '@/lib/payroll/paidPeriodCases';
 import {sameAttributionEvidence} from '@/lib/payroll/historicalAttribution';
@@ -18,6 +18,7 @@ export function parseProjectCorrectionEvidence(raw:unknown,projectId:string):Pro
    if(c.source_kind!=='external_worker'||c.external_worker_id!==original.id||c.supervisor_payroll_id!==null)throw Error('Invalid external case');
    item=parsePeriodCases({snapshot:original,total:1,items:[{...c,source_id:c.external_worker_id}]},original)[0];
   }
+  relatedCorrectionCases(c);
   if(item.id!==value.case_id||item.status==='pending')throw Error('Wrong or unresolved correction case');if(kind==='voucher')correctionCase(c,kind,item);
   const gross=correctionAmount(value.total_gross_change),site=correctionAmount(value.site_gross_change),split=correctionSplit(value.split,gross.text);
   if(site.cents===0n||!sameAttributionEvidence(split,value.split)||split.find(x=>x.project_id===projectId.toLowerCase())?.gross_change!==site.text)throw Error('Correction split differs');

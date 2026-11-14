@@ -46,11 +46,14 @@ suite('correction attribution PostgreSQL races (synthetic candidate)',()=>{
   await first.query("SELECT public.record_historical_external_worker_payroll($1,$2,'2024-11-03','2024-11-09',600,100,0,500,'Synthetic ledger',$3,true)",[id(10),voucher,JSON.stringify(review.worker)]);
   const original=(await first.query("SELECT public.paid_period_assertion_case_list('external_worker',$1) v",[id(10)])).rows[0].v.snapshot;
   await first.query("SELECT public.open_paid_period_assertion_case($1,'external_worker',$2,$3,30,'Synthetic A')",[id(11),id(10),original]);await first.query("SELECT public.resolve_paid_period_assertion_case($1,'no_transfer',NULL,'Reviewed A',true)",[id(11)]);
-  const expected=(await first.query("SELECT public.project_cost_correction_attribution('external_worker',$1,NULL) v",[id(11)])).rows[0].v.case;
   await first.query("SELECT public.open_paid_period_assertion_case($1,'external_worker',$2,$3,10,'Synthetic B')",[id(12),id(10),original]);
+  const expected=(await first.query("SELECT public.project_cost_correction_attribution('external_worker',$1,NULL) v",[id(11)])).rows[0].v.case;
   await first.query('BEGIN');await second.query('BEGIN');try{
    await first.query("SELECT public.resolve_paid_period_assertion_case($1,'no_transfer',NULL,'Reviewed B',true)",[id(12)]);
-   let done=false;const write=second.query("SELECT public.record_project_cost_correction_attribution($1,'external_worker',$2,0,$3,20,$4,'Reviewed',true) v",[id(13),id(11),expected,JSON.stringify([{project_id:site,gross_change:'20.00'}])]).finally(()=>{done=true;});await pause();expect(done).toBe(false);await first.query('COMMIT');expect((await write).rows[0].v.replayed).toBe(false);await second.query('COMMIT');
+   const sql="SELECT public.record_project_cost_correction_attribution($1,'external_worker',$2,0,$3,20,$4,'Reviewed',true) v",split=JSON.stringify([{project_id:site,gross_change:'20.00'}]);
+   let done=false;const write=second.query(sql,[id(13),id(11),expected,split]).then(()=>({code:'success'}),(e:{code:string})=>({code:e.code})).finally(()=>{done=true;});await pause();expect(done).toBe(false);await first.query('COMMIT');expect((await write).code).toBe('40001');await second.query('ROLLBACK');
+   const updated=(await second.query("SELECT public.project_cost_correction_attribution('external_worker',$1,NULL) v",[id(11)])).rows[0].v.case;
+   expect((await second.query(sql,[id(13),id(11),updated,split])).rows[0].v.replayed).toBe(false);
    expect((await admin.query('SELECT gross::text,net::text FROM public.historical_external_worker_payroll WHERE request_id=$1',[id(10)])).rows[0]).toEqual({gross:'600.00',net:'500.00'});
   }finally{await first.query('ROLLBACK');await second.query('ROLLBACK');}
  },15000);

@@ -14,6 +14,7 @@ const read=(db:PGlite,kind:string,cid:string,rev:number|null=null)=>db.query<{v:
 const save=(db:PGlite,req:string,kind:string,cid:string,rev:number,source:unknown,gross:string,split:unknown,note='Original evidence reviewed',ack=true)=>db.query<{v:{revision:number;replayed:boolean}}>('SELECT public.record_project_cost_correction_attribution($1,$2,$3,$4,$5::jsonb,$6::numeric,$7::jsonb,$8,$9) v',[req,kind,cid,rev,JSON.stringify(source),gross,JSON.stringify(split),note,ack]);
 async function setup(){
  const db=new PGlite();await db.exec(baseFixture);await db.exec(`BEGIN;${sql('paid_payroll_adjustments')} COMMIT;
+ CREATE TABLE public.supervisor_period_payroll(id uuid PRIMARY KEY); CREATE TABLE public.paid_period_assertion_case_events(id uuid PRIMARY KEY);
  CREATE TABLE public.historical_external_worker_payroll(request_id uuid PRIMARY KEY, original jsonb NOT NULL);
  CREATE TABLE public.paid_period_assertion_cases(id uuid PRIMARY KEY,source_kind text NOT NULL,external_worker_id uuid REFERENCES public.historical_external_worker_payroll(request_id),original_snapshot jsonb NOT NULL,difference numeric(12,2) NOT NULL,status text NOT NULL);
  CREATE FUNCTION public.paid_period_assertion_snapshot(p_kind text,p_id uuid) RETURNS jsonb LANGUAGE sql STABLE AS $$SELECT original FROM public.historical_external_worker_payroll WHERE request_id=p_id AND p_kind='external_worker'$$;
@@ -99,6 +100,13 @@ describe('project cost correction attribution (synthetic candidate only)',()=>{
    expect(rows).toEqual([expect.objectContaining({site_gross_change:'-12.50',total_gross_change:'-12.50'})]);
    expect(parseProjectCorrectionEvidence({project_id:site,items:rows},site)).toMatchObject([{kind:'external_worker',siteChange:'-12.50',caseStatus:'no_transfer'}]);
    expect(()=>parseProjectCorrectionEvidence({project_id:site,items:[{...(rows[0] as object),site_gross_change:'-9.00'}]},site)).toThrow(/split differs/);
+   await db.query("SELECT public.open_paid_period_assertion_case($1,'external_worker',$2,$3,-10,'Second case')",[id(33),id(30),JSON.stringify(original)]);
+   const pending=(await read(db,'external_worker',id(31))).rows[0].v;expect(pending.attribution?.case_changed).toBe(true);
+   await expect(save(db,id(32),'external_worker',id(31),0,checked.case,'-12.50',attempt.split,attempt.note)).rejects.toThrow(/case changed/);
+   await expect(save(db,id(34),'external_worker',id(31),1,pending.case,'-12.50',attempt.split,attempt.note)).rejects.toThrow(/Resolve all pending cases/);
+   await db.query("SELECT public.resolve_paid_period_assertion_case($1,'no_transfer',NULL,'Reviewed second case',true)",[id(33)]);
+   await expect(save(db,id(34),'external_worker',id(31),1,pending.case,'-12.50',attempt.split,attempt.note)).rejects.toThrow(/case changed/);
+   const refreshed=(await read(db,'external_worker',id(31))).rows[0].v.case;expect((await save(db,id(34),'external_worker',id(31),1,refreshed,'-12.50',attempt.split,attempt.note)).rows[0].v.revision).toBe(2);
    await db.exec('RESET ROLE');
    expect((await db.query<{gross:string;net:string}>('SELECT gross::text,net::text FROM public.historical_external_worker_payroll WHERE request_id=$1',[id(30)])).rows[0]).toEqual({gross:'600.00',net:'500.00'});
   }finally{await db.close();}
@@ -115,6 +123,7 @@ describe('project cost correction attribution (synthetic candidate only)',()=>{
  it('rejects inherited table privileges at installation',async()=>{
   const db=new PGlite();try{
    await db.exec(baseFixture);await db.exec(`BEGIN;${sql('paid_payroll_adjustments')} COMMIT;
+    CREATE TABLE public.supervisor_period_payroll(id uuid PRIMARY KEY); CREATE TABLE public.paid_period_assertion_case_events(id uuid PRIMARY KEY);
     CREATE TABLE public.historical_external_worker_payroll(request_id uuid PRIMARY KEY, original jsonb);
     CREATE TABLE public.paid_period_assertion_cases(id uuid PRIMARY KEY,source_kind text,external_worker_id uuid,original_snapshot jsonb,difference numeric);
     CREATE FUNCTION public.paid_period_assertion_snapshot(text,uuid) RETURNS jsonb LANGUAGE sql AS $$SELECT NULL::jsonb$$;

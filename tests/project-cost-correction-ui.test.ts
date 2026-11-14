@@ -8,7 +8,7 @@ vi.mock('@/lib/auth/authContext',()=>({useAuth:()=>({user:{id:mocks.user},isFoun
 vi.mock('@/lib/supabase/client',()=>({createClient:()=>({rpc:mocks.rpc})}));
 const actor='11111111-1111-4111-8111-111111111111',worker='22222222-2222-4222-8222-222222222222',voucher='33333333-3333-4333-8333-333333333333',caseId='44444444-4444-4444-8444-444444444444',site='55555555-5555-4555-8555-555555555555',req='66666666-6666-4666-8666-666666666666';
 const item={id:caseId,payroll_id:voucher,worker_id:worker,original_voucher:{id:voucher,worker_id:worker,period_start:'2024-12-01',period_end:'2024-12-07',status:'paid' as const,gross_pay:'600.00',bale_deduction:'100.00',other_deductions:'0.00',net_pay:'500.00'},difference:'-30.00',reason:'Reviewed',status:'no_transfer' as const,created_at:'2024-12-10T00:00:00Z',created_by:actor,resolved_at:'2024-12-11T00:00:00Z',resolved_by:actor,settled_on:null,resolution_note:'No transfer needed'};
-const payload={source_kind:'voucher',case_id:caseId,case:item,latest_revision:0,attribution:null};
+const payload={source_kind:'voucher',case_id:caseId,case:{...item,related_cases:[{...item,original_fingerprint:'a'.repeat(64)}]},latest_revision:0,attribution:null};
 beforeEach(()=>{sessionStorage.clear();mocks.rpc.mockReset();mocks.user=actor;mocks.founder=true;mocks.assurance='ready';vi.stubGlobal('crypto',{randomUUID:()=>req});});
 afterEach(()=>{cleanup();vi.unstubAllGlobals();vi.restoreAllMocks();});
 function renderPanel(){return render(React.createElement(ProjectCostCorrectionPanel,{actor,kind:'voucher',item}));}
@@ -32,6 +32,6 @@ describe('correction evidence candidate UI',()=>{
   const view=renderPanel();fireEvent.click(screen.getByRole('button',{name:'Project-cost correction evidence'}));fireEvent.click(screen.getByRole('button',{name:'Load correction evidence'}));mocks.assurance='required';view.rerender(React.createElement(ProjectCostCorrectionPanel,{actor,kind:'voucher',item}));expect(screen.queryByText(/gross cost effect/)).toBeNull();await act(async()=>resolve({data:payload,error:null}));expect(screen.queryByText(/No correction site evidence/)).toBeNull();
  });
  it('refuses to show a correction for a changed case',async()=>{
-  loadMocks();mocks.rpc.mockImplementation(async(name:string)=>name==='historical_worker_attribution_projects'?{data:{projects:[]},error:null}:{data:{...payload,case:{...item,difference:'-31.00'}},error:null});renderPanel();fireEvent.click(screen.getByRole('button',{name:'Project-cost correction evidence'}));fireEvent.click(screen.getByRole('button',{name:'Load correction evidence'}));await screen.findByText(/could not be verified/);expect(screen.queryByLabelText('Total signed gross change (₱)')).toBeNull();
+  loadMocks();mocks.rpc.mockImplementation(async(name:string)=>name==='historical_worker_attribution_projects'?{data:{projects:[]},error:null}:{data:{...payload,case:{...payload.case,difference:'-31.00'}},error:null});renderPanel();fireEvent.click(screen.getByRole('button',{name:'Project-cost correction evidence'}));fireEvent.click(screen.getByRole('button',{name:'Load correction evidence'}));await screen.findByText(/could not be verified/);expect(screen.queryByLabelText('Total signed gross change (₱)')).toBeNull();
  });
 });
