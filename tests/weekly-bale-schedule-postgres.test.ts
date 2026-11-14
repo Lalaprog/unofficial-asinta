@@ -142,6 +142,32 @@ suite('weekly Bale schedule on disposable PostgreSQL',()=>{
    expect((await admin.query("SELECT count(*)::int n FROM public.user_notifications WHERE advance_request_id=ANY($1::uuid[]) AND event_type='advance_request_rejected'",[[one,two]])).rows[0].n).toBe(2);
   }finally{await admin.query('DROP TRIGGER IF EXISTS test_fail_expiry ON public.advance_requests; DROP FUNCTION IF EXISTS public.test_fail_expiry()');}
  },15000);
+ it('catches up a 501-request outage backlog in bounded runs, including a locked request',async()=>{
+  // Synthetic local data only: submit through the actual Supervisor guards and
+  // let the real worker, audit and notification triggers run. No hosted rows.
+  await admin.query(`INSERT INTO public.workers(id,name,active) SELECT md5('bulk-bale-worker:'||n)::uuid,'Synthetic worker '||n,true FROM generate_series(1,501) n;
+   INSERT INTO public.project_worker_assignments(project_id,worker_id,active) SELECT '${site}',md5('bulk-bale-worker:'||n)::uuid,true FROM generate_series(1,501) n`);
+  await first.query(`SET ROLE authenticated;SET test.uid='${supervisor}';SET test.assurance='yes';SET test.clock='2026-11-15T04:00:00Z'`);
+  const requests=(await first.query<{id:string}>(`INSERT INTO public.advance_requests(worker_id,project_id,requested_amount,submitted_by)
+   SELECT md5('bulk-bale-worker:'||n)::uuid,$1,100.25,$2 FROM generate_series(1,501) n RETURNING id`,[site,supervisor])).rows.map(r=>r.id);
+  expect(requests).toHaveLength(501);
+  const advancesBefore=(await admin.query<{n:number}>('SELECT count(*)::int n FROM public.advances')).rows[0].n;
+  await first.query("RESET ROLE;SET test.uid='';SET test.clock='2026-11-18T04:00:00Z'");await second.query("RESET ROLE;SET test.uid='';SET test.clock='2026-11-18T04:00:00Z'");
+  await first.query('BEGIN');try{
+   await first.query('SELECT id FROM public.advance_requests WHERE id=$1 FOR UPDATE',[requests[0]]);
+   expect((await second.query('SELECT public.run_weekly_bale_expiry_job() result')).rows[0].result).toEqual({outcome:'completed',processed:500,remaining_due:1});
+   expect((await second.query('SELECT public.weekly_bale_external_monitor_healthy() healthy')).rows[0].healthy).toBe(false);
+   expect((await second.query('SELECT public.run_weekly_bale_expiry_job() result')).rows[0].result).toEqual({outcome:'completed',processed:0,remaining_due:1});
+   await first.query('COMMIT');
+   expect((await second.query('SELECT public.run_weekly_bale_expiry_job() result')).rows[0].result).toEqual({outcome:'completed',processed:1,remaining_due:0});
+   expect((await second.query('SELECT public.run_weekly_bale_expiry_job() result')).rows[0].result).toEqual({outcome:'completed',processed:0,remaining_due:0});
+   expect((await second.query('SELECT public.weekly_bale_external_monitor_healthy() healthy')).rows[0].healthy).toBe(true);
+   expect((await admin.query<{n:number}>("SELECT count(*)::int n FROM public.advance_requests WHERE id=ANY($1::uuid[]) AND status='rejected' AND auto_expired AND rejected_by IS NULL",[requests])).rows[0].n).toBe(501);
+   expect((await admin.query<{n:number}>("SELECT count(*)::int n FROM public.user_notifications WHERE advance_request_id=ANY($1::uuid[]) AND event_type='advance_request_rejected'",[requests])).rows[0].n).toBe(501);
+   expect((await admin.query<{n:number}>("SELECT count(*)::int n FROM public.audit_log WHERE record_id=ANY($1::uuid[]) AND action='update' AND actor_id IS NULL",[requests])).rows[0].n).toBe(501);
+   expect((await admin.query<{n:number}>('SELECT count(*)::int n FROM public.advances')).rows[0].n).toBe(advancesBefore);
+  }finally{await first.query('ROLLBACK');}
+ },60000);
  it('skips an in-flight request and materializes it only once after the lock clears',async()=>{
   await first.query(`SET test.uid='${supervisor}'; SET test.clock='2026-11-15T04:00:00Z'`);const request=await submit(first);
   await first.query("RESET ROLE; SET test.uid=''; SET test.clock='2026-11-18T04:00:00Z'");await second.query("RESET ROLE; SET test.uid=''; SET test.clock='2026-11-18T04:00:00Z'");
