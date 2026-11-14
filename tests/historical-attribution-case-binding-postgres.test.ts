@@ -46,6 +46,49 @@ suite('historical attribution case binding PostgreSQL races (held candidate)',()
   }finally{await first.query('ROLLBACK');await second.query('ROLLBACK');}
  },15000);
  it('rejects repeatable-read writers',async()=>{await first.query('BEGIN ISOLATION LEVEL REPEATABLE READ');try{await expect(record(first,id(3),reviewed)).rejects.toMatchObject({code:'P1002'});}finally{await first.query('ROLLBACK');}});
+ it('demonstrates that revoking execute does not cancel an old invocation already waiting inside the function',async()=>{
+  // This is an intentional vulnerability demonstration, not a cutover. The
+  // old call starts and passes execute permission before the ACL is revoked.
+  const w=(await first.query("SELECT public.historical_external_worker_review($1,'2024-11-17') v",[worker])).rows[0].v.worker;
+  await first.query("SELECT public.record_historical_external_worker_payroll($1,$2,'2024-11-17','2024-11-23',600,100,0,500,'Third ledger',$3,true)",[id(6),worker,w]);
+  const oldSource=(await first.query('SELECT public.historical_external_worker_lookup($1) v',[id(6)])).rows[0].v;
+  const pid=(await first.query('SELECT pg_backend_pid() pid')).rows[0].pid;
+  await admin.query('BEGIN');let oldCall:Promise<{code:string}>|undefined;
+  try{
+   await admin.query("SELECT pg_advisory_xact_lock(hashtextextended('historical-attribution-request:'||$1::text,0))",[id(7)]);
+   let done=false;
+   oldCall=first.query("SELECT public.record_historical_worker_attribution($1,$2,$3::jsonb,$4::jsonb,'Old caller',true)",[id(7),id(6),JSON.stringify(oldSource),JSON.stringify([{project_id:site,gross:'600.00'}])]).then(()=>({code:'success'}),(e:{code:string})=>({code:e.code})).finally(()=>{done=true;});
+   await pause();expect(done).toBe(false);
+   expect((await admin.query('SELECT cardinality(pg_blocking_pids($1)) > 0 blocked',[pid])).rows[0].blocked).toBe(true);
+   await admin.query('REVOKE EXECUTE ON FUNCTION public.record_historical_worker_attribution(uuid,uuid,jsonb,jsonb,text,boolean) FROM PUBLIC,anon,authenticated,service_role');
+   await admin.query('COMMIT');
+   expect((await oldCall).code).toBe('success');
+   expect((await admin.query('SELECT count(*)::int n FROM public.historical_worker_attributions WHERE request_id=$1',[id(7)])).rows[0].n).toBe(1);
+   expect((await admin.query('SELECT count(*)::int n FROM public.historical_attribution_case_bindings WHERE request_id=$1',[id(7)])).rows[0].n).toBe(0);
+  }finally{await admin.query('ROLLBACK');if(oldCall)await oldCall;}
+ },15000);
+ it('rejects the same in-flight old insert after installing the held insert barrier',async()=>{
+  // Restore only the synthetic old grant so the call can start before the
+  // barrier transaction; never run this against a shared database.
+  await admin.query('GRANT EXECUTE ON FUNCTION public.record_historical_worker_attribution(uuid,uuid,jsonb,jsonb,text,boolean) TO authenticated');
+  const w=(await first.query("SELECT public.historical_external_worker_review($1,'2024-11-24') v",[worker])).rows[0].v.worker;
+  await first.query("SELECT public.record_historical_external_worker_payroll($1,$2,'2024-11-24','2024-11-30',600,100,0,500,'Fourth ledger',$3,true)",[id(8),worker,w]);
+  const oldSource=(await first.query('SELECT public.historical_external_worker_lookup($1) v',[id(8)])).rows[0].v;
+  const pid=(await first.query('SELECT pg_backend_pid() pid')).rows[0].pid;
+  await admin.query('BEGIN');let oldCall:Promise<{code:string}>|undefined;
+  try{
+   await admin.query("SELECT pg_advisory_xact_lock(hashtextextended('historical-attribution-request:'||$1::text,0))",[id(9)]);
+   let done=false;
+   oldCall=first.query("SELECT public.record_historical_worker_attribution($1,$2,$3::jsonb,$4::jsonb,'Old caller',true)",[id(9),id(8),JSON.stringify(oldSource),JSON.stringify([{project_id:site,gross:'600.00'}])]).then(()=>({code:'success'}),(e:{code:string})=>({code:e.code})).finally(()=>{done=true;});
+   await pause();expect(done).toBe(false);
+   expect((await admin.query('SELECT cardinality(pg_blocking_pids($1)) > 0 blocked',[pid])).rows[0].blocked).toBe(true);
+   await admin.query(`SET LOCAL app.historical_case_barrier_candidate='synthetic-only';${sql('historical_attribution_write_barrier')}`);
+   await admin.query('COMMIT');
+   expect((await oldCall).code).toBe('42501');
+   expect((await admin.query('SELECT count(*)::int n FROM public.historical_worker_attributions WHERE request_id=$1',[id(9)])).rows[0].n).toBe(0);
+   expect((await admin.query('SELECT count(*)::int n FROM public.historical_attribution_case_bindings WHERE request_id=$1',[id(9)])).rows[0].n).toBe(0);
+  }finally{await admin.query('ROLLBACK');if(oldCall)await oldCall;}
+ },15000);
  it('replays and writes through the replacement after a direct old-writer revoke',async()=>{
   // Synthetic ACL change only, after the race tests. This does not drain old
   // invocations or test grants inherited through other roles on a target.

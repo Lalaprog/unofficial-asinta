@@ -83,6 +83,30 @@ describe('historical attribution case-binding held candidate',()=>{
    expect((await db.query<{v:{found:boolean}}>('SELECT public.historical_attribution_case_binding($1) v',[id(1)])).rows[0].v).toEqual({found:false});
   }finally{await db.close();}
  },30000);
+ it('requires the separate synthetic hold before installing the write barrier',async()=>{
+  const {db}=await setup();try{await db.exec('RESET ROLE');await expect(db.exec(`BEGIN;${sql('historical_attribution_write_barrier')} COMMIT;`)).rejects.toThrow(/synthetic rehearsal only/);await db.exec('ROLLBACK');expect((await db.query<{v:string|null}>("SELECT to_regclass('public.historical_attribution_write_permits')::text v")).rows[0].v).toBeNull();}finally{await db.close();}
+ },30000);
+ it('rolls back the write barrier and old-RPC revoke if a permit grant is inherited',async()=>{
+  const {db}=await setup();try{
+   await db.exec('RESET ROLE;CREATE ROLE inherited_barrier_reader;GRANT inherited_barrier_reader TO service_role;ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT SELECT ON TABLES TO inherited_barrier_reader');
+   await expect(db.exec(`BEGIN;SET LOCAL app.historical_case_barrier_candidate='synthetic-only';${sql('historical_attribution_write_barrier')} COMMIT;`)).rejects.toThrow(/Unexpected historical barrier privilege/);
+   await db.exec('ROLLBACK');expect((await db.query<{v:string|null}>("SELECT to_regclass('public.historical_attribution_write_permits')::text v")).rows[0].v).toBeNull();
+   expect((await db.query<{v:boolean}>("SELECT has_function_privilege('authenticated','public.record_historical_worker_attribution(uuid,uuid,jsonb,jsonb,text,boolean)','EXECUTE') v")).rows[0].v).toBe(true);
+  }finally{await db.close();}
+ },30000);
+ it('rejects direct old writes, allows the bound writer and leaves no permit after commit or failure',async()=>{
+  const {db,source,cases,run}=await setup();try{
+   const reviewed=await cases();await db.exec(`RESET ROLE;BEGIN;SET LOCAL app.historical_case_barrier_candidate='synthetic-only';${sql('historical_attribution_write_barrier')} COMMIT;SET ROLE authenticated`);
+   await expect(db.query(original,[id(2),id(1),JSON.stringify(source),JSON.stringify(split),'Reviewed',true])).rejects.toThrow(/permission denied/);
+   await expect(db.query('SELECT * FROM public.historical_attribution_write_permits')).rejects.toThrow(/permission denied/);
+   await expect(run(id(2),reviewed,{note:''})).rejects.toThrow();
+   expect((await run(id(2),reviewed)).rows[0].v.replayed).toBe(false);expect((await run(id(2),reviewed)).rows[0].v.replayed).toBe(true);
+   await db.exec('RESET ROLE');
+   expect((await db.query<{n:number}>('SELECT count(*)::int n FROM public.historical_attribution_write_permits')).rows[0].n).toBe(0);
+   expect((await db.query<{n:number}>('SELECT count(*)::int n FROM public.historical_attribution_case_bindings')).rows[0].n).toBe(1);
+   await expect(db.query("INSERT INTO public.historical_worker_attributions(request_id,source_id,source_snapshot,split,note,actor_id) SELECT $1,source_id,source_snapshot,split,note,actor_id FROM public.historical_worker_attributions LIMIT 1",[id(3)])).rejects.toThrow(/requires reviewed case binding/);
+  }finally{await db.close();}
+ },30000);
  it('denies unauthorized actors and direct evidence access',async()=>{
   const {db,cases,run}=await setup();try{
    const reviewed=await cases();await expect(db.query('SELECT * FROM public.historical_attribution_case_bindings')).rejects.toThrow(/permission denied/);
