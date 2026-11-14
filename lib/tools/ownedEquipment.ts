@@ -1,3 +1,4 @@
+import {developmentFinanceCutoverEnabled} from '@/lib/finance/featureAvailability';
 export type EquipmentProject={id:string;name:string};
 export type EquipmentSite={project_id:string;name:string;quantity:number};
 export type EquipmentItem={id:string;name:string;stock:number;condition:'excellent'|'good'|'fair'|'needs_repair'|'damaged';legacy_project_id:string|null;managed:boolean;sites:EquipmentSite[]};
@@ -8,7 +9,7 @@ const isId=(v:unknown):v is string=>typeof v==='string'&&uuid.test(v);
 const str=(v:unknown):v is string=>typeof v==='string'&&!!v.trim();
 const integer=(v:unknown):v is number=>typeof v==='number'&&Number.isInteger(v)&&v>=0&&v<=2147483647;
 const obj=(v:unknown):v is Record<string,unknown>=>!!v&&typeof v==='object'&&!Array.isArray(v);
-export function ownedEquipmentPreviewEnabled(){return process.env.NEXT_PUBLIC_OWNED_EQUIPMENT_PREVIEW==='true';}
+export function ownedEquipmentPreviewEnabled(){return (process.env.NEXT_PUBLIC_OWNED_EQUIPMENT_PREVIEW==='true') || developmentFinanceCutoverEnabled();}
 export function parseEquipmentSnapshot(raw:unknown):EquipmentSnapshot{
  if(!obj(raw)||!Array.isArray(raw.items)||raw.items.length>2000||!Array.isArray(raw.projects)||raw.projects.length>2000)throw new Error('Invalid equipment snapshot');
  const projectIds=new Set<string>();

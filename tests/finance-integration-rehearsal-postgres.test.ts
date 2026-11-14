@@ -367,6 +367,77 @@ suite('coordinated finance integration rehearsal, synthetic PostgreSQL only',()=
    for(const signature of legacySignatures)expect((await db.query("SELECT has_function_privilege('anon',$1,'EXECUTE') allowed",[signature])).rows[0].allowed).toBe(true);
    expect((await db.query("SELECT to_regclass('public.owned_equipment_allocations') IS NULL absent,to_regclass('public.historical_worker_attributions') IS NULL attribution_absent")).rows[0]).toEqual({absent:true,attribution_absent:true});
    expect((await db.query("SELECT to_regclass('public.weekly_worker_draft_sources') IS NULL absent,to_regprocedure('public.weekly_worker_preview_base_inputs(date)') IS NULL wrapper_absent,to_regprocedure('public.weekly_worker_preview_inputs(date)') IS NOT NULL base_present,to_regprocedure('public.weekly_bale_external_monitor_healthy()') IS NULL monitor_absent")).rows[0]).toEqual({absent:true,wrapper_absent:true,base_present:true,monitor_absent:true});
+   // Exercise the actual ordered development cutover candidate against the
+   // two already-staged migrations, independently of the rollback generator.
+   // This database is still synthetic: the enclosing transaction is rolled back.
+   const stagedCutover=execFileSync('node',['scripts/build-development-finance-cutover.mjs'],{encoding:'utf8'});
+   expect(stagedCutover).toBe(readFileSync('supabase/release/development-finance-cutover.sql','utf8'));
+   if(stagedCutover.includes('$cutover_source$'))throw Error('Unexpected SQL quote delimiter');
+   // Exercise the exact large SQL as a single SQL statement as well; the
+   // managed migration interface may submit the verified payload in one call.
+   const singleStatement=`DO $outer$ BEGIN EXECUTE $cutover_source$${stagedCutover}$cutover_source$; END $outer$;`;
+   const prepareStaged=async()=>{
+    // Model the observed empty development business state, not its users.
+    await db.query('DELETE FROM public.payroll; DELETE FROM public.attendance; DELETE FROM public.expenses; DELETE FROM public.project_supervisors; DELETE FROM public.tools; DELETE FROM public.workers; DELETE FROM public.projects');
+    await db.query(readFileSync('supabase/drafts/legacy_bale_request_anon_acl.sql','utf8'));
+    await db.query(readFileSync('supabase/applied_development/staged_attendance_time_foundation.sql','utf8'));
+    await db.query(readFileSync('supabase/applied_development/staged_attendance_time_preview.sql','utf8'));
+   };
+   // A collision near the end must roll back the entire coordinated installation.
+   await db.query('BEGIN'); await prepareStaged();
+   await db.query('CREATE TABLE public.confirmed_rental_expenses(id uuid)');
+   await expect(db.query(stagedCutover)).rejects.toThrow(/already exist|collision/i);
+   await db.query('ROLLBACK'); expect(await snapshot()).toEqual(before);
+   expect((await db.query("SELECT to_regclass('public.worker_allowances') IS NULL absent,to_regclass('public.attendance_time_details') IS NULL staged_absent")).rows[0]).toEqual({absent:true,staged_absent:true});
+   await db.query('BEGIN'); await prepareStaged();
+   await db.query('SAVEPOINT unexpected_business_data');
+   await db.query("INSERT INTO public.projects(id,name) VALUES($1,'Synthetic drift')",[site]);
+   await expect(db.query(stagedCutover)).rejects.toThrow(/Development business records exist/);
+   await db.query('ROLLBACK TO SAVEPOINT unexpected_business_data; RELEASE SAVEPOINT unexpected_business_data');
+   await db.query('SAVEPOINT changed_time_grant');
+   await db.query('GRANT EXECUTE ON FUNCTION public.record_attendance_time_detail(uuid,uuid,timestamptz,numeric,numeric,text) TO authenticated');
+   await expect(db.query(stagedCutover)).rejects.toThrow(/Staged time writer changed or enabled/);
+   await db.query('ROLLBACK TO SAVEPOINT changed_time_grant; RELEASE SAVEPOINT changed_time_grant');
+   await db.query(singleStatement);
+   // Synthetic records only, in this local transaction, after installation.
+   await db.query("INSERT INTO public.projects(id,name) VALUES($1,'Site One'),('00000000-0000-0000-0000-000000000005','Site Two')",[site]);
+   await db.query("INSERT INTO public.workers(id,name,position,contact_number,pay_rate,pay_rate_type,active) VALUES($1,'Test Worker','Mason','none',600,'daily',true)",[worker]);
+   await db.query('INSERT INTO public.project_supervisors(project_id,supervisor_id) VALUES($1,$2)',[site,supervisor]);
+   expect((await db.query("SELECT has_function_privilege('authenticated','public.record_attendance_time_detail(uuid,uuid,timestamptz,numeric,numeric,text)','EXECUTE') allowed")).rows[0].allowed).toBe(true);
+   expect((await db.query("SELECT count(*)::int n FROM pg_trigger WHERE tgrelid IN ('public.payroll'::regclass,'public.advances'::regclass) AND tgname IN ('require_weekly_worker_source_on_insert','require_weekly_bale_source_on_insert') AND tgenabled='O'")).rows[0].n).toBe(2);
+   await db.query("CREATE OR REPLACE FUNCTION public.weekly_bale_clock() RETURNS timestamptz LANGUAGE sql VOLATILE SET search_path='' AS $$SELECT current_setting('test.clock')::timestamptz$$");
+   await db.query(`SET LOCAL test.uid='${founder}'; SET LOCAL test.assurance='yes'; SET LOCAL test.clock='2024-08-04T04:00:00Z'`);
+   await db.query('SELECT public.set_project_worker_guarded($1,$2,$3,true)',[founder,site,worker]);
+   await db.query("INSERT INTO public.attendance(id,worker_id,project_id,date,status,hours_worked,submitted_at) VALUES($1,$2,$3,'2024-08-04','present',8,'2024-08-04T08:00:00Z')",[attendance,worker,site]);
+   await db.query(`SET LOCAL ROLE authenticated; SET LOCAL test.uid='${supervisor}'`);
+   const cutoverRequest=(await db.query('INSERT INTO public.advance_requests(worker_id,project_id,requested_amount,submitted_by) VALUES($1,$2,100.25,$3) RETURNING id',[worker,site,supervisor])).rows[0].id;
+   await db.query(`SET LOCAL test.uid='${founder}'; SET LOCAL test.clock='2024-08-06T04:00:00Z'`);
+   await db.query("SELECT public.review_advance_request($1,'approve')",[cutoverRequest]);
+   await db.query(`SET LOCAL test.uid='${supervisor}'; SET LOCAL test.clock='2024-08-07T04:00:00Z'`);
+   expect((await db.query('SELECT public.record_weekly_bale_release($1) v',[cutoverRequest])).rows[0].v.outcome).toBe('updated');
+   await db.query(`SET LOCAL test.uid='${founder}'`);
+   await db.query("SELECT public.record_attendance_time_detail('70000000-0000-4000-8000-000000000003',$1,'2024-08-04T08:00:00Z',8,2,'Synthetic overtime')",[attendance]);
+   expect((await db.query("SELECT public.create_weekly_worker_draft($1,$2,'2024-08-04') v",[voucher,worker])).rows[0].v.calculation).toMatchObject({gross:'750.00',bale:'100.25',net:'649.75'});
+   await db.query('SET CONSTRAINTS require_weekly_worker_source_on_insert,require_weekly_bale_source_on_insert IMMEDIATE');
+   await db.query('SELECT public.approve_weekly_worker_draft($1,0)',[voucher]);
+   expect((await db.query("SELECT public.record_weekly_worker_payment($1,'2024-08-10',0) v",[voucher])).rows[0].v.outcome).toBe('updated');
+   expect((await db.query('SELECT public.project_paid_worker_evidence($1) v',[site])).rows[0].v.items).toEqual([expect.objectContaining({payroll_id:voucher,gross:'750.00'})]);
+   await db.query('RESET ROLE');
+   await db.query("INSERT INTO public.workers(id,name,position,contact_number,pay_rate,pay_rate_type,active) VALUES($1,'Supervisor','Supervisor','none',600,'daily',true)",[supervisor]);
+   await db.query(`SET LOCAL ROLE authenticated; SET LOCAL test.uid='${supervisor}'`);
+   await db.query("SELECT public.submit_supervisor_day('70000000-0000-4000-8000-000000000005','2024-08-04','present')");
+   await db.query("SELECT public.submit_supervisor_leave('70000000-0000-4000-8000-000000000013','2024-08-05','2024-08-05','emergency','Synthetic leave')");
+   await db.query(`SET LOCAL test.uid='${founder}'`);
+   await db.query("SELECT public.review_supervisor_day('70000000-0000-4000-8000-000000000005','approved')");
+   await db.query("SELECT public.review_supervisor_leave('70000000-0000-4000-8000-000000000013','approved')");
+   const stagedPlan=(await db.query("SELECT public.supervisor_period_prepare($1,'2024-08-01') v",[supervisor])).rows[0].v;
+   const stagedSupervisorVoucher='70000000-0000-4000-8000-000000000006';
+   await db.query("SELECT public.create_supervisor_period_draft($1,$2,'2024-08-01',600,$3)",[stagedSupervisorVoucher,supervisor,JSON.stringify(stagedPlan)]);
+   await db.query("SELECT public.transition_supervisor_period_payroll('70000000-0000-4000-8000-000000000007',$1,'approved',NULL,true)",[stagedSupervisorVoucher]);
+   await db.query("SELECT public.transition_supervisor_period_payroll('70000000-0000-4000-8000-000000000008',$1,'recorded_paid','2024-08-15',true)",[stagedSupervisorVoucher]);
+   expect((await db.query("SELECT public.supervisor_paid_company_evidence('2024-08-01','2024-08-15') v")).rows[0].v).toMatchObject({count:1,total:'600.00'});
+   await db.query('RESET ROLE; ROLLBACK');
+   expect(await snapshot()).toEqual(before);
   }finally{await db.query('ROLLBACK').catch(()=>{});await db.end();}
- },60000);
+ },90000);
 });

@@ -1,4 +1,5 @@
-export function assignmentHistoryPreviewEnabled():boolean{return process.env.NEXT_PUBLIC_ASSIGNMENT_HISTORY_PREVIEW==='true';}
+import {developmentFinanceCutoverEnabled} from '@/lib/finance/featureAvailability';
+export function assignmentHistoryPreviewEnabled():boolean{return (process.env.NEXT_PUBLIC_ASSIGNMENT_HISTORY_PREVIEW==='true') || developmentFinanceCutoverEnabled();}
 export type AssignmentEvent={id:string;projectId:string;projectName:string;type:'baseline_active'|'baseline_inactive'|'assigned'|'unassigned';occurredAt:string;actorId:string|null};
 export function parseAssignmentHistory(raw:unknown,worker:string,cursor?:AssignmentEvent):{items:AssignmentEvent[];hasMore:boolean}{
  if(!raw||typeof raw!=='object')throw new Error('Invalid history');const page=raw as {worker_id?:unknown;has_more?:unknown;items?:unknown};

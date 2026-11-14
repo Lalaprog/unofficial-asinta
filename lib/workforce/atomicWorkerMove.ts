@@ -1,7 +1,8 @@
+import {developmentFinanceCutoverEnabled} from '@/lib/finance/featureAvailability';
 export type WorkerMoveAttempt = {requestId:string;actorId:string;workerId:string;fromProject:string;toProject:string};
 const uuid=/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 export function workerMovePreviewEnabled():boolean {
- return process.env.NEXT_PUBLIC_ASSIGNMENT_HISTORY_PREVIEW==='true' && process.env.NEXT_PUBLIC_ATOMIC_WORKER_MOVE_PREVIEW==='true';
+ return (process.env.NEXT_PUBLIC_ASSIGNMENT_HISTORY_PREVIEW==='true' && process.env.NEXT_PUBLIC_ATOMIC_WORKER_MOVE_PREVIEW==='true') || developmentFinanceCutoverEnabled();
 }
 export function parseWorkerMoveAttempt(raw:unknown,actorId:string,fromProject:string):WorkerMoveAttempt {
  if(!raw || typeof raw!=='object' || Array.isArray(raw))throw Error('Invalid move retry');
