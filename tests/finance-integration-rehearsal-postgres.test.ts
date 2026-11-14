@@ -113,6 +113,8 @@ suite('coordinated finance integration rehearsal, synthetic PostgreSQL only',()=
    await db.query(readFileSync('supabase/drafts/project_cost_correction_attribution.sql','utf8'));
    // Separate candidate: validated original-site context only; no cross-site posting.
    await db.query(readFileSync('supabase/drafts/project_cost_correction_original_context.sql','utf8'));
+   // Separate unsaved all-site illustration; it never posts to project totals.
+   await db.query(readFileSync('supabase/drafts/project_cost_cross_site_preview.sql','utf8'));
    await db.query(readFileSync('supabase/drafts/project_cost_correction_inventory.sql','utf8'));
    await db.query(readFileSync('supabase/drafts/project_cost_corrected_preview.sql','utf8'));
    await db.query(readFileSync('supabase/drafts/project_cost_corrected_review_ledger.sql','utf8'));
@@ -277,6 +279,15 @@ suite('coordinated finance integration rehearsal, synthetic PostgreSQL only',()=
     const evidence=(await db.query('SELECT public.project_cost_correction_attribution($1,$2,NULL) v',[kind,caseId])).rows[0].v;
     await db.query("SELECT public.record_project_cost_correction_attribution($1,$2,$3,0,$4::jsonb,$5::numeric,$6::jsonb,'Synthetic correction evidence',true)",[request,kind,caseId,JSON.stringify(evidence.case),gross,JSON.stringify(split)]);
    }
+   // Reallocate part of one original voucher into a site without an original.
+   // All writes below are synthetic attribution revisions inside a savepoint;
+   // the illustration itself is read-only and does not change project reviews.
+   await db.query('SAVEPOINT cross_site_preview');
+   const initialAttribution=(await db.query("SELECT public.project_cost_correction_attribution('voucher',$1,NULL) v",[voucherCase])).rows[0].v;
+   await db.query("SELECT public.record_project_cost_correction_attribution($1,'voucher',$2,1,$3::jsonb,0,$4::jsonb,'Synthetic site reallocation',true)",['70000000-0000-4000-8000-000000000092',voucherCase,JSON.stringify(initialAttribution.case),JSON.stringify([{project_id:site,gross_change:'-100.25'},{project_id:siteTwo,gross_change:'100.25'}])]);
+   const crossEvidence=(await db.query("SELECT public.project_cost_cross_site_evidence('voucher',$1) v",[voucherCase])).rows[0].v;
+   expect((await db.query("SELECT public.project_cost_cross_site_preview('voucher',$1,$2::jsonb,true) v",[voucherCase,JSON.stringify(crossEvidence)])).rows[0].v).toMatchObject({original_gross:'800.25',gross_change:'0.00',corrected_gross:'800.25',incomplete:true,sites:[{project_id:site,original_gross:'800.25',gross_change:'-100.25',corrected_gross:'700.00'},{project_id:siteTwo,original_gross:'0.00',gross_change:'100.25',corrected_gross:'100.25'}]});
+   await db.query('ROLLBACK TO SAVEPOINT cross_site_preview; RELEASE SAVEPOINT cross_site_preview');
    correctionInventory=(await db.query('SELECT public.project_cost_correction_inventory($1) v',[site])).rows[0].v;
    expect(correctionInventory.corrections).toEqual(expect.arrayContaining([
     expect.objectContaining({kind:'voucher',site_gross_change:'0.00',evidence:expect.objectContaining({attribution:expect.objectContaining({case_changed:false})})}),
