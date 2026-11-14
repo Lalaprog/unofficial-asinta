@@ -48,4 +48,17 @@ suite('corrected review concurrency, synthetic PostgreSQL',()=>{
  it('rejects a Founder demotion while waiting on the actor row',async()=>{const s=await snap();await admin.query('BEGIN');try{
   await admin.query("UPDATE public.users SET role='supervisor' WHERE id=$1",[founder]);const pending=call(b,id(5),2,s).then(()=>null,e=>e);await waitForLock(b);await admin.query('COMMIT');expect(await pending).toMatchObject({code:'42501'});
  }finally{await admin.query('ROLLBACK');await admin.query("UPDATE public.users SET role='founder' WHERE id=$1",[founder]);}},15000);
+ it('reports changed evidence when a source commits after capture but before the review commits',async()=>{
+  // This deliberately models an unlocked source writer. Saving a statement
+  // snapshot is not a guarantee that the source is unchanged at commit.
+  await admin.query("UPDATE public.test_inventory SET value=jsonb_set(value,'{historical_review,base,expenses}','[]'::jsonb)");
+  const s=await snap();await a.query('BEGIN');try{
+   expect((await call(a,id(6),2,s)).rows[0].v).toMatchObject({revision:3,replayed:false});
+   await admin.query("UPDATE public.test_inventory SET value=jsonb_set(value,'{historical_review,base,expenses}', '[{\"id\":\"94000000-0000-4000-8000-000000000021\",\"amount\":\"2.00\"}]'::jsonb)");
+   await a.query('COMMIT');
+  }finally{await a.query('ROLLBACK');}
+  const review=(await b.query<{v:{revision:number;freshness:string}}>('SELECT public.project_cost_corrected_review($1,3) v',[site])).rows[0].v;
+  expect(review).toMatchObject({revision:3,freshness:'changed'});
+  expect((await admin.query('SELECT count(*)::int n FROM public.project_cost_corrected_reviews')).rows[0].n).toBe(3);
+ },15000);
 });
