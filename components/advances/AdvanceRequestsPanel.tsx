@@ -5,6 +5,7 @@ import { useRouter, useSearchParams } from 'next/navigation';
 import { useAuth } from '@/lib/auth/authContext';
 import { useDataStore } from '@/lib/data/store';
 import { useBaleProjectWorkers } from '@/lib/attendance/useBaleProjectWorkers';
+import { useBaleRequestSubmissionGuard } from '@/lib/attendance/useBaleRequestSubmissionGuard';
 import { useWeeklyBaleStatuses } from '@/lib/attendance/useWeeklyBaleStatuses';
 import { weeklyBaleExpiryHealthPreviewEnabled, weeklyBaleReleasePreviewEnabled, weeklyWorkerCutoverMode } from '@/lib/finance/featureAvailability';
 import { WeeklyBaleExpiryHealth } from '@/components/advances/WeeklyBaleExpiryHealth';
@@ -115,6 +116,12 @@ export function AdvanceRequestsPanel() {
   const team = useBaleProjectWorkers(user?.id, selectedProjectId, isSupervisor && requestModalOpen);
   const weeklyMode = weeklyBaleReleasePreviewEnabled();
   const cutoverMode = weeklyWorkerCutoverMode();
+  const submissionGuard = useBaleRequestSubmissionGuard(user?.id, weeklyMode && isSupervisor);
+  const submissionScope = JSON.stringify([user?.id, isSupervisor, weeklyMode]);
+  const activeSubmissionScope = React.useRef(submissionScope);
+  activeSubmissionScope.current = submissionScope;
+  const [reviewedUncertainSubmission, setReviewedUncertainSubmission] = useState(false);
+  useEffect(() => { setReviewedUncertainSubmission(false); }, [user?.id, weeklyMode]);
   const weeklyStatuses = useWeeklyBaleStatuses(weeklyMode, user?.id, isFounder ? 'founder' : isSupervisor ? 'supervisor' : 'other', isFounder ? advanceRequests : advanceRequests.filter(r => r.submitted_by === user?.id));
   const statusFor = (request: AdvanceRequest) => weeklyStatuses.data?.items.find(item => item.id === request.id && item.stored_status === request.status);
   const canReview = (request: AdvanceRequest) => request.status === 'pending_approval' && (weeklyMode ? statusFor(request)?.can_review === true : !cutoverMode);
@@ -324,8 +331,10 @@ export function AdvanceRequestsPanel() {
   const handleSubmitRequest = async (event: React.FormEvent) => {
     event.preventDefault();
     const amount = Number(requestedAmount);
-    if ((cutoverMode && !weeklyMode) || submitLock.current || team.status !== 'ready' || !activeWorkers.some((worker) => worker.id === selectedWorkerId) || !selectedProjectId || !Number.isFinite(amount) || amount <= 0) return;
+    if ((cutoverMode && !weeklyMode) || (weeklyMode && submissionGuard.status !== 'ready') || submitLock.current || team.status !== 'ready' || !activeWorkers.some((worker) => worker.id === selectedWorkerId) || !selectedProjectId || !Number.isFinite(amount) || amount <= 0) return;
     submitLock.current = true;
+    const marker = weeklyMode ? submissionGuard.begin() : null;
+    if (weeklyMode && !marker) { submitLock.current = false; return; }
     setIsSubmitting(true);
     try {
       const created = await createAdvanceRequest({
@@ -333,10 +342,20 @@ export function AdvanceRequestsPanel() {
         project_id: selectedProjectId,
         requested_amount: amount,
       });
-      if (created) setRequestModalOpen(false);
-      else showToast('error', 'Request submission not confirmed. Check the request list before retrying.');
+      const verified = created && (!weeklyMode || (typeof created.id === 'string' && !!created.id && created.worker_id === selectedWorkerId && created.project_id === selectedProjectId && created.submitted_by === user?.id && created.requested_amount === Math.round(amount * 100) / 100));
+      const confirmed = verified && (!weeklyMode || (marker && submissionGuard.confirmed(marker)));
+      if (activeSubmissionScope.current === submissionScope) {
+        if (confirmed) setRequestModalOpen(false);
+        else {
+          if (weeklyMode) setRequestModalOpen(false);
+          showToast('error', 'Request submission not confirmed. Check the request list before retrying.');
+        }
+      }
     } catch {
-      showToast('error', 'Request submission not confirmed. Check the request list before retrying.');
+      if (activeSubmissionScope.current === submissionScope) {
+        if (weeklyMode) setRequestModalOpen(false);
+        showToast('error', 'Request submission not confirmed. Check the request list before retrying.');
+      }
     } finally {
       submitLock.current = false;
       setIsSubmitting(false);
@@ -491,6 +510,13 @@ export function AdvanceRequestsPanel() {
   return (
     <div className="space-y-4">
       {cutoverMode && !weeklyMode && <p role="alert" className="rounded-xl bg-status-warning-bg p-3 text-xs text-ink-secondary">Weekly Bale controls are not enabled. Requests and decisions are held until the configuration is reviewed.</p>}
+      {weeklyMode && isSupervisor && submissionGuard.status === 'pending' && <section role="alert" className="space-y-2 rounded-xl bg-status-warning-bg p-3 text-xs text-ink-secondary">
+        <p>A Bale request may have been sent, but its result was not confirmed. Refresh and check the request list with the Founder before submitting another. An empty list does not prove the request failed; it may still be processing. Do not give or request money again based on this warning.</p>
+        <p>This warning is only in this browser tab. Closing it or clearing storage may erase the warning; another tab or device can still send a request.</p>
+        <label className="flex items-start gap-2"><input type="checkbox" checked={reviewedUncertainSubmission} onChange={e=>setReviewedUncertainSubmission(e.target.checked)} />I investigated the earlier request and understand that clearing this warning does not cancel it.</label>
+        <Button type="button" size="sm" variant="secondary" disabled={!reviewedUncertainSubmission || isSubmitting} onClick={()=>{if(submissionGuard.clearAfterReview())setReviewedUncertainSubmission(false);}}>Clear warning after review</Button>
+      </section>}
+      {weeklyMode && isSupervisor && submissionGuard.status === 'unavailable' && <p role="alert" className="rounded-xl bg-status-warning-bg p-3 text-xs text-ink-secondary">This tab cannot safely check its request warning. New requests are held; investigate the request list and restore browser storage before trying again.</p>}
       {isFounder && user?.id && weeklyBaleExpiryHealthPreviewEnabled() && <WeeklyBaleExpiryHealth userId={user.id} />}
       {weeklyMode && <div className="rounded-xl border border-surface-border bg-white p-3 text-xs text-ink-secondary">
         <p>Weekly decision status is checked against the server. Existing list totals and filters reflect stored statuses, which may lag automatic expiry. Release is handled in the separate experimental panel.</p>
@@ -530,7 +556,7 @@ export function AdvanceRequestsPanel() {
             size="sm"
             className="w-full shrink-0 sm:w-auto"
             onClick={openRequestModal}
-            disabled={accessibleProjects.length === 0}
+            disabled={accessibleProjects.length === 0 || (weeklyMode && submissionGuard.status !== 'ready')}
           >
             New Bale Request
           </Button>
@@ -979,15 +1005,16 @@ export function AdvanceRequestsPanel() {
             required
           />
 
+          {weeklyMode && submissionGuard.status !== 'ready' && <p role="alert">This request cannot be sent while the earlier submission or browser storage is unconfirmed. Close this form and investigate the warning.</p>}
           <p className="rounded-lg bg-surface-inset px-3 py-2 text-[11px] leading-relaxed text-ink-secondary">
-            This submits a request only. It does not add an issued advance or change payroll until the Founder confirms payment.
+            This submits a request only. It does not release money. An approved release must be separately recorded by an authorized person.
           </p>
 
           <div className="flex flex-col-reverse gap-2 pt-2 sm:flex-row sm:justify-end">
             <Button type="button" variant="secondary" onClick={() => setRequestModalOpen(false)} disabled={isSubmitting}>
               Cancel
             </Button>
-            <Button type="submit" variant="primary" isLoading={isSubmitting} disabled={(cutoverMode && !weeklyMode) || team.status !== 'ready' || !activeWorkers.some((worker) => worker.id === selectedWorkerId)}>
+            <Button type="submit" variant="primary" isLoading={isSubmitting} disabled={(cutoverMode && !weeklyMode) || (weeklyMode && submissionGuard.status !== 'ready') || team.status !== 'ready' || !activeWorkers.some((worker) => worker.id === selectedWorkerId)}>
               {isSubmitting ? 'Sending request…' : 'Send to Founder'}
             </Button>
           </div>

@@ -945,10 +945,11 @@ export const DataStoreProvider: React.FC<{ children: React.ReactNode }> = ({ chi
         .single()
     );
     const mapped = row ? mapAdvanceRequest(row) : null;
-    if (mapped) {
-      setAdvanceRequests((prev) => [mapped, ...prev]);
-      showToast('success', 'Bale request sent to the Founder for approval.');
-    }
+    if (!mapped || typeof mapped.id !== 'string' || !mapped.id || mapped.worker_id !== data.worker_id ||
+        mapped.project_id !== data.project_id || mapped.submitted_by !== user.id ||
+        mapped.requested_amount !== round2(data.requested_amount)) return null;
+    setAdvanceRequests((prev) => [mapped, ...prev]);
+    showToast('success', 'Bale request sent to the Founder for approval.');
     return mapped;
   };
 
