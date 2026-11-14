@@ -10,6 +10,7 @@ import {estimateProjectCost,parseCostSnapshot} from '@/lib/projects/projectCostR
 import {parseEquipmentSnapshot} from '@/lib/tools/ownedEquipment';
 import {parseProjectEquipment} from '@/lib/tools/projectEquipment';
 import {parseHistoricalProjectAttributions} from '@/lib/projects/historicalWorkerAttributions';
+import {parseCorrectedInventory,calculateCorrected,verifyCorrectedTotals,parseCorrectedSaved} from '@/lib/projects/correctedCostReview';
 import {parseAttributionProjects,parseAttributionSource,parseAttributionStatus} from '@/lib/payroll/historicalAttribution';
 import {estimateHistoricalProjectCost,parseHistoricalCostSnapshot} from '@/lib/projects/projectCostHistoricalReview';
 import {parseSavedReview} from '@/lib/projects/projectCostReview';
@@ -272,13 +273,17 @@ suite('coordinated finance integration rehearsal, synthetic PostgreSQL only',()=
     expect.objectContaining({kind:'voucher',site_gross_change:'0.00',evidence:expect.objectContaining({attribution:expect.objectContaining({case_changed:false})})}),
     expect.objectContaining({kind:'external_worker',site_gross_change:'-20.00',evidence:expect.objectContaining({attribution:expect.objectContaining({case_changed:false})})})]));
    const correctedChoices={expenses:reviewChoices,historical:{[attributionId]:{decision:'include',reason:null}},corrections:{[`voucher:${voucherCase}`]:{decision:'include',reason:'No gross change'},[`external_worker:${historicalCase}`]:{decision:'include',reason:'Reviewed original and settlement'}}};
+   const parsedInventory=parseCorrectedInventory(correctionInventory,site),localCorrected=calculateCorrected(parsedInventory,correctedChoices);
    const adjusted=(await db.query('SELECT public.project_cost_corrected_preview($1,$2::jsonb,$3::jsonb,true) v',[site,JSON.stringify(correctionInventory),JSON.stringify(correctedChoices)])).rows[0].v;
    expect(adjusted).toMatchObject({included_expenses:'1012.35',paid_gross:'800.25',historical_gross:'400.25',correction_gross:'-20.00',incomplete_total:'2192.85',excluded_cases:0,incomplete:true});
+   expect(verifyCorrectedTotals(adjusted,site,localCorrected.totals)).toMatchObject({correction:-2000n,total:219285n});
    const correctedArgs=['70000000-0000-4000-8000-000000000097',site,0,JSON.stringify(correctionInventory),JSON.stringify(correctedChoices),'Synthetic corrected review'];
    const recordCorrected='SELECT public.record_project_cost_corrected_review($1,$2,$3,$4::jsonb,$5::jsonb,$6,true) v';
    expect((await db.query(recordCorrected,correctedArgs)).rows[0].v).toMatchObject({revision:1,replayed:false});
    expect((await db.query(recordCorrected,correctedArgs)).rows[0].v).toMatchObject({revision:1,replayed:true});
-   expect((await db.query('SELECT public.project_cost_corrected_review($1,NULL) v',[site])).rows[0].v).toMatchObject({revision:1,freshness:'matches',result:{incomplete_total:'2192.85',incomplete:true}});
+   const correctedSaved=(await db.query('SELECT public.project_cost_corrected_review($1,NULL) v',[site])).rows[0].v;
+   expect(correctedSaved).toMatchObject({revision:1,freshness:'matches',result:{incomplete_total:'2192.85',incomplete:true}});
+   expect(parseCorrectedSaved(correctedSaved,site)).toMatchObject({found:true,revision:1,totals:{total:219285n}});
    expect((await db.query('SELECT public.project_cost_review($1) v',[site])).rows[0].v).toMatchObject({freshness:'changed',incomplete_total:'2212.85'});
    const caseRaw=(await db.query('SELECT public.project_cost_historical_review($1) v',[site])).rows[0].v;
    await db.query('SAVEPOINT flagged_historical_review');

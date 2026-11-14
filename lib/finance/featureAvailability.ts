@@ -158,3 +158,9 @@ export function paidAdjustmentsPreviewEnabled(): boolean {
 export function projectCostCorrectionPreviewEnabled(): boolean {
   return financeFoundationEnabled() && process.env.NEXT_PUBLIC_PROJECT_COST_CORRECTION_PREVIEW === 'true';
 }
+
+/** Separate opt-in for correction-inclusive reviews; neither finance cutover nor
+ * correction evidence alone enables this unfinished UI or verifies its backend. */
+export function correctedProjectCostReviewPreviewEnabled(): boolean {
+  return projectCostCorrectionPreviewEnabled() && process.env.NEXT_PUBLIC_CORRECTED_PROJECT_COST_REVIEW_PREVIEW === 'true';
+}
