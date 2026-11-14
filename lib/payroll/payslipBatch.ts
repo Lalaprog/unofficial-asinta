@@ -1,10 +1,12 @@
 import type { PayrollStatus } from '@/types';
+import {parseRecordedCraft, type RecordedCraft} from '@/lib/workforce/recordedCraft';
 
 export interface BatchPayslip {
   id: string;
   worker_id: string;
   worker_name: string;
   worker_position: string;
+  recorded_craft: RecordedCraft | null;
   period_start: string;
   period_end: string;
   status: PayrollStatus;
@@ -29,6 +31,7 @@ export function parsePayslipBatch(value: unknown, start: string, end: string): B
       || row.period_start !== start || row.period_end !== end
       || !['draft','reviewed','approved','paid'].includes(String(row.status))
 ) throw new Error('Invalid payslip batch.');
+    const recorded_craft = parseRecordedCraft(row);
     const number = (key: string, optional = false): number | null => {
       const input = row[key];
       if (optional && input == null) return null;
@@ -37,7 +40,7 @@ export function parsePayslipBatch(value: unknown, start: string, end: string): B
     };
     ids.add(row.id); workers.add(row.worker_id);
     return {
-      id: row.id, worker_id: row.worker_id, worker_name: row.worker_name, worker_position: row.worker_position,
+      id: row.id, worker_id: row.worker_id, worker_name: row.worker_name, worker_position: row.worker_position, recorded_craft,
       period_start: start, period_end: end, status: row.status as PayrollStatus,
       days_worked: number('days_worked', true), hours_worked: number('hours_worked', true),
       gross_pay: number('gross_pay')!, bale_deduction: number('bale_deduction')!,

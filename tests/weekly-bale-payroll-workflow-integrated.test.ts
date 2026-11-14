@@ -44,6 +44,9 @@ async function fixture(cutover=true){
   // replacements even when the obsolete functions are no longer executable.
   await db.exec('REVOKE ALL ON FUNCTION public.issue_advance_request(uuid),public.record_advance_deduction_atomic(uuid,numeric) FROM PUBLIC,anon,authenticated,service_role');
  }
+ if(cutover){
+  for(const p of ['supabase/migrations/20261103000001_attendance_history.sql','supabase/migrations/20261112000001_payslip_batch_snapshot.sql','supabase/drafts/worker_category_catalog.sql','supabase/drafts/worker_category_workforce_cutover.sql','supabase/drafts/recorded_craft_observations.sql'])await db.exec(`BEGIN; ${sql(p)} COMMIT;`);
+ }
  await db.exec(`CREATE OR REPLACE FUNCTION public.weekly_bale_clock() RETURNS timestamptz LANGUAGE sql VOLATILE SET search_path='' AS $$SELECT current_setting('test.clock')::timestamptz$$;
  SET test.assurance='yes';SET test.uid='${supervisor}';SET test.clock='2024-11-03T04:00:00Z';SET ROLE authenticated`);
  return db;
@@ -123,7 +126,7 @@ describe('weekly Bale through worker payroll: candidate UI and synthetic SQL',()
    fireEvent.change(screen.getByLabelText('Signed difference in pesos'),{target:{value:'-300.00'}});fireEvent.change(screen.getByLabelText('Reason for review'),{target:{value:'Synthetic attendance correction'}});fireEvent.click(screen.getByRole('button',{name:'Review new case'}));fireEvent.click(within(screen.getByRole('dialog')).getByRole('button',{name:'Open case'}));await screen.findByText(/Outcome not confirmed/);cleanup();
    render(React.createElement(PaidAdjustmentPanel,{voucher:paidVoucher}));fireEvent.click(screen.getByRole('button',{name:'Adjustment cases for this voucher'}));fireEvent.click(screen.getByRole('button',{name:'Retry exact case action'}));await screen.findByText(/Recorded. Reload case history/);fireEvent.click(screen.getByRole('button',{name:'Load case history'}));await screen.findByText(/pending · difference/);fireEvent.click(screen.getByRole('button',{name:'Resolve this case'}));
    const dialog=screen.getByRole('dialog');fireEvent.change(within(dialog).getByLabelText('Resolution'),{target:{value:'no_transfer'}});fireEvent.change(within(dialog).getByLabelText('Resolution explanation'),{target:{value:'Synthetic review: no transfer required'}});fireEvent.click(within(dialog).getByRole('checkbox',{name:/confirmed no transfer is required/}));fireEvent.click(within(dialog).getByRole('button',{name:'Record resolution'}));await screen.findByText(/Recorded. Reload case history/);cleanup();
-   await db.exec('RESET ROLE');expect((await db.query('SELECT status,gross_pay::text gross,bale_deduction::text bale,net_pay::text net FROM public.payroll WHERE id=$1',[voucher])).rows).toEqual([{status:'paid',gross:'800.25',bale:'100.25',net:'700.00'}]);
+   await db.exec('RESET ROLE');expect((await db.query('SELECT status,gross_pay::text gross,bale_deduction::text bale,net_pay::text net FROM public.payroll WHERE id=$1',[voucher])).rows).toEqual([{status:'paid',gross:'800.25',bale:'100.25',net:'700.00'}]);expect((await db.query('SELECT craft FROM public.payroll_craft_observations WHERE payroll_id=$1',[voucher])).rows).toEqual([{craft:'Mason'}]);
    expect((await db.query('SELECT amount::text amount,amount_deducted::text deducted,status FROM public.advances WHERE worker_id=$1',[worker])).rows).toEqual([{amount:'100.25',deducted:'100.25',status:'fully_deducted'}]);
    expect((await db.query('SELECT project_id,gross::text gross FROM public.weekly_worker_paid_allocations WHERE payroll_id=$1',[voucher])).rows).toEqual([{project_id:site,gross:'800.25'}]);
    expect((await db.query('SELECT amount::text amount,status FROM public.worker_allowances WHERE worker_id=$1',[worker])).rows).toEqual([{amount:'50.25',status:'approved'}]);

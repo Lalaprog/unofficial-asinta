@@ -10,6 +10,7 @@ import { useAttendanceHistory } from '@/lib/attendance/useAttendanceHistory';
 import { financeFoundationEnabled } from '@/lib/finance/featureAvailability';
 import type { HistoryFilters, HistoryRecord, HistorySheet } from '@/lib/attendance/history';
 import type { AttendanceStatus } from '@/types';
+import {parseRecordedCraft} from '@/lib/workforce/recordedCraft';
 
 function formatStatusLabel(status: AttendanceStatus): string {
   if (status === 'present') return 'Present (Full Day)';
@@ -32,13 +33,14 @@ export function HistorySheetRecords({sheet, filters, userId, revision, isFounder
     <div className="divide-y divide-surface-border/60 border-t border-surface-border/60">
       <AttendanceTimeDetails records={records.items} userId={userId} revision={revision+timeRevision} loading={records.loading||Boolean(records.error)}>
       {records.items.map((rec) => {
+        const observedCraft = parseRecordedCraft(rec as unknown as Record<string,unknown>);
         const isUnverifiedSelf = rec.is_supervisor && !rec.is_founder_override && (rec.status === 'present' || rec.status === 'half_day');
         return (
           <div key={rec.id} className="flex flex-col justify-between gap-2 px-4 py-2.5 text-xs transition-colors hover:bg-slate-50 sm:flex-row sm:items-center">
             <div className="min-w-0 space-y-0.5">
               <div className="flex flex-wrap items-center gap-1.5">
                 <span className="break-words font-bold text-navy">{rec.worker_name || 'Worker (details unavailable)'}</span>
-                {rec.worker_position && <span className="text-[11px] text-ink-secondary">(Current craft: {rec.worker_position}; historical craft not recorded)</span>}
+                {observedCraft ? <span className="text-[11px] text-ink-secondary">(Craft at entry: {observedCraft.label}; may differ from work date)</span> : rec.worker_position && <span className="text-[11px] text-ink-secondary">(Current craft: {rec.worker_position}; historical craft not recorded)</span>}
                 {isUnverifiedSelf && <Badge variant="warning" size="sm">Pending Founder Approval (Held from Payroll)</Badge>}
                 {rec.is_supervisor && rec.is_founder_override && <Badge variant="success" size="sm">Founder Approved ✓</Badge>}
                 {!rec.is_supervisor && rec.is_founder_override && <Badge variant="navy" size="sm">Founder Override</Badge>}

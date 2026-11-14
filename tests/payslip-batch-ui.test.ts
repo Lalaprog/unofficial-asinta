@@ -22,6 +22,12 @@ describe('batch payslip flow',()=>{
   fireEvent.change(screen.getByLabelText('Payslip period start'),{target:{value:'2026-10-18'}});
   expect(screen.queryByText('Alba')).toBeNull();expect((screen.getByRole('button',{name:'Print all payslips'}) as HTMLButtonElement).disabled).toBe(true);
  });
+ it('prints entry-time craft with its qualification when captured',async()=>{
+  vi.useFakeTimers({toFake:['Date']});vi.setSystemTime(new Date('2026-10-27T08:00:00Z'));
+  mocks.rpc.mockResolvedValue({data:[{...voucher,worker_position:'Lead Mason',entry_craft:'Mason',entry_craft_at:'2026-11-14T02:00:00Z'}],error:null});
+  render(React.createElement(PayslipBatch,{onClose:()=>{}}));fireEvent.click(screen.getByRole('button',{name:'Load period payslips'}));
+  expect(await screen.findByText('Craft at voucher entry: Mason (may differ from work date)')).toBeTruthy();
+ });
  it('does not display a response from a previous period',async()=>{
   let resolve!: (value:unknown)=>void;
   mocks.rpc.mockReturnValue(new Promise(r=>{resolve=r}));
