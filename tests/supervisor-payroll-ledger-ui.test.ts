@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import React from 'react';
-import {cleanup,fireEvent,render,screen,within} from '@testing-library/react';
+import {act,cleanup,fireEvent,render,screen,within} from '@testing-library/react';
 import {afterEach,beforeEach,describe,expect,it,vi} from 'vitest';
 const m=vi.hoisted(()=>({rpc:vi.fn(),auth:{user:{id:'11000000-0000-4000-8000-000000000001'},isFounder:true,assurance:'ready'}}));
 vi.mock('@/lib/supabase/client',()=>({createClient:()=>({rpc:m.rpc})}));
@@ -32,6 +32,35 @@ describe('experimental Supervisor payroll ledger UI',()=>{
  });
  it('blocks changed sources and rejects invalid paid evidence or totals',async()=>{currentRow={...approved,source_changed:true};await open();expect(screen.getByText(/Sources changed after this record/)).toBeTruthy();expect(screen.queryByRole('button',{name:'Review payment recording'})).toBeNull();expect(()=>parseSupervisorLedgerRow({...row,gross:'1000'},supervisor,input.start)).toThrow();expect(()=>parseCompanyEvidence({...company,total:'999'},company.from,company.to)).toThrow();});
  it('preserves exact retries on uncertain outcomes and sends nothing when storage fails',async()=>{m.rpc.mockImplementation(async(name:string)=>name==='create_supervisor_period_draft'?Promise.reject(Error('lost')):reply(name));await open();createForm();confirm();await screen.findByText(/Outcome not verified/);expect(sessionStorage.getItem(key)).toBeTruthy();const first=m.rpc.mock.calls.find(([name])=>name==='create_supervisor_period_draft')?.[1];cleanup();render(React.createElement(SupervisorPayrollLedger));fireEvent.click(screen.getByRole('button',{name:'Experimental Supervisor payroll ledger'}));m.rpc.mockImplementation(async(name:string)=>reply(name));fireEvent.click(screen.getByRole('button',{name:'Retry exact request'}));await screen.findByText(/Action recorded/);expect(m.rpc.mock.calls.filter(([name])=>name==='create_supervisor_period_draft')[1][1]).toEqual(first);expect(crypto.randomUUID).toHaveBeenCalledTimes(1);cleanup();sessionStorage.clear();m.rpc.mockClear();await open();createForm();vi.spyOn(Storage.prototype,'setItem').mockImplementation(()=>{throw Error('unavailable');});confirm();await screen.findByText(/no request was sent/);expect(m.rpc.mock.calls.some(([name])=>name==='create_supervisor_period_draft')).toBe(false);});
+ it('does not send a fresh action over a retry added after review began',async()=>{
+  await open();createForm();sessionStorage.setItem(key,'newer evidence');confirm();await screen.findByText(/Retry storage could not be verified/);
+  expect(m.rpc.mock.calls.filter(([name])=>name==='create_supervisor_period_draft')).toHaveLength(0);expect(sessionStorage.getItem(key)).toBe('newer evidence');
+ });
+ it('does not clear a changed retry when the server responds',async()=>{
+  let resolve!:(value:unknown)=>void;m.rpc.mockImplementation((name:string)=>name==='create_supervisor_period_draft'?new Promise(r=>{resolve=r;}):Promise.resolve(reply(name)));
+  await open();createForm();confirm();sessionStorage.setItem(key,'newer evidence');await act(async()=>{resolve({data:{id:request,replayed:false},error:null});await Promise.resolve();});
+  expect(sessionStorage.getItem(key)).toBe('newer evidence');expect(screen.queryByText(/Action recorded/)).toBeNull();expect(screen.getByText(/Outcome not verified/)).toBeTruthy();expect((screen.getByRole('button',{name:'Retry exact request'}) as HTMLButtonElement).disabled).toBe(true);
+ });
+ it('does not clear a different retry record after review',async()=>{
+  m.rpc.mockImplementation(async(name:string)=>name==='create_supervisor_period_draft'?Promise.reject(Error('lost')):reply(name));await open();createForm();confirm();await screen.findByText(/Outcome not verified/);
+  fireEvent.click(screen.getByRole('button',{name:'Review stopping retry'}));const other='changed retry evidence';sessionStorage.setItem(key,other);fireEvent.click(screen.getByRole('button',{name:'I investigated; stop retry'}));
+  expect(screen.getByRole('alert').textContent).toMatch(/Could not safely clear/);expect(sessionStorage.getItem(key)).toBe(other);expect(screen.queryByRole('button',{name:'Load Supervisors'})).toBeNull();
+ });
+ it('treats empty or malformed stored records as evidence, not an absent retry',async()=>{
+  sessionStorage.setItem(key,'');render(React.createElement(SupervisorPayrollLedger));fireEvent.click(screen.getByRole('button',{name:'Experimental Supervisor payroll ledger'}));
+  expect(screen.queryByRole('button',{name:'Load Supervisors'})).toBeNull();expect(sessionStorage.getItem(key)).toBe('');
+  fireEvent.click(screen.getByRole('button',{name:'Review stopping retry'}));fireEvent.click(screen.getByRole('button',{name:'I investigated; stop retry'}));expect(sessionStorage.getItem(key)).toBeNull();expect(screen.getByRole('button',{name:'Load Supervisors'})).toBeTruthy();
+ });
+ it('does not recreate a missing retry record or send a new request on exact retry',async()=>{
+  m.rpc.mockImplementation(async(name:string)=>name==='create_supervisor_period_draft'?Promise.reject(Error('lost')):reply(name));await open();createForm();confirm();await screen.findByText(/Outcome not verified/);sessionStorage.removeItem(key);
+  fireEvent.click(screen.getByRole('button',{name:'Retry exact request'}));await screen.findByText(/Retry storage could not be verified/);expect(m.rpc.mock.calls.filter(([name])=>name==='create_supervisor_period_draft')).toHaveLength(1);expect(sessionStorage.getItem(key)).toBeNull();
+ });
+ it('retains the retry if a response arrives after the panel closes',async()=>{
+  let resolve!:(value:unknown)=>void;m.rpc.mockImplementation((name:string)=>name==='create_supervisor_period_draft'?new Promise(r=>{resolve=r;}):Promise.resolve(reply(name)));
+  await open();createForm();confirm();expect(sessionStorage.getItem(key)).toBeTruthy();fireEvent.click(screen.getByRole('button',{name:'Experimental Supervisor payroll ledger'}));
+  await act(async()=>{resolve({data:{id:request,replayed:false},error:null});await Promise.resolve();});expect(sessionStorage.getItem(key)).toBeTruthy();
+  fireEvent.click(screen.getByRole('button',{name:'Experimental Supervisor payroll ledger'}));expect(screen.getByRole('button',{name:'Retry exact request'})).toBeTruthy();
+ });
  it('invalidates an open confirmation if a same-tab attendance or leave action occurs',async()=>{await open();createForm();fireEvent.click(within(screen.getByRole('dialog')).getByRole('checkbox'));fireEvent(window,new Event('asinta:supervisor-day-changed'));expect(screen.queryByRole('dialog')).toBeNull();expect(screen.getByRole('alert').textContent).toMatch(/may have changed/);expect(m.rpc.mock.calls.some(([name])=>name==='create_supervisor_period_draft')).toBe(false);});
  it('uses reviewed revisions for refresh, return and approval without exposing changes to paid records',async()=>{
   vi.stubEnv('NEXT_PUBLIC_DEVELOPMENT_FINANCE_CUTOVER','true');vi.stubEnv('NEXT_PUBLIC_SUPERVISOR_PAYROLL_REVISION_PREVIEW','true');
