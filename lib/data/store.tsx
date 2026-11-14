@@ -946,7 +946,8 @@ export const DataStoreProvider: React.FC<{ children: React.ReactNode }> = ({ chi
           submitted_by: user.id,
         })
         .select()
-        .single()
+        .single(),
+      'Bale request not confirmed. Check the request list before retrying.'
     );
     const row = data.request_id ? (response && typeof response.replayed === 'boolean' ? response.request : null) : response;
     const mapped = row ? mapAdvanceRequest(row) : null;
