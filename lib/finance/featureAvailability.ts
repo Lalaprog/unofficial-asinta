@@ -94,6 +94,11 @@ export function historicalWorkerAttributionEntryPreviewEnabled(): boolean {
   return historicalExternalWorkerPreviewEnabled() && (process.env.NEXT_PUBLIC_HISTORICAL_WORKER_ATTRIBUTION_ENTRY_PREVIEW === 'true' || developmentFinanceCutoverEnabled());
 }
 
+/** Synthetic candidate only: requires its separate uninstalled backend. Never enabled by cutover alone. */
+export function historicalAttributionCaseBindingPreviewEnabled(): boolean {
+  return historicalWorkerAttributionEntryPreviewEnabled() && process.env.NEXT_PUBLIC_HISTORICAL_CASE_BINDING_PREVIEW === 'true';
+}
+
 /** Separate combined historical scratch review; read-only and never a saved ledger. */
 export function historicalCostReviewPreviewEnabled(): boolean {
   return historicalWorkerAttributionPreviewEnabled() && (process.env.NEXT_PUBLIC_HISTORICAL_COST_REVIEW_PREVIEW === 'true' || developmentFinanceCutoverEnabled());
