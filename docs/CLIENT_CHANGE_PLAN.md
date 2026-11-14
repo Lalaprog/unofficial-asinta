@@ -1,4 +1,5 @@
-> **Current incremental status:** The PR #103 Bale guard and base-only weekly read RPC are installed; three PR #103 migrations and the time-detail sequence safeguard remain absent; two Supervisor migrations have their empty locked tables installed but not their functions. The base response is incomplete for the current UI and cannot be used for payroll. See `PR103_SCHEMA_REHEARSAL.md` for the exact hosted migration and checks. Older rollout observations below are point-in-time historical notes.
+> **Current status:** This document includes historical design notes that can be outdated. For the development installations, remaining work and release blockers, use [CLIENT_TASK_STATUS.md](CLIENT_TASK_STATUS.md). The draft PR is not a release approval.
+
 
 # Client change plan and deferred items
 
