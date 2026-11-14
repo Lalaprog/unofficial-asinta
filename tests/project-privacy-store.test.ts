@@ -7,7 +7,8 @@ const mock = vi.hoisted(() => ({
   role: 'founder' as 'founder' | 'supervisor' | 'signedout',
   assurance: 'ready' as 'ready' | 'required' | 'checking' | 'unavailable',
   projects: [] as any[], calls: [] as Array<{kind:string;table?:string;selection?:string;payload?:any}>,
-  reloadError: false, nextLoad: null as null | Promise<{data:any[]; error:null}>, toast: vi.fn(),
+  reloadError: false, nextLoad: null as null | Promise<{data:any[] | null; error:{message:string} | null}>, toast: vi.fn(),
+  tableFailure: null as null | {table:string; type:'error'|'throw'|'null'},
   founder: {id:'user', email:'founder@example.test', role:'founder'},
   supervisor: {id:'user', email:'founder@example.test', role:'supervisor'},
 }));
@@ -24,7 +25,17 @@ vi.mock('@/lib/supabase/client', () => ({createClient: () => ({
     };
   },
   from: (table:string) => ({
-    select: (selection:string) => { mock.calls.push({kind:'select',table,selection}); return {order:async()=>({data:[],error:null}),then:(resolve:(x:unknown)=>void)=>resolve({data:[],error:null})}; },
+    select: (selection:string) => { mock.calls.push({kind:'select',table,selection});
+      const result = async () => {
+        if (mock.tableFailure?.table === table) {
+          if (mock.tableFailure.type === 'throw') throw new Error('network down');
+          if (mock.tableFailure.type === 'null') return {data:null,error:null};
+          return {data:null,error:{message:'query failed'}};
+        }
+        return {data:[],error:null};
+      };
+      return {order:result,then:(resolve:(x:unknown)=>void, reject:(e:unknown)=>void)=>result().then(resolve,reject)};
+    },
     insert: (payload:any) => ({select:(selection:string) => ({single:async()=>{mock.calls.push({kind:'insert',table,selection,payload});return {data:{id:'p'},error:null}}})}),
     update: (payload:any) => ({eq:()=>({select:(selection:string)=>({single:async()=>{mock.calls.push({kind:'update',table,selection,payload});return {data:{id:'p'},error:null}}})})}),
   }),
@@ -34,7 +45,7 @@ let store:ReturnType<typeof useDataStore>;
 function Probe(){store=useDataStore();return null;}
 const project = {id:'p',name:'Site',client_id:'private-client',location:'Lipa',budget_estimate:'90000',status:'active' as const,start_date:'2026-01-01',target_completion_date:'2026-12-31',created_at:'2026-01-01T00:00:00Z'};
 const setup = async () => {render(React.createElement(DataStoreProvider,null,React.createElement(Probe)));await waitFor(()=>expect(store.isLoaded).toBe(true));};
-beforeEach(()=>{mock.role='founder';mock.assurance='ready';mock.projects=[project];mock.calls=[];mock.reloadError=false;mock.nextLoad=null;mock.toast.mockReset();sessionStorage.clear();});
+beforeEach(()=>{mock.role='founder';mock.assurance='ready';mock.projects=[project];mock.calls=[];mock.reloadError=false;mock.nextLoad=null;mock.tableFailure=null;mock.toast.mockReset();sessionStorage.clear();});
 afterEach(()=>cleanup());
 
 describe('project privacy in the shared store',()=>{
@@ -82,14 +93,75 @@ describe('project privacy in the shared store',()=>{
     expect(store.projects[0]).toMatchObject({client_id:null,budget_estimate:null});
     expect(sessionStorage.getItem('bale-ledger-cache:v2:user:founder')).toBeNull();
   });
+  it('ignores an overtaken failed read after a successful refresh',async()=>{
+    let resolve!:(value:{data:null;error:{message:string}})=>void;
+    mock.nextLoad=new Promise(r=>{resolve=r});
+    render(React.createElement(DataStoreProvider,null,React.createElement(Probe)));
+    await waitFor(()=>expect(mock.calls.some(c=>c.kind==='rpc' && c.table==='visible_projects')).toBe(true));
+    await act(async()=>{await store.refresh()});
+    expect(store.isLoaded).toBe(true);expect(store.loadError).toBeNull();
+    await act(async()=>resolve({data:null,error:{message:'old failure'}}));
+    expect(store.loadError).toBeNull();expect(store.projects[0].name).toBe('Site');
+  });
   it('clears the cached ledger on sign-out in the same tab',async()=>{
     const view=render(React.createElement(DataStoreProvider,null,React.createElement(Probe)));
     await waitFor(()=>expect(store.projects).toHaveLength(1));
-    expect(sessionStorage.getItem('bale-ledger-cache:v2:user:founder')).not.toBeNull();
+    expect(sessionStorage.getItem('bale-ledger-cache:v3:user:founder')).not.toBeNull();
     mock.role='signedout';
     view.rerender(React.createElement(DataStoreProvider,null,React.createElement(Probe)));
     await waitFor(()=>expect(store.projects).toHaveLength(0));
+    expect(sessionStorage.getItem('bale-ledger-cache:v3:user:founder')).toBeNull();
+  });
+  it.each(['error','throw','null'] as const)('keeps the last complete batch and warns after a %s silent sync, then recovers',async(type)=>{
+    await setup();
+    const cacheKey='bale-ledger-cache:v3:user:founder';
+    const before=sessionStorage.getItem(cacheKey);
+    mock.projects=[{...project,name:'Changed'}];
+    mock.tableFailure={table:'payroll',type};
+    await act(async()=>{window.dispatchEvent(new Event('focus'));await new Promise(resolve=>setTimeout(resolve,600));});
+    await waitFor(()=>expect(store.loadError).toMatch(/sync/));
+    expect(store.projects[0].name).toBe('Site');
+    expect(sessionStorage.getItem(cacheKey)).toBe(before);
+    mock.tableFailure=null;
+    await act(async()=>{await store.refresh()});
+    expect(store.loadError).toBeNull();
+    expect(store.projects[0].name).toBe('Changed');
+    expect(sessionStorage.getItem(cacheKey)).not.toBe(before);
+  });
+  it('does not open the workspace or cache a partial initial batch',async()=>{
+    mock.tableFailure={table:'advance_requests',type:'error'};
+    render(React.createElement(DataStoreProvider,null,React.createElement(Probe)));
+    await waitFor(()=>expect(store.loadError).toMatch(/sync failed/));
+    expect(store.isLoaded).toBe(false);
+    expect(store.projects).toHaveLength(0);
+    expect(sessionStorage.getItem('bale-ledger-cache:v3:user:founder')).toBeNull();
+    mock.tableFailure=null;
+    await act(async()=>{await store.refresh()});
+    expect(store.isLoaded).toBe(true);
+    expect(store.projects[0].name).toBe('Site');
+  });
+  it('does not trust old partial or malformed tab caches',async()=>{
+    mock.tableFailure={table:'payroll',type:'error'};
+    sessionStorage.setItem('bale-ledger-cache:v2:user:founder',JSON.stringify({projects:[project]}));
+    sessionStorage.setItem('bale-ledger-cache:v3:user:founder',JSON.stringify({projects:[project]}));
+    render(React.createElement(DataStoreProvider,null,React.createElement(Probe)));
+    await waitFor(()=>expect(store.loadError).toMatch(/sync failed/));
+    expect(store.isLoaded).toBe(false);
+    expect(store.projects).toHaveLength(0);
     expect(sessionStorage.getItem('bale-ledger-cache:v2:user:founder')).toBeNull();
+  });
+  it('marks a complete tab snapshot stale until the first live sync completes',async()=>{
+    await setup();
+    cleanup();
+    let resolve!: (value:{data:any[];error:null})=>void;
+    mock.nextLoad=new Promise(r=>{resolve=r});
+    render(React.createElement(DataStoreProvider,null,React.createElement(Probe)));
+    await waitFor(()=>expect(store.isLoaded).toBe(true));
+    expect(store.projects[0].name).toBe('Site');
+    expect(store.loadError).toMatch(/saved tab snapshot/);
+    await act(async()=>resolve({data:[{...project,name:'Fresh'}],error:null}));
+    await waitFor(()=>expect(store.loadError).toBeNull());
+    expect(store.projects[0].name).toBe('Fresh');
   });
   it('returns public columns from writes and rereads authoritative Founder details',async()=>{
     await setup();

@@ -18,7 +18,7 @@ beforeEach(() => {
   mocks.store = {
     projects: [...originalProjects], isLoaded: true, loadError: null,
     invoices: [invoice('a', 'alpha', 1000), invoice('b', 'beta', 2500), invoice('c', 'past', 5000)],
-    expenses: [], advances: [], advanceRequests: [], attendance: [], payroll: [], tools: [], clients: [], sendSMS: vi.fn(),
+    expenses: [], advances: [], advanceRequests: [], attendance: [], payroll: [], tools: [], clients: [], sendSMS: vi.fn(), refresh: vi.fn(),
   };
   vi.stubGlobal('matchMedia', vi.fn().mockReturnValue({ matches: true, addEventListener: vi.fn(), removeEventListener: vi.fn() }));
 });
@@ -98,14 +98,36 @@ describe('dashboard project scope selector', () => {
     mocks.store.projects = [];
     mocks.store.isLoaded = false;
     const view = render(React.createElement(FounderDashboard));
-    const selector = screen.getByRole('combobox', { name: 'Project scope' }) as HTMLSelectElement;
-    expect(selector.disabled).toBe(true);
-    expect(selector.getAttribute('aria-busy')).toBe('true');
+    expect(screen.getByText('Dashboard figures unavailable')).toBeTruthy();
+    expect(screen.queryByRole('combobox', { name: 'Project scope' })).toBeNull();
     mocks.store.isLoaded = true;
     view.rerender(React.createElement(FounderDashboard));
+    const selector = screen.getByRole('combobox', { name: 'Project scope' }) as HTMLSelectElement;
     expect(selector.disabled).toBe(false);
     expect(selector.options).toHaveLength(1);
     expect(screen.getByText('No current projects')).toBeTruthy();
+  });
+  it('hides stale dashboard figures and allows a retry', () => {
+    mocks.store.loadError='The latest ledger sync failed.';
+    render(React.createElement(FounderDashboard));
+    expect(screen.getByText('Dashboard figures unavailable')).toBeTruthy();
+    expect(screen.queryByRole('heading', {name:'Workforce & pay'})).toBeNull();
+    expect(screen.queryByText('All clear for now')).toBeNull();
+    fireEvent.click(screen.getByRole('button', {name:'Retry dashboard data'}));
+    expect(mocks.store.refresh).toHaveBeenCalledTimes(1);
+  });
+  it('does not present legacy payroll and Bale as weekly cutover figures or claim all clear', () => {
+    vi.stubEnv('NEXT_PUBLIC_DEVELOPMENT_FINANCE_CUTOVER','true');
+    mocks.store.payroll=[{id:'legacy',worker_id:'w1',period_start:'2026-10-01',period_end:'2026-10-15',net_pay:900,status:'draft',created_at:'2026-10-16'}];
+    mocks.store.advanceRequests=[{id:'r',project_id:'alpha',status:'pending_approval',requested_amount:500}];
+    render(React.createElement(FounderDashboard));
+    expect(screen.getByText('Weekly payroll and Bale are not summarized here.')).toBeTruthy();
+    expect(screen.getByText('Weekly payroll, Supervisor payroll and Bale are not checked on this board.')).toBeTruthy();
+    expect(screen.queryByText(/payroll voucher.*need review/)).toBeNull();
+    expect(screen.queryByText(/Bale request.*await approval/)).toBeNull();
+    expect(screen.queryByText('All clear for now')).toBeNull();
+    expect(screen.getByRole('link',{name:/Open payroll/}).getAttribute('href')).toBe('/payroll');
+    expect(screen.getByRole('link',{name:/Review Bale/}).getAttribute('href')).toBe('/advances?tab=requests');
   });
   it('keeps payroll matching by period attendance, voucher notes and advance assignment', () => {
     mocks.store.attendance = [{ id: 'att', worker_id: 'w1', project_id: 'alpha', date: '2026-10-10', status: 'present' }];
@@ -116,6 +138,7 @@ describe('dashboard project scope selector', () => {
     const selector = screen.getByRole('combobox', { name: 'Project scope' });
     const workforceCard = screen.getByRole('heading', { name: 'Workforce & pay' }).closest('.group') as HTMLElement;
     fireEvent.change(selector, { target: { value: 'alpha' } });
+    expect(within(workforceCard).getByText(/Approximate matches use attendance/)).toBeTruthy();
     expect(within(workforceCard).getAllByLabelText('₱700.00').length).toBeGreaterThan(0);
     fireEvent.change(selector, { target: { value: 'beta' } });
     expect(within(workforceCard).getAllByLabelText('₱1,100.00').length).toBeGreaterThan(0);
@@ -130,6 +153,20 @@ describe('dashboard project scope selector', () => {
     expect(selector.value).toBe('two');
   });
 
+  it('blocks an unsent reminder if sync fails while the dialog is open', async () => {
+    mocks.store.invoices=[{...invoice('late','alpha',1000),due_date:'2020-01-01'}];
+    const view=render(React.createElement(FounderDashboard));
+    fireEvent.click(screen.getAllByRole('button',{name:'Remind client'})[0]);
+    await screen.findByLabelText('SMS message');
+    mocks.store.loadError='Sync failed';
+    view.rerender(React.createElement(FounderDashboard));
+    expect(screen.getByText(/Ledger sync was unavailable/)).toBeTruthy();
+    expect((screen.getByRole('button',{name:'Send PhilSMS Now'}) as HTMLButtonElement).disabled).toBe(true);
+    mocks.store.loadError=null;
+    view.rerender(React.createElement(FounderDashboard));
+    expect((screen.getByRole('button',{name:'Send PhilSMS Now'}) as HTMLButtonElement).disabled).toBe(true);
+    expect(mocks.store.sendSMS).not.toHaveBeenCalled();
+  });
   it('lets a Founder customize the quick SMS without changing future messages', async () => {
     const overdue={...invoice('late','alpha',1000),due_date:'2020-01-01'};
     const send=vi.fn(async()=>true);mocks.store.invoices=[overdue];mocks.store.sendSMS=send;

@@ -17,7 +17,10 @@ afterEach(()=>cleanup());
 describe('server-backed project expense totals',()=>{
  it('uses the server total on project cards, not the partial shared store',async()=>{
   render(React.createElement(ProjectPage));expect(await screen.findByText('₱265.65')).toBeTruthy();
-  expect(screen.queryByText('₱999.00')).toBeNull();expect(screen.getByText(/27% of estimate/)).toBeTruthy();
+  expect(screen.queryByText('₱999.00')).toBeNull();expect(screen.getByText('Logged expenses: 27% of estimate')).toBeTruthy();
+  expect(screen.getByText(/estimate less expenses/)).toBeTruthy();
+  expect(screen.getByText('Expenses only; payroll and other costs are not included.')).toBeTruthy();
+  expect(screen.getByRole('progressbar',{name:'Logged expenses for Site as a percentage of its estimate'})).toBeTruthy();
  });
  it('shows the same scoped total and a paginated ledger on project detail',async()=>{
   render(React.createElement(ProjectDetail));expect(await screen.findByText('₱265.65')).toBeTruthy();

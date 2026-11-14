@@ -58,13 +58,13 @@ export function PaidAdjustmentPanel({voucher}:{voucher:PaidReviewVoucher}){
   busy.current=true;setSaving(true);setMessage('');const token=++seq.current;let stored=false;
   try{
    const existing=sessionStorage.getItem(storageKey);
-   if((retry&&!existing)||(existing&&JSON.stringify(parseAdjustmentAttempt(JSON.parse(existing),voucher))!==JSON.stringify(a)))throw Error('Retry record changed');
+   if(!observed.current||existing!==observed.current.raw||(retry&&!existing)||(!retry&&existing)||(existing&&JSON.stringify(parseAdjustmentAttempt(JSON.parse(existing),voucher))!==JSON.stringify(a)))throw Error('Retry record changed');
    if(!existing)sessionStorage.setItem(storageKey,JSON.stringify(a));
    const storedValue=sessionStorage.getItem(storageKey);if(!storedValue||JSON.stringify(parseAdjustmentAttempt(JSON.parse(storedValue),voucher))!==JSON.stringify(a))throw Error('Retry record unavailable');
    stored=true;observed.current={raw:storedValue};if(token===seq.current&&active.current===key){setPending(a);setConfirm(null);}
    const {data,error}=await createClient().rpc(a.kind==='open'?'open_paid_payroll_adjustment':'resolve_paid_payroll_adjustment',adjustmentAttemptArguments(a));
    if(error)throw error;verifyAdjustmentAttempt(data,a);
-   if(token!==seq.current||active.current!==key)return;const saved=sessionStorage.getItem(storageKey);if(!saved||JSON.stringify(parseAdjustmentAttempt(JSON.parse(saved),voucher))!==JSON.stringify(a))throw Error('Retry record changed');sessionStorage.removeItem(storageKey);observed.current={raw:null};
+   if(token!==seq.current||active.current!==key)return;const saved=sessionStorage.getItem(storageKey);if(!saved||saved!==observed.current?.raw||JSON.stringify(parseAdjustmentAttempt(JSON.parse(saved),voucher))!==JSON.stringify(a))throw Error('Retry record changed');sessionStorage.removeItem(storageKey);observed.current={raw:null};
    if(token===seq.current&&active.current===key){setPending(null);setDifference('');setReason('');setConfirm(null);setState(empty(key));setMessage('Recorded. Reload case history to verify the current state. No voucher, payment or Bale was changed.');}
   }catch{if(token===seq.current&&active.current===key){setConfirm(null);setState(empty(key));setMessage(stored?'Outcome not confirmed. The action may already be recorded; investigate or retry the exact request.':'Retry storage could not be verified; no request was sent this time. An earlier action may still complete.');if(!stored)setStorageError(true);}}
   finally{if(token===seq.current&&active.current===key){busy.current=false;setSaving(false);}}

@@ -313,14 +313,14 @@ export const DataStoreProvider: React.FC<{ children: React.ReactNode }> = ({ chi
         const firstError = results.find((r) => r.error)?.error as PostgrestError | undefined;
         if (firstError) {
           console.error('Supabase data load failed:', firstError.message);
-          if (!options?.silent) {
-            setLoadError(
-              `Could not load BALE ledger data from Supabase: ${firstError.message}. ` +
-                'Check your connection and Row Level Security policies, then retry.'
-            );
-          }
-        } else {
-          setLoadError(null);
+          setLoadError('The latest ledger sync failed. Previously loaded data may be stale; check the connection and retry before relying on it.');
+          return;
+        }
+        // A null or malformed SELECT response is not evidence of an empty table.
+        // Do not publish or cache any part of this batch unless all reads succeeded.
+        if (results.some((result) => !Array.isArray(result.data))) {
+          setLoadError('The latest ledger sync returned incomplete data. Previously loaded data may be stale; retry before relying on it.');
+          return;
         }
 
         const nextProjects = (results[0].data ?? []).map(mapProject);
@@ -353,11 +353,12 @@ export const DataStoreProvider: React.FC<{ children: React.ReactNode }> = ({ chi
         setProjectSupervisors(nextProjectSupervisors);
         setUsers(nextUsers);
         setIsLoaded(true);
+        setLoadError(null);
 
         if (user?.id && typeof window !== 'undefined') {
           try {
             window.sessionStorage.setItem(
-              `bale-ledger-cache:v2:${user.id}:${user.role}`,
+              `bale-ledger-cache:v3:${user.id}:${user.role}`,
               JSON.stringify({
                 projects: nextProjects,
                 invoices: nextInvoices,
@@ -382,12 +383,7 @@ export const DataStoreProvider: React.FC<{ children: React.ReactNode }> = ({ chi
       } catch (e: any) {
         if (inFlightRef.current !== token || activeSessionRef.current !== requestSession) return;
         console.error('Unexpected error while loading BALE data:', e);
-        if (!options?.silent) {
-          setLoadError(
-            e?.message ||
-              'Unexpected network error while contacting Supabase. Please check your connection and retry.'
-          );
-        }
+        setLoadError('The latest ledger sync failed. Previously loaded data may be stale; check the connection and retry before relying on it.');
       } finally {
         if (inFlightRef.current === token) {
           setIsLoading(false);
@@ -428,7 +424,7 @@ export const DataStoreProvider: React.FC<{ children: React.ReactNode }> = ({ chi
     }
     // A shared tab must not leave a previous user's cached ledger available
     // after sign-out or when another account/role signs in.
-    const currentCacheKey = user ? `bale-ledger-cache:v2:${user.id}:${user.role}` : null;
+    const currentCacheKey = user ? `bale-ledger-cache:v3:${user.id}:${user.role}` : null;
     if (typeof window !== 'undefined') {
       try {
         const staleKeys = Array.from({ length: window.sessionStorage.length }, (_, i) => window.sessionStorage.key(i))
@@ -448,22 +444,24 @@ export const DataStoreProvider: React.FC<{ children: React.ReactNode }> = ({ chi
         const cachedRaw = currentCacheKey ? window.sessionStorage.getItem(currentCacheKey) : null;
         if (cachedRaw) {
           const cached = JSON.parse(cachedRaw);
-          if (cached && Array.isArray(cached.projects)) {
+          const fields = ['projects','invoices','expenses','workers','clients','advances','advanceRequests','userNotifications','attendance','payroll','tools','smsLogs','projectSupervisors','users'];
+          if (cached && fields.every((field) => Array.isArray(cached[field]))) {
             setProjects(cached.projects);
-            setInvoices(cached.invoices ?? []);
-            setExpenses(cached.expenses ?? []);
-            setWorkers(cached.workers ?? []);
-            setClients(cached.clients ?? []);
-            setAdvances(cached.advances ?? []);
-            setAdvanceRequests(cached.advanceRequests ?? []);
-            setUserNotifications(cached.userNotifications ?? []);
-            setAttendance(cached.attendance ?? []);
-            setPayroll(cached.payroll ?? []);
-            setTools(cached.tools ?? []);
-            setSmsLogs(cached.smsLogs ?? []);
-            setProjectSupervisors(cached.projectSupervisors ?? []);
-            setUsers(cached.users ?? []);
+            setInvoices(cached.invoices);
+            setExpenses(cached.expenses);
+            setWorkers(cached.workers);
+            setClients(cached.clients);
+            setAdvances(cached.advances);
+            setAdvanceRequests(cached.advanceRequests);
+            setUserNotifications(cached.userNotifications);
+            setAttendance(cached.attendance);
+            setPayroll(cached.payroll);
+            setTools(cached.tools);
+            setSmsLogs(cached.smsLogs);
+            setProjectSupervisors(cached.projectSupervisors);
+            setUsers(cached.users);
             setIsLoaded(true);
+            setLoadError('Showing a saved tab snapshot while the ledger syncs. It may be stale; wait for verification before relying on it.');
           }
         }
       } catch {
