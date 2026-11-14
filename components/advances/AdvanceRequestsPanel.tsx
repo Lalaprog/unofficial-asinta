@@ -9,6 +9,7 @@ import { useBaleRequestSubmissionGuard } from '@/lib/attendance/useBaleRequestSu
 import { getManilaClock } from '@/lib/reminders/scheduler';
 import { workerPayrollPeriod } from '@/lib/payroll/periods';
 import { useWeeklyBaleStatuses } from '@/lib/attendance/useWeeklyBaleStatuses';
+import { selectedBaleDuplicateSignals } from '@/lib/attendance/baleDuplicateSignals';
 import { weeklyBaleExpiryHealthPreviewEnabled, weeklyBaleReleasePreviewEnabled, weeklyBaleIdempotentSubmissionPreviewEnabled, weeklyWorkerCutoverMode } from '@/lib/finance/featureAvailability';
 import { WeeklyBaleExpiryHealth } from '@/components/advances/WeeklyBaleExpiryHealth';
 import type { AdvanceRequest, AdvanceRequestStatus } from '@/types';
@@ -206,6 +207,12 @@ export function AdvanceRequestsPanel() {
     0
   );
   const selectedSiteName = projects.find((project) => project.id === requestSelection.siteId)?.name || 'this site';
+  const duplicateSignals = weeklyMode && isFounder && weeklyStatuses.data
+    ? selectedBaleDuplicateSignals(advanceRequests, weeklyStatuses.data.items, new Set(advanceRequests.map(request => request.id)))
+    : [];
+  const possibleDuplicates = duplicateSignals.filter(signal => selectedRequests.some(request =>
+    request.worker_id === signal.workerId && statusFor(request)?.period_start === signal.periodStart
+  ));
 
   useEffect(() => {
     if (!focusedRequestId || !visibleRequests.some((request) => request.id === focusedRequestId)) return;
@@ -423,6 +430,7 @@ export function AdvanceRequestsPanel() {
     const isActioning = actioningRequestId === request.id;
     const isSelected = selectedRequestIds.has(request.id);
     const weeklyStatus = weeklyMode ? statusFor(request) : undefined;
+    const duplicateSignal = weeklyStatus && duplicateSignals.find(signal => signal.workerId === request.worker_id && signal.periodStart === weeklyStatus.period_start);
     const selectionDisabled =
       !canReview(request) ||
       (Boolean(requestSelection.siteId) && requestSelection.siteId !== request.project_id) ||
@@ -469,6 +477,7 @@ export function AdvanceRequestsPanel() {
             <p className="max-w-lg text-xs leading-relaxed text-ink-secondary">{weeklyStatus?.effective_status === 'expired_unapproved' ? 'The approval window ended after Tuesday. This request cannot be approved; recorded rejection may be pending the expiry job.' : weeklyStatus?.auto_expired ? 'Automatically rejected after the approval window; no Bale was issued.' : requestStatusDescription(request.status)}</p>
             {weeklyMode && !weeklyStatus && <p className="text-xs text-status-warning">Weekly status unavailable or changed. Reload the request list and weekly status before taking action.</p>}
             {weeklyMode && weeklyStatus?.kind === 'legacy' && <p className="text-xs text-status-warning">Legacy request: review separately; weekly actions are unavailable.</p>}
+            {isFounder && weeklyStatus?.effective_status !== 'rejected' && weeklyStatus?.effective_status !== 'expired_unapproved' && duplicateSignal && <p className="text-xs text-status-warning">Possible repeated requests: {duplicateSignal.requestCount} non-rejected requests are visible for this worker and week. Check whether they are intentional; this list may be incomplete.</p>}
             <details className="group/activity text-xs">
               <summary className="inline-flex min-h-11 cursor-pointer items-center gap-1.5 rounded-md font-semibold text-brand focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand">
                 Status dates <span className="sr-only">for {worker?.name || 'worker'} · {formatPeso(request.requested_amount)}</span>
@@ -937,6 +946,21 @@ export function AdvanceRequestsPanel() {
                 )}
               </div>
             </div>
+            {possibleDuplicates.length > 0 && (
+              <div role="alert" className="rounded-lg border border-status-warning/30 bg-status-warning-bg/50 px-3 py-2.5 leading-relaxed text-ink-secondary">
+                <p className="font-semibold text-navy">Check possible repeated requests before approval</p>
+                <p>Multiple non-rejected requests are visible for the same worker and week. They may be intentional; check their details and status before approving.</p>
+                <ul className="mt-1 list-inside list-disc">
+                  {possibleDuplicates.slice(0, 5).map(signal => (
+                    <li key={`${signal.workerId}:${signal.periodStart}`} className="break-words">
+                      {workers.find(worker => worker.id === signal.workerId)?.name || 'Worker unavailable'} · week of {signal.periodStart} · {signal.requestCount} requests
+                    </li>
+                  ))}
+                </ul>
+                {possibleDuplicates.length > 5 && <p>And {possibleDuplicates.length - 5} more worker-week groups.</p>}
+                <p className="mt-1">This hint only uses loaded, verified weekly statuses and cannot rule out other requests.</p>
+              </div>
+            )}
             <p className="rounded-lg border border-status-warning/20 bg-status-warning-bg/50 px-3 py-2.5 leading-relaxed text-ink-secondary">
               Approval is separate from payment. These requests will remain approved and awaiting payment; confirm payment later, one request at a time.
             </p>

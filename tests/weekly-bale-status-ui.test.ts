@@ -47,6 +47,13 @@ describe('weekly request status in legacy list',()=>{
   await screen.findByText('Expired · awaiting recorded rejection');await act(async()=>resolve(response([status('r1','pending_approval','pending_approval',true)])));
   expect((screen.getByRole('button',{name:'Approve'}) as HTMLButtonElement).disabled).toBe(true);
  });
+ it('warns the Founder about another loaded request in the same week on the row and batch confirmation',async()=>{
+  mock.rows=[request('r1'),request('r2','approved_pending_payment')];mock.rpc.mockResolvedValue(response([status('r1','pending_approval','pending_approval',true),status('r2','approved_pending_payment','approved_pending_payment',false)]));
+  render(React.createElement(AdvanceRequestsPanel));
+  await screen.findAllByText(/Possible repeated requests: 2/);const row=document.getElementById('advance-request-r1')!;
+  fireEvent.click(within(row).getByRole('checkbox'));fireEvent.click(screen.getByRole('button',{name:'Approve selected (1)'}));
+  const dialog=screen.getByRole('dialog',{name:'Approve selected Bale requests?'});expect(within(dialog).getByText('Check possible repeated requests before approval')).toBeTruthy();expect(within(dialog).getByText(/Ada · week of 2026-11-15 · 2 requests/)).toBeTruthy();expect(mock.batch).not.toHaveBeenCalled();
+ });
  it('prevents stale server snapshots from authorizing a changed cached record',async()=>{
   mock.rpc.mockResolvedValue(response([status('r1','approved_pending_payment','approved_pending_payment',false)]));render(React.createElement(AdvanceRequestsPanel));
   await screen.findByText(/Weekly status unavailable or changed/);const row=screen.getByText('Ada').closest('article')!;expect((within(row).getByRole('button',{name:'Approve'}) as HTMLButtonElement).disabled).toBe(true);
