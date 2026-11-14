@@ -37,7 +37,13 @@ async function fixture(cutover=true){
   INSERT INTO public.attendance(id,worker_id,project_id,date,status,hours_worked,submitted_at) VALUES('${attendance}','${worker}','${site}','2024-11-03','present',8,'2024-11-03T08:00:00Z');`);
  const paths=['supabase/migrations/20261102000000_atomic_payroll_payments.sql','supabase/migrations/20261113000000_weekly_worker_preview.sql','supabase/migrations/20261113000001_attendance_time_detail.sql','supabase/migrations/20261113000002_worker_allowances.sql','supabase/migrations/20261113000003_weekly_payroll_context.sql','supabase/drafts/guard_legacy_bale_payment.sql','supabase/drafts/weekly_payment_date.sql','supabase/drafts/weekly_worker_generator.sql','supabase/drafts/weekly_worker_approval.sql','supabase/drafts/weekly_worker_paid_allocation.sql','supabase/drafts/weekly_worker_draft_details.sql','supabase/drafts/weekly_paid_attendance_change_review.sql','supabase/drafts/paid_payroll_adjustments.sql','supabase/drafts/weekly_worker_draft_refresh.sql','supabase/drafts/weekly_worker_return_to_draft.sql','supabase/migrations/20261013000000_advance_requests.sql','supabase/migrations/20261013000001_advance_request_notifications.sql','supabase/migrations/20261113000004_bale_request_site_guard.sql','supabase/drafts/weekly_bale_schedule.sql','supabase/drafts/weekly_bale_expiration.sql','supabase/drafts/weekly_bale_release_list.sql'];
  for(const p of paths)await db.exec(sql(p));
- if(cutover)await db.exec(`BEGIN; ${sql('supabase/drafts/weekly_bale_legacy_cutover_guard.sql')} ${sql('supabase/drafts/weekly_worker_legacy_cutover_guard.sql')} COMMIT;`);
+ if(cutover){
+  await db.exec(`BEGIN; ${sql('supabase/drafts/weekly_bale_legacy_cutover_guard.sql')} ${sql('supabase/drafts/weekly_worker_legacy_cutover_guard.sql')} COMMIT;`);
+  // Model the hosted follow-up ACL change as well as the original guards.
+  // The UI still uses Founder review, but release and payment must use the
+  // replacements even when the obsolete functions are no longer executable.
+  await db.exec('REVOKE ALL ON FUNCTION public.issue_advance_request(uuid),public.record_advance_deduction_atomic(uuid,numeric) FROM PUBLIC,anon,authenticated,service_role');
+ }
  await db.exec(`CREATE OR REPLACE FUNCTION public.weekly_bale_clock() RETURNS timestamptz LANGUAGE sql VOLATILE SET search_path='' AS $$SELECT current_setting('test.clock')::timestamptz$$;
  SET test.assurance='yes';SET test.uid='${supervisor}';SET test.clock='2024-11-03T04:00:00Z';SET ROLE authenticated`);
  return db;
@@ -47,6 +53,8 @@ describe('weekly Bale through worker payroll: candidate UI and synthetic SQL',()
  it('records one release and one external payment, recovering safely from lost responses',async()=>{
   for(const name of ['NEXT_PUBLIC_FINANCE_FOUNDATION_PREVIEW','NEXT_PUBLIC_WEEKLY_WORKER_ACTIONS_PREVIEW','NEXT_PUBLIC_WEEKLY_WORKER_CUTOVER_PREVIEW','NEXT_PUBLIC_WEEKLY_BALE_RELEASE_PREVIEW','NEXT_PUBLIC_WEEKLY_WORKER_REFRESH_PREVIEW','NEXT_PUBLIC_WEEKLY_WORKER_RETURN_PREVIEW'])vi.stubEnv(name,'true');
   mock.today='2024-11-06';mock.actor=supervisor;mock.supervisor=true;mock.founder=false;const db=await fixture();try{
+   await expect(db.query('SELECT public.issue_advance_request(NULL::uuid)')).rejects.toThrow(/permission denied/);
+   await expect(db.query('SELECT public.record_advance_deduction_atomic(NULL::uuid,1::numeric)')).rejects.toThrow(/permission denied/);
    const req=(await db.query<{id:string}>('INSERT INTO public.advance_requests(worker_id,project_id,requested_amount,submitted_by) VALUES($1,$2,100.25,$3) RETURNING id',[worker,site,supervisor])).rows[0].id;
    let loseTime=true,loseAllowance=true,loseRelease=true,losePayment=true,loseCase=true;mock.rpc.mockReset();mock.rpc.mockImplementation(async(name:string,args:Record<string,unknown>={})=>{
     try{
