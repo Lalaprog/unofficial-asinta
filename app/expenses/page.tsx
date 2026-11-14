@@ -43,6 +43,8 @@ import { AICategorizationResult } from '@/lib/ai/groq';
 import {
   RECEIPT_BUCKET,
   buildReceiptObjectPath,
+  canonicalReceiptMime,
+  canonicalReceiptUpload,
   createReceiptSignedUrl,
   validateReceiptFile,
 } from '@/lib/supabase/receipts';
@@ -633,10 +635,11 @@ export default function ExpensesPage() {
       return null;
     }
     const path = buildReceiptObjectPath(user?.id || 'unattributed', check.extension);
-    const { error: uploadError } = await supabase.storage.from(RECEIPT_BUCKET).upload(path, file, {
+    const { error: uploadError } = await supabase.storage.from(RECEIPT_BUCKET).upload(path, canonicalReceiptUpload(file), {
       cacheControl: '3600',
       upsert: false,
-      contentType: file.type,
+      // Match the canonical type used by the inbox and future bucket limits.
+      contentType: canonicalReceiptMime(file.type)!,
     });
     if (uploadError) {
       showToast('error', `Receipt upload failed: ${uploadError.message}`);

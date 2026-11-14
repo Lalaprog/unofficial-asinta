@@ -1,5 +1,5 @@
 import type {SupabaseClient} from '@supabase/supabase-js';
-import {RECEIPT_BUCKET,validateReceiptFile} from '@/lib/supabase/receipts';
+import {RECEIPT_BUCKET,canonicalReceiptMime,canonicalReceiptUpload,validateReceiptFile} from '@/lib/supabase/receipts';
 
 export interface ReceiptInboxItem {id:string;saved_by:string|null;object_path:string;file_name:string;mime_type:string;file_size:number;sha256:string;status:'pending'|'ready';created_at:string}
 export interface ReceiptInboxPage {items:ReceiptInboxItem[];hasMore:boolean}
@@ -28,17 +28,18 @@ export async function receiptDigest(file:File):Promise<string> {
 export async function prepareInboxItem(userId:string,file:File):Promise<Omit<ReceiptInboxItem,'status'|'created_at'>> {
  const check=validateReceiptFile(file);
  if(!check.ok || !check.extension || !uuid.test(userId)) throw new Error(check.error || 'Sign in as a Founder first.');
- const id=crypto.randomUUID();const mime=file.type.toLowerCase()==='image/jpg'?'image/jpeg':file.type.toLowerCase();
+ const id=crypto.randomUUID();const mime=canonicalReceiptMime(file.type);
+ if(!mime) throw new Error('Unsupported receipt type.');
  return {id,saved_by:userId,object_path:`${userId}/inbox/${id}.${check.extension}`,file_name:file.name.trim().slice(0,200)||'Receipt photo',mime_type:mime,file_size:file.size,sha256:await receiptDigest(file)};
 }
 export function matchesReceiptFile(item:ReceiptInboxItem,file:File,digest:string):boolean {
- const mime=file.type.toLowerCase()==='image/jpg'?'image/jpeg':file.type.toLowerCase();
+ const mime=canonicalReceiptMime(file.type);
  return validateReceiptFile(file).ok && mime===item.mime_type && file.size===item.file_size && digest===item.sha256;
 }
 /** Upload may succeed even if its response is lost. Finish by checking the object in the database. */
 export async function uploadAndFinishInbox(client:SupabaseClient,item:ReceiptInboxItem,file:File):Promise<boolean> {
  if(!matchesReceiptFile(item,file,await receiptDigest(file))) throw new Error('Choose the same photo that started this upload.');
- try {await client.storage.from(RECEIPT_BUCKET).upload(item.object_path,file,{upsert:false,contentType:item.mime_type});} catch { /* completion check below handles ambiguous upload */ }
+ try {await client.storage.from(RECEIPT_BUCKET).upload(item.object_path,canonicalReceiptUpload(file),{upsert:false,contentType:item.mime_type});} catch { /* completion check below handles ambiguous upload */ }
  try {
   const {data,error}=await client.from('receipt_photo_inbox').update({status:'ready'}).eq('id',item.id).eq('status','pending').select('*').maybeSingle();
   const matchesReady=(value:unknown)=>{const saved=parseReceiptItem(value);return saved.status==='ready' && saved.id===item.id && saved.object_path===item.object_path && saved.sha256===item.sha256 && saved.file_size===item.file_size && saved.mime_type===item.mime_type;};

@@ -14,6 +14,15 @@ describe('receipt inbox preparation and recovery',()=>{
   expect(matchesReceiptFile({...prepared,status:'pending' as const,created_at:item.created_at},file,prepared.sha256)).toBe(true);
   expect(matchesReceiptFile({...prepared,status:'pending' as const,created_at:item.created_at},new File(['abd'],'other.jpg',{type:'image/jpeg'}),await receiptDigest(new File(['abd'],'other.jpg',{type:'image/jpeg'})))).toBe(false);
  });
+ it('canonicalizes the JPEG alias consistently for inbox upload and retry',async()=>{
+  const file=new File(['abc'],'photo.jpg',{type:'image/jpg'}),prepared=await prepareInboxItem(owner,file);
+  const data={...prepared,status:'pending' as const,created_at:item.created_at};
+  const upload=vi.fn().mockResolvedValue({error:null});const query={eq:vi.fn().mockReturnThis(),select:vi.fn().mockReturnThis(),maybeSingle:vi.fn().mockResolvedValue({data:{...data,status:'ready'},error:null})};
+  const client={storage:{from:()=>({upload})},from:()=>({update:()=>query})};
+  expect(prepared.mime_type).toBe('image/jpeg');expect(await uploadAndFinishInbox(client as never,data,file)).toBe(true);
+  const [path,body,options]=upload.mock.calls[0] as unknown as [string,File,unknown];
+  expect(path).toBe(prepared.object_path);expect(body.type).toBe('image/jpeg');expect(await receiptDigest(body)).toBe(prepared.sha256);expect(options).toEqual({upsert:false,contentType:'image/jpeg'});
+ });
  it('checks database completion after an ambiguous upload response',async()=>{
   const file=new File(['abc'],'photo.jpg',{type:'image/jpeg'}),digest=await receiptDigest(file);const data={...item,sha256:digest};
   const upload=vi.fn().mockRejectedValue(new Error('timeout'));

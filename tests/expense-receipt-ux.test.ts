@@ -30,6 +30,14 @@ async function saveDetectedBale() {
   return screen.getByRole('dialog',{name:'Worker advance detected'});
 }
 describe('expense receipt review',()=>{
+  it('uploads the JPG alias as canonical JPEG, compatible with bucket limits',async()=>{
+    render(React.createElement(ExpensesPage));fireEvent.click(screen.getAllByRole('button',{name:'Record Expense'})[0]);
+    const dialog=screen.getByRole('dialog',{name:'Record Site Expense'});
+    const file=new File(['photo'],'receipt.jpg',{type:'image/jpg'});
+    await act(async()=>{fireEvent.change(within(dialog).getByLabelText('Attach Photo'),{target:{files:[file]}})});
+    expect(mock.upload).toHaveBeenCalledOnce();const [,body,options]=mock.upload.mock.calls[0];
+    expect(body.type).toBe('image/jpeg');expect(body.size).toBe(file.size);expect(options).toMatchObject({contentType:'image/jpeg'});
+  });
   it('preserves the expense but holds the legacy Bale shortcut in independent cutover mode',async()=>{
     vi.stubEnv('NEXT_PUBLIC_WEEKLY_WORKER_CUTOVER_PREVIEW','true');
     vi.stubEnv('NEXT_PUBLIC_FINANCE_FOUNDATION_PREVIEW','false');

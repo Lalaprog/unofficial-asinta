@@ -38,6 +38,20 @@ export const RECEIPT_MIME_EXTENSIONS: Record<string, string> = {
 
 export const RECEIPT_ALLOWED_MIME_TYPES = Object.keys(RECEIPT_MIME_EXTENSIONS);
 
+/** Canonicalize the common JPEG alias before supplying a Storage content type. */
+export function canonicalReceiptMime(type: string | undefined): string | null {
+  const value = (type || '').toLowerCase();
+  if (!Object.prototype.hasOwnProperty.call(RECEIPT_MIME_EXTENSIONS, value)) return null;
+  return value === 'image/jpg' ? 'image/jpeg' : value;
+}
+
+/** Storage SDK sends Blob/File.type in multipart uploads, not its contentType option. */
+export function canonicalReceiptUpload(file: File): File {
+  const mime = canonicalReceiptMime(file.type);
+  if (!mime) throw new Error('Unsupported receipt type.');
+  return file.type === mime ? file : new File([file], file.name, { type: mime, lastModified: file.lastModified });
+}
+
 export interface ReceiptFileCheck {
   ok: boolean;
   /** Safe, user-facing reason when ok is false. */
@@ -52,8 +66,8 @@ export function validateReceiptFile(file: { type?: string; size?: number } | nul
     return { ok: false, error: 'Choose a receipt photo first.' };
   }
 
-  const mime = (file.type || '').toLowerCase();
-  const extension = RECEIPT_MIME_EXTENSIONS[mime];
+  const mime = canonicalReceiptMime(file.type);
+  const extension = mime ? RECEIPT_MIME_EXTENSIONS[mime] : undefined;
   if (!extension) {
     return {
       ok: false,
@@ -62,7 +76,7 @@ export function validateReceiptFile(file: { type?: string; size?: number } | nul
   }
 
   const size = typeof file.size === 'number' ? file.size : 0;
-  if (size <= 0) {
+  if (!Number.isSafeInteger(size) || size <= 0) {
     return { ok: false, error: 'That file is empty.' };
   }
   if (size > RECEIPT_MAX_BYTES) {
@@ -83,8 +97,9 @@ export function validateReceiptFile(file: { type?: string; size?: number } | nul
  *   - a legacy public URL:              ".../object/public/receipts/user-id/1234-ab.jpg"
  *   - a legacy signed URL with a token: ".../object/sign/receipts/…?token=…"
  *
- * Returns null for anything that is not a safe, single-bucket path: absolute
- * URLs on another host, `..` traversal, or an empty value. The caller renders
+ * Only receipt-bucket URLs are converted; their host is not validated because
+ * only the extracted path is passed to the configured Storage client. Reject
+ * traversal and empty paths. The caller renders
  * "no receipt" rather than pretending a photo is available.
  */
 export function receiptPathFromStoredValue(value: string | null | undefined): string | null {
@@ -97,7 +112,7 @@ export function receiptPathFromStoredValue(value: string | null | undefined): st
     // Strip the query string first: a signed URL's token must not be treated
     // as part of the path.
     candidate = candidate.split('?')[0];
-    const marker = candidate.match(/\/storage\/v1\/object\/(?:public|sign|authenticated)\/[^/]+\/(.+)$/);
+    const marker = candidate.match(/\/storage\/v1\/object\/(?:public|sign|authenticated)\/receipts\/(.+)$/);
     if (!marker) return null;
     candidate = marker[1];
   }
