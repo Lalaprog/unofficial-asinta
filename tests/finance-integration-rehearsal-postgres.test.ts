@@ -106,6 +106,10 @@ suite('coordinated finance integration rehearsal, synthetic PostgreSQL only',()=
    // New external-pay attribution evidence is separate and never posts project costs.
    await db.query(readFileSync('supabase/drafts/historical_worker_project_attribution.sql','utf8'));
    await db.query(readFileSync('supabase/drafts/project_cost_historical_review.sql','utf8'));
+   // Correction evidence and inventory are drafts, installed here only inside
+   // the disposable rolled-back rehearsal, not in the development database.
+   await db.query(readFileSync('supabase/drafts/project_cost_correction_attribution.sql','utf8'));
+   await db.query(readFileSync('supabase/drafts/project_cost_correction_inventory.sql','utf8'));
    // Equipment is outside the generated chain; only this disposable transaction installs it.
    await db.query(readFileSync('supabase/drafts/owned_equipment_allocations.sql','utf8'));
    expect((await db.query("SELECT has_table_privilege('service_role','public.owned_equipment_allocations','INSERT,UPDATE,DELETE') allowed")).rows[0].allowed).toBe(false);
@@ -247,6 +251,24 @@ suite('coordinated finance integration rehearsal, synthetic PostgreSQL only',()=
    await db.query("SELECT public.resolve_paid_period_assertion_case($1,'no_transfer',NULL,'Synthetic review complete',true)",[historicalCase]);
    const withCase=parseHistoricalCostSnapshot((await db.query('SELECT public.project_cost_historical_review($1) v',[site])).rows[0].v,site);
    expect(withCase.historical[0].caseCount).toBe(1);
+   // Inventory links both original source types, distinguishing absent evidence
+   // from an explicitly reviewed zero, without changing a saved cost review.
+   const voucherCase='70000000-0000-4000-8000-000000000012';
+   let correctionInventory=(await db.query('SELECT public.project_cost_correction_inventory($1) v',[site])).rows[0].v;
+   expect(correctionInventory.corrections).toEqual(expect.arrayContaining([
+    expect.objectContaining({kind:'voucher',case_id:voucherCase,source_in_snapshot:true,site_gross_change:null}),
+    expect.objectContaining({kind:'external_worker',case_id:historicalCase,source_in_snapshot:true,site_gross_change:null})]));
+   for(const [kind,caseId,request,gross,split] of [
+    ['voucher',voucherCase,'70000000-0000-4000-8000-000000000098','0.00',[]],
+    ['external_worker',historicalCase,'70000000-0000-4000-8000-000000000099','-20.00',[{project_id:site,gross_change:'-20.00'}]],
+   ] as const){
+    const evidence=(await db.query('SELECT public.project_cost_correction_attribution($1,$2,NULL) v',[kind,caseId])).rows[0].v;
+    await db.query("SELECT public.record_project_cost_correction_attribution($1,$2,$3,0,$4::jsonb,$5::numeric,$6::jsonb,'Synthetic correction evidence',true)",[request,kind,caseId,JSON.stringify(evidence.case),gross,JSON.stringify(split)]);
+   }
+   correctionInventory=(await db.query('SELECT public.project_cost_correction_inventory($1) v',[site])).rows[0].v;
+   expect(correctionInventory.corrections).toEqual(expect.arrayContaining([
+    expect.objectContaining({kind:'voucher',site_gross_change:'0.00',evidence:expect.objectContaining({attribution:expect.objectContaining({case_changed:false})})}),
+    expect.objectContaining({kind:'external_worker',site_gross_change:'-20.00',evidence:expect.objectContaining({attribution:expect.objectContaining({case_changed:false})})})]));
    expect((await db.query('SELECT public.project_cost_review($1) v',[site])).rows[0].v).toMatchObject({freshness:'changed',incomplete_total:'2212.85'});
    const caseRaw=(await db.query('SELECT public.project_cost_historical_review($1) v',[site])).rows[0].v;
    await db.query('SAVEPOINT flagged_historical_review');
