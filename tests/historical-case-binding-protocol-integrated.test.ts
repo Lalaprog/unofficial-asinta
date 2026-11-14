@@ -39,9 +39,25 @@ describe('held historical case-binding retry protocol and synthetic SQL',()=>{
    expect(()=>parseBoundAttributionAttempt({...restored,version:1},founder,worker,id(1))).toThrow();
    expect(()=>parseBoundAttributionAttempt({...restored,reviewed_cases:{...cases,total:1}},founder,worker,id(1))).toThrow();
    expect(()=>parseBoundAttributionAttempt(restored,id(8),worker,id(1))).toThrow();
+   // Isolated ACL simulation only: owner-owned wrapper can still replay while
+   // the authenticated caller can no longer invoke the original function.
+   await db.exec('RESET ROLE; REVOKE EXECUTE ON FUNCTION public.record_historical_worker_attribution(uuid,uuid,jsonb,jsonb,text,boolean) FROM PUBLIC,anon,authenticated,service_role; SET ROLE authenticated');
+   const args=boundAttributionArguments(restored);
+   await expect(db.query('SELECT public.record_historical_worker_attribution($1,$2,$3::jsonb,$4::jsonb,$5,$6)',[args.p_request,args.p_source,JSON.stringify(args.p_expected),JSON.stringify(args.p_split),args.p_note,args.p_ack])).rejects.toThrow(/permission denied/);
+   expect((await write()).replayed).toBe(true);
+   const secondWorker=(await db.query<{v:{worker:unknown}}>("SELECT public.historical_external_worker_review($1,'2024-11-10') v",[worker])).rows[0].v.worker;
+   await db.query("SELECT public.record_historical_external_worker_payroll($1,$2,'2024-11-10','2024-11-16',600,100,0,500,'Second ledger',$3,true)",[id(4),worker,JSON.stringify(secondWorker)]);
+   const secondSource=(await db.query<{v:ExternalRow}>('SELECT public.historical_external_worker_lookup($1) v',[id(4)])).rows[0].v;
+   const secondCases=(await db.query<{v:unknown}>("SELECT public.paid_period_assertion_case_list('external_worker',$1) v",[id(4)])).rows[0].v;
+   const next=parseBoundAttributionAttempt({version:2,attribution:{...legacy,id:id(5),source:secondSource},reviewed_cases:secondCases},founder,worker,id(4));
+   const a=boundAttributionArguments(next);
+   expect((await db.query<{v:{replayed:boolean}}>('SELECT public.record_historical_attribution_with_cases($1,$2,$3::jsonb,$4::jsonb,$5,$6,$7::jsonb) v',[a.p_request,a.p_source,JSON.stringify(a.p_expected),JSON.stringify(a.p_split),a.p_note,a.p_ack,JSON.stringify(a.p_cases)])).rows[0].v.replayed).toBe(false);
+   const nextStatus=parseAttributionStatus((await db.query<{v:unknown}>('SELECT public.historical_worker_attribution($1) v',[id(4)])).rows[0].v,worker,id(4));
+   const nextBinding=(await db.query<{v:unknown}>('SELECT public.historical_attribution_case_binding($1) v',[id(4)])).rows[0].v;
+   expect(verifyBoundAttribution(nextBinding,nextStatus,next)).toEqual({casesChanged:false});
    await db.exec('RESET ROLE');
-   expect((await db.query<{n:number}>('SELECT count(*)::int n FROM public.historical_attribution_case_bindings')).rows[0].n).toBe(1);
-   expect((await db.query<{n:number}>('SELECT count(*)::int n FROM public.historical_worker_attributions')).rows[0].n).toBe(1);
+   expect((await db.query<{n:number}>('SELECT count(*)::int n FROM public.historical_attribution_case_bindings')).rows[0].n).toBe(2);
+   expect((await db.query<{n:number}>('SELECT count(*)::int n FROM public.historical_worker_attributions')).rows[0].n).toBe(2);
   }finally{await db.close();}
  },30000);
 });

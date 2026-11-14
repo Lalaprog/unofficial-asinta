@@ -46,4 +46,18 @@ suite('historical attribution case binding PostgreSQL races (held candidate)',()
   }finally{await first.query('ROLLBACK');await second.query('ROLLBACK');}
  },15000);
  it('rejects repeatable-read writers',async()=>{await first.query('BEGIN ISOLATION LEVEL REPEATABLE READ');try{await expect(record(first,id(3),reviewed)).rejects.toMatchObject({code:'P1002'});}finally{await first.query('ROLLBACK');}});
+ it('replays and writes through the replacement after a direct old-writer revoke',async()=>{
+  // Synthetic ACL change only, after the race tests. This does not drain old
+  // invocations or test grants inherited through other roles on a target.
+  await admin.query('REVOKE EXECUTE ON FUNCTION public.record_historical_worker_attribution(uuid,uuid,jsonb,jsonb,text,boolean) FROM PUBLIC,anon,authenticated,service_role');
+  await expect(first.query("SELECT public.record_historical_worker_attribution($1,$2,$3::jsonb,$4::jsonb,'Reviewed',true)",[id(3),id(1),JSON.stringify(source),JSON.stringify([{project_id:site,gross:'600.00'}])])).rejects.toMatchObject({code:'42501'});
+  expect((await record(first,id(3),reviewed)).rows[0].v.replayed).toBe(true);
+  const w=(await first.query("SELECT public.historical_external_worker_review($1,'2024-11-10') v",[worker])).rows[0].v.worker;
+  await first.query("SELECT public.record_historical_external_worker_payroll($1,$2,'2024-11-10','2024-11-16',600,100,0,500,'Second ledger',$3,true)",[id(4),worker,w]);
+  const secondSource=(await first.query('SELECT public.historical_external_worker_lookup($1) v',[id(4)])).rows[0].v;
+  const secondCases=(await first.query("SELECT public.paid_period_assertion_case_list('external_worker',$1) v",[id(4)])).rows[0].v;
+  const result=await first.query("SELECT public.record_historical_attribution_with_cases($1,$2,$3::jsonb,$4::jsonb,'Reviewed',true,$5::jsonb) v",[id(5),id(4),JSON.stringify(secondSource),JSON.stringify([{project_id:site,gross:'600.00'}]),JSON.stringify(secondCases)]);
+  expect(result.rows[0].v.replayed).toBe(false);
+  expect((await admin.query('SELECT count(*)::int n FROM public.historical_attribution_case_bindings')).rows[0].n).toBe(2);
+ },15000);
 });
