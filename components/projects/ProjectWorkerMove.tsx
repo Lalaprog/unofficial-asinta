@@ -22,10 +22,15 @@ export function ProjectWorkerMove({actorId,projectId,workers,projects,onComplete
   if(lock.current)return;lock.current=true;setBusy(true);setError('');setMessage('');
   let stored=false;
   try{
-   sessionStorage.setItem(key,JSON.stringify(attempt));stored=true;if(alive.current)setPending(attempt);
+   const serialized=JSON.stringify(attempt),existing=sessionStorage.getItem(key);
+   if(existing!==null&&JSON.stringify(parseWorkerMoveAttempt(JSON.parse(existing),actorId,projectId))!==serialized)throw Error('Different unresolved move');
+   if(existing===null){if(pending)throw Error('Retry record missing');sessionStorage.setItem(key,serialized);}
+   const saved=sessionStorage.getItem(key);if(!saved||JSON.stringify(parseWorkerMoveAttempt(JSON.parse(saved),actorId,projectId))!==serialized)throw Error('Retry record not stored');
+   stored=true;if(alive.current)setPending(attempt);
    const {data,error:rpcError}=await createClient().rpc('move_worker_project',{p_request:attempt.requestId,p_worker:attempt.workerId,p_from:attempt.fromProject,p_to:attempt.toProject});
    if(rpcError)throw rpcError;
    const result=verifyWorkerMoveResult(data,attempt);
+   const current=sessionStorage.getItem(key);if(!current||JSON.stringify(parseWorkerMoveAttempt(JSON.parse(current),actorId,projectId))!==serialized)throw Error('Retry record changed');
    sessionStorage.removeItem(key);
    if(alive.current){setPending(null);setConfirm(false);setWorker('');setTarget('');setMessage(result.replayed?'The original move was confirmed. Check both project teams.':'Move recorded. Check both project teams.');}
    try { await onCompleted(); } catch { if(alive.current)setMessage('Move confirmed, but the team refresh failed. Refresh both project teams.'); }
@@ -39,7 +44,7 @@ export function ProjectWorkerMove({actorId,projectId,workers,projects,onComplete
  }
  function stopRetry(){
   if(!pending||!stop||busy)return;
-  try{sessionStorage.removeItem(key);setPending(null);setStop(false);setConfirm(false);setMessage('Retry stopped; this did not undo a move. Refresh both project teams and review assignment history before proceeding.');}
+  try{const saved=sessionStorage.getItem(key);if(!saved||JSON.stringify(parseWorkerMoveAttempt(JSON.parse(saved),actorId,projectId))!==JSON.stringify(pending))throw Error('Retry record changed');sessionStorage.removeItem(key);setPending(null);setStop(false);setConfirm(false);setMessage('Retry stopped; this did not undo a move. Refresh both project teams and review assignment history before proceeding.');}
   catch{setError('Could not clear the saved retry. New moves remain blocked.');}
  }
  return <section className="rounded-xl border border-surface-border bg-white p-3 text-xs space-y-3">

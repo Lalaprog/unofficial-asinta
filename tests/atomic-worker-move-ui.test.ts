@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import React from 'react';
-import {cleanup,fireEvent,render,screen,waitFor} from '@testing-library/react';
+import {cleanup,fireEvent,render,screen} from '@testing-library/react';
 import {afterEach,beforeEach,describe,expect,it,vi} from 'vitest';
 const {rpc}=vi.hoisted(()=>({rpc:vi.fn()}));
 vi.mock('@/lib/supabase/client',()=>({createClient:()=>({rpc})}));
@@ -29,6 +29,24 @@ describe('experimental atomic worker move UI',()=>{
  });
  it('blocks writes when retry storage fails or holds a malformed record',async()=>{
   vi.spyOn(Storage.prototype,'setItem').mockImplementation(()=>{throw Error('blocked')});view();await start();await screen.findByText(/no move was sent/);expect(rpc).not.toHaveBeenCalled();cleanup();vi.restoreAllMocks();sessionStorage.setItem(key,'{}');view();await screen.findByText(/Cannot read the saved move retry/);expect(screen.queryByRole('button',{name:'Confirm move'})).toBeNull();expect(rpc).not.toHaveBeenCalled();
+ });
+ it('does not overwrite a newly appeared move before submitting',async()=>{
+  view();fireEvent.click(screen.getByRole('button',{name:'Move a worker to another project'}));fireEvent.change(screen.getByLabelText('Worker on this project'),{target:{value:worker}});fireEvent.change(screen.getByLabelText('Destination project'),{target:{value:dest}});fireEvent.click(screen.getByRole('checkbox'));
+  const other=JSON.stringify({requestId:'10000000-0000-4000-8000-000000000099',actorId:actor,workerId:worker,fromProject:site,toProject:dest});sessionStorage.setItem(key,other);fireEvent.click(screen.getByRole('button',{name:'Confirm move'}));await screen.findByText(/no move was sent/);expect(rpc).not.toHaveBeenCalled();expect(sessionStorage.getItem(key)).toBe(other);
+ });
+ it('preserves changed retry evidence and refuses a stale retry or clear',async()=>{
+  rpc.mockResolvedValueOnce({data:null,error:{message:'network'}});view();await start();await screen.findByText(/outcome is not confirmed/);
+  const attempt=JSON.parse(sessionStorage.getItem(key)!);const changed=JSON.stringify({...attempt,requestId:'10000000-0000-4000-8000-000000000099'});sessionStorage.setItem(key,changed);
+  fireEvent.click(screen.getByRole('button',{name:'Retry same move'}));await screen.findByText(/no move was sent/);expect(rpc).toHaveBeenCalledTimes(1);expect(sessionStorage.getItem(key)).toBe(changed);
+  fireEvent.click(screen.getByRole('button',{name:'Review before stopping retry'}));fireEvent.click(screen.getByRole('button',{name:'I checked; stop retrying'}));await screen.findByText(/Could not clear the saved retry/);expect(sessionStorage.getItem(key)).toBe(changed);
+ });
+ it('allows an explicitly reviewed stop when the retry record is unchanged',async()=>{
+  rpc.mockResolvedValueOnce({data:null,error:{message:'network'}});view();await start();await screen.findByText(/outcome is not confirmed/);fireEvent.click(screen.getByRole('button',{name:'Review before stopping retry'}));fireEvent.click(screen.getByRole('button',{name:'I checked; stop retrying'}));await screen.findByText(/Retry stopped/);expect(sessionStorage.getItem(key)).toBeNull();
+ });
+ it('preserves changed evidence after a late success and verifies storage before sending',async()=>{
+  let resolve!:(value:unknown)=>void;rpc.mockReturnValueOnce(new Promise(r=>{resolve=r;}));view();await start();const attempt=JSON.parse(sessionStorage.getItem(key)!);const changed=JSON.stringify({...attempt,requestId:'10000000-0000-4000-8000-000000000099'});sessionStorage.setItem(key,changed);
+  resolve({data:{request_id:attempt.requestId,worker_id:worker,from_project:site,to_project:dest,replayed:false},error:null});await screen.findByText(/outcome is not confirmed/);expect(sessionStorage.getItem(key)).toBe(changed);expect(props.onCompleted).not.toHaveBeenCalled();
+  cleanup();sessionStorage.clear();rpc.mockReset();vi.spyOn(Storage.prototype,'setItem').mockImplementationOnce(()=>{});view();await start();await screen.findByText(/no move was sent/);expect(rpc).not.toHaveBeenCalled();
  });
  it('does not accept a mismatched RPC result as confirmation',async()=>{
   rpc.mockResolvedValue({data:{request_id:'wrong',worker_id:worker,from_project:site,to_project:dest,replayed:false},error:null});view();await start();await screen.findByText(/outcome is not confirmed/);expect(sessionStorage.getItem(key)).not.toBeNull();expect(props.onCompleted).not.toHaveBeenCalled();

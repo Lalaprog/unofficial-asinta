@@ -5,7 +5,7 @@ import {createClient} from '@/lib/supabase/client';
 import {formatPeso} from '@/lib/email/format';
 import {parseConfirmedRentals,type ConfirmedRental} from '@/lib/projects/confirmedRentals';
 type State={key:string;status:'loading'|'ready'|'error';items:ConfirmedRental[]};
-/** Read-only draft: the separate confirmation UI is not implemented yet. */
+/** Read-only list; confirmation is handled by the separately gated form. */
 export function ConfirmedRentals({projectId,userId}:{projectId:string;userId:string}){
  const [revision,setRevision]=useState(0);const key=JSON.stringify([projectId,userId,revision]);const [state,setState]=useState<State>({key:'',status:'loading',items:[]});
  useEffect(()=>{let active=true;setState({key,status:'loading',items:[]});void(async()=>{try{const {data,error}=await createClient().rpc('project_confirmed_rentals',{p_project:projectId});if(error)throw error;const items=parseConfirmedRentals(data,projectId);if(active)setState({key,status:'ready',items});}catch{if(active)setState({key,status:'error',items:[]});}})();return()=>{active=false;};},[key,projectId]);

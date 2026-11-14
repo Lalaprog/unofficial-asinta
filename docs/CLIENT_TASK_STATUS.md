@@ -24,7 +24,7 @@ This is the current working inventory for the 16 agreed areas, not a release sig
 ## Cross-cutting release blockers
 
 - Do not merge the draft as complete or blindly run `supabase db push` or the stale generated apply bundles. Hosted migration history differs from the repository.
-- Preview backend identity and real authenticated Auth/PostgREST/device behavior have not been established. Passing synthetic fixtures, rollback simulations, CI or a READY build is not proof of a working production workflow.
+- Preview backend identity and real authenticated Auth/PostgREST/device behavior have not been established. Passing synthetic fixtures, rollback simulations, CI or a READY build is not proof of a working production workflow. The branch now checks retry records before sending, confirming or explicitly clearing worker moves and rental links; that does not prevent another tab, a cleared session, a concurrent request or a malicious same-origin script from creating uncertainty. Investigate outcomes before taking another action.
 - The Bale scheduler has no independent failure/dead-man alert. This may be configured after system adjustments, but is required before real use.
 - No verified backup exists. A reliable recovery and restore test covering database, Auth and Storage is required before real client data or handover. The user handles backup/handover later and accepts disposable development data, not loss of client records.
 - The user handles real-account/device testing, environment variables and SMTP; no additional fictional hosted records, real payments or messages are authorized without separate approval.
