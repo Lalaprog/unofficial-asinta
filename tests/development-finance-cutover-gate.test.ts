@@ -19,12 +19,15 @@ describe('coordinated development build configuration',()=>{
  it('enables the complete coordinated surfaces but not unrelated categories or portraits',()=>{
   vi.stubEnv('NEXT_PUBLIC_DEVELOPMENT_FINANCE_CUTOVER','true');
   for(const [name,fn] of Object.entries(finance)){
-   expect(fn(),name).toBe(!['supervisorPayrollRevisionPreviewEnabled','projectCostCorrectionPreviewEnabled'].includes(name));
+   expect(fn(),name).toBe(!['supervisorPayrollRevisionPreviewEnabled','projectCostCorrectionPreviewEnabled','correctedProjectCostReviewPreviewEnabled'].includes(name));
   }
   vi.stubEnv('NEXT_PUBLIC_SUPERVISOR_PAYROLL_REVISION_PREVIEW','true');
   expect(finance.supervisorPayrollRevisionPreviewEnabled()).toBe(true);
   vi.stubEnv('NEXT_PUBLIC_PROJECT_COST_CORRECTION_PREVIEW','true');
   expect(finance.projectCostCorrectionPreviewEnabled()).toBe(true);
+  expect(finance.correctedProjectCostReviewPreviewEnabled()).toBe(false);
+  vi.stubEnv('NEXT_PUBLIC_CORRECTED_PROJECT_COST_REVIEW_PREVIEW','true');
+  expect(finance.correctedProjectCostReviewPreviewEnabled()).toBe(true);
   expect(ownedEquipmentPreviewEnabled()).toBe(true);
   expect(assignmentHistoryPreviewEnabled()).toBe(true);
   expect(workerMovePreviewEnabled()).toBe(true);
