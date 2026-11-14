@@ -7,7 +7,7 @@
 SET LOCAL lock_timeout='3s'; SET LOCAL statement_timeout='30s';
 DO $preflight$
 BEGIN
- IF to_regclass('public.users') IS NULL OR to_regprocedure('auth.uid()') IS NULL
+ IF to_regclass('public.users') IS NULL OR to_regclass('public.audit_log') IS NULL OR to_regprocedure('auth.uid()') IS NULL
  OR to_regprocedure('public.is_founder()') IS NULL OR to_regprocedure('public.session_assurance_satisfied()') IS NULL THEN
   RAISE EXCEPTION 'Supervisor portrait prerequisites missing'; END IF;
  IF to_regclass('public.supervisor_profile_photos') IS NOT NULL
@@ -96,6 +96,12 @@ BEGIN
  INSERT INTO public.supervisor_profile_photos(supervisor_id,version,previous_version,actor_id,mime,photo)
  VALUES(p_supervisor,p_operation,p_expected_version,v_actor,p_mime,v_photo)
  ON CONFLICT(supervisor_id) DO UPDATE SET version=EXCLUDED.version,previous_version=EXCLUDED.previous_version,actor_id=EXCLUDED.actor_id,mime=EXCLUDED.mime,photo=EXCLUDED.photo,updated_at=clock_timestamp();
+ -- Record metadata only: never copy image bytes or base64 to the audit log.
+ -- An exact replay returns above and cannot create a duplicate audit row.
+ INSERT INTO public.audit_log(actor_id,action,table_name,record_id,before_row,after_row)
+ VALUES(v_actor,CASE WHEN v_exists THEN 'update' ELSE 'insert' END,'supervisor_profile_photos',p_supervisor,
+  CASE WHEN v_exists THEN jsonb_build_object('version',v_row.version,'has_photo',v_row.photo IS NOT NULL,'mime',v_row.mime) ELSE NULL END,
+  jsonb_build_object('version',p_operation,'has_photo',v_photo IS NOT NULL,'mime',p_mime));
  RETURN jsonb_build_object('supervisor_id',p_supervisor,'version',p_operation,'has_photo',v_photo IS NOT NULL,'replayed',false);
 END;
 $$;

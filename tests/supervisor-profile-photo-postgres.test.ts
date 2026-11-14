@@ -24,6 +24,7 @@ const pending=async(promise:Promise<unknown>)=>{
    CREATE SCHEMA auth;CREATE FUNCTION auth.uid() RETURNS uuid LANGUAGE sql STABLE AS $$SELECT nullif(current_setting('test.uid',true),'')::uuid$$;
    CREATE FUNCTION public.session_assurance_satisfied() RETURNS boolean LANGUAGE sql STABLE AS $$SELECT coalesce(current_setting('test.assurance',true)='yes',false)$$;
    CREATE TABLE public.users(id uuid PRIMARY KEY,role text NOT NULL);
+ CREATE TABLE public.audit_log(actor_id uuid,action text NOT NULL,table_name text NOT NULL,record_id uuid,before_row jsonb,after_row jsonb);
    CREATE FUNCTION public.is_founder() RETURNS boolean LANGUAGE sql STABLE SECURITY DEFINER AS $$SELECT EXISTS(SELECT 1 FROM public.users WHERE id=auth.uid() AND role='founder')$$;
    INSERT INTO public.users VALUES('${founder}','founder'),('${supervisor}','supervisor');GRANT USAGE ON SCHEMA public,auth TO authenticated,anon,service_role;`);
   await admin.query(`BEGIN;${readFileSync('supabase/drafts/supervisor_profile_photo.sql','utf8')} COMMIT;`);
