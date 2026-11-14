@@ -121,6 +121,15 @@ suite('coordinated finance integration rehearsal, synthetic PostgreSQL only',()=
    // Equipment is outside the generated chain; only this disposable transaction installs it.
    await db.query(readFileSync('supabase/drafts/owned_equipment_allocations.sql','utf8'));
    expect((await db.query("SELECT has_table_privilege('service_role','public.owned_equipment_allocations','INSERT,UPDATE,DELETE') allowed")).rows[0].allowed).toBe(false);
+   // Rehearse service-role restrictions before exercising the actual Founder
+   // payment path below. These are not part of the generated chain.
+   await db.query(readFileSync('supabase/release/development-service-finance-truncate.sql','utf8'));
+   await db.query(readFileSync('supabase/release/development-service-paid-evidence-writers.sql','utf8'));
+   await db.query('SET LOCAL ROLE service_role; SAVEPOINT denied_paid_evidence');
+   await expect(db.query('INSERT INTO public.payroll_payment_dates DEFAULT VALUES')).rejects.toThrow(/permission denied/);
+   await db.query('ROLLBACK TO SAVEPOINT denied_paid_evidence; RELEASE SAVEPOINT denied_paid_evidence; SAVEPOINT denied_paid_allocation');
+   await expect(db.query('INSERT INTO public.weekly_worker_paid_allocations DEFAULT VALUES')).rejects.toThrow(/permission denied/);
+   await db.query('ROLLBACK TO SAVEPOINT denied_paid_allocation; RELEASE SAVEPOINT denied_paid_allocation; RESET ROLE');
    // Rehearse category integration and entry-time craft observations with all the finance guards.
    for (const p of ['worker_category_catalog','worker_category_workforce_cutover','worker_removal_category_compatibility','recorded_craft_observations']) await db.query(readFileSync(`supabase/drafts/${p}.sql`,'utf8'));
    await db.query(`SET LOCAL test.uid='${founder}'; SET LOCAL test.assurance='yes'`);
