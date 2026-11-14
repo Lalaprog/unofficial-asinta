@@ -9,6 +9,7 @@ import { useBaleRequestSubmissionGuard } from '@/lib/attendance/useBaleRequestSu
 import { getManilaClock } from '@/lib/reminders/scheduler';
 import { workerPayrollPeriod } from '@/lib/payroll/periods';
 import { useWeeklyBaleStatuses } from '@/lib/attendance/useWeeklyBaleStatuses';
+import { useBaleReviewGuard } from '@/lib/attendance/useBaleReviewGuard';
 import { selectedBaleDuplicateSignals } from '@/lib/attendance/baleDuplicateSignals';
 import { weeklyBaleExpiryHealthPreviewEnabled, weeklyBaleReleasePreviewEnabled, weeklyBaleIdempotentSubmissionPreviewEnabled, weeklyWorkerCutoverMode } from '@/lib/finance/featureAvailability';
 import { WeeklyBaleExpiryHealth } from '@/components/advances/WeeklyBaleExpiryHealth';
@@ -74,6 +75,7 @@ export function AdvanceRequestsPanel() {
   const submitLock = React.useRef(false);
   const batchLock = React.useRef(false);
   const actionLock = React.useRef(false);
+  const reviewLock = React.useRef(false);
   const {
     advanceRequests,
     projects,
@@ -121,6 +123,13 @@ export function AdvanceRequestsPanel() {
   const idempotentSubmission = weeklyBaleIdempotentSubmissionPreviewEnabled();
   const cutoverMode = weeklyWorkerCutoverMode();
   const submissionGuard = useBaleRequestSubmissionGuard(user?.id, weeklyMode && isSupervisor);
+  const reviewGuard = useBaleReviewGuard(user?.id, weeklyMode && isFounder);
+  const [reviewedUncertainDecision, setReviewedUncertainDecision] = useState(false);
+  const reviewScope = JSON.stringify([user?.id,isFounder,weeklyMode]);
+  const activeReviewScope = React.useRef(reviewScope); activeReviewScope.current=reviewScope;
+  const reviewMounted = React.useRef(false);
+  useEffect(()=>{reviewMounted.current=true;return()=>{reviewMounted.current=false;};},[]);
+  useEffect(()=>{setReviewedUncertainDecision(false);},[reviewScope,reviewGuard.raw]);
   const submissionScope = JSON.stringify([user?.id, isSupervisor, weeklyMode]);
   const activeSubmissionScope = React.useRef(submissionScope);
   activeSubmissionScope.current = submissionScope;
@@ -128,7 +137,7 @@ export function AdvanceRequestsPanel() {
   useEffect(() => { setReviewedUncertainSubmission(false); }, [user?.id, weeklyMode]);
   const weeklyStatuses = useWeeklyBaleStatuses(weeklyMode, user?.id, isFounder ? 'founder' : isSupervisor ? 'supervisor' : 'other', isFounder ? advanceRequests : advanceRequests.filter(r => r.submitted_by === user?.id));
   const statusFor = (request: AdvanceRequest) => weeklyStatuses.data?.items.find(item => item.id === request.id && item.stored_status === request.status);
-  const canReview = (request: AdvanceRequest) => request.status === 'pending_approval' && (weeklyMode ? statusFor(request)?.can_review === true : !cutoverMode);
+  const canReview = (request: AdvanceRequest) => request.status === 'pending_approval' && (weeklyMode ? reviewGuard.status === 'ready' && statusFor(request)?.can_review === true : !cutoverMode);
   // Statuses are a point-in-time server snapshot; only the Supervisor's own
   // loaded rows can be checked here, and another request may still be in flight.
   const snapshotTime = weeklyStatuses.data?.as_of;
@@ -325,22 +334,27 @@ export function AdvanceRequestsPanel() {
 
   const handleApproveSelected = async () => {
     const requestIds = selectedRequests.map((request) => request.id);
-    if (batchLock.current || requestIds.length === 0 || requestIds.length > MAX_BATCH_APPROVAL_SIZE) return;
+    if (batchLock.current || reviewLock.current || requestIds.length === 0 || requestIds.length > MAX_BATCH_APPROVAL_SIZE) return;
+    reviewLock.current = true;
+    const marker = weeklyMode ? reviewGuard.begin('approve',requestIds) : null;
+    if (weeklyMode && !marker) { reviewLock.current=false; return; }
     batchLock.current = true;
     setIsApprovingBatch(true);
+    setIsBatchApprovalOpen(false);
     try {
       const approved = await approveAdvanceRequests(requestIds);
-      if (approved) {
-        setIsBatchApprovalOpen(false);
+      if (!reviewMounted.current || activeReviewScope.current!==reviewScope) return;
+      if (approved && (!weeklyMode || (marker && reviewGuard.confirmed(marker)))) {
         setRequestSelection({ siteId: null, ids: [] });
       } else {
-        showToast('error', 'Approval not confirmed. Check the request statuses before retrying.');
+        showToast('error', 'Approval not confirmed. Check every request status before retrying.');
       }
     } catch {
-      showToast('error', 'Approval not confirmed. Check the request statuses before retrying.');
+      if (reviewMounted.current && activeReviewScope.current===reviewScope) showToast('error', 'Approval not confirmed. Check every request status before retrying.');
     } finally {
+      reviewLock.current = false;
       batchLock.current = false;
-      setIsApprovingBatch(false);
+      if (reviewMounted.current && activeReviewScope.current===reviewScope) setIsApprovingBatch(false);
     }
   };
 
@@ -406,17 +420,22 @@ export function AdvanceRequestsPanel() {
 
   const handleReview = async (id: string, decision: 'approve' | 'reject') => {
     const request = advanceRequests.find(item => item.id === id);
-    if (actionLock.current || !request || !canReview(request)) return;
+    if (actionLock.current || reviewLock.current || !request || !canReview(request)) return;
+    reviewLock.current = true;
+    const marker = weeklyMode ? reviewGuard.begin(decision,[id]) : null;
+    if (weeklyMode && !marker) { reviewLock.current=false; return; }
     actionLock.current = true;
     setActioningRequestId(id);
     try {
       const success = await reviewAdvanceRequest(id, decision);
-      if (!success) showToast('error', 'Review not confirmed. Check the request status before retrying.');
+      if (!reviewMounted.current || activeReviewScope.current!==reviewScope) return;
+      if (!success || (weeklyMode && (!marker || !reviewGuard.confirmed(marker)))) showToast('error', 'Review not confirmed. Check the request status before retrying.');
     } catch {
-      showToast('error', 'Review not confirmed. Check the request status before retrying.');
+      if (reviewMounted.current && activeReviewScope.current===reviewScope) showToast('error', 'Review not confirmed. Check the request status before retrying.');
     } finally {
+      reviewLock.current = false;
       actionLock.current = false;
-      setActioningRequestId(null);
+      if (reviewMounted.current && activeReviewScope.current===reviewScope) setActioningRequestId(null);
     }
   };
 
@@ -554,6 +573,14 @@ export function AdvanceRequestsPanel() {
   return (
     <div className="space-y-4">
       {cutoverMode && !weeklyMode && <p role="alert" className="rounded-xl bg-status-warning-bg p-3 text-xs text-ink-secondary">Weekly Bale controls are not enabled. Requests and decisions are held until the configuration is reviewed.</p>}
+      {weeklyMode && isFounder && reviewGuard.status === 'pending' && <section role="alert" className="space-y-2 rounded-xl bg-status-warning-bg p-3 text-xs text-ink-secondary">
+        <p>A Bale review may have been recorded. Check each affected request and its history before another decision. An empty list does not prove failure; the earlier action may still be processing.</p>
+        {reviewGuard.marker && <p className="break-all">{reviewGuard.marker.decision === 'approve' ? 'Approval' : 'Rejection'} · request IDs: {reviewGuard.marker.ids.join(', ')}</p>}
+        <p>This warning exists only in this browser tab. It can be lost if storage is cleared, does not lock other devices, and clearing it does not cancel a request.</p>
+        <label className="flex items-start gap-2"><input type="checkbox" checked={reviewedUncertainDecision} onChange={event=>setReviewedUncertainDecision(event.target.checked)} />I investigated each request and understand this does not cancel the earlier decision.</label>
+        <Button type="button" size="sm" variant="secondary" disabled={!reviewedUncertainDecision || Boolean(actioningRequestId) || isApprovingBatch} onClick={()=>{if(reviewGuard.clearAfterReview())setReviewedUncertainDecision(false);}}>Clear Bale review warning</Button>
+      </section>}
+      {weeklyMode && isFounder && reviewGuard.status === 'unavailable' && <p role="alert" className="rounded-xl bg-status-warning-bg p-3 text-xs text-ink-secondary">This tab cannot safely check its Bale review warning. Decisions are held; investigate the request history and restore browser storage before continuing.</p>}
       {weeklyMode && isSupervisor && submissionGuard.status === 'pending' && <section role="alert" className="space-y-2 rounded-xl bg-status-warning-bg p-3 text-xs text-ink-secondary">
         <p>A Bale request may have been sent, but its result was not confirmed. Refresh and check the request list with the Founder before submitting another. An empty list does not prove the request failed; it may still be processing. Do not give or request money again based on this warning.</p>
         <p>This warning is only in this browser tab. Closing it or clearing storage may erase the warning; another tab or device can still send a request.</p>
@@ -567,7 +594,7 @@ export function AdvanceRequestsPanel() {
       {weeklyMode && isSupervisor && submissionGuard.status === 'unavailable' && <p role="alert" className="rounded-xl bg-status-warning-bg p-3 text-xs text-ink-secondary">This tab cannot safely check its request warning. New requests are held; investigate the request list and restore browser storage before trying again.</p>}
       {isFounder && user?.id && weeklyBaleExpiryHealthPreviewEnabled() && <WeeklyBaleExpiryHealth userId={user.id} />}
       {weeklyMode && <div className="rounded-xl border border-surface-border bg-white p-3 text-xs text-ink-secondary">
-        <p>Weekly decision status is checked against the server. Existing list totals and filters reflect stored statuses, which may lag automatic expiry. Release is handled in the separate experimental panel.</p>
+        <p>Weekly decision status is checked against the server in bounded batches, not one transaction. Results can change immediately; decisions are checked again by the server. Existing list totals and filters reflect stored statuses, which may lag automatic expiry. Release is handled in the separate experimental panel.</p>
         {weeklyStatuses.loading && <p role="status">Checking weekly request status…</p>}
         {weeklyStatuses.error && <p role="alert">Weekly status unavailable: {weeklyStatuses.error}</p>}
         <Button type="button" size="sm" variant="secondary" disabled={weeklyStatuses.loading} onClick={() => void weeklyStatuses.refresh()}>Refresh weekly status</Button>

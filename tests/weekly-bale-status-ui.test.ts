@@ -14,8 +14,8 @@ import {AdvanceRequestsPanel} from '@/components/advances/AdvanceRequestsPanel';
 const request=(id:string,status='pending_approval')=>({id,worker_id:'worker',project_id:'site',requested_amount:100,submitted_by:'sup',status,created_at:'2026-11-15T04:00:00Z',updated_at:'2026-11-15T04:00:00Z',approved_at:null,rejected_at:status==='rejected'?'2026-11-18T00:00:00Z':null,issued_at:null});
 const status=(id:string,stored_status:string,effective_status:string,can_review:boolean,auto_expired=false)=>({id,kind:'weekly',period_start:'2026-11-15',stored_status,effective_status,can_review,auto_expired});
 const response=(items:object[])=>({data:{as_of:'2026-11-18T00:00:00Z',items},error:null});
-beforeEach(()=>{mock.rpc.mockReset();mock.review.mockReset();mock.batch.mockReset();mock.issue.mockReset();mock.rows=[request('r1')];vi.stubEnv('NEXT_PUBLIC_FINANCE_FOUNDATION_PREVIEW','true');vi.stubEnv('NEXT_PUBLIC_WEEKLY_BALE_RELEASE_PREVIEW','true');vi.stubEnv('NEXT_PUBLIC_WEEKLY_WORKER_ACTIONS_PREVIEW','true');vi.stubEnv('NEXT_PUBLIC_WEEKLY_WORKER_CUTOVER_PREVIEW','true');});
-afterEach(()=>{cleanup();vi.unstubAllEnvs();});
+beforeEach(()=>{sessionStorage.clear();mock.rpc.mockReset();mock.review.mockReset();mock.batch.mockReset();mock.issue.mockReset();mock.rows=[request('r1')];vi.stubEnv('NEXT_PUBLIC_FINANCE_FOUNDATION_PREVIEW','true');vi.stubEnv('NEXT_PUBLIC_WEEKLY_BALE_RELEASE_PREVIEW','true');vi.stubEnv('NEXT_PUBLIC_WEEKLY_WORKER_ACTIONS_PREVIEW','true');vi.stubEnv('NEXT_PUBLIC_WEEKLY_WORKER_CUTOVER_PREVIEW','true');});
+afterEach(()=>{cleanup();sessionStorage.clear();vi.restoreAllMocks();vi.unstubAllEnvs();});
 describe('weekly request status in legacy list',()=>{
  it('labels expired pending requests and blocks all approval paths',async()=>{
   mock.rpc.mockResolvedValue(response([status('r1','pending_approval','expired_unapproved',false)]));render(React.createElement(AdvanceRequestsPanel));
@@ -53,6 +53,73 @@ describe('weekly request status in legacy list',()=>{
   await screen.findAllByText(/Possible repeated requests: 2/);const row=document.getElementById('advance-request-r1')!;
   fireEvent.click(within(row).getByRole('checkbox'));fireEvent.click(screen.getByRole('button',{name:'Approve selected (1)'}));
   const dialog=screen.getByRole('dialog',{name:'Approve selected Bale requests?'});expect(within(dialog).getByText('Check possible repeated requests before approval')).toBeTruthy();expect(within(dialog).getByText(/Ada · week of 2026-11-15 · 2 requests/)).toBeTruthy();expect(mock.batch).not.toHaveBeenCalled();
+ });
+ it('checks more than 500 loaded requests and holds every decision if a later batch fails',async()=>{
+  mock.rows=Array.from({length:501},(_,i)=>request(`r${String(i).padStart(3,'0')}`,i===500?'pending_approval':i===0?'approved_pending_payment':'rejected'));
+  let failing=false;
+  mock.rpc.mockImplementation(async(_name:string,{p_ids}:{p_ids:string[]})=>{
+   if(failing && p_ids.length===1)return {data:null,error:{message:'offline'}};
+   return response(p_ids.map(id=>{const row=mock.rows.find((r:any)=>r.id===id) as {status:string};return status(id,row.status,row.status,row.status==='pending_approval');}));
+  });
+  render(React.createElement(AdvanceRequestsPanel));
+  await screen.findAllByText(/Possible repeated requests: 2/);
+  expect(mock.rpc.mock.calls.map(call=>call[1].p_ids.length)).toEqual([500,1]);
+  const row=document.getElementById('advance-request-r500')!;
+  expect((within(row).getByRole('button',{name:'Approve'}) as HTMLButtonElement).disabled).toBe(false);
+  failing=true;fireEvent.click(screen.getByRole('button',{name:'Refresh weekly status'}));
+  await screen.findByText(/Weekly status unavailable: offline/);
+  expect((within(row).getByRole('button',{name:'Approve'}) as HTMLButtonElement).disabled).toBe(true);
+  fireEvent.click(within(row).getByRole('button',{name:'Approve'}));expect(mock.review).not.toHaveBeenCalled();
+ });
+ it('clears a saved warning after a confirmed response in the same view',async()=>{
+  mock.rpc.mockResolvedValue(response([status('r1','pending_approval','pending_approval',true)]));mock.review.mockResolvedValue(true);
+  render(React.createElement(AdvanceRequestsPanel));await screen.findByRole('button',{name:'Approve'});await act(async()=>{await Promise.resolve();});
+  fireEvent.click(screen.getByRole('button',{name:'Approve'}));
+  await act(async()=>{await Promise.resolve();});
+  expect(mock.review).toHaveBeenCalledWith('r1','approve');
+  expect(sessionStorage.getItem(JSON.stringify(['weekly-bale-review-unconfirmed-v1','founder']))).toBeNull();
+  expect(screen.queryByText(/A Bale review may have been recorded/)).toBeNull();
+ });
+ it('holds a lost review across remount until the Founder investigates',async()=>{
+  mock.rpc.mockResolvedValue(response([status('r1','pending_approval','pending_approval',true)]));mock.review.mockResolvedValue(false);
+  const view=render(React.createElement(AdvanceRequestsPanel));const approve=await screen.findByRole('button',{name:'Approve'});
+  await act(async()=>{await Promise.resolve();});expect((approve as HTMLButtonElement).disabled).toBe(false);
+  fireEvent.click(approve);await screen.findByText(/A Bale review may have been recorded/);
+  expect(mock.review).toHaveBeenCalledTimes(1);expect((approve as HTMLButtonElement).disabled).toBe(true);
+  view.unmount();render(React.createElement(AdvanceRequestsPanel));await screen.findByText(/A Bale review may have been recorded/);
+  expect(screen.getByText(/request IDs: r1/)).toBeTruthy();
+  fireEvent.click(screen.getByRole('checkbox',{name:/I investigated each request/}));
+  fireEvent.click(screen.getByRole('button',{name:'Clear Bale review warning'}));
+  expect(screen.queryByText(/A Bale review may have been recorded/)).toBeNull();
+ });
+ it('holds a failed batch and identifies every affected request',async()=>{
+  mock.rows=[request('r1'),request('r2')];mock.rpc.mockResolvedValue(response([status('r1','pending_approval','pending_approval',true),status('r2','pending_approval','pending_approval',true)]));mock.batch.mockResolvedValue(false);
+  render(React.createElement(AdvanceRequestsPanel));await screen.findAllByText(/Possible repeated requests: 2/);
+  fireEvent.click(within(document.getElementById('advance-request-r1')!).getByRole('checkbox'));
+  fireEvent.click(within(document.getElementById('advance-request-r2')!).getByRole('checkbox'));
+  fireEvent.click(screen.getByRole('button',{name:'Approve selected (2)'}));fireEvent.click(within(screen.getByRole('dialog')).getByRole('button',{name:'Approve 2 requests'}));
+  await screen.findByText(/A Bale review may have been recorded/);
+  expect(screen.getByText(/request IDs: r1, r2/)).toBeTruthy();expect(mock.batch).toHaveBeenCalledWith(['r1','r2']);
+  expect((within(document.getElementById('advance-request-r1')!).getByRole('button',{name:'Approve'}) as HTMLButtonElement).disabled).toBe(true);
+ });
+ it('keeps a warning on unmount even when the response later succeeds',async()=>{
+  mock.rpc.mockResolvedValue(response([status('r1','pending_approval','pending_approval',true)]));let resolve!:(success:boolean)=>void;mock.review.mockReturnValue(new Promise(r=>{resolve=r}));
+  const view=render(React.createElement(AdvanceRequestsPanel));await screen.findByRole('button',{name:'Approve'});await act(async()=>{await Promise.resolve();});
+  fireEvent.click(screen.getByRole('button',{name:'Approve'}));await screen.findByText(/A Bale review may have been recorded/);
+  const key=JSON.stringify(['weekly-bale-review-unconfirmed-v1','founder']),raw=sessionStorage.getItem(key);view.unmount();
+  await act(async()=>resolve(true));expect(sessionStorage.getItem(key)).toBe(raw);
+ });
+ it('does not submit a review when tab storage cannot save its warning',async()=>{
+  mock.rpc.mockResolvedValue(response([status('r1','pending_approval','pending_approval',true)]));render(React.createElement(AdvanceRequestsPanel));
+  await screen.findByRole('button',{name:'Approve'});await act(async()=>{await Promise.resolve();});
+  vi.spyOn(Storage.prototype,'setItem').mockImplementation(()=>{throw Error('unavailable')});
+  fireEvent.click(screen.getByRole('button',{name:'Approve'}));await screen.findByText(/cannot safely check its Bale review warning/);expect(mock.review).not.toHaveBeenCalled();
+ });
+ it('does not clear changed warning evidence after a matching response',async()=>{
+  mock.rpc.mockResolvedValue(response([status('r1','pending_approval','pending_approval',true)]));let resolve!:(success:boolean)=>void;mock.review.mockReturnValue(new Promise(r=>{resolve=r}));
+  render(React.createElement(AdvanceRequestsPanel));await screen.findByRole('button',{name:'Approve'});await act(async()=>{await Promise.resolve();});fireEvent.click(screen.getByRole('button',{name:'Approve'}));
+  const key=JSON.stringify(['weekly-bale-review-unconfirmed-v1','founder']);sessionStorage.setItem(key,'changed');
+  await act(async()=>resolve(true));await screen.findByText(/cannot safely check its Bale review warning/);expect(sessionStorage.getItem(key)).toBe('changed');
  });
  it('prevents stale server snapshots from authorizing a changed cached record',async()=>{
   mock.rpc.mockResolvedValue(response([status('r1','approved_pending_payment','approved_pending_payment',false)]));render(React.createElement(AdvanceRequestsPanel));

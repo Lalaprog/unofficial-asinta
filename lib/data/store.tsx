@@ -2,6 +2,7 @@
 
 import { isInvoiceOverdue } from '@/lib/invoices/overdue';
 import { manilaDateISO } from '@/lib/dates/manila';
+import { verifyBaleReviewRows } from '@/lib/attendance/baleReview';
 
 import React, { createContext, useContext, useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import type { SupabaseClient, PostgrestError } from '@supabase/supabase-js';
@@ -961,17 +962,29 @@ export const DataStoreProvider: React.FC<{ children: React.ReactNode }> = ({ chi
     id: string,
     decision: 'approve' | 'reject'
   ): Promise<boolean> => {
-    const row = await runMutation('Review Bale request', (db) =>
+    const expected = advanceRequests.find(request => request.id === id);
+    const actor = user?.id;
+    const requestSession = activeSessionRef.current;
+    if (!expected || !actor || !requestSession || expected.status !== 'pending_approval') return false;
+    const row = await runMutation<unknown>('Review Bale request', (db) =>
       db.rpc('review_advance_request', {
         p_request_id: id,
         p_decision: decision,
-      })
+      }),
+      'Review not confirmed. Check the request status before retrying.'
     );
-    const returnedRequest = Array.isArray(row) ? row[0] : row;
-    const mapped = returnedRequest ? mapAdvanceRequest(returnedRequest) : null;
-    if (!mapped) return false;
+    if (activeSessionRef.current !== requestSession) return false;
+    let mapped: AdvanceRequest;
+    try {
+      mapped = verifyBaleReviewRows(Array.isArray(row) ? row : [row], [expected], decision, actor)[0];
+    } catch {
+      showToast('error', 'Review not confirmed. It may have been recorded; check the request status before retrying.');
+      return false;
+    }
 
-    setAdvanceRequests((prev) => prev.map((request) => (request.id === id ? mapped : request)));
+    setAdvanceRequests((prev) => prev.map((request) =>
+      request.id === id && request.status === expected.status && request.updated_at === expected.updated_at ? mapped : request
+    ));
     showToast(
       'success',
       decision === 'approve'
@@ -988,22 +1001,30 @@ export const DataStoreProvider: React.FC<{ children: React.ReactNode }> = ({ chi
       return false;
     }
 
-    const rows = await runMutation<unknown[]>('Approve selected Bale requests', (db) =>
-      db.rpc('approve_advance_requests', { p_request_ids: requestIds })
+    const actor = user?.id;
+    const requestSession = activeSessionRef.current;
+    const expected = requestIds.map(id => advanceRequests.find(request => request.id === id));
+    if (!actor || !requestSession || expected.some(request => !request || request.status !== 'pending_approval') || new Set(expected.map(request => request?.project_id)).size !== 1) return false;
+    const rows = await runMutation<unknown>('Approve selected Bale requests', (db) =>
+      db.rpc('approve_advance_requests', { p_request_ids: requestIds }),
+      'Batch approval not confirmed. Check every request status before retrying.'
     );
-    if (!rows) return false;
-
-    const mappedRows = rows.map(mapAdvanceRequest);
-    if (mappedRows.length !== requestIds.length) {
-      showToast('error', 'The batch could not be fully confirmed. Refresh the request list and try again.');
-      await refresh();
+    if (activeSessionRef.current !== requestSession) return false;
+    let mappedRows: AdvanceRequest[];
+    try {
+      mappedRows = verifyBaleReviewRows(rows, expected as AdvanceRequest[], 'approve', actor);
+    } catch {
+      showToast('error', 'Batch approval not confirmed. It may have been recorded; check every request status before retrying.');
       return false;
     }
 
     const updatedById = new Map(mappedRows.map((request) => [request.id, request]));
-    setAdvanceRequests((prev) =>
-      prev.map((request) => updatedById.get(request.id) ?? request)
-    );
+    const expectedById = new Map((expected as AdvanceRequest[]).map(request => [request.id, request]));
+    setAdvanceRequests((prev) => prev.map((request) => {
+      const prior = expectedById.get(request.id);
+      return prior && request.status === prior.status && request.updated_at === prior.updated_at
+        ? updatedById.get(request.id) ?? request : request;
+    }));
     showToast(
       'success',
       `${mappedRows.length} request${mappedRows.length === 1 ? '' : 's'} approved. Payment is still awaiting confirmation.`
