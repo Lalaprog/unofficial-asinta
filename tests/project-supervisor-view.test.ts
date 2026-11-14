@@ -3,12 +3,12 @@ import React from 'react';
 import { cleanup, fireEvent, render, screen } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
-const mocks = vi.hoisted(() => ({ founder: false, rpc: vi.fn() }));
+const mocks = vi.hoisted(() => ({ founder: false, assurance: 'ready', rpc: vi.fn() }));
 vi.mock('@/lib/supabase/client', () => ({ createClient: () => ({ rpc: mocks.rpc }) }));
 vi.mock('next/navigation', () => ({ useParams: () => ({ id: 'site-1' }), useRouter: () => ({ push: vi.fn() }) }));
 vi.mock('next/link', () => ({ default: ({ children, href, prefetch: _prefetch, ...props }: React.AnchorHTMLAttributes<HTMLAnchorElement> & { prefetch?: boolean }) => React.createElement('a', { ...props, href }, children) }));
 vi.mock('@/components/layout/AppShell', () => ({ AppShell: ({ children }: { children: React.ReactNode }) => React.createElement('main', null, children) }));
-vi.mock('@/lib/auth/authContext', () => ({ useAuth: () => ({ isFounder: mocks.founder, isSupervisor: !mocks.founder, user: { id: 'supervisor' } }) }));
+vi.mock('@/lib/auth/authContext', () => ({ useAuth: () => ({ isFounder: mocks.founder, isSupervisor: !mocks.founder, user: { id: 'supervisor' }, assurance: mocks.assurance }) }));
 vi.mock('@/components/ui/Toast', () => ({ useToast: () => ({ showToast: vi.fn() }) }));
 vi.mock('@/components/projects/ProjectSiteEquipment', () => ({ ProjectSiteEquipment: () => React.createElement('div', null, 'Scoped equipment snapshot') }));
 vi.mock('@/lib/data/store', () => {
@@ -28,7 +28,7 @@ vi.mock('@/lib/data/store', () => {
 import ProjectDetailPage from '@/app/projects/[id]/page';
 import ProjectsPage from '@/app/projects/page';
 
-beforeEach(() => { mocks.founder = false; mocks.rpc.mockResolvedValue({ data: [], error: null }); });
+beforeEach(() => { mocks.founder = false; mocks.assurance='ready'; mocks.rpc.mockReset(); mocks.rpc.mockResolvedValue({ data: [], error: null }); });
 afterEach(() => { cleanup(); vi.unstubAllEnvs(); });
 
 describe('project roles and workforce logs', () => {
@@ -59,6 +59,13 @@ describe('project roles and workforce logs', () => {
     vi.stubEnv('NEXT_PUBLIC_OWNED_EQUIPMENT_PREVIEW','true');render(React.createElement(ProjectDetailPage));
     const tab=screen.getByRole('button',{name:'Site Tools'});fireEvent.click(tab);
     expect(screen.getByText('Scoped equipment snapshot')).toBeTruthy();expect(screen.queryByText('Site Drill')).toBeNull();expect(screen.queryByText('Other Drill')).toBeNull();
+  });
+  it('limits the paid payroll overview to an assured Founder and the existing reconciliation gate', () => {
+    vi.stubEnv('NEXT_PUBLIC_FINANCE_FOUNDATION_PREVIEW','true');vi.stubEnv('NEXT_PUBLIC_PROJECT_COST_RECONCILIATION_PREVIEW','true');
+    const view=render(React.createElement(ProjectDetailPage));expect(screen.queryByRole('region',{name:'Paid worker payroll for this site'})).toBeNull();
+    mocks.founder=true;mocks.assurance='checking';view.rerender(React.createElement(ProjectDetailPage));expect(screen.queryByRole('region',{name:'Paid worker payroll for this site'})).toBeNull();
+    mocks.assurance='ready';view.rerender(React.createElement(ProjectDetailPage));expect(screen.getByRole('region',{name:'Paid worker payroll for this site'})).toBeTruthy();expect(mocks.rpc.mock.calls.filter(([name])=>name==='project_cost_reconciliation_preview')).toHaveLength(0);
+    vi.stubEnv('NEXT_PUBLIC_PROJECT_COST_RECONCILIATION_PREVIEW','false');view.rerender(React.createElement(ProjectDetailPage));expect(screen.queryByRole('region',{name:'Paid worker payroll for this site'})).toBeNull();
   });
   it('keeps Founder client information and financial tools', () => {
     mocks.founder = true;
