@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import React from 'react';
-import {cleanup,fireEvent,render,screen,within} from '@testing-library/react';
+import {act,cleanup,fireEvent,render,screen,waitFor,within} from '@testing-library/react';
 import {afterEach,beforeEach,describe,expect,it,vi} from 'vitest';
 const mock=vi.hoisted(()=>({rpc:vi.fn(),today:'2026-11-21'}));
 vi.mock('@/lib/supabase/client',()=>({createClient:()=>({rpc:mock.rpc})}));
@@ -216,5 +216,65 @@ describe('weekly retry evidence must remain present',()=>{
   render(React.createElement(WeeklyWorkerActions,{...props,row:existing}));sessionStorage.removeItem(key);
   fireEvent.click(screen.getByRole('button',{name:kind==='refresh'?'Retry exact refresh':'Retry exact return'}));
   expect(await screen.findByText(/Retry storage could not be verified/)).toBeTruthy();expect(sessionStorage.getItem(key)).toBeNull();expect(mock.rpc).not.toHaveBeenCalled();
+ });
+});
+
+describe('weekly voucher decision uncertainty',()=>{
+ const existing={...row,vouchers:[{id,worker_id:worker,status:'approved' as const,period_start:start,period_end:end}]};
+ const key=JSON.stringify(['weekly-worker-decision-unconfirmed-v1','founder',worker,start]);
+ async function prepare(){
+  fireEvent.click(screen.getByRole('button',{name:'Load voucher details'}));await screen.findByText(/Saved status: approved/);
+  fireEvent.click(screen.getByRole('button',{name:'Review external payment'}));
+  fireEvent.change(screen.getByLabelText('Actual external payment date'),{target:{value:end}});
+  fireEvent.click(screen.getByRole('checkbox',{name:/I verified the external payment/}));
+ }
+ it('retains an unconfirmed payment warning across remount and allows investigation without another payment',async()=>{
+  mock.rpc.mockImplementation(async(name:string)=>name==='weekly_worker_draft_details'?{data:details('approved'),error:null}:{data:null,error:{message:'Lost response'}});
+  const first=render(React.createElement(WeeklyWorkerActions,{...props,row:existing}));await prepare();fireEvent.click(screen.getByRole('button',{name:'Record payment'}));
+  await screen.findByText(/A voucher approval or payment record may have been sent/);expect(sessionStorage.getItem(key)).toBeTruthy();
+  first.unmount();render(React.createElement(WeeklyWorkerActions,{...props,row:existing}));
+  expect(await screen.findByText(/A voucher approval or payment record may have been sent/)).toBeTruthy();
+  fireEvent.click(screen.getByRole('button',{name:'Load voucher details'}));await screen.findByText(/Saved status: approved/);expect(screen.queryByRole('button',{name:'Review external payment'})).toBeNull();
+  const clear=screen.getByRole('button',{name:'Clear decision warning after review'}) as HTMLButtonElement;expect(clear.disabled).toBe(true);
+  fireEvent.click(screen.getByLabelText(/I investigated the voucher/));fireEvent.click(clear);expect(sessionStorage.getItem(key)).toBeNull();expect(screen.getByText(/Warning cleared after review/)).toBeTruthy();
+  expect(mock.rpc.mock.calls.filter(([name])=>name==='record_weekly_worker_payment')).toHaveLength(1);
+ });
+ it('does not clear a warning if a response completes after the component unmounts',async()=>{
+  let resolve!:(value:unknown)=>void;const pending=new Promise(r=>{resolve=r;});
+  mock.rpc.mockImplementation(async(name:string)=>name==='record_weekly_worker_payment'?pending:{data:details('approved'),error:null});
+  const first=render(React.createElement(WeeklyWorkerActions,{...props,row:existing}));await prepare();fireEvent.click(screen.getByRole('button',{name:'Record payment'}));
+  await waitFor(()=>expect(sessionStorage.getItem(key)).toBeTruthy());first.unmount();
+  mock.rpc.mockImplementation(async()=>({data:details('paid'),error:null}));
+  await act(async()=>resolve({data:{outcome:'updated',payroll:{id,status:'paid'},payment_date:end},error:null}));
+  expect(sessionStorage.getItem(key)).toBeTruthy();render(React.createElement(WeeklyWorkerActions,{...props,row:existing}));expect(await screen.findByText(/A voucher approval or payment record may have been sent/)).toBeTruthy();
+ });
+ it('retains approval uncertainty and holds approval after a remount',async()=>{
+  const draft={...row,vouchers:[{id,worker_id:worker,status:'draft' as const,period_start:start,period_end:end}]};
+  mock.rpc.mockImplementation(async(name:string)=>name==='weekly_worker_draft_details'?{data:details('draft'),error:null}:{data:null,error:{message:'Lost response'}});
+  const first=render(React.createElement(WeeklyWorkerActions,{...props,row:draft}));fireEvent.click(screen.getByRole('button',{name:'Load voucher details'}));await screen.findByText(/Saved status: draft/);
+  fireEvent.click(screen.getByRole('button',{name:'Review approval'}));fireEvent.click(screen.getByRole('button',{name:'Confirm approval'}));
+  await screen.findByText(/A voucher approval or payment record may have been sent/);expect(JSON.parse(sessionStorage.getItem(key)!).action).toBe('approve');
+  first.unmount();render(React.createElement(WeeklyWorkerActions,{...props,row:draft}));await screen.findByText(/A voucher approval or payment record may have been sent/);
+  fireEvent.click(screen.getByRole('button',{name:'Load voucher details'}));await screen.findByText(/Saved status: draft/);expect(screen.queryByRole('button',{name:'Review approval'})).toBeNull();
+  expect(mock.rpc.mock.calls.filter(([name])=>name==='approve_weekly_worker_draft')).toHaveLength(1);
+ });
+ it('rechecks storage before sending if another view wrote a warning',async()=>{
+  mock.rpc.mockResolvedValue({data:details('approved'),error:null});render(React.createElement(WeeklyWorkerActions,{...props,row:existing}));await prepare();
+  sessionStorage.setItem(key,'other-view-warning');fireEvent.click(screen.getByRole('button',{name:'Record payment'}));
+  await screen.findByText(/A voucher approval or payment record may have been sent/);expect(mock.rpc.mock.calls.filter(([name])=>name==='record_weekly_worker_payment')).toHaveLength(0);
+ });
+ it('cannot send payment when the tab cannot preserve its warning',async()=>{
+  mock.rpc.mockResolvedValue({data:details('approved'),error:null});render(React.createElement(WeeklyWorkerActions,{...props,row:existing}));await prepare();
+  vi.spyOn(Storage.prototype,'setItem').mockImplementation(()=>{throw Error('Storage blocked');});fireEvent.click(screen.getByRole('button',{name:'Record payment'}));
+  await screen.findByText(/cannot safely preserve or check/);expect(mock.rpc.mock.calls.filter(([name])=>name==='record_weekly_worker_payment')).toHaveLength(0);
+ });
+ it('preserves a changed marker rather than clearing it after an apparently successful result',async()=>{
+  let resolve!:(value:unknown)=>void;const pending=new Promise(r=>{resolve=r;});
+  mock.rpc.mockImplementation(async(name:string)=>name==='record_weekly_worker_payment'?pending:{data:details('approved'),error:null});
+  render(React.createElement(WeeklyWorkerActions,{...props,row:existing}));await prepare();fireEvent.click(screen.getByRole('button',{name:'Record payment'}));
+  await waitFor(()=>expect(sessionStorage.getItem(key)).toBeTruthy());sessionStorage.setItem(key,'changed-by-another-operation');
+  mock.rpc.mockImplementation(async()=>({data:details('paid'),error:null}));
+  await act(async()=>resolve({data:{outcome:'updated',payroll:{id,status:'paid'},payment_date:end},error:null}));
+  await screen.findByText(/cannot safely preserve or check/);expect(sessionStorage.getItem(key)).toBe('changed-by-another-operation');expect(screen.queryByText(/External payment recorded/)).toBeNull();
  });
 });

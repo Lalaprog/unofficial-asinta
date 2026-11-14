@@ -9,6 +9,7 @@ import {createClient} from '@/lib/supabase/client';
 import {getManilaClock} from '@/lib/reminders/scheduler';
 import {classifyUnmarkedDates,parseWeeklyDraftDetails,parseWeeklyRefreshAttempt,parseWeeklyReturnAttempt,type WeeklyDraftDetails,type WeeklyRefreshAttempt,type WeeklyReturnAttempt} from '@/lib/payroll/weeklyDraftDetails';
 import {weeklyWorkerRefreshPreviewEnabled,weeklyWorkerReturnPreviewEnabled} from '@/lib/finance/featureAvailability';
+import {useWeeklyDecisionGuard} from '@/lib/payroll/useWeeklyDecisionGuard';
 import type {WeeklyRow} from '@/lib/payroll/weeklyPreview';
 
 type Action='generate'|'approve'|'pay'|'refresh'|'return';
@@ -20,6 +21,9 @@ export function WeeklyWorkerActions({row,start,end,userId,projects,previewDate}:
  const [returnReason,setReturnReason]=useState(''),[returnAck,setReturnAck]=useState(false),[pendingReturn,setPendingReturn]=useState<WeeklyReturnAttempt|null>(null);
  const storageKey=JSON.stringify(['weekly-worker-refresh-v1',userId,row.worker.id,start]);
  const returnStorageKey=JSON.stringify(['weekly-worker-return-v1',userId,row.worker.id,start]);
+ const decisionGuard=useWeeklyDecisionGuard(userId,row.worker.id,start);
+ const [reviewedDecision,setReviewedDecision]=useState(false);
+ useEffect(()=>setReviewedDecision(false),[userId,row.worker.id,start]);
  const [retryReady,setRetryReady]=useState(!refreshEnabled),[retryError,setRetryError]=useState(false),[pending,setPending]=useState<WeeklyRefreshAttempt|null>(null),[stopRetry,setStopRetry]=useState(false);
  const viewKey=JSON.stringify([storageKey,previewDate,refreshEnabled,returnEnabled]);
  const busy=useRef(false),mounted=useRef(true),activeKey=useRef(viewKey),observedRetry=useRef<{refresh:string|null;returned:string|null}|null>(null);activeKey.current=viewKey;
@@ -43,7 +47,7 @@ export function WeeklyWorkerActions({row,start,end,userId,projects,previewDate}:
   finally{busy.current=false;if(mounted.current&&activeKey.current===viewKey)setSaving(false);}
  }
  async function sendRefresh(attempt:WeeklyRefreshAttempt,retry=false){
-  if(busy.current||retryError||!retryReady||pendingReturn)return;
+  if(busy.current||retryError||!retryReady||pendingReturn||decisionGuard.status!=='ready')return;
   if(getManilaClock().dateIso!==previewDate){fail(new Error('Philippine date changed'));return;}
   busy.current=true;setSaving(true);setMessage('');let stored=false;
   try{
@@ -59,6 +63,7 @@ export function WeeklyWorkerActions({row,start,end,userId,projects,previewDate}:
    if(!mounted.current||activeKey.current!==viewKey)return;
    if(JSON.stringify(parseWeeklyRefreshAttempt(JSON.parse(sessionStorage.getItem(storageKey)||'null')))!==JSON.stringify(attempt))throw new Error('Retry record changed');
    if(returnEnabled&&sessionStorage.getItem(returnStorageKey)!==null)throw new Error('A return retry is pending');
+   if(!decisionGuard.stillReady())throw new Error('A voucher decision warning is pending');
    if(getManilaClock().dateIso!==previewDate)throw new Error('Philippine date changed');
    const {data,error}=await createClient().rpc('refresh_weekly_worker_draft',{p_request:attempt.request,p_id:attempt.payroll,p_expected_revision:attempt.revision});
    if(error)throw new Error(error.message);
@@ -76,7 +81,7 @@ export function WeeklyWorkerActions({row,start,end,userId,projects,previewDate}:
   finally{busy.current=false;if(mounted.current&&activeKey.current===viewKey)setSaving(false);}
  }
  async function sendReturn(attempt:WeeklyReturnAttempt,retry=false){
-  if(!returnEnabled||busy.current||retryError||!retryReady||pending)return;
+  if(!returnEnabled||busy.current||retryError||!retryReady||pending||decisionGuard.status!=='ready')return;
   if(getManilaClock().dateIso!==previewDate){fail(new Error('Philippine date changed'));return;}
   busy.current=true;setSaving(true);setMessage('');let stored=false;
   try{
@@ -90,6 +95,7 @@ export function WeeklyWorkerActions({row,start,end,userId,projects,previewDate}:
    if(!mounted.current||activeKey.current!==viewKey)return;
    if(JSON.stringify(parseWeeklyReturnAttempt(JSON.parse(sessionStorage.getItem(returnStorageKey)||'null')))!==JSON.stringify(attempt))throw new Error('Retry record changed');
    if(sessionStorage.getItem(storageKey)!==null)throw new Error('A refresh retry is pending');
+   if(!decisionGuard.stillReady())throw new Error('A voucher decision warning is pending');
    if(getManilaClock().dateIso!==previewDate)throw new Error('Philippine date changed');
    const {data,error}=await createClient().rpc('return_weekly_worker_to_draft',{p_request:attempt.request,p_id:attempt.payroll,p_expected_revision:attempt.revision,p_reason:attempt.reason});
    if(error)throw new Error(error.message);
@@ -108,7 +114,8 @@ export function WeeklyWorkerActions({row,start,end,userId,projects,previewDate}:
   catch{setRetryError(true);setMessage('Could not clear retry record; investigate before continuing.');}
  }
  async function act(){
-  if(!confirm||busy.current||locked||!retryReady||retryError||pending||pendingReturn)return;
+  if(!confirm||busy.current||locked||!retryReady||retryError||pending||pendingReturn||decisionGuard.status!=='ready')return;
+  if(!decisionGuard.stillReady())return;
   if(getManilaClock().dateIso!==previewDate){fail(new Error('Philippine date changed'));return;}
   const action=confirm,old=details;
   if(action==='generate'&&!mayGenerate)return;
@@ -117,7 +124,9 @@ export function WeeklyWorkerActions({row,start,end,userId,projects,previewDate}:
   if(action==='return'&&(!returnEnabled||!old||old.status!=='approved'||old.draft_revision===undefined||!returnAck||!returnReason.trim()||returnReason.trim().length>500))return;
   if(action==='pay'&&(!old||old.status!=='approved'||!ack||!paymentDate||paymentDate<start||paymentDate>getManilaClock().dateIso))return;
   busy.current=true;setSaving(true);setMessage('');
+  let decisionMarker:string|null=null;
   try{
+   if(refreshEnabled&&(sessionStorage.getItem(storageKey)!==null||(returnEnabled&&sessionStorage.getItem(returnStorageKey)!==null)))throw new Error('A draft refresh or return retry is pending');
    let id=old?.payroll_id;
    if(action==='generate'){
     // Persist only a random request ID and identifiers, so a lost response and
@@ -134,36 +143,55 @@ export function WeeklyWorkerActions({row,start,end,userId,projects,previewDate}:
     const attempt=parseWeeklyReturnAttempt({request:crypto.randomUUID(),payroll:id,revision:old!.draft_revision,reason:returnReason.trim()});
     busy.current=false;await sendReturn(attempt);return;
    }else if(action==='approve'){
+    decisionMarker=decisionGuard.begin('approve',id!,null,refreshEnabled?old!.draft_revision??null:null);
+    if(!decisionMarker)throw new Error('Could not preserve the approval warning; no approval was intentionally sent');
     const args=refreshEnabled?{p_id:id,p_expected_revision:old!.draft_revision}:{p_id:id};
     const {data,error}=await createClient().rpc('approve_weekly_worker_draft',args);if(error)throw new Error(error.message);
     if(!data||!['updated','already_approved'].includes(data.outcome)||data.payroll?.id!==id||data.payroll?.status!=='approved')throw new Error('Approval response could not be verified');
    }else{
+    decisionMarker=decisionGuard.begin('pay',id!,paymentDate,returnEnabled?old!.draft_revision??null:null);
+    if(!decisionMarker)throw new Error('Could not preserve the payment warning; no payment record was intentionally sent');
     const args=returnEnabled?{p_id:id,p_payment_date:paymentDate,p_expected_revision:old!.draft_revision}:{p_id:id,p_payment_date:paymentDate};
     const {data,error}=await createClient().rpc('record_weekly_worker_payment',args);if(error)throw new Error(error.message);
     if(!data||!['updated','already_recorded'].includes(data.outcome)||data.payroll?.id!==id||data.payroll?.status!=='paid'||data.payment_date!==paymentDate)throw new Error('Payment response could not be verified');
    }
    const updated=await read(id!);
    if(action==='generate'&&updated.status!=='draft'||action==='approve'&&(updated.status!=='approved'||refreshEnabled&&updated.draft_revision!==old?.draft_revision)||action==='pay'&&(updated.status!=='paid'||updated.payment_date!==paymentDate||refreshEnabled&&updated.draft_revision!==old?.draft_revision))throw new Error('Voucher state changed; review again');
-   if(mounted.current&&activeKey.current===viewKey){setDetails(updated);setConfirm(null);setAck(false);setPaymentDate('');setMessage(action==='generate'?'Draft recorded. Review its saved amounts before approval.':action==='approve'?'Approval recorded. A separate confirmation is required to record an external payment.':'External payment recorded. No money was transferred by this application.');}
+   // If this view changed or unmounted, leave its warning for later review.
+   if(mounted.current&&activeKey.current===viewKey){
+    if(decisionMarker&&!decisionGuard.confirmed(decisionMarker))throw new Error('Decision warning changed or could not be cleared');
+    setDetails(updated);setConfirm(null);setAck(false);setPaymentDate('');setMessage(action==='generate'?'Draft recorded. Review its saved amounts before approval.':action==='approve'?'Approval recorded. A separate confirmation is required to record an external payment.':'External payment recorded. No money was transferred by this application.');
+   }
   }catch(e){if(mounted.current&&activeKey.current===viewKey)fail(e);}
   finally{busy.current=false;if(mounted.current&&activeKey.current===viewKey)setSaving(false);}
  }
- if(!existing&&!mayGenerate&&!pending&&!pendingReturn&&!retryError)return null;
+ if(!existing&&!mayGenerate&&!pending&&!pendingReturn&&!retryError&&decisionGuard.status==='ready')return null;
  return <div className="mt-3 space-y-2 border-t border-surface-border pt-2">
   <p className="font-semibold text-navy">Experimental weekly voucher</p>
+  {decisionGuard.status==='checking'&&<p role="status">Checking the voucher decision warning…</p>}
+  {decisionGuard.status==='unavailable'&&<p role="alert">This tab cannot safely preserve or check the voucher decision warning. Voucher changes are held; investigate the voucher and restore browser storage before continuing.</p>}
+  {decisionGuard.status==='pending'&&<div role="alert" className="space-y-2 rounded-lg bg-status-warning-bg p-3">
+   <p>A voucher approval or payment record may have been sent, but its final result was not confirmed. Inspect the original voucher and payment evidence before taking another action. Do not make or repeat an external payment because of this warning.</p>
+   {decisionGuard.decision&&<p className="break-all">{decisionGuard.decision.action==='pay'?'Payment recording':'Approval'} · voucher {decisionGuard.decision.payroll}{decisionGuard.decision.revision!==null?` · reviewed revision ${decisionGuard.decision.revision}`:''}{decisionGuard.decision.paymentDate?` · external payment date ${decisionGuard.decision.paymentDate}`:''}</p>}
+   <p>This warning is only in this tab and may be lost if it or browser storage is closed or cleared; other tabs and devices are not locked. Clearing it does not cancel an in-flight request.</p>
+   <label className="flex items-start gap-2"><input type="checkbox" checked={reviewedDecision} onChange={e=>setReviewedDecision(e.target.checked)} />I investigated the voucher and understand this cannot cancel a request.</label>
+   <Button type="button" size="sm" variant="secondary" disabled={!reviewedDecision||saving||busy.current} onClick={()=>{if(!busy.current&&decisionGuard.clearAfterReview()){setReviewedDecision(false);setDetails(null);setLocked(true);setMessage('Warning cleared after review. Reload the weekly preview and inspect the voucher before taking further action.');}}}>Clear decision warning after review</Button>
+  </div>}
   {refreshEnabled&&!retryReady&&<p>Checking saved retry record…</p>}
-  {refreshEnabled&&(pending||pendingReturn||retryError)&&<div className="space-y-2 rounded-lg bg-status-warning-bg p-3"><p>A refresh or return may have been sent. This tab’s retry record is not shared with other tabs and can be lost if browser storage is cleared. A missing response does not mean failure.</p>{pending&&<><p className="break-all">Voucher {pending.payroll} · request {pending.request} · reviewed revision {pending.revision}</p><Button type="button" size="sm" variant="secondary" disabled={saving||!!pendingReturn} onClick={()=>void sendRefresh(pending,true)}>Retry exact refresh</Button></>}{pendingReturn&&<><p className="break-all">Return voucher {pendingReturn.payroll} · request {pendingReturn.request} · reviewed revision {pendingReturn.revision}</p><p className="break-words">Reason: {pendingReturn.reason}</p><Button type="button" size="sm" variant="secondary" disabled={saving||!!pending} onClick={()=>void sendReturn(pendingReturn,true)}>Retry exact return</Button></>}<Button type="button" size="sm" variant="ghost" disabled={saving} onClick={()=>setStopRetry(v=>!v)}>Review stopping retry</Button>{stopRetry&&<div><p>Stopping does not cancel or undo an in-flight request. Independently investigate the voucher and original request before proceeding.</p><Button type="button" size="sm" variant="danger" disabled={saving} onClick={stopPending}>I investigated; stop retrying</Button></div>}</div>}
-  {!details&&retryReady&&!retryError&&!pending&&!pendingReturn&&(existing?<Button type="button" size="sm" variant="secondary" disabled={locked||saving} onClick={()=>load(existing.id)} isLoading={saving}>Load voucher details</Button>:<Button type="button" size="sm" variant="secondary" disabled={locked||saving} onClick={()=>setConfirm('generate')}>Review new draft</Button>)}
+  {refreshEnabled&&(pending||pendingReturn||retryError)&&<div className="space-y-2 rounded-lg bg-status-warning-bg p-3"><p>A refresh or return may have been sent. This tab’s retry record is not shared with other tabs and can be lost if browser storage is cleared. A missing response does not mean failure.</p>{pending&&<><p className="break-all">Voucher {pending.payroll} · request {pending.request} · reviewed revision {pending.revision}</p><Button type="button" size="sm" variant="secondary" disabled={saving||!!pendingReturn||decisionGuard.status!=='ready'} onClick={()=>void sendRefresh(pending,true)}>Retry exact refresh</Button></>}{pendingReturn&&<><p className="break-all">Return voucher {pendingReturn.payroll} · request {pendingReturn.request} · reviewed revision {pendingReturn.revision}</p><p className="break-words">Reason: {pendingReturn.reason}</p><Button type="button" size="sm" variant="secondary" disabled={saving||!!pending||decisionGuard.status!=='ready'} onClick={()=>void sendReturn(pendingReturn,true)}>Retry exact return</Button></>}<Button type="button" size="sm" variant="ghost" disabled={saving} onClick={()=>setStopRetry(v=>!v)}>Review stopping retry</Button>{stopRetry&&<div><p>Stopping does not cancel or undo an in-flight request. Independently investigate the voucher and original request before proceeding.</p><Button type="button" size="sm" variant="danger" disabled={saving} onClick={stopPending}>I investigated; stop retrying</Button></div>}</div>}
+  {!details&&retryReady&&!retryError&&!pending&&!pendingReturn&&(existing?<Button type="button" size="sm" variant="secondary" disabled={locked||saving} onClick={()=>load(existing.id)} isLoading={saving}>Load voucher details</Button>:decisionGuard.status==='ready'&&<Button type="button" size="sm" variant="secondary" disabled={locked||saving} onClick={()=>setConfirm('generate')}>Review new draft</Button>)}
   {message&&<p role="status" className={locked?'text-status-danger':''}>{message}</p>}
   {details&&!pending&&!pendingReturn&&!retryError&&<div className="space-y-2">
    <p className="font-semibold">Saved status: {details.status} · {details.period_start} to {details.period_end}{refreshEnabled&&` · revision ${details.draft_revision}`}</p>
    <p>Regular {details.calculation.regular_hours} hrs · OT {details.calculation.overtime_hours} hrs · wages ₱{details.calculation.wage} · allowances ₱{details.calculation.allowance} · gross ₱{details.gross} · Bale ₱{details.bale} · net ₱{details.net}</p>
    {missing&&<div className="space-y-1"><p>Saved unmarked dates, classified using the current Philippine date. Unmarked does not mean absent; this saved snapshot does not update when attendance changes.</p><p>Past unmarked: {missing.past.join(', ')||'none'}.</p><p>Today unmarked: {missing.today.join(', ')||'none'}.</p><p>Upcoming: {missing.upcoming.join(', ')||'none'}.</p></div>}
    {details.payment_date&&<><p>Recorded external payment date: {details.payment_date}. This is not proof of transfer.</p><p>Project gross allocations (not combined expense totals):</p>{details.allocations.length?<ul>{details.allocations.map(a=><li key={a.project_id}>{projects.find(p=>p.id===a.project_id)?.name||`Site ID ${a.project_id}`}: ₱{a.gross} ({a.hours} hrs, wages ₱{a.wage}, allowances ₱{a.allowance})</li>)}</ul>:<p>No site allocation for a zero-work voucher.</p>}<p>Do not add these to expenses without reconciling Bale and other overlapping entries.</p></>}
-   {refreshEnabled&&details.status==='draft'&&<Button type="button" size="sm" variant="secondary" disabled={locked||saving} onClick={()=>setConfirm('refresh')}>Review draft refresh</Button>}
-   {details.status==='draft'&&<Button type="button" size="sm" variant="secondary" disabled={locked||saving} onClick={()=>setConfirm('approve')}>Review approval</Button>}
-   {returnEnabled&&details.status==='approved'&&<Button type="button" size="sm" variant="secondary" disabled={locked||saving} onClick={()=>{setReturnReason('');setReturnAck(false);setConfirm('return');}}>Review return to draft</Button>}
-   {details.status==='approved'&&<Button type="button" size="sm" variant="secondary" disabled={locked||saving} onClick={()=>{setPaymentDate('');setAck(false);setConfirm('pay');}}>Review external payment</Button>}
+   {decisionGuard.status==='ready'&&<>
+    {refreshEnabled&&details.status==='draft'&&<Button type="button" size="sm" variant="secondary" disabled={locked||saving} onClick={()=>setConfirm('refresh')}>Review draft refresh</Button>}
+    {details.status==='draft'&&<Button type="button" size="sm" variant="secondary" disabled={locked||saving} onClick={()=>setConfirm('approve')}>Review approval</Button>}
+    {returnEnabled&&details.status==='approved'&&<Button type="button" size="sm" variant="secondary" disabled={locked||saving} onClick={()=>{setReturnReason('');setReturnAck(false);setConfirm('return');}}>Review return to draft</Button>}
+    {details.status==='approved'&&<Button type="button" size="sm" variant="secondary" disabled={locked||saving} onClick={()=>{setPaymentDate('');setAck(false);setConfirm('pay');}}>Review external payment</Button>}
+   </>}
   </div>}
   {typeof document!=='undefined'&&createPortal(<Modal isOpen={!!confirm} onClose={()=>setConfirm(null)} title={confirm==='generate'?'Create weekly draft?':confirm==='refresh'?'Refresh this unapproved draft?':confirm==='return'?'Return approval to draft?':confirm==='approve'?'Approve saved weekly voucher?':'Record an external payment?'} description="Review this worker and original period carefully. This application does not transfer money." dismissOnBackdrop={!saving} dismissOnEscape={!saving} showCloseButton={!saving}>
    {confirm&&<div className="space-y-3 text-sm text-ink-secondary">
