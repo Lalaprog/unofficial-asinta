@@ -4,6 +4,7 @@ import {Button} from '@/components/ui/Button';
 import {Input} from '@/components/ui/Input';
 import {Select} from '@/components/ui/Select';
 import {Modal} from '@/components/ui/Modal';
+import {CrossSiteIllustration} from './CrossSiteIllustration';
 import {useAuth} from '@/lib/auth/authContext';
 import {createClient} from '@/lib/supabase/client';
 import {parseAttributionProjects,sameAttributionEvidence,type AttributionProject} from '@/lib/payroll/historicalAttribution';
@@ -57,6 +58,7 @@ export function ProjectCostCorrectionPanel({actor,kind,item}:{actor:string;kind:
    {!pending&&!storageError&&<Button type="button" variant="secondary" size="sm" disabled={!ready||busy} onClick={()=>void load()}>Load correction evidence</Button>}
    {projects&&review&&<div className="space-y-3"><p>Original case: {item.status.replace('_',' ')} · net difference ₱{item.difference} · {item.reason}.</p><div className="rounded-lg bg-status-warning-bg p-3"><p>Known cases for the same original period ({relatedCorrectionCases(review.case).length}). These are whole-period figures, not site costs.</p><ul>{relatedCorrectionCases(review.case).map(c=><li key={c.id} className="break-words">{c.id} · {c.status.replace('_',' ')} · net difference ₱{c.difference} · {c.reason}{c.resolution_note&&` · ${c.resolution_note}`}</li>)}</ul><p>If a case is added or resolved, this evidence must be reviewed again.</p></div>
     {review.attribution?<div className="rounded-lg border border-surface-border p-3"><p>Latest full replacement · revision {review.attribution.revision} · gross change ₱{review.attribution.gross_change}</p><ul>{review.attribution.split.map(line=><li key={line.project_id}>{projects.find(p=>p.id.toLowerCase()===line.project_id)?.name||line.project_id} · ₱{line.gross_change}</li>)}</ul><p>{review.attribution.split.length===0?'No project changes. ':''}{review.attribution.note}</p><p>Recorded by {review.attribution.recorded_by} at {review.attribution.recorded_at}.</p>{review.attribution.case_changed&&<p role="alert">The original-period case history changed since the last revision. Review every case and replace the full split if appropriate; the earlier revision remains preserved.</p>}</div>:<p>No correction site evidence has been recorded for this case.</p>}
+    {!pending&&!storageError&&<CrossSiteIllustration actor={actor} kind={kind} item={item} review={review} projects={projects}/>}
     {relatedCorrectionCases(review.case).some(c=>c.status==='pending')&&<p role="alert">Resolve all pending cases for this original period before recording correction evidence.</p>}
     {!relatedCorrectionCases(review.case).some(c=>c.status==='pending')&&<><p>Each new revision replaces the full previous split; it is not an additional amount. A zero total may have no sites or balanced positive and negative site changes.</p>
      <Input label="Total signed gross change (₱)" inputMode="decimal" value={gross} onChange={e=>setGross(e.target.value)} hint="For example -15.00, 0.00 or 20.00."/>
