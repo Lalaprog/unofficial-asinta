@@ -56,6 +56,17 @@ const pending=async(promise:Promise<unknown>)=>{
    expect((await admin.query('SELECT version FROM public.supervisor_profile_photos WHERE supervisor_id=$1',[supervisor])).rows[0].version).toBe(op(4));
   }finally{await a.query('ROLLBACK');await b.query('ROLLBACK');await admin.query("UPDATE public.users SET role='founder' WHERE id=$1",[founder]);await a.query('SET ROLE authenticated');}
  },15000);
+ it('rechecks the target role after concurrent demotion and retains the old tombstone',async()=>{
+  await a.query('RESET ROLE');await a.query('BEGIN');await b.query('BEGIN');try{
+   await a.query("UPDATE public.users SET role='founder' WHERE id=$1",[supervisor]);const waiting=await pending(write(b,op(8),op(4)));await a.query('COMMIT');expect((await waiting.result).code).toBe('22023');await b.query('ROLLBACK');
+   expect((await admin.query('SELECT version,photo IS NULL removed FROM public.supervisor_profile_photos WHERE supervisor_id=$1',[supervisor])).rows[0]).toEqual({version:op(4),removed:true});
+  }finally{await a.query('ROLLBACK');await b.query('ROLLBACK');await admin.query("UPDATE public.users SET role='supervisor' WHERE id=$1",[supervisor]);await a.query('SET ROLE authenticated');}
+ },15000);
+ it('audits successful writes once without copying photo bytes',async()=>{
+  const rows=(await admin.query("SELECT action,before_row,after_row FROM public.audit_log WHERE table_name='supervisor_profile_photos' ORDER BY after_row->>'version'")).rows;
+  expect(rows.map(r=>r.after_row.version)).toEqual([op(1),op(3),op(4)]);expect(JSON.stringify(rows)).not.toContain(photo);
+  expect(rows[2]).toMatchObject({action:'update',before_row:{has_photo:true,mime:'image/png'},after_row:{has_photo:false,mime:null}});
+ });
  it('fails closed at repeatable read',async()=>{
   await a.query('BEGIN ISOLATION LEVEL REPEATABLE READ');try{await expect(write(a,op(7),op(4))).rejects.toMatchObject({code:'P1002'});}finally{await a.query('ROLLBACK');}
  });
