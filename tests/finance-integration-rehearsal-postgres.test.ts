@@ -109,6 +109,8 @@ suite('coordinated finance integration rehearsal, synthetic PostgreSQL only',()=
    // Equipment is outside the generated chain; only this disposable transaction installs it.
    await db.query(readFileSync('supabase/drafts/owned_equipment_allocations.sql','utf8'));
    expect((await db.query("SELECT has_table_privilege('service_role','public.owned_equipment_allocations','INSERT,UPDATE,DELETE') allowed")).rows[0].allowed).toBe(false);
+   // Rehearse category integration and entry-time craft observations with all the finance guards.
+   for (const p of ['worker_category_catalog','worker_category_workforce_cutover','worker_removal_category_compatibility','recorded_craft_observations']) await db.query(readFileSync(`supabase/drafts/${p}.sql`,'utf8'));
    await db.query(`SET LOCAL test.uid='${founder}'; SET LOCAL test.assurance='yes'`);
    await db.query("INSERT INTO public.attendance(id,worker_id,project_id,date,status,hours_worked,submitted_at) VALUES($1,$2,$3,'2024-08-04','present',8,'2024-08-04T08:00:00Z')",[attendance,worker,site]);
    await db.query('INSERT INTO public.project_worker_assignments(project_id,worker_id,active) VALUES($1,$2,true)',[site,worker]);
@@ -119,7 +121,7 @@ suite('coordinated finance integration rehearsal, synthetic PostgreSQL only',()=
    await db.query('RESET ROLE');
    await db.query("INSERT INTO public.project_supervisors(project_id,supervisor_id) VALUES('00000000-0000-0000-0000-000000000005',$1)",[supervisor]);
    await db.query("INSERT INTO public.tools(id,name,quantity,condition,project_id) VALUES('70000000-0000-4000-8000-000000000030','Synthetic drill',5,'good',NULL)");
-   await db.query("INSERT INTO public.workers(id,name,position,contact_number,pay_rate,pay_rate_type,active) VALUES($1,'Supervisor','Supervisor','none',600,'daily',true)",[supervisor]);
+   await db.query("INSERT INTO public.workers(id,name,position,contact_number,pay_rate,pay_rate_type,active) VALUES($1,'Supervisor','Site Supervisor','none',600,'daily',true)",[supervisor]);
    await db.query(`INSERT INTO public.expenses(id,project_id,description,category,amount,expense_date,ai_bale_detection) VALUES
     ('70000000-0000-4000-8000-000000000009',$1,'Excavator','equipment',1000,'2024-08-04',false),
     ('70000000-0000-4000-8000-000000000010',$1,'Bale expense','other',100.25,'2024-08-07',true)`,[site]);
@@ -146,6 +148,8 @@ suite('coordinated finance integration rehearsal, synthetic PostgreSQL only',()=
    // This rehearsal rolls back the outer transaction, so explicitly fire the
    // deferred constraint to test the same source check that commit would run.
    await db.query('SET CONSTRAINTS require_weekly_worker_source_on_insert IMMEDIATE; SET CONSTRAINTS require_weekly_worker_source_on_insert DEFERRED');
+   expect((await db.query('SELECT craft FROM public.attendance_craft_observations WHERE attendance_id=$1',[attendance])).rows).toEqual([{craft:'Mason'}]);
+   expect((await db.query('SELECT craft FROM public.payroll_craft_observations WHERE payroll_id=$1',[voucher])).rows).toEqual([{craft:'Mason'}]);
    await db.query('SAVEPOINT denied_legacy');
    await expect(db.query("SELECT public.set_payroll_status_atomic($1,'approved')",[voucher])).rejects.toThrow(/frozen/);
    await db.query('ROLLBACK TO SAVEPOINT denied_legacy; RELEASE SAVEPOINT denied_legacy');
