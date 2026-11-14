@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import React from 'react';
-import {cleanup,fireEvent,render,screen,waitFor} from '@testing-library/react';
+import {act,cleanup,fireEvent,render,screen,waitFor} from '@testing-library/react';
 import {afterEach,beforeEach,describe,expect,it,vi} from 'vitest';
 const {rpc,prepare}=vi.hoisted(()=>({rpc:vi.fn(),prepare:vi.fn()}));
 vi.mock('@/lib/supabase/client',()=>({createClient:()=>({rpc})}));
@@ -29,6 +29,15 @@ describe('experimental Supervisor portrait UI',()=>{
   prepare.mockRejectedValue(new Error('Bad photo'));
   render(React.createElement(SupervisorPortrait,{id,name:'Test'}));fireEvent.change(await screen.findByLabelText('Choose photo'),{target:{files:[new File(['x'],'a.png',{type:'image/png'})]}});
   await screen.findByText('Bad photo');expect(rpc.mock.calls.every(c=>c[0]!=='set_supervisor_profile_photo')).toBe(true);
+ });
+ it('discards a late response and never shows one Supervisor photo for another',async()=>{
+  const other='10000000-0000-4000-8000-000000000003',version='20000000-0000-4000-8000-000000000001';
+  let resolveOld!:(value:unknown)=>void;
+  rpc.mockImplementation((name:string,params:{p_supervisor:string})=>params.p_supervisor===id?new Promise(resolve=>{resolveOld=resolve;}):Promise.resolve({data:{supervisor_id:other,version:null,has_photo:false,mime:null,data:null},error:null}));
+  const view=render(React.createElement(SupervisorPortrait,{id,name:'First'}));
+  view.rerender(React.createElement(SupervisorPortrait,{id:other,name:'Second'}));await screen.findByLabelText('Choose photo');
+  await act(async()=>resolveOld({data:{supervisor_id:id,version,has_photo:true,mime:'image/png',data:'YWJj'},error:null}));
+  expect(screen.queryByAltText('First profile photo')).toBeNull();expect(screen.queryByAltText('Second profile photo')).toBeNull();
  });
  it('shows the private image and removal sends its version',async()=>{
   const version='20000000-0000-4000-8000-000000000001';

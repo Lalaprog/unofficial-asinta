@@ -443,7 +443,7 @@ export default function UsersPage() {
                   </div>
 
                   {u.role === 'supervisor' && process.env.NEXT_PUBLIC_SUPERVISOR_PORTRAIT_PREVIEW === 'true' && (
-                    <SupervisorPortrait id={u.id} name={u.name} />
+                    <SupervisorPortrait key={`${currentUser?.id ?? 'none'}:${u.id}`} id={u.id} name={u.name} />
                   )}
                   {/* Permissions Description */}
                   <div className="p-3.5 rounded-2xl bg-surface-inset/50 border border-surface-border/70 text-xs space-y-2">

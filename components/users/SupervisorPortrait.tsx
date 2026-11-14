@@ -6,8 +6,12 @@ import {createClient} from '@/lib/supabase/client';
 import {parseSupervisorPortrait, prepareSupervisorPortrait, type SupervisorPortraitRecord} from '@/lib/users/supervisorPortrait';
 type Operation = {p_supervisor: string; p_operation: string; p_expected_version: string | null; p_mime: string | null; p_data: string | null};
 
-/** Experimental; only mount when the reviewed backend is installed. */
-export function SupervisorPortrait({id, name}: {id: string; name: string}) {
+/** Reset all image and pending state if a reused component changes target. */
+export function SupervisorPortrait(props: {id: string; name: string}) {
+  return <SupervisorPortraitForId key={props.id} {...props} />;
+}
+
+function SupervisorPortraitForId({id, name}: {id: string; name: string}) {
   const [portrait,setPortrait]=useState<SupervisorPortraitRecord | null>(null);
   const [message,setMessage]=useState('');
   const [busy,setBusy]=useState(false);
