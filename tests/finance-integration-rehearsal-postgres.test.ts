@@ -110,6 +110,7 @@ suite('coordinated finance integration rehearsal, synthetic PostgreSQL only',()=
    // the disposable rolled-back rehearsal, not in the development database.
    await db.query(readFileSync('supabase/drafts/project_cost_correction_attribution.sql','utf8'));
    await db.query(readFileSync('supabase/drafts/project_cost_correction_inventory.sql','utf8'));
+   await db.query(readFileSync('supabase/drafts/project_cost_corrected_preview.sql','utf8'));
    // Equipment is outside the generated chain; only this disposable transaction installs it.
    await db.query(readFileSync('supabase/drafts/owned_equipment_allocations.sql','utf8'));
    expect((await db.query("SELECT has_table_privilege('service_role','public.owned_equipment_allocations','INSERT,UPDATE,DELETE') allowed")).rows[0].allowed).toBe(false);
@@ -269,6 +270,9 @@ suite('coordinated finance integration rehearsal, synthetic PostgreSQL only',()=
    expect(correctionInventory.corrections).toEqual(expect.arrayContaining([
     expect.objectContaining({kind:'voucher',site_gross_change:'0.00',evidence:expect.objectContaining({attribution:expect.objectContaining({case_changed:false})})}),
     expect.objectContaining({kind:'external_worker',site_gross_change:'-20.00',evidence:expect.objectContaining({attribution:expect.objectContaining({case_changed:false})})})]));
+   const correctedChoices={expenses:reviewChoices,historical:{[attributionId]:{decision:'include',reason:null}},corrections:{[`voucher:${voucherCase}`]:{decision:'include',reason:'No gross change'},[`external_worker:${historicalCase}`]:{decision:'include',reason:'Reviewed original and settlement'}}};
+   const adjusted=(await db.query('SELECT public.project_cost_corrected_preview($1,$2::jsonb,$3::jsonb,true) v',[site,JSON.stringify(correctionInventory),JSON.stringify(correctedChoices)])).rows[0].v;
+   expect(adjusted).toMatchObject({included_expenses:'1012.35',paid_gross:'800.25',historical_gross:'400.25',correction_gross:'-20.00',incomplete_total:'2192.85',excluded_cases:0,incomplete:true});
    expect((await db.query('SELECT public.project_cost_review($1) v',[site])).rows[0].v).toMatchObject({freshness:'changed',incomplete_total:'2212.85'});
    const caseRaw=(await db.query('SELECT public.project_cost_historical_review($1) v',[site])).rows[0].v;
    await db.query('SAVEPOINT flagged_historical_review');
