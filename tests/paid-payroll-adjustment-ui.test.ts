@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import React from 'react';
-import {cleanup,fireEvent,render,screen,waitFor,within} from '@testing-library/react';
+import {act,cleanup,fireEvent,render,screen,waitFor,within} from '@testing-library/react';
 import {afterEach,beforeEach,describe,expect,it,vi} from 'vitest';
 import {snapshotFromReview} from '@/lib/payroll/paidAdjustments';
 import type {PaidReviewVoucher} from '@/lib/payroll/paidReview';
@@ -25,6 +25,21 @@ describe('paid adjustment case UI',()=>{
   fireEvent.click(screen.getByRole('button',{name:'Retry exact case action'}));
   await screen.findByText(/Recorded. Reload case history/);
   const calls=mock.rpc.mock.calls.filter(c=>c[0]==='open_paid_payroll_adjustment');expect(calls).toHaveLength(2);expect(calls[0][1].p_id).toBe(calls[1][1].p_id);expect(calls[1][1]).toMatchObject({p_payroll_id:'v',p_expected:snapshotFromReview(voucher),p_difference:'50.25',p_reason:'Missed OT'});
+ });
+ it('does not recreate a missing exact retry or send a second action',async()=>{
+  mock.rpc.mockImplementation(async(name:string)=>name==='paid_payroll_adjustment_list'?{data:{total:0,offset:0,items:[]},error:null}:{data:null,error:{message:'lost'}});
+  render(React.createElement(PaidAdjustmentPanel,{voucher}));fireEvent.click(screen.getByRole('button',{name:'Adjustment cases for this voucher'}));fireEvent.click(screen.getByRole('button',{name:'Load case history'}));await screen.findByText('No cases recorded for this voucher.');fireEvent.change(screen.getByLabelText('Signed difference in pesos'),{target:{value:'50.25'}});fireEvent.change(screen.getByLabelText('Reason for review'),{target:{value:'Missed OT'}});fireEvent.click(screen.getByRole('button',{name:'Review new case'}));fireEvent.click(within(screen.getByRole('dialog')).getByRole('button',{name:'Open case'}));await screen.findByText(/Outcome not confirmed/);
+  const key=sessionStorage.key(0)!;sessionStorage.removeItem(key);fireEvent.click(screen.getByRole('button',{name:'Retry exact case action'}));await screen.findByText(/no request was sent this time/);expect(sessionStorage.getItem(key)).toBeNull();expect(mock.rpc.mock.calls.filter(c=>c[0]==='open_paid_payroll_adjustment')).toHaveLength(1);
+ });
+ it('does not clear changed retry evidence after the stop confirmation',async()=>{
+  mock.rpc.mockImplementation(async(name:string)=>name==='paid_payroll_adjustment_list'?{data:{total:0,offset:0,items:[]},error:null}:{data:null,error:{message:'lost'}});
+  render(React.createElement(PaidAdjustmentPanel,{voucher}));fireEvent.click(screen.getByRole('button',{name:'Adjustment cases for this voucher'}));fireEvent.click(screen.getByRole('button',{name:'Load case history'}));await screen.findByText('No cases recorded for this voucher.');fireEvent.change(screen.getByLabelText('Signed difference in pesos'),{target:{value:'50.25'}});fireEvent.change(screen.getByLabelText('Reason for review'),{target:{value:'Missed OT'}});fireEvent.click(screen.getByRole('button',{name:'Review new case'}));fireEvent.click(within(screen.getByRole('dialog')).getByRole('button',{name:'Open case'}));await screen.findByText(/Outcome not confirmed/);
+  const key=sessionStorage.key(0)!;fireEvent.click(screen.getByRole('button',{name:'Review stopping case retry'}));const changed=JSON.stringify({...JSON.parse(sessionStorage.getItem(key)!),reason:'Changed'});sessionStorage.setItem(key,changed);fireEvent.click(screen.getByRole('button',{name:'I investigated; stop case retry'}));await screen.findByText(/Nothing was cleared/);expect(sessionStorage.getItem(key)).toBe(changed);
+ });
+ it('does not clear an old request when the voucher scope changes before the response',async()=>{
+  let resolve!:(value:unknown)=>void;mock.rpc.mockImplementation((name:string)=>name==='paid_payroll_adjustment_list'?Promise.resolve({data:{total:0,offset:0,items:[]},error:null}):new Promise(r=>{resolve=r;}));
+  const view=render(React.createElement(PaidAdjustmentPanel,{voucher}));fireEvent.click(screen.getByRole('button',{name:'Adjustment cases for this voucher'}));fireEvent.click(screen.getByRole('button',{name:'Load case history'}));await screen.findByText('No cases recorded for this voucher.');fireEvent.change(screen.getByLabelText('Signed difference in pesos'),{target:{value:'50.25'}});fireEvent.change(screen.getByLabelText('Reason for review'),{target:{value:'Missed OT'}});fireEvent.click(screen.getByRole('button',{name:'Review new case'}));fireEvent.click(within(screen.getByRole('dialog')).getByRole('button',{name:'Open case'}));
+  const key=sessionStorage.key(0)!,stored=sessionStorage.getItem(key);expect(stored).toBeTruthy();view.rerender(React.createElement(PaidAdjustmentPanel,{voucher:{...voucher,gross_pay:'650.00',net_pay:'650.00'}}));await act(async()=>resolve({data:{id:'fresh-request-id',status:'pending',replayed:false},error:null}));expect(sessionStorage.getItem(key)).toBe(stored);
  });
  it('confirms the selected resolution without changing payroll',async()=>{
   mock.rpc.mockImplementation(async(name:string)=>name==='paid_payroll_adjustment_list'?{data:{total:1,offset:0,items:[pending]},error:null}:{data:{id:'a',status:'no_transfer',replayed:false},error:null});

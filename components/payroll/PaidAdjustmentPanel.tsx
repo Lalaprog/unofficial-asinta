@@ -27,9 +27,9 @@ export function PaidAdjustmentPanel({voucher}:{voucher:PaidReviewVoucher}){
  const [resolution,setResolution]=useState<'settled_external'|'no_transfer'>('settled_external'),[settledOn,setSettledOn]=useState(''),[note,setNote]=useState(''),[resolutionAck,setResolutionAck]=useState(false);
  const [confirm,setConfirm]=useState<Confirm|null>(null),[saving,setSaving]=useState(false);
  const [retryScope,setRetryScope]=useState(''),[retryReady,setRetryReady]=useState(false),[storageError,setStorageError]=useState(false),[pending,setPending]=useState<AdjustmentAttempt|null>(null),[stopping,setStopping]=useState(false);
- const seq=useRef(0),busy=useRef(false),active=useRef(key);active.current=key;
- useEffect(()=>{const sequence=seq;sequence.current++;busy.current=false;setExpanded(false);setState(empty(key));setDifference('');setReason('');setMessage('');setConfirm(null);setSaving(false);setResolution('settled_external');setSettledOn('');setNote('');setResolutionAck(false);setRetryReady(false);setRetryScope(key);setPending(null);setStorageError(false);setStopping(false);
-  if(user?.id&&isFounder&&assurance==='ready'){try{const saved=sessionStorage.getItem(storageKey);if(saved)setPending(parseAdjustmentAttempt(JSON.parse(saved),voucher));}catch{setStorageError(true);}setRetryReady(true);}
+ const seq=useRef(0),busy=useRef(false),active=useRef(key),observed=useRef<{raw:string|null}|null>(null),stopSnapshot=useRef<{raw:string|null}|null>(null);active.current=key;
+ useEffect(()=>{const sequence=seq;sequence.current++;busy.current=false;observed.current=null;stopSnapshot.current=null;setExpanded(false);setState(empty(key));setDifference('');setReason('');setMessage('');setConfirm(null);setSaving(false);setResolution('settled_external');setSettledOn('');setNote('');setResolutionAck(false);setRetryReady(false);setRetryScope(key);setPending(null);setStorageError(false);setStopping(false);
+  if(user?.id&&isFounder&&assurance==='ready'){try{const saved=sessionStorage.getItem(storageKey);observed.current={raw:saved};if(saved)setPending(parseAdjustmentAttempt(JSON.parse(saved),voucher));}catch{setStorageError(true);}setRetryReady(true);}
   return()=>{sequence.current++;};
  },[key,storageKey,user?.id,isFounder,assurance,voucher]);
  const current=state.key===key?state:empty(key),retryAvailable=retryScope===key&&retryReady,activePending=retryAvailable?pending:null,blocked=!retryAvailable||storageError||!!activePending;
@@ -53,25 +53,26 @@ export function PaidAdjustmentPanel({voucher}:{voucher:PaidReviewVoucher}){
   if(busy.current||blocked||assurance!=='ready'||item.status!=='pending'||!sameSnapshot(item.original_voucher,snapshot))return;
   setResolution('settled_external');setSettledOn('');setNote('');setResolutionAck(false);setMessage('');setConfirm({kind:'resolve',item});
  }
- async function send(a:AdjustmentAttempt){
+ async function send(a:AdjustmentAttempt,retry=false){
   if(busy.current||!user?.id||!isFounder||assurance!=='ready'||!retryAvailable||storageError)return;
   busy.current=true;setSaving(true);setMessage('');const token=++seq.current;let stored=false;
   try{
    const existing=sessionStorage.getItem(storageKey);
-   if(existing&&JSON.stringify(parseAdjustmentAttempt(JSON.parse(existing),voucher))!==JSON.stringify(a))throw Error('Retry record changed');
+   if((retry&&!existing)||(existing&&JSON.stringify(parseAdjustmentAttempt(JSON.parse(existing),voucher))!==JSON.stringify(a)))throw Error('Retry record changed');
    if(!existing)sessionStorage.setItem(storageKey,JSON.stringify(a));
-   if(JSON.stringify(parseAdjustmentAttempt(JSON.parse(sessionStorage.getItem(storageKey)||'null'),voucher))!==JSON.stringify(a))throw Error('Retry record unavailable');
-   stored=true;if(token===seq.current&&active.current===key){setPending(a);setConfirm(null);}
+   const storedValue=sessionStorage.getItem(storageKey);if(!storedValue||JSON.stringify(parseAdjustmentAttempt(JSON.parse(storedValue),voucher))!==JSON.stringify(a))throw Error('Retry record unavailable');
+   stored=true;observed.current={raw:storedValue};if(token===seq.current&&active.current===key){setPending(a);setConfirm(null);}
    const {data,error}=await createClient().rpc(a.kind==='open'?'open_paid_payroll_adjustment':'resolve_paid_payroll_adjustment',adjustmentAttemptArguments(a));
    if(error)throw error;verifyAdjustmentAttempt(data,a);
-   const saved=sessionStorage.getItem(storageKey);if(!saved||JSON.stringify(parseAdjustmentAttempt(JSON.parse(saved),voucher))!==JSON.stringify(a))throw Error('Retry record changed');sessionStorage.removeItem(storageKey);
+   if(token!==seq.current||active.current!==key)return;const saved=sessionStorage.getItem(storageKey);if(!saved||JSON.stringify(parseAdjustmentAttempt(JSON.parse(saved),voucher))!==JSON.stringify(a))throw Error('Retry record changed');sessionStorage.removeItem(storageKey);observed.current={raw:null};
    if(token===seq.current&&active.current===key){setPending(null);setDifference('');setReason('');setConfirm(null);setState(empty(key));setMessage('Recorded. Reload case history to verify the current state. No voucher, payment or Bale was changed.');}
-  }catch{if(token===seq.current&&active.current===key){setConfirm(null);setState(empty(key));setMessage(stored?'Outcome not confirmed. The action may already be recorded; investigate or retry the exact request.':'Retry storage could not be verified; no request was sent. Investigate saved data.');if(!stored)setStorageError(true);}}
+  }catch{if(token===seq.current&&active.current===key){setConfirm(null);setState(empty(key));setMessage(stored?'Outcome not confirmed. The action may already be recorded; investigate or retry the exact request.':'Retry storage could not be verified; no request was sent this time. An earlier action may still complete.');if(!stored)setStorageError(true);}}
   finally{if(token===seq.current&&active.current===key){busy.current=false;setSaving(false);}}
  }
+ function reviewStop(){try{const raw=sessionStorage.getItem(storageKey);if(!observed.current||raw!==observed.current.raw)throw Error('Retry changed');if(activePending&&(!raw||JSON.stringify(parseAdjustmentAttempt(JSON.parse(raw),voucher))!==JSON.stringify(activePending)))throw Error('Retry changed');stopSnapshot.current={raw};setStopping(true);setMessage('');}catch{setStopping(false);setMessage('Retry data changed or could not be read. Nothing was cleared; investigate before continuing.');}}
  function stopRetry(){
-  try{sessionStorage.removeItem(storageKey);setPending(null);setStorageError(false);setStopping(false);setState(empty(key));setMessage('Retry stopped. This does not cancel an in-flight action; investigate all case history before making another decision.');}
-  catch{setMessage('Could not clear retry data; new actions remain blocked.');}
+  try{if(!stopSnapshot.current||!observed.current||sessionStorage.getItem(storageKey)!==stopSnapshot.current.raw||observed.current.raw!==stopSnapshot.current.raw)throw Error('Retry changed');if(activePending&&(!stopSnapshot.current.raw||JSON.stringify(parseAdjustmentAttempt(JSON.parse(stopSnapshot.current.raw),voucher))!==JSON.stringify(activePending)))throw Error('Retry changed');sessionStorage.removeItem(storageKey);observed.current={raw:null};stopSnapshot.current=null;setPending(null);setStorageError(false);setStopping(false);setState(empty(key));setMessage('Retry stopped. This does not cancel an in-flight action; investigate all case history before making another decision.');}
+  catch{stopSnapshot.current=null;setStopping(false);setMessage('Retry data changed or could not be read. Nothing was cleared; investigate before continuing.');}
  }
  function save(){
   if(!confirm||busy.current||!user?.id||!isFounder||assurance!=='ready'||!current.list||blocked)return;
@@ -91,8 +92,8 @@ export function PaidAdjustmentPanel({voucher}:{voucher:PaidReviewVoucher}){
    <Button type="button" variant="secondary" size="sm" onClick={()=>load(current.list?.offset??0)} disabled={saving||current.loading||!isFounder||assurance!=='ready'} isLoading={current.loading}>{current.list?'Refresh case history':'Load case history'}</Button>
    {current.error&&<p role="alert">Unable to load case history: {current.error}</p>}{message&&<p role="status">{message}</p>}
    {retryAvailable&&(activePending||storageError)&&<div className="space-y-2 rounded-lg bg-status-warning-bg p-3"><p>A case action may have been sent. Retry details are sensitive, stored only in this tab and can be lost if storage is cleared. Missing records do not prove failure.</p>
-    {activePending&&<><p className="break-all">{activePending.kind==='open'?'Open case':'Resolve case'} · ID {activePending.id} · original voucher {activePending.snapshot.id}.</p><p className="break-words">{activePending.kind==='open'?`Difference ₱${activePending.difference} · ${activePending.reason}`:`${activePending.resolution} · ${activePending.settled_on||'no date'} · ${activePending.note}`}</p><Button type="button" size="sm" variant="secondary" disabled={saving} onClick={()=>void send(activePending)}>Retry exact case action</Button></>}
-    <Button type="button" size="sm" variant="ghost" disabled={saving} onClick={()=>setStopping(v=>!v)}>Review stopping case retry</Button>{stopping&&<div><p>Stopping does not cancel or undo an action. Independently investigate before proceeding.</p><Button type="button" size="sm" variant="danger" disabled={saving} onClick={stopRetry}>I investigated; stop case retry</Button></div>}
+    {activePending&&<><p className="break-all">{activePending.kind==='open'?'Open case':'Resolve case'} · ID {activePending.id} · original voucher {activePending.snapshot.id}.</p><p className="break-words">{activePending.kind==='open'?`Difference ₱${activePending.difference} · ${activePending.reason}`:`${activePending.resolution} · ${activePending.settled_on||'no date'} · ${activePending.note}`}</p><Button type="button" size="sm" variant="secondary" disabled={saving} onClick={()=>void send(activePending,true)}>Retry exact case action</Button></>}
+    <Button type="button" size="sm" variant="ghost" disabled={saving} onClick={()=>{if(stopping){stopSnapshot.current=null;setStopping(false);}else reviewStop();}}>Review stopping case retry</Button>{stopping&&<div><p>Stopping does not cancel or undo an action. Independently investigate before proceeding.</p><Button type="button" size="sm" variant="danger" disabled={saving} onClick={stopRetry}>I investigated; stop case retry</Button></div>}
    </div>}
    {!retryAvailable&&<p>Checking case retry data…</p>}
    {current.list&&<>
