@@ -12,7 +12,7 @@ Development migration `20261114094409_development_revoke_anonymous_workforce_fin
 
 ## Attribution installation and old bundle collision
 
-Development migration `20261114102109_development_project_cost_correction_attribution` installed the evidence-only attribution layer after a pinned hosted rollback rehearsal. It does not add corrections to totals or verify real authenticated flows. The old held corrected-review bundle embeds this now-installed layer and is no longer suitable for this target, even if its manual hold is bypassed. A new post-attribution bundle must check the installed dependency and current sources, and independently address the writer and lock limitations below before any installation. See `PROJECT_COST_CORRECTION_ATTRIBUTION_DRAFT.md` for the installation record and scope.
+Development migration `20261114102109_development_project_cost_correction_attribution` installed the evidence-only attribution layer after a pinned hosted rollback rehearsal. It does not add corrections to totals or verify real authenticated flows. The old held corrected-review bundle embeds this now-installed layer and is no longer suitable for this target, even if its manual hold is bypassed. A post-attribution bundle was then installed on development as `20261114103249` after a hosted rollback rehearsal and selected writer/dependency checks; neither bundle should be rerun. This did not eliminate the writer and lock limitations below or enable the UI. See `PROJECT_COST_CORRECTION_ATTRIBUTION_DRAFT.md` for the installation record and scope.
 
 ## Selected table privileges and triggers
 
