@@ -129,6 +129,19 @@ export function AdvanceRequestsPanel() {
   const weeklyStatuses = useWeeklyBaleStatuses(weeklyMode, user?.id, isFounder ? 'founder' : isSupervisor ? 'supervisor' : 'other', isFounder ? advanceRequests : advanceRequests.filter(r => r.submitted_by === user?.id));
   const statusFor = (request: AdvanceRequest) => weeklyStatuses.data?.items.find(item => item.id === request.id && item.stored_status === request.status);
   const canReview = (request: AdvanceRequest) => request.status === 'pending_approval' && (weeklyMode ? statusFor(request)?.can_review === true : !cutoverMode);
+  // Statuses are a point-in-time server snapshot; only the Supervisor's own
+  // loaded rows can be checked here, and another request may still be in flight.
+  const snapshotTime = weeklyStatuses.data?.as_of;
+  const snapshotWeek = snapshotTime && Number.isFinite(Date.parse(snapshotTime))
+    ? workerPayrollPeriod(getManilaClock(new Date(snapshotTime)).dateIso).start
+    : null;
+  const ownSameWeekRequests = weeklyMode && isSupervisor && selectedWorkerId && snapshotWeek
+    ? advanceRequests.filter(request => {
+      const status = statusFor(request);
+      return request.submitted_by === user?.id && request.worker_id === selectedWorkerId && status?.kind === 'weekly' &&
+        status.period_start === snapshotWeek && status.effective_status !== 'rejected' && status.effective_status !== 'expired_unapproved';
+    })
+    : [];
   const activeWorkers = team.status === 'ready' ? team.workers : [];
   const missingWorkerDetails = team.status === 'ready' && team.someDetailsUnavailable;
   const pendingApprovalRequests = advanceRequests.filter(
@@ -1043,6 +1056,21 @@ export function AdvanceRequestsPanel() {
           )}
           {selectedProjectId && missingWorkerDetails && <p role="status">Some assigned worker details are unavailable. They may be inactive or not visible to this account. Ask the Founder to check the site team if someone is missing.</p>}
           {selectedProjectId && team.status === 'ready' && !missingWorkerDetails && activeWorkers.length === 0 && <p>No active workers are assigned to this site. Ask the Founder to check the site team if someone is missing.</p>}
+
+          {weeklyMode && isSupervisor && selectedWorkerId && (
+            <div className="rounded-lg border border-status-warning/20 bg-status-warning-bg/50 px-3 py-2.5 text-ink-secondary">
+              {ownSameWeekRequests.length > 0 && <>
+                <p role="alert" className="font-semibold text-navy">Check earlier requests for this worker</p>
+                <p>Your loaded list includes {ownSameWeekRequests.length} non-rejected request{ownSameWeekRequests.length === 1 ? '' : 's'} for the week starting {snapshotWeek}. Confirm whether another request is intended before sending.</p>
+                <ul className="mt-1 list-inside list-disc">
+                  {ownSameWeekRequests.slice(0, 3).map(request => <li key={request.id} className="break-words">{formatPeso(request.requested_amount)} · {requestStatusLabel(request.status)} · {projects.find(project => project.id === request.project_id)?.name || 'Site unavailable'}</li>)}
+                </ul>
+                {ownSameWeekRequests.length > 3 && <p>And {ownSameWeekRequests.length - 3} more in the loaded list.</p>}
+              </>}
+              {!snapshotWeek && <p>Weekly status is unavailable; this check is incomplete.</p>}
+              <p className={ownSameWeekRequests.length > 0 ? 'mt-1' : ''}>Only your loaded requests with verified weekly status at the last check can be compared. Other Supervisors, old records or in-flight requests may not appear; an empty list does not prove there is no earlier request. Ask the Founder when unsure.</p>
+            </div>
+          )}
 
           <Input
             label="Requested amount (₱)"
