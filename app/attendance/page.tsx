@@ -56,6 +56,7 @@ import { SupervisorFoundationPanels } from '@/components/attendance/SupervisorFo
 import { WorkerCategoryFoundation } from '@/components/workforce/WorkerCategoryFoundation';
 import { WorkerCategorySelect } from '@/components/workforce/WorkerCategorySelect';
 import { CATEGORY_CHANGED, useActiveCategories } from '@/lib/workforce/useActiveCategories';
+import { categoryWorkforceEnabled } from '@/lib/workforce/categoryCatalog';
 import { AssignmentHistory } from '@/components/workforce/AssignmentHistory';
 import { assignmentHistoryPreviewEnabled } from '@/lib/workforce/assignmentHistory';
 import { weeklyWorkerCutoverMode } from '@/lib/finance/featureAvailability';
@@ -110,6 +111,23 @@ function getCraftGroup(position: string): CraftGroupKey {
     return 'mep_steel';
   }
   return 'general';
+}
+
+// Integrated categories are distinct groups, including archived categories still on workers.
+// Prefix prevents a category literally named "all" from colliding with the reset filter.
+function workerCraftGroup(position: string): string {
+  return categoryWorkforceEnabled() ? `category:${position.trim() || 'Unspecified'}` : getCraftGroup(position);
+}
+function craftGroupLabel(key: string): string {
+  return key.startsWith('category:') ? key.slice('category:'.length) : CRAFT_GROUP_META[key as CraftGroupKey].label;
+}
+function craftGroupOrder(a: string, b: string): number {
+  if (categoryWorkforceEnabled()) return craftGroupLabel(a).localeCompare(craftGroupLabel(b));
+  return CRAFT_GROUP_META[a as CraftGroupKey].order - CRAFT_GROUP_META[b as CraftGroupKey].order;
+}
+function craftOptions(positions: string[]) {
+  if (!categoryWorkforceEnabled()) return CRAFT_FILTER_OPTIONS;
+  return [{ label: 'All Craft Groups', value: 'all' }, ...Array.from(new Set(positions.map(workerCraftGroup))).sort(craftGroupOrder).map(value => ({label: craftGroupLabel(value), value}))];
 }
 
 function statusToHours(status: AttendanceStatus): number {
@@ -872,13 +890,16 @@ function AttendancePageInner() {
     .filter((worker) => !(draftAttendance[worker.id] || getBaselineDraftEntry(worker.id)).status)
     .map((worker) => worker.id);
 
+  const rosterCraftOptions = useMemo(() => craftOptions(siteRosterWorkers.map(w => w.position)), [siteRosterWorkers]);
+  useEffect(() => { if (!rosterCraftOptions.some(option => option.value === craftFilter)) setCraftFilter('all'); }, [rosterCraftOptions, craftFilter]);
+
   // Filtered workers on the Daily Roster (Supervisors placed at the top)
   const filteredWorkers = useMemo(() => {
     const unmarkedIds = unmarkedWorkerIds ? new Set(unmarkedWorkerIds) : null;
     return siteRosterWorkers
       .filter((w) => {
         if (unmarkedIds && !unmarkedIds.has(w.id)) return false;
-        if (craftFilter !== 'all' && getCraftGroup(w.position) !== craftFilter) {
+        if (craftFilter !== 'all' && workerCraftGroup(w.position) !== craftFilter) {
           return false;
         }
         if (!searchWorker.trim()) return true;
@@ -897,15 +918,15 @@ function AttendancePageInner() {
 
   // Group filteredWorkers by CraftGroupKey for compact collapsible display
   const groupedRosterWorkers = useMemo(() => {
-    const map = new Map<CraftGroupKey, Worker[]>();
+    const map = new Map<string, Worker[]>();
     filteredWorkers.forEach((w) => {
-      const key = getCraftGroup(w.position);
+      const key = workerCraftGroup(w.position);
       const list = map.get(key) || [];
       list.push(w);
       map.set(key, list);
     });
     return Array.from(map.entries()).sort(
-      (a, b) => CRAFT_GROUP_META[a[0]].order - CRAFT_GROUP_META[b[0]].order
+      (a, b) => craftGroupOrder(a[0], b[0])
     );
   }, [filteredWorkers]);
 
@@ -952,6 +973,9 @@ function AttendancePageInner() {
     return workers.filter((worker) => assigned.has(worker.id) && worker.id !== user?.id);
   }, [workers, isSupervisor, workforceTeam.status, workforceTeam.ids, user?.id]);
 
+  const workforceCraftOptions = useMemo(() => craftOptions(workforceScopedWorkers.map(w => w.position)), [workforceScopedWorkers]);
+  useEffect(() => { if (!workforceCraftOptions.some(option => option.value === workforceCraftFilter)) setWorkforceCraftFilter('all'); }, [workforceCraftOptions, workforceCraftFilter]);
+
   const missingWorkforceProfiles = isSupervisor && workforceTeam.status === 'ready'
     ? workforceTeam.ids.filter((id) => id !== user?.id && !workers.some((worker) => worker.id === id)).length
     : 0;
@@ -962,7 +986,7 @@ function AttendancePageInner() {
       if (workforceStatusFilter === 'removed' ? !w.removed_at : Boolean(w.removed_at)) return false;
       if (workforceStatusFilter === 'active' && !w.active) return false;
       if (workforceStatusFilter === 'inactive' && w.active) return false;
-      if (workforceCraftFilter !== 'all' && getCraftGroup(w.position) !== workforceCraftFilter) {
+      if (workforceCraftFilter !== 'all' && workerCraftGroup(w.position) !== workforceCraftFilter) {
         return false;
       }
       if (!workforceSearch.trim()) return true;
@@ -970,15 +994,15 @@ function AttendancePageInner() {
       return w.name.toLowerCase().includes(q) || w.position.toLowerCase().includes(q);
     });
 
-    const map = new Map<CraftGroupKey, Worker[]>();
+    const map = new Map<string, Worker[]>();
     filtered.forEach((w) => {
-      const key = getCraftGroup(w.position);
+      const key = workerCraftGroup(w.position);
       const list = map.get(key) || [];
       list.push(w);
       map.set(key, list);
     });
     return Array.from(map.entries()).sort(
-      (a, b) => CRAFT_GROUP_META[a[0]].order - CRAFT_GROUP_META[b[0]].order
+      (a, b) => craftGroupOrder(a[0], b[0])
     );
   }, [workforceScopedWorkers, workforceCraftFilter, workforceSearch, workforceStatusFilter]);
 
@@ -1393,7 +1417,7 @@ function AttendancePageInner() {
                     aria-label="Filter by craft group"
                     value={craftFilter}
                     onChange={(e) => setCraftFilter(e.target.value)}
-                    options={CRAFT_FILTER_OPTIONS}
+                    options={rosterCraftOptions}
                   />
                 </div>
               </div>
@@ -1430,11 +1454,11 @@ function AttendancePageInner() {
                   <button
                     type="button"
                     onClick={() => setCraftFilter('all')}
-                    aria-label={`Remove craft filter: ${CRAFT_FILTER_OPTIONS.find((option) => option.value === craftFilter)?.label || 'selected group'}`}
+                    aria-label={`Remove craft filter: ${rosterCraftOptions.find((option) => option.value === craftFilter)?.label || 'selected group'}`}
                     className="inline-flex min-h-11 min-w-0 max-w-full items-center gap-1.5 rounded-full bg-surface-inset px-3 py-1 text-xs font-medium text-navy transition-colors hover:bg-slate-200 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand focus-visible:ring-offset-2"
                   >
                     <span className="truncate">
-                      {CRAFT_FILTER_OPTIONS.find((option) => option.value === craftFilter)?.label || 'Selected craft'}
+                      {rosterCraftOptions.find((option) => option.value === craftFilter)?.label || 'Selected craft'}
                     </span>
                     <X className="h-3.5 w-3.5 shrink-0" aria-hidden="true" />
                   </button>
@@ -1455,7 +1479,7 @@ function AttendancePageInner() {
                   label="Craft group"
                   value={craftFilter}
                   onChange={(e) => setCraftFilter(e.target.value)}
-                  options={CRAFT_FILTER_OPTIONS}
+                  options={rosterCraftOptions}
                 />
                 <div className="flex flex-col-reverse gap-2 sm:flex-row sm:justify-end">
                   {craftFilter !== 'all' && (
@@ -1519,7 +1543,7 @@ function AttendancePageInner() {
                         type="button"
                         onClick={() => toggleGroupCollapse(groupKey)}
                         aria-expanded={!isCollapsed}
-                        aria-controls={`attendance-group-${groupKey}`}
+                        aria-controls={`attendance-group-${encodeURIComponent(groupKey)}`}
                         className="flex min-h-11 w-full min-w-0 items-center gap-2.5 rounded-md text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand"
                       >
                         {isCollapsed ? (
@@ -1528,7 +1552,7 @@ function AttendancePageInner() {
                           <ChevronDown className="h-4 w-4 shrink-0 text-ink-secondary" />
                         )}
                         <span className="min-w-0 flex-1 break-words text-sm font-semibold leading-snug text-navy">
-                          {CRAFT_GROUP_META[groupKey].label}
+                          {craftGroupLabel(groupKey)}
                         </span>
                         <span className="inline-flex h-8 min-w-8 shrink-0 items-center justify-center rounded-full border border-surface-border bg-surface px-2 text-xs font-semibold tabular-nums text-navy">
                           {groupWorkers.length}
@@ -1565,7 +1589,7 @@ function AttendancePageInner() {
                     </div>
 
                     <div
-                      id={`attendance-group-${groupKey}`}
+                      id={`attendance-group-${encodeURIComponent(groupKey)}`}
                       ref={(node) => { node?.toggleAttribute('inert', isCollapsed); }}
                       aria-hidden={isCollapsed || undefined}
                       className={`grid transition-[grid-template-rows] duration-200 ease-out motion-reduce:transition-none ${isCollapsed ? 'grid-rows-[0fr]' : 'grid-rows-[1fr]'}`}
@@ -2230,14 +2254,7 @@ function AttendancePageInner() {
                     aria-label="Filter workforce by craft group"
                     value={workforceCraftFilter}
                     onChange={(e) => setWorkforceCraftFilter(e.target.value)}
-                    options={[
-                      { label: 'All Craft Groups', value: 'all' },
-                      { label: 'Supervision & Foremen', value: 'supervision' },
-                      { label: 'Masonry & Concrete', value: 'masonry' },
-                      { label: 'Carpentry & Formworks', value: 'carpentry' },
-                      { label: 'Steel, Electrical & Plumbing', value: 'mep_steel' },
-                      { label: 'Finishing & General Labor', value: 'general' },
-                    ]}
+                    options={workforceCraftOptions}
                   />
                 </div>
                 <div className="w-full sm:w-36">
@@ -2290,7 +2307,7 @@ function AttendancePageInner() {
                 >
                   <div className="px-4 py-2.5 bg-surface-inset/70 border-b border-surface-border/60 flex items-center justify-between">
                     <span className="font-bold text-xs text-navy">
-                      {CRAFT_GROUP_META[groupKey].label}
+                      {craftGroupLabel(groupKey)}
                     </span>
                     <Badge variant="neutral" size="sm">
                       {groupWorkers.length} worker{groupWorkers.length === 1 ? '' : 's'}

@@ -3,7 +3,7 @@ import React from 'react';
 import { act, cleanup, fireEvent, render, screen, within } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
-const mock = vi.hoisted(() => ({ supervisor: false, duplicate: false, missingLinked: false, extraSites: [] as Array<{id:string;name:string;location:string}>, record: vi.fn(), toast: vi.fn(), createWorker: vi.fn(), snapshots: new Map<string, any>(), siteAttendance: [] as any[] }));
+const mock = vi.hoisted(() => ({ supervisor: false, duplicate: false, missingLinked: false, customCrafts: false, extraSites: [] as Array<{id:string;name:string;location:string}>, record: vi.fn(), toast: vi.fn(), createWorker: vi.fn(), snapshots: new Map<string, any>(), siteAttendance: [] as any[] }));
 function getSnapshot(projectId: string, date: string) {
   const key = `${projectId}:${date}`;
   if (!mock.snapshots.has(key)) mock.snapshots.set(key, {
@@ -17,6 +17,7 @@ vi.mock('@/lib/attendance/project-roll-call', () => ({
   loadProjectRollCall: async (project: string, date: string) => getSnapshot(project, date),
   projectRollCallFingerprint: (snapshot: unknown) => JSON.stringify(snapshot),
 }));
+vi.mock('@/lib/workforce/useActiveCategories', () => ({ CATEGORY_CHANGED: 'category-changed', useActiveCategories: () => ({enabled:false, categories:[], loading:false, error:null, reload:vi.fn()}) }));
 vi.mock('@/lib/attendance/usePendingApprovals', () => ({ usePendingApprovals: () => ({items: [], total: 0, hasMore: false, loading: false, error: null, loadMore: vi.fn(), refresh: vi.fn()}) }));
 vi.mock('next/navigation', () => { const params = new URLSearchParams(); return { useSearchParams: () => params }; });
 vi.mock('next/link', () => ({ default: ({ children, href, prefetch: _prefetch, ...props }: React.AnchorHTMLAttributes<HTMLAnchorElement> & { prefetch?: boolean }) => React.createElement('a', { ...props, href }, children) }));
@@ -30,7 +31,7 @@ vi.mock('@/components/ui/Toast', () => ({ useToast: () => ({ showToast: mock.toa
 vi.mock('@/lib/data/store', () => {
   const worker = (id: string, name: string, position: string) => ({ id, name, position, active: true, pay_rate: 850, pay_rate_type: 'daily', contact_number: '—' });
   const projects = [{ id: 'site-1', name: 'Site One', location: 'Batangas, PH' }, { id: 'site-2', name: 'Site Two', location: 'Lipa, PH' }];
-  const workers = [worker('sup', 'Site Supervisor', 'Site Supervisor'), worker('amy', 'Amy', 'Mason'), worker('ben', 'Ben', 'Mason'), worker('cara', 'Cara', 'Mason'), worker('dan', 'Dan', 'Mason'), worker('eva', 'Eva', 'Carpenter')];
+  const workers = [worker('sup', 'Site Supervisor', 'Site Supervisor'), worker('amy', 'Amy', mock.customCrafts ? 'Special Mason' : 'Mason'), worker('ben', 'Ben', 'Mason'), worker('cara', 'Cara', 'Mason'), worker('dan', 'Dan', 'Mason'), worker('eva', 'Eva', 'Carpenter')];
   const attendance = [
     { id: 'b', worker_id: 'ben', project_id: 'site-1', date: '2026-11-03', status: 'half_day', notes: '', recorded_by: 'founder' },
     { id: 'c', worker_id: 'cara', project_id: 'site-1', date: '2026-11-03', status: 'absent', notes: '', recorded_by: 'founder' },
@@ -40,13 +41,14 @@ vi.mock('@/lib/data/store', () => {
   const store = { projects, workers, attendance, users: [{ id: 'sup', name: 'Site Supervisor', role: 'supervisor' }], projectSupervisors: [{ project_id: 'site-1', supervisor_id: 'sup' }], isLoaded: true, createWorker: mock.createWorker, updateWorker: vi.fn(), toggleWorkerStatus: vi.fn(), recordAttendanceBatch: mock.record, updateAttendanceRecord: vi.fn(), getProjectsForSupervisor: () => [...projects, ...mock.extraSites] };
   const duplicate = worker('legacy-sup', 'Site Supervisor', 'Site Supervisor');
   const variants = [workers, [...workers, duplicate], workers.filter((w) => w.id !== 'sup'), [...workers.filter((w) => w.id !== 'sup'), duplicate]];
-  return { useDataStore: () => ({ ...store, workers: variants[(mock.missingLinked ? 2 : 0) + (mock.duplicate ? 1 : 0)] }) };
+  const customVariants = variants.map(list => list.map(w => w.id === 'amy' ? {...w, position:'Special Mason'} : w));
+  return { useDataStore: () => ({ ...store, workers: (mock.customCrafts ? customVariants : variants)[(mock.missingLinked ? 2 : 0) + (mock.duplicate ? 1 : 0)] }) };
 });
 import AttendancePage from '@/app/attendance/page';
 
 beforeEach(() => {
   vi.useFakeTimers(); vi.setSystemTime(new Date('2026-11-03T04:00:00Z'));
-  mock.snapshots.clear(); mock.supervisor = true; mock.duplicate = false; mock.missingLinked = false; mock.extraSites = []; mock.record.mockReset(); mock.toast.mockReset(); mock.createWorker.mockReset();
+  vi.unstubAllEnvs(); mock.customCrafts = false; mock.snapshots.clear(); mock.supervisor = true; mock.duplicate = false; mock.missingLinked = false; mock.extraSites = []; mock.record.mockReset(); mock.toast.mockReset(); mock.createWorker.mockReset();
   window.localStorage.clear(); window.history.replaceState({}, '', '/attendance');
 });
 afterEach(() => { cleanup(); vi.useRealTimers(); });
@@ -56,6 +58,26 @@ function status(worker: string, label: string) {
 }
 
 describe('roll call usability and safety', () => {
+  it('groups and filters distinct integrated categories instead of merging similar labels', () => {
+    vi.stubEnv('NEXT_PUBLIC_WORKER_CATEGORY_PREVIEW','true'); vi.stubEnv('NEXT_PUBLIC_WORKER_CATEGORY_WORKFORCE_PREVIEW','true'); mock.customCrafts = true;
+    render(React.createElement(AttendancePage));
+    const filter = screen.getByRole('combobox', {name:'Filter by craft group'});
+    expect(within(filter).getByRole('option',{name:'Mason'})).toBeTruthy();
+    expect(within(filter).getByRole('option',{name:'Special Mason'})).toBeTruthy();
+    fireEvent.change(filter,{target:{value:'category:Special Mason'}});
+    expect(screen.getByText('Amy')).toBeTruthy(); expect(screen.queryByText('Ben')).toBeNull();
+    expect(mock.record).not.toHaveBeenCalled();
+  });
+  it('uses distinct categories in the workforce directory filter', () => {
+    vi.stubEnv('NEXT_PUBLIC_WORKER_CATEGORY_PREVIEW','true'); vi.stubEnv('NEXT_PUBLIC_WORKER_CATEGORY_WORKFORCE_PREVIEW','true'); mock.supervisor=false; mock.customCrafts=true;
+    HTMLElement.prototype.scrollIntoView = vi.fn(); window.matchMedia=vi.fn().mockReturnValue({matches:true});
+    render(React.createElement(AttendancePage));
+    act(() => { window.dispatchEvent(new CustomEvent('asinta:mobile-quick-action', {detail:'worker'})); });
+    const filter=screen.getByRole('combobox',{name:'Filter workforce by craft group'});
+    expect(within(filter).getByRole('option',{name:'Mason'})).toBeTruthy(); expect(within(filter).getByRole('option',{name:'Special Mason'})).toBeTruthy();
+    fireEvent.change(filter,{target:{value:'category:Special Mason'}});
+    expect(screen.getByText('Amy')).toBeTruthy(); expect(screen.queryByText('Ben')).toBeNull();
+  });
   it.each([true, false])('pauses submission for a possible duplicate for supervisor=%s', (supervisor) => {
     mock.supervisor = supervisor; mock.duplicate = true;
     render(React.createElement(AttendancePage));
