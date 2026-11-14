@@ -42,6 +42,16 @@ describe('Supervisor payroll revision upgrade (synthetic only)',()=>{
   await db.exec("SET test.assurance='yes'; RESET ROLE; ALTER TABLE public.supervisor_payroll_revision_events ADD CONSTRAINT fail_refresh CHECK(action<>'refresh') NOT VALID; SET ROLE authenticated");
   await expect(action(db,id(22),'1','refresh','600',now,'Audit failure')).rejects.toThrow(/fail_refresh/i);expect(await review(db)).toMatchObject({revision:'1',gross:'1200.00'});
  }finally{await db.close();}},30000);
+ it('exposes bounded revision history only to an assured Founder',async()=>{const db=await setup();try{
+  await db.exec('RESET ROLE');await db.exec(`BEGIN; ${sql('supervisor_payroll_revision_history')} COMMIT;`);await db.exec(`SET ROLE authenticated; SET test.assurance='yes'; SET test.uid='${founder}'`);
+  await create(db);await action(db,id(31),'0','approved');await action(db,id(32),'1','return_to_draft',null,null,'No payment was made');
+  const page=(await db.query<{v:{payroll_id:string;items:{revision:string;action:string;reason:string|null;before_status:string;after_status:string}[];has_more:boolean}}>('SELECT public.supervisor_payroll_revision_history($1,NULL) v',[id(10)])).rows[0].v;
+  expect(page.payroll_id).toBe(id(10));expect(page.has_more).toBe(false);expect(page.items.map(x=>x.revision)).toEqual(['1','0']);expect(page.items[0]).toMatchObject({action:'return_to_draft',reason:'No payment was made',before_status:'approved',after_status:'draft'});
+  const older=(await db.query<{v:{items:{revision:string}[]}}>('SELECT public.supervisor_payroll_revision_history($1,1) v',[id(10)])).rows[0].v;expect(older.items.map(x=>x.revision)).toEqual(['0']);
+  await db.exec(`SET test.uid='${sup}'`);await expect(db.query('SELECT public.supervisor_payroll_revision_history($1,NULL)',[id(10)])).rejects.toThrow(/Founder access/i);
+  await db.exec(`SET test.uid='${founder}'; SET test.assurance='no'`);await expect(db.query('SELECT public.supervisor_payroll_revision_history($1,NULL)',[id(10)])).rejects.toThrow(/Founder access/i);
+  await db.exec('RESET ROLE');expect((await db.query<{anon:boolean;service:boolean}>("SELECT has_function_privilege('anon','public.supervisor_payroll_revision_history(uuid,bigint)','EXECUTE') anon,has_function_privilege('service_role','public.supervisor_payroll_revision_history(uuid,bigint)','EXECUTE') service")).rows[0]).toEqual({anon:false,service:false});
+ }finally{await db.close();}},30000);
  it('rolls back the upgrade if a legacy decision grant is inherited',async()=>{
   const db=new PGlite();try{await db.exec(baseFixture);for(const name of ['supervisor_table_foundation','supervisor_rpc_rollout','supervisor_payroll_preview','supervisor_payroll_ledger'])await db.exec(`BEGIN; ${sql(name)} COMMIT;`);
    await db.exec('CREATE ROLE legacy_inherited; GRANT EXECUTE ON FUNCTION public.transition_supervisor_period_payroll(uuid,uuid,text,date,boolean) TO legacy_inherited; GRANT legacy_inherited TO authenticated');

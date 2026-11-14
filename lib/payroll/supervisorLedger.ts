@@ -57,3 +57,15 @@ export function parseCompanyEvidence(raw:unknown,from:string,to:string):CompanyE
  for(const x of r.items){if(!x||!uuid(x.id)||ids.has(x.id)||!uuid(x.supervisor_id)||!text(x.supervisor_name)||!date(x.period_start)||supervisorPayrollPeriod(x.period_start).start!==x.period_start||x.period_end!==supervisorPayrollPeriod(x.period_start).end||!date(x.paid_on)||x.paid_on<from||x.paid_on>to||x.paid_on<x.period_start)throw Error('Invalid paid evidence');ids.add(x.id);sum+=cents(x.gross);}
  if(cents(r.total,12)!==sum)throw Error('Evidence total mismatch');return r;
 }
+
+export type SupervisorRevisionEvent={request_id:string;actor_id:string;action:'refresh'|'return_to_draft'|'approved'|'recorded_paid';revision:string;occurred_at:string;reason:string|null;before_status:string;after_status:string;before_rate:string;after_rate:string;before_gross:string;after_gross:string;paid_on:string|null};
+export function parseSupervisorRevisionHistory(raw:unknown,payroll:string,before:string|null):{items:SupervisorRevisionEvent[];has_more:boolean}{
+ if(!uuid(payroll)||(before!==null&&!validSupervisorRevision(before))||!raw||typeof raw!=='object'||Array.isArray(raw))throw Error('Invalid history');
+ const result=raw as {payroll_id:unknown;items:unknown;has_more:unknown};
+ if(result.payroll_id!==payroll||!Array.isArray(result.items)||result.items.length>50||typeof result.has_more!=='boolean'||(result.has_more&&result.items.length!==50))throw Error('Incomplete history');
+ const seen=new Set<string>();let last=before===null?null:BigInt(before);
+ const items=result.items.map((x:unknown)=>{if(!x||typeof x!=='object'||Array.isArray(x))throw Error('Invalid event');const e=x as SupervisorRevisionEvent;
+  if(!uuid(e.request_id)||seen.has(e.request_id)||!uuid(e.actor_id)||!['refresh','return_to_draft','approved','recorded_paid'].includes(e.action)||!validSupervisorRevision(e.revision)||!stamp(e.occurred_at)||!(e.reason===null||typeof e.reason==='string'&&e.reason.length<=500)||!['draft','approved','paid'].includes(e.before_status)||!['draft','approved','paid'].includes(e.after_status)||!(e.paid_on===null||date(e.paid_on)))throw Error('Invalid event');
+  cents(e.before_rate);cents(e.after_rate);cents(e.before_gross);cents(e.after_gross);const revision=BigInt(e.revision);if(last!==null&&revision>=last)throw Error('History order changed');last=revision;seen.add(e.request_id);return e;
+ });return {items,has_more:result.has_more};
+}

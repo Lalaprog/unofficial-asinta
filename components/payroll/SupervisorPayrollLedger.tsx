@@ -7,6 +7,7 @@ import {Modal} from '@/components/ui/Modal';
 import {paidPeriodAssertionCasesPreviewEnabled,supervisorPayrollRevisionPreviewEnabled} from '@/lib/finance/featureAvailability';
 import {snapshotFromSupervisor} from '@/lib/payroll/paidPeriodCases';
 import {PaidPeriodAssertionCases} from './PaidPeriodAssertionCases';
+import {SupervisorRevisionHistory} from './SupervisorRevisionHistory';
 import {useAuth} from '@/lib/auth/authContext';
 import {createClient} from '@/lib/supabase/client';
 import {getManilaClock} from '@/lib/reminders/scheduler';
@@ -78,6 +79,7 @@ function Contents({actor,today}:{actor:string;today:string}){
    {current&&<><p>Reviewed identity: {current.prepared.person.name} · {current.prepared.person.id}; linked worker: {current.prepared.linked_worker.name} · {current.prepared.linked_worker.position} · {current.prepared.linked_worker.active?'active':'archived'}. Server Philippine date {current.prepared.input.as_of}.</p>
     <p>Legacy site records: {current.prepared.input.legacy_count} · possible legacy vouchers: {current.prepared.input.overlapping_vouchers} · possible historical worker periods: {current.prepared.historical_worker_conflicts} · identity requires review: {current.prepared.input.identity_needs_review?'yes':'no'}. These checks can miss real-world payments.</p>{current.prepared.historical_worker_conflicts>0&&<p className="font-semibold text-status-warning">Possible historical worker-pay overlap requires separate identity and period reconciliation.</p>}
     {current.row?<><p className="font-semibold text-navy">Saved as {current.row.supervisor_name} · {current.row.status} · rate ₱{current.row.daily_rate} · {current.row.half_day_units/2} day equivalent(s) · gross ₱{current.row.gross}{current.row.paid_on?` · external payment date ${current.row.paid_on}`:''}.</p><p>{current.row.unmarked_dates.length} date(s) were unmarked in the saved snapshot. They were not treated as absent.</p>
+     {revisionMode&&process.env.NEXT_PUBLIC_SUPERVISOR_REVISION_HISTORY_PREVIEW==='true'&&<SupervisorRevisionHistory key={current.row.id} payroll={current.row.id}/>}
      {current.row.source_changed&&<p className="font-semibold text-status-warning">Sources changed after this record was created. Investigate the original period; no automatic adjustment or carry-forward occurs.</p>}
      {revisionMode&&current.row.status!=='paid'&&<div className="space-y-2 rounded-xl border border-surface-border p-3"><p>Revision {current.row.revision}. Before returning an approval, verify no external payment has already occurred. These actions record review evidence but do not move money.</p><Input label="Reason for Supervisor payroll revision" value={reason} maxLength={500} disabled={busy} onChange={e=>setReason(e.target.value)} />
       {current.row.status==='approved'&&<Button type="button" variant="secondary" size="sm" disabled={busy||!reason.trim()} onClick={()=>stage('return_to_draft')}>Review return to draft</Button>}
