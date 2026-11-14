@@ -100,4 +100,23 @@ let admin:Client,a:Client,b:Client;const pause=()=>new Promise(r=>setTimeout(r,1
    expect((await admin.query("SELECT count(*)::int n FROM public.project_assignment_history WHERE project_id=$1 AND event_type='unassigned'",[other])).rows[0].n).toBe(1);
   }finally{await a.query('ROLLBACK');await b.query('ROLLBACK');}
  },15000);
+ it('pins category and assignment triggers during reversible worker removal',async()=>{
+  await admin.query("ALTER TABLE public.workers ADD COLUMN position text NOT NULL DEFAULT 'Mason'");
+  for(const path of ['supabase/drafts/worker_category_catalog.sql','supabase/drafts/worker_category_workforce_cutover.sql','supabase/drafts/worker_removal_category_compatibility.sql']) await admin.query(`BEGIN; ${readFileSync(path,'utf8')} COMMIT`);
+  const w='00000000-0000-0000-0000-000000000150';await admin.query("INSERT INTO public.workers(id,name,position,active) VALUES($1,'Category worker','Mason',true)",[w]);await admin.query('INSERT INTO public.project_worker_assignments VALUES($1,$2,true,now(),$3)',[site,w,founder]);
+  await a.query('BEGIN');try{
+   await a.query('SELECT public.set_workers_removed_guarded($1,$2::uuid[],true)',[founder,[w]]);
+   let settled=false;const pid=(await admin.query('SELECT pg_backend_pid() pid')).rows[0].pid;
+   const disable=admin.query('ALTER TABLE public.workers DISABLE TRIGGER bind_worker_category').finally(()=>{settled=true;});
+   await pause();expect(settled).toBe(false);
+   expect((await b.query('SELECT cardinality(pg_blocking_pids($1))::int n',[pid])).rows[0].n).toBeGreaterThan(0);
+   await a.query('COMMIT');await disable;
+   await expect(a.query('SELECT public.set_workers_removed_guarded($1,$2::uuid[],false)',[founder,[w]])).rejects.toMatchObject({code:'P1002'});
+   await admin.query('ALTER TABLE public.workers ENABLE TRIGGER bind_worker_category');
+   await a.query('SELECT public.set_workers_removed_guarded($1,$2::uuid[],false)',[founder,[w]]);
+   expect((await admin.query('SELECT active,removed_at,position FROM public.workers WHERE id=$1',[w])).rows[0]).toEqual({active:false,removed_at:null,position:'Mason'});
+   expect((await admin.query('SELECT event_type FROM public.project_assignment_history WHERE worker_id=$1 ORDER BY event_type',[w])).rows).toEqual([{event_type:'assigned'},{event_type:'unassigned'}]);
+  }finally{await a.query('ROLLBACK');await admin.query('ALTER TABLE public.workers ENABLE TRIGGER bind_worker_category');}
+ },15000);
+
 });
