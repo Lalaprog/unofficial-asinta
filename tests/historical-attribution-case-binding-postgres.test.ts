@@ -46,6 +46,19 @@ suite('historical attribution case binding PostgreSQL races (held candidate)',()
   }finally{await first.query('ROLLBACK');await second.query('ROLLBACK');}
  },15000);
  it('rejects repeatable-read writers',async()=>{await first.query('BEGIN ISOLATION LEVEL REPEATABLE READ');try{await expect(record(first,id(3),reviewed)).rejects.toMatchObject({code:'P1002'});}finally{await first.query('ROLLBACK');}});
+ it('shows the installation lock waits for an already-inserted old transaction, which can still commit unbound',async()=>{
+  const w=(await first.query("SELECT public.historical_external_worker_review($1,'2024-12-01') v",[worker])).rows[0].v.worker;
+  await first.query("SELECT public.record_historical_external_worker_payroll($1,$2,'2024-12-01','2024-12-07',600,100,0,500,'Fifth ledger',$3,true)",[id(10),worker,w]);
+  const oldSource=(await first.query('SELECT public.historical_external_worker_lookup($1) v',[id(10)])).rows[0].v;
+  await first.query('BEGIN');await admin.query('BEGIN');let lock:Promise<unknown>|undefined;
+  try{
+   await first.query("SELECT public.record_historical_worker_attribution($1,$2,$3::jsonb,$4::jsonb,'Old caller',true)",[id(11),id(10),JSON.stringify(oldSource),JSON.stringify([{project_id:site,gross:'600.00'}])]);
+   let locked=false;lock=admin.query('LOCK TABLE public.historical_worker_attributions IN ACCESS EXCLUSIVE MODE').then(()=>{locked=true;});
+   await pause();expect(locked).toBe(false);await first.query('COMMIT');await lock;
+   expect((await admin.query('SELECT count(*)::int n FROM public.historical_worker_attributions WHERE request_id=$1',[id(11)])).rows[0].n).toBe(1);
+   expect((await admin.query('SELECT count(*)::int n FROM public.historical_attribution_case_bindings WHERE request_id=$1',[id(11)])).rows[0].n).toBe(0);
+  }finally{await first.query('ROLLBACK');if(lock)await lock;await admin.query('ROLLBACK');}
+ },15000);
  it('demonstrates that revoking execute does not cancel an old invocation already waiting inside the function',async()=>{
   // This is an intentional vulnerability demonstration, not a cutover. The
   // old call starts and passes execute permission before the ACL is revoked.
