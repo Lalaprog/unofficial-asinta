@@ -19,6 +19,7 @@ import { loadSMSTemplate } from '@/lib/sms/loadTemplate';
 import { formatDatePH, formatPeso } from '@/lib/email/format';
 import { ownedEquipmentPreviewEnabled } from '@/lib/tools/ownedEquipment';
 import { weeklyWorkerCutoverMode } from '@/lib/finance/featureAvailability';
+import { manilaDateISO } from '@/lib/dates/manila';
 
 const TOOL_CONDITION_LABELS: Record<ToolCondition, string> = {
   excellent: 'Excellent',
@@ -534,12 +535,17 @@ export default function FounderDashboard() {
 
   const [selectedProjectId, setSelectedProjectId] = useState<string | null>(null);
 
-  const now = new Date();
-  const asOfDate = [
-    now.getFullYear(),
-    String(now.getMonth() + 1).padStart(2, '0'),
-    String(now.getDate()).padStart(2, '0'),
-  ].join('-');
+  // Business dates are Philippine calendar dates, not the device's local date.
+  // Recheck periodically and when a sleeping tab regains focus.
+  const [asOfDate,setAsOfDate] = useState(() => manilaDateISO());
+  useEffect(() => {
+    const update = () => setAsOfDate(manilaDateISO());
+    update();
+    const timer=window.setInterval(update,60_000);
+    window.addEventListener('focus',update);
+    document.addEventListener('visibilitychange',update);
+    return () => {window.clearInterval(timer);window.removeEventListener('focus',update);document.removeEventListener('visibilitychange',update);};
+  }, []);
 
   const metrics = useMemo(
     () =>
@@ -728,7 +734,7 @@ export default function FounderDashboard() {
                 : 'Client balances, workforce payments, project costs, and site scope—all in one place.'}
             </p>
             <p className="mt-2 text-[11px] font-medium text-ink-muted">
-              Loaded view dated {formatDatePH(metrics.asOfDate)}. Reads are not a transaction and may be limited or become stale; verify records in their ledgers before acting.
+              Loaded view dated {formatDatePH(metrics.asOfDate)} (Philippine time). Reads are not a transaction and may be limited or become stale; verify records in their ledgers before acting.
             </p>
             <div className="mt-4 inline-flex w-full max-w-sm items-center gap-3 rounded-xl border border-[#e3dccd] bg-white/75 px-3 py-1 shadow-sm transition-colors focus-within:border-brand/50 focus-within:ring-2 focus-within:ring-brand/15 sm:w-auto lg:hidden">
               <label htmlFor="dashboard-project-scope" className="shrink-0 text-[10px] font-bold uppercase tracking-wider text-ink-muted">Project</label>

@@ -1,3 +1,4 @@
+import { manilaDateISO } from '@/lib/dates/manila';
 import type {
   Advance,
   AdvanceRequest,
@@ -205,7 +206,7 @@ export function resolvePayrollProjectIds(
  */
 export function calculateFinancialDashboardMetrics(
   inputs: FinancialDashboardInputs,
-  asOfDate = new Date().toISOString().slice(0, 10)
+  asOfDate = manilaDateISO()
 ): FinancialDashboardMetrics {
   const allEligibleInvoices = activeReceivableInvoices(inputs.invoices);
   const allOpenInvoices = allEligibleInvoices.filter(

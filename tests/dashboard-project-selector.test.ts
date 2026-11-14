@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 vi.mock('@/lib/sms/loadTemplate', () => ({ loadSMSTemplate: async () => 'Dear {{client_contact_name}}, invoice {{invoice_number}}.' }));
 import React from 'react';
-import { cleanup, fireEvent, render, screen, within } from '@testing-library/react';
+import { act, cleanup, fireEvent, render, screen, within } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { Project } from '@/types';
 
@@ -22,12 +22,22 @@ beforeEach(() => {
   };
   vi.stubGlobal('matchMedia', vi.fn().mockReturnValue({ matches: true, addEventListener: vi.fn(), removeEventListener: vi.fn() }));
 });
-afterEach(() => { cleanup(); vi.unstubAllGlobals(); vi.unstubAllEnvs(); });
+afterEach(() => { cleanup(); vi.useRealTimers(); vi.unstubAllGlobals(); vi.unstubAllEnvs(); });
 
 function scopeGroup() { return screen.getByRole('group', { name: 'Filter dashboard by project' }); }
 function balancesCard() { return screen.getByRole('heading', { name: 'Client balances due' }).closest('.group') as HTMLElement; }
 
 describe('dashboard project scope selector', () => {
+  it('uses Philippine dates and updates the dashboard after midnight and a resumed tab', () => {
+    vi.useFakeTimers();vi.setSystemTime(new Date('2026-10-15T15:59:30Z'));
+    render(React.createElement(FounderDashboard));
+    expect(screen.getByText(/Loaded view dated October 15, 2026 \(Philippine time\)/)).toBeTruthy();
+    act(()=>{vi.advanceTimersByTime(60_000)});
+    expect(screen.getByText(/Loaded view dated October 16, 2026 \(Philippine time\)/)).toBeTruthy();
+    vi.setSystemTime(new Date('2026-10-17T16:01:00Z'));
+    act(()=>{window.dispatchEvent(new Event('focus'))});
+    expect(screen.getByText(/Loaded view dated October 18, 2026 \(Philippine time\)/)).toBeTruthy();
+  });
   it('withholds legacy tool/depot totals when split equipment preview is enabled', () => {
     vi.stubEnv('NEXT_PUBLIC_OWNED_EQUIPMENT_PREVIEW','true');
     mocks.store.tools=[{id:'t',name:'Drill',quantity:5,condition:'damaged',project_id:null}];
