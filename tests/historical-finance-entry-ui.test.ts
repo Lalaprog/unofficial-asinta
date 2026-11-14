@@ -51,4 +51,15 @@ describe('experimental historical assertion entry',()=>{
  it('validates saved scope and snapshot amounts without float rounding',()=>{
   expect(snapshotMatchesVoucher(parseHistoricalSnapshot(snap),voucher)).toBe(true);expect(()=>parseHistoricalSnapshot({...snap,gross_pay:'NaN'})).toThrow();expect(()=>parseHistoricalSnapshot({...snap,extra:1})).toThrow();expect(()=>parseHistoricalAttempt({kind:'date',request:id(6),snapshot:{...snap,worker_id:id(99)},date:'2024-10-26',note:'x',project:null},voucher)).toThrow();
  });
+ it('refuses missing retry evidence and does not clear changed evidence while stopping',async()=>{
+  mock.rpc.mockRejectedValue(Error('lost'));render(React.createElement(HistoricalFinanceEntry,props));dateForm();fireEvent.click(screen.getByRole('checkbox'));fireEvent.click(screen.getByRole('button',{name:'Save historical assertion'}));await screen.findByText(/Outcome not verified/);
+  const key=JSON.stringify(['historical-evidence-v1',props.userId,voucher.id]),saved=sessionStorage.getItem(key)!;sessionStorage.removeItem(key);fireEvent.click(screen.getByRole('button',{name:'Retry exact evidence request'}));await screen.findByText(/no request was sent this time/);expect(mock.rpc).toHaveBeenCalledTimes(1);expect(sessionStorage.getItem(key)).toBeNull();
+  cleanup();sessionStorage.setItem(key,saved);render(React.createElement(HistoricalFinanceEntry,props));fireEvent.click(screen.getByRole('button',{name:'Review stopping evidence retry'}));sessionStorage.setItem(key,'changed');fireEvent.click(screen.getByRole('button',{name:'I investigated; stop evidence retry'}));expect(screen.getByText(/Nothing was cleared/)).toBeTruthy();expect(sessionStorage.getItem(key)).toBe('changed');
+ });
+ it('keeps an exact request if a successful response arrives after a voucher change',async()=>{
+  const waiting=deferred();mock.rpc.mockReturnValue(waiting.promise);const view=render(React.createElement(HistoricalFinanceEntry,props));dateForm();fireEvent.click(screen.getByRole('checkbox'));fireEvent.click(screen.getByRole('button',{name:'Save historical assertion'}));
+  const key=JSON.stringify(['historical-evidence-v1',props.userId,voucher.id]);expect(sessionStorage.getItem(key)).toBeTruthy();view.rerender(React.createElement(HistoricalFinanceEntry,{...props,voucher:{...voucher,id:id(20)}}));
+  await act(async()=>waiting.resolve({data:{request_id:id(6),payroll_id:voucher.id,replayed:false,payment_date:'2024-10-26'},error:null}));expect(sessionStorage.getItem(key)).toBeTruthy();expect(props.onRecorded).not.toHaveBeenCalled();
+ });
+
 });

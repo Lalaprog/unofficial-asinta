@@ -42,13 +42,13 @@ export function WeeklyWorkerActions({row,start,end,userId,projects,previewDate}:
   try{const value=await read(id);if(mounted.current&&activeKey.current===viewKey)setDetails(value);}catch(e){if(mounted.current&&activeKey.current===viewKey)fail(e);}
   finally{busy.current=false;if(mounted.current&&activeKey.current===viewKey)setSaving(false);}
  }
- async function sendRefresh(attempt:WeeklyRefreshAttempt){
+ async function sendRefresh(attempt:WeeklyRefreshAttempt,retry=false){
   if(busy.current||retryError||!retryReady||pendingReturn)return;
   if(getManilaClock().dateIso!==previewDate){fail(new Error('Philippine date changed'));return;}
   busy.current=true;setSaving(true);setMessage('');let stored=false;
   try{
    const saved=sessionStorage.getItem(storageKey);
-   if(saved&&JSON.stringify(parseWeeklyRefreshAttempt(JSON.parse(saved)))!==JSON.stringify(attempt))throw new Error('A different retry is pending');
+   if((retry&&!saved)||(saved&&JSON.stringify(parseWeeklyRefreshAttempt(JSON.parse(saved)))!==JSON.stringify(attempt)))throw new Error('Retry record is missing or differs');
    if(!saved){sessionStorage.setItem(storageKey,JSON.stringify(attempt));}
    const preserved=sessionStorage.getItem(storageKey);if(JSON.stringify(parseWeeklyRefreshAttempt(JSON.parse(preserved||'null')))!==JSON.stringify(attempt))throw new Error('Could not preserve the exact retry');
    if(observedRetry.current)observedRetry.current.refresh=preserved;
@@ -75,13 +75,13 @@ export function WeeklyWorkerActions({row,start,end,userId,projects,previewDate}:
   }catch(e){if(mounted.current&&activeKey.current===viewKey){setDetails(null);setConfirm(null);if(!stored)setRetryError(true);setMessage(stored?'Refresh outcome not confirmed. Retry the exact request or investigate before stopping; it may still be processing.':`Retry storage could not be verified: ${e instanceof Error?e.message:'Unknown error'}. No new request was intentionally sent; investigate before proceeding.`);}}
   finally{busy.current=false;if(mounted.current&&activeKey.current===viewKey)setSaving(false);}
  }
- async function sendReturn(attempt:WeeklyReturnAttempt){
+ async function sendReturn(attempt:WeeklyReturnAttempt,retry=false){
   if(!returnEnabled||busy.current||retryError||!retryReady||pending)return;
   if(getManilaClock().dateIso!==previewDate){fail(new Error('Philippine date changed'));return;}
   busy.current=true;setSaving(true);setMessage('');let stored=false;
   try{
    const saved=sessionStorage.getItem(returnStorageKey);
-   if(saved&&JSON.stringify(parseWeeklyReturnAttempt(JSON.parse(saved)))!==JSON.stringify(attempt))throw new Error('A different return retry is pending');
+   if((retry&&!saved)||(saved&&JSON.stringify(parseWeeklyReturnAttempt(JSON.parse(saved)))!==JSON.stringify(attempt)))throw new Error('Return retry record is missing or differs');
    if(!saved)sessionStorage.setItem(returnStorageKey,JSON.stringify(attempt));
    const preserved=sessionStorage.getItem(returnStorageKey);if(JSON.stringify(parseWeeklyReturnAttempt(JSON.parse(preserved||'null')))!==JSON.stringify(attempt))throw new Error('Could not preserve the exact retry');
    if(observedRetry.current)observedRetry.current.returned=preserved;
@@ -152,7 +152,7 @@ export function WeeklyWorkerActions({row,start,end,userId,projects,previewDate}:
  return <div className="mt-3 space-y-2 border-t border-surface-border pt-2">
   <p className="font-semibold text-navy">Experimental weekly voucher</p>
   {refreshEnabled&&!retryReady&&<p>Checking saved retry record…</p>}
-  {refreshEnabled&&(pending||pendingReturn||retryError)&&<div className="space-y-2 rounded-lg bg-status-warning-bg p-3"><p>A refresh or return may have been sent. This tab’s retry record is not shared with other tabs and can be lost if browser storage is cleared. A missing response does not mean failure.</p>{pending&&<><p className="break-all">Voucher {pending.payroll} · request {pending.request} · reviewed revision {pending.revision}</p><Button type="button" size="sm" variant="secondary" disabled={saving||!!pendingReturn} onClick={()=>void sendRefresh(pending)}>Retry exact refresh</Button></>}{pendingReturn&&<><p className="break-all">Return voucher {pendingReturn.payroll} · request {pendingReturn.request} · reviewed revision {pendingReturn.revision}</p><p className="break-words">Reason: {pendingReturn.reason}</p><Button type="button" size="sm" variant="secondary" disabled={saving||!!pending} onClick={()=>void sendReturn(pendingReturn)}>Retry exact return</Button></>}<Button type="button" size="sm" variant="ghost" disabled={saving} onClick={()=>setStopRetry(v=>!v)}>Review stopping retry</Button>{stopRetry&&<div><p>Stopping does not cancel or undo an in-flight request. Independently investigate the voucher and original request before proceeding.</p><Button type="button" size="sm" variant="danger" disabled={saving} onClick={stopPending}>I investigated; stop retrying</Button></div>}</div>}
+  {refreshEnabled&&(pending||pendingReturn||retryError)&&<div className="space-y-2 rounded-lg bg-status-warning-bg p-3"><p>A refresh or return may have been sent. This tab’s retry record is not shared with other tabs and can be lost if browser storage is cleared. A missing response does not mean failure.</p>{pending&&<><p className="break-all">Voucher {pending.payroll} · request {pending.request} · reviewed revision {pending.revision}</p><Button type="button" size="sm" variant="secondary" disabled={saving||!!pendingReturn} onClick={()=>void sendRefresh(pending,true)}>Retry exact refresh</Button></>}{pendingReturn&&<><p className="break-all">Return voucher {pendingReturn.payroll} · request {pendingReturn.request} · reviewed revision {pendingReturn.revision}</p><p className="break-words">Reason: {pendingReturn.reason}</p><Button type="button" size="sm" variant="secondary" disabled={saving||!!pending} onClick={()=>void sendReturn(pendingReturn,true)}>Retry exact return</Button></>}<Button type="button" size="sm" variant="ghost" disabled={saving} onClick={()=>setStopRetry(v=>!v)}>Review stopping retry</Button>{stopRetry&&<div><p>Stopping does not cancel or undo an in-flight request. Independently investigate the voucher and original request before proceeding.</p><Button type="button" size="sm" variant="danger" disabled={saving} onClick={stopPending}>I investigated; stop retrying</Button></div>}</div>}
   {!details&&retryReady&&!retryError&&!pending&&!pendingReturn&&(existing?<Button type="button" size="sm" variant="secondary" disabled={locked||saving} onClick={()=>load(existing.id)} isLoading={saving}>Load voucher details</Button>:<Button type="button" size="sm" variant="secondary" disabled={locked||saving} onClick={()=>setConfirm('generate')}>Review new draft</Button>)}
   {message&&<p role="status" className={locked?'text-status-danger':''}>{message}</p>}
   {details&&!pending&&!pendingReturn&&!retryError&&<div className="space-y-2">

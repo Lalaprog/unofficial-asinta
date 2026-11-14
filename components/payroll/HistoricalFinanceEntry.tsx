@@ -11,33 +11,39 @@ import type {HistoricalEvidence} from '@/lib/payroll/historicalEvidence';
 import {historicalArguments,isSundayWeek,parseHistoricalAttempt,parseHistoricalSnapshot,snapshotMatchesVoucher,verifyHistoricalResult,type HistoricalAttempt,type HistoricalSnapshot} from '@/lib/payroll/historicalEntry';
 
 /** Uninstalled experimental evidence writers; never transfer or change balances. */
-export function HistoricalFinanceEntry({userId,voucher,evidence,onRecorded}:{userId:string;voucher:PaidReviewVoucher;evidence:HistoricalEvidence|null;onRecorded:()=>void}){
+type EntryProps={userId:string;voucher:PaidReviewVoucher;evidence:HistoricalEvidence|null;onRecorded:()=>void};
+export function HistoricalFinanceEntry(props:EntryProps){return <HistoricalFinanceEntryContents key={JSON.stringify([props.userId,props.voucher])} {...props}/>;}
+function HistoricalFinanceEntryContents({userId,voucher,evidence,onRecorded}:EntryProps){
  const {projects,isLoaded,loadError}=useDataStore();
  const storageKey=JSON.stringify(['historical-evidence-v1',userId,voucher.id]);
  const [ready,setReady]=useState(false),[storageError,setStorageError]=useState(false),[pending,setPending]=useState<HistoricalAttempt|null>(null);
  const [kind,setKind]=useState<'date'|'bale'|null>(null),[day,setDay]=useState(''),[note,setNote]=useState(''),[project,setProject]=useState(''),[ack,setAck]=useState(false),[stop,setStop]=useState(false);
  const [busy,setBusy]=useState(false),[error,setError]=useState(''),[message,setMessage]=useState('');
- const lock=useRef(false),alive=useRef(false);
- useEffect(()=>{alive.current=true;setReady(false);setPending(null);setStorageError(false);try{const saved=sessionStorage.getItem(storageKey);if(saved)setPending(parseHistoricalAttempt(JSON.parse(saved),voucher));}catch{setStorageError(true);}setReady(true);return()=>{alive.current=false;};},[storageKey,voucher]);
+ const scope=JSON.stringify([userId,voucher]),lock=useRef(false),alive=useRef(false),sequence=useRef(0),current=useRef(scope),observed=useRef<{raw:string|null}|null>(null),stopSnapshot=useRef<{raw:string|null}|null>(null);current.current=scope;
+ useEffect(()=>{const seq=sequence;alive.current=true;seq.current++;observed.current=null;stopSnapshot.current=null;setReady(false);setPending(null);setStorageError(false);setStop(false);try{const saved=sessionStorage.getItem(storageKey);observed.current={raw:saved};if(saved)setPending(parseHistoricalAttempt(JSON.parse(saved),voucher));}catch{setStorageError(true);}setReady(true);return()=>{alive.current=false;seq.current++;};
+ // The serialized snapshot tracks content rather than equal object instances.
+ // eslint-disable-next-line react-hooks/exhaustive-deps
+ },[storageKey,scope]);
+ const live=(token:number)=>alive.current&&sequence.current===token&&current.current===scope;
  useEffect(()=>{setKind(null);setAck(false);setDay('');setNote('');setProject('');},[evidence]);
  let snapshot:HistoricalSnapshot|null=null;
  try{if(evidence){const s=parseHistoricalSnapshot(evidence.voucher_snapshot);if(snapshotMatchesVoucher(s,voucher))snapshot=s;}}catch{/* Withhold writers if the snapshot is missing or malformed. */}
  const dateAvailable=!!snapshot&&!!evidence&&!evidence.date_evidence&&!evidence.recorded_payment_date&&!evidence.payment_conflict;
  const baleAvailable=!!snapshot&&!!evidence&&!evidence.bale_evidence&&!evidence.payment_conflict&&!!(evidence.date_evidence||evidence.recorded_payment_date)&&(!evidence.date_evidence||evidence.date_evidence.matches_voucher)&&isSundayWeek(snapshot.period_start,snapshot.period_end)&&Number(snapshot.bale_deduction)>0;
  function open(next:'date'|'bale'){setKind(next);setDay('');setNote('');setProject('');setAck(false);setError('');setMessage('');}
- async function send(a:HistoricalAttempt){
-  if(lock.current||storageError)return;lock.current=true;setBusy(true);setError('');setMessage('');let stored=false;
+ async function send(a:HistoricalAttempt,retry=false){
+  if(lock.current||storageError)return;lock.current=true;setBusy(true);setError('');setMessage('');let stored=false;const token=++sequence.current;
   try{
    const existing=sessionStorage.getItem(storageKey);
-   if(existing&&JSON.stringify(parseHistoricalAttempt(JSON.parse(existing),voucher))!==JSON.stringify(a))throw Error('Retry record changed');
+   if((retry&&!existing)||(existing&&JSON.stringify(parseHistoricalAttempt(JSON.parse(existing),voucher))!==JSON.stringify(a)))throw Error('Retry record missing or changed');
    if(!existing)sessionStorage.setItem(storageKey,JSON.stringify(a));
-   if(JSON.stringify(parseHistoricalAttempt(JSON.parse(sessionStorage.getItem(storageKey)||'null'),voucher))!==JSON.stringify(a))throw Error('Retry record unavailable');
-   stored=true;if(alive.current){setPending(a);setKind(null);}
+   const storedValue=sessionStorage.getItem(storageKey);if(JSON.stringify(parseHistoricalAttempt(JSON.parse(storedValue||'null'),voucher))!==JSON.stringify(a))throw Error('Retry record unavailable');
+   stored=true;observed.current={raw:storedValue};if(live(token)){setPending(a);setKind(null);}
    const {data,error:rpcError}=await createClient().rpc(a.kind==='date'?'annotate_historical_paid_date':'record_historical_settled_bale',historicalArguments(a));if(rpcError)throw rpcError;verifyHistoricalResult(data,a);
-   const saved=sessionStorage.getItem(storageKey);if(!saved||JSON.stringify(parseHistoricalAttempt(JSON.parse(saved),voucher))!==JSON.stringify(a))throw Error('Retry record changed');
-   sessionStorage.removeItem(storageKey);
-   if(alive.current){setPending(null);setMessage('Evidence assertion saved. No payment, Bale deduction or transfer was made. Reload evidence and independently check original records.');onRecorded();}
-  }catch{if(alive.current){setError(stored?'Outcome not verified. It may already be saved; investigate or retry exactly the same request.':'Retry storage could not be verified; no request was sent. Investigate saved data before proceeding.');if(!stored)setStorageError(true);}}
+   if(!live(token))return;const saved=sessionStorage.getItem(storageKey);if(!saved||JSON.stringify(parseHistoricalAttempt(JSON.parse(saved),voucher))!==JSON.stringify(a))throw Error('Retry record changed');
+   sessionStorage.removeItem(storageKey);observed.current={raw:null};
+   if(live(token)){setPending(null);setMessage('Evidence assertion saved. No payment, Bale deduction or transfer was made. Reload evidence and independently check original records.');onRecorded();}
+  }catch{if(live(token)){setError(stored?'Outcome not verified. It may already be saved; investigate or retry exactly the same request.':'Retry storage could not be verified; no request was sent this time. An earlier request may still complete.');if(!stored)setStorageError(true);}}
   finally{lock.current=false;if(alive.current)setBusy(false);}
  }
  function prepare(){
@@ -49,13 +55,14 @@ export function HistoricalFinanceEntry({userId,voucher,evidence,onRecorded}:{use
    const a=parseHistoricalAttempt({kind,request:crypto.randomUUID(),snapshot,date:day,note:note.trim(),project:kind==='bale'?project:null},voucher);void send(a);
   }catch{setError('Check the date, project, note and reviewed voucher before saving.');}
  }
- function stopRetry(){try{sessionStorage.removeItem(storageKey);setPending(null);setStorageError(false);setStop(false);setKind(null);setMessage('Retry stopped. This does not cancel or undo a request. Investigate before any new entry.');onRecorded();}catch{setError('Could not clear retry data; no new request is available.');}}
+ function reviewStop(){try{const raw=sessionStorage.getItem(storageKey);if(!observed.current||raw!==observed.current.raw)throw Error('Retry changed');if(pending&&(!raw||JSON.stringify(parseHistoricalAttempt(JSON.parse(raw),voucher))!==JSON.stringify(pending)))throw Error('Retry changed');stopSnapshot.current={raw};setStop(true);setError('');}catch{setStop(false);setError('Retry data changed or could not be read. Nothing was cleared; investigate before continuing.');}}
+ function stopRetry(){try{if(!stopSnapshot.current||!observed.current||sessionStorage.getItem(storageKey)!==stopSnapshot.current.raw||observed.current.raw!==stopSnapshot.current.raw)throw Error('Retry changed');if(pending&&(!stopSnapshot.current.raw||JSON.stringify(parseHistoricalAttempt(JSON.parse(stopSnapshot.current.raw),voucher))!==JSON.stringify(pending)))throw Error('Retry changed');sessionStorage.removeItem(storageKey);observed.current={raw:null};stopSnapshot.current=null;setPending(null);setStorageError(false);setStop(false);setKind(null);setMessage('Retry stopped. This does not cancel or undo a request. Investigate before any new entry.');onRecorded();}catch{stopSnapshot.current=null;setStop(false);setError('Retry data changed or could not be read. Nothing was cleared; investigate before continuing.');}}
  return <section className="space-y-2 rounded-lg border border-status-warning/25 bg-status-warning-bg p-3">
   <p className="font-semibold">Experimental historical evidence entry</p><p>Only for an already paid voucher and an external payment or Bale release that actually happened. This saves an immutable human assertion, not a payment, Bale transaction, balance change or proof. Verify original records and duplicates first; corrections are not yet supported. Retry details are stored in this browser tab and can be lost if storage is cleared.</p>
   {error&&<p role="alert">{error}</p>}{message&&<p role="status">{message}</p>}
   {(pending||storageError)&&<div className="space-y-2"><p>A previous request may have been sent. Closing this tab or clearing browser storage can lose the retry record; absence is not proof of failure.</p>
-   {pending&&<><p className="break-all">{pending.kind==='date'?'Payment-date':'Settled Bale'} request {pending.request} · voucher {pending.snapshot.id} · date {pending.date}{pending.project&&` · project ${pending.project}`}.</p><p className="break-words">Evidence note: {pending.note}</p><Button type="button" size="sm" variant="secondary" disabled={busy} onClick={()=>void send(pending)}>Retry exact evidence request</Button></>}
-   <Button type="button" size="sm" variant="ghost" disabled={busy} onClick={()=>setStop(v=>!v)}>Review stopping evidence retry</Button>{stop&&<div><p>Stopping does not cancel or undo an in-flight request. Independently investigate before proceeding.</p><Button type="button" size="sm" variant="danger" disabled={busy} onClick={stopRetry}>I investigated; stop evidence retry</Button></div>}
+   {pending&&<><p className="break-all">{pending.kind==='date'?'Payment-date':'Settled Bale'} request {pending.request} · voucher {pending.snapshot.id} · date {pending.date}{pending.project&&` · project ${pending.project}`}.</p><p className="break-words">Evidence note: {pending.note}</p><Button type="button" size="sm" variant="secondary" disabled={busy} onClick={()=>void send(pending,true)}>Retry exact evidence request</Button></>}
+   <Button type="button" size="sm" variant="ghost" disabled={busy} onClick={reviewStop}>Review stopping evidence retry</Button>{stop&&<div><p>Stopping does not cancel or undo an in-flight request. Independently investigate before proceeding.</p><Button type="button" size="sm" variant="danger" disabled={busy} onClick={stopRetry}>I investigated; stop evidence retry</Button></div>}
   </div>}
   {ready&&!pending&&!storageError&&<>{!snapshot&&<p>Load historical evidence and refresh the voucher summary before entry. Entry is withheld if their snapshots differ or are invalid.</p>}
    {snapshot&&<div className="flex flex-wrap gap-2">{dateAvailable&&<Button type="button" size="sm" variant="secondary" disabled={busy} onClick={()=>open('date')}>Review historical payment-date assertion</Button>}{baleAvailable&&<Button type="button" size="sm" variant="secondary" disabled={busy} onClick={()=>open('bale')}>Review settled Bale assertion</Button>}</div>}

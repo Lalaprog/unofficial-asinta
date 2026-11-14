@@ -206,3 +206,15 @@ describe('approved voucher return and revision-bound payment UI',()=>{
   sessionStorage.clear();sessionStorage.setItem(JSON.stringify(['weekly-worker-return-v1','founder',worker,start]),'{bad');render(React.createElement(WeeklyWorkerActions,{...props,row:existing}));expect(await screen.findByText(/refresh or return may have been sent/)).toBeTruthy();expect(screen.queryByRole('button',{name:'Load voucher details'})).toBeNull();
  });
 });
+
+describe('weekly retry evidence must remain present',()=>{
+ it.each(['refresh','return'] as const)('does not recreate a missing %s retry or send it',async(kind)=>{
+  for(const key of ['NEXT_PUBLIC_FINANCE_FOUNDATION_PREVIEW','NEXT_PUBLIC_WEEKLY_WORKER_ACTIONS_PREVIEW','NEXT_PUBLIC_WEEKLY_BALE_RELEASE_PREVIEW','NEXT_PUBLIC_WEEKLY_WORKER_CUTOVER_PREVIEW','NEXT_PUBLIC_WEEKLY_WORKER_REFRESH_PREVIEW','NEXT_PUBLIC_WEEKLY_WORKER_RETURN_PREVIEW'])vi.stubEnv(key,'true');
+  const key=JSON.stringify([`weekly-worker-${kind}-v1`,'founder',worker,start]),request='20000000-0000-4000-8000-000000000008';
+  sessionStorage.setItem(key,JSON.stringify(kind==='refresh'?{request,payroll:id,revision:0}:{request,payroll:id,revision:0,reason:'Attendance'}));
+  const existing={...row,vouchers:[{id,worker_id:worker,status:(kind==='refresh'?'draft':'approved') as 'draft'|'approved',period_start:start,period_end:end}]};
+  render(React.createElement(WeeklyWorkerActions,{...props,row:existing}));sessionStorage.removeItem(key);
+  fireEvent.click(screen.getByRole('button',{name:kind==='refresh'?'Retry exact refresh':'Retry exact return'}));
+  expect(await screen.findByText(/Retry storage could not be verified/)).toBeTruthy();expect(sessionStorage.getItem(key)).toBeNull();expect(mock.rpc).not.toHaveBeenCalled();
+ });
+});
