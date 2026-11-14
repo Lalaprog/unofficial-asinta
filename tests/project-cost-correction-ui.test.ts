@@ -31,6 +31,16 @@ describe('correction evidence candidate UI',()=>{
   let resolve!:(value:unknown)=>void;loadMocks();mocks.rpc.mockImplementation((name:string)=>name==='historical_worker_attribution_projects'?Promise.resolve({data:{projects:[]},error:null}):new Promise(r=>{resolve=r;}));
   const view=renderPanel();fireEvent.click(screen.getByRole('button',{name:'Project-cost correction evidence'}));fireEvent.click(screen.getByRole('button',{name:'Load correction evidence'}));mocks.assurance='required';view.rerender(React.createElement(ProjectCostCorrectionPanel,{actor,kind:'voucher',item}));expect(screen.queryByText(/gross cost effect/)).toBeNull();await act(async()=>resolve({data:payload,error:null}));expect(screen.queryByText(/No correction site evidence/)).toBeNull();
  });
+ it('shows changed earlier evidence but allows a newly reviewed replacement once cases are resolved',async()=>{
+  const stale={...payload.case,related_cases:[{...payload.case.related_cases[0],reason:'Earlier reason'}]};
+  mocks.rpc.mockImplementation(async(name:string)=>name==='historical_worker_attribution_projects'?{data:{projects:[{id:site,name:'Site one'}]},error:null}:{data:{...payload,latest_revision:1,attribution:{request_id:req,revision:1,case_snapshot:stale,case_changed:true,gross_change:'0.00',split:[],note:'Earlier review',recorded_by:actor,recorded_at:'2024-12-11T00:00:00Z'}},error:null});
+  renderPanel();fireEvent.click(screen.getByRole('button',{name:'Project-cost correction evidence'}));fireEvent.click(screen.getByRole('button',{name:'Load correction evidence'}));await screen.findByText(/case history changed since the last revision/);expect(screen.getByLabelText('Total signed gross change (₱)')).toBeTruthy();
+ });
+ it('blocks attribution while another original-period case is pending',async()=>{
+  const related={...payload.case.related_cases[0],id:'77777777-7777-4777-8777-777777777777',status:'pending',resolution_note:null};
+  mocks.rpc.mockImplementation(async(name:string)=>name==='historical_worker_attribution_projects'?{data:{projects:[]},error:null}:{data:{...payload,case:{...payload.case,related_cases:[...payload.case.related_cases,related]}},error:null});
+  renderPanel();fireEvent.click(screen.getByRole('button',{name:'Project-cost correction evidence'}));fireEvent.click(screen.getByRole('button',{name:'Load correction evidence'}));await screen.findByText(/Resolve all pending cases/);expect(screen.queryByLabelText('Total signed gross change (₱)')).toBeNull();
+ });
  it('refuses to show a correction for a changed case',async()=>{
   loadMocks();mocks.rpc.mockImplementation(async(name:string)=>name==='historical_worker_attribution_projects'?{data:{projects:[]},error:null}:{data:{...payload,case:{...payload.case,difference:'-31.00'}},error:null});renderPanel();fireEvent.click(screen.getByRole('button',{name:'Project-cost correction evidence'}));fireEvent.click(screen.getByRole('button',{name:'Load correction evidence'}));await screen.findByText(/could not be verified/);expect(screen.queryByLabelText('Total signed gross change (₱)')).toBeNull();
  });

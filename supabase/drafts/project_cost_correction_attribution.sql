@@ -45,7 +45,7 @@ CREATE TRIGGER guard_project_cost_correction_sites_immutable BEFORE UPDATE OR DE
 -- binding an attribution to a different voucher or assertion.
 CREATE FUNCTION app_private.project_cost_correction_case(p_kind text,p_case uuid) RETURNS jsonb
 LANGUAGE plpgsql STABLE SECURITY DEFINER SET search_path='' AS $$
-DECLARE v jsonb;v_original jsonb;v_current jsonb;v_source uuid;v_related jsonb;v_count bigint;
+DECLARE v jsonb;v_original jsonb;v_current jsonb;v_source uuid;v_related jsonb;v_count bigint;v_mismatch boolean;
 BEGIN
  IF p_kind='voucher' THEN
   SELECT to_jsonb(c)||jsonb_build_object('difference',c.difference::text),c.original_voucher,app_private.paid_adjustment_voucher_snapshot(p),c.payroll_id INTO v,v_original,v_current,v_source
@@ -59,11 +59,17 @@ BEGIN
  -- this case. An added or resolved case invalidates an earlier review. A hash
  -- binds each sibling's original source without repeating large snapshots.
  IF p_kind='voucher' THEN
-  SELECT count(*),coalesce(jsonb_agg((to_jsonb(c)-'original_voucher')||jsonb_build_object('difference',c.difference::text,'original_fingerprint',encode(sha256(convert_to(c.original_voucher::text,'UTF8')),'hex')) ORDER BY c.id),'[]'::jsonb) INTO v_count,v_related FROM public.paid_payroll_adjustment_cases c WHERE c.payroll_id=v_source;
+  SELECT count(*),coalesce(bool_or(c.original_voucher IS DISTINCT FROM v_current OR c.worker_id IS DISTINCT FROM (v->>'worker_id')::uuid),false) INTO v_count,v_mismatch FROM public.paid_payroll_adjustment_cases c WHERE c.payroll_id=v_source;
  ELSE
-  SELECT count(*),coalesce(jsonb_agg((to_jsonb(c)-'original_snapshot')||jsonb_build_object('difference',c.difference::text,'original_fingerprint',encode(sha256(convert_to(c.original_snapshot::text,'UTF8')),'hex')) ORDER BY c.id),'[]'::jsonb) INTO v_count,v_related FROM public.paid_period_assertion_cases c WHERE c.source_kind='external_worker' AND c.external_worker_id=v_source;
+  SELECT count(*),coalesce(bool_or(c.original_snapshot IS DISTINCT FROM v_current),false) INTO v_count,v_mismatch FROM public.paid_period_assertion_cases c WHERE c.source_kind='external_worker' AND c.external_worker_id=v_source;
  END IF;
  IF v_count>100 THEN RAISE EXCEPTION 'More than 100 related cases; separate reconciliation required' USING ERRCODE='54000'; END IF;
+ IF v_mismatch THEN RAISE EXCEPTION 'Related case original paid-period evidence differs; investigate' USING ERRCODE='40001'; END IF;
+ IF p_kind='voucher' THEN
+  SELECT coalesce(jsonb_agg((to_jsonb(c)-'original_voucher')||jsonb_build_object('difference',c.difference::text,'original_fingerprint',encode(sha256(convert_to(c.original_voucher::text,'UTF8')),'hex')) ORDER BY c.id),'[]'::jsonb) INTO v_related FROM public.paid_payroll_adjustment_cases c WHERE c.payroll_id=v_source;
+ ELSE
+  SELECT coalesce(jsonb_agg((to_jsonb(c)-'original_snapshot')||jsonb_build_object('difference',c.difference::text,'original_fingerprint',encode(sha256(convert_to(c.original_snapshot::text,'UTF8')),'hex')) ORDER BY c.id),'[]'::jsonb) INTO v_related FROM public.paid_period_assertion_cases c WHERE c.source_kind='external_worker' AND c.external_worker_id=v_source;
+ END IF;
  v:=v||jsonb_build_object('related_cases',v_related);
  IF octet_length(v::text)>65536 THEN RAISE EXCEPTION 'Correction case evidence too large' USING ERRCODE='54000'; END IF;
  RETURN v;

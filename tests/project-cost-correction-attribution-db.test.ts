@@ -107,6 +107,9 @@ describe('project cost correction attribution (synthetic candidate only)',()=>{
    await db.query("SELECT public.resolve_paid_period_assertion_case($1,'no_transfer',NULL,'Reviewed second case',true)",[id(33)]);
    await expect(save(db,id(34),'external_worker',id(31),1,pending.case,'-12.50',attempt.split,attempt.note)).rejects.toThrow(/case changed/);
    const refreshed=(await read(db,'external_worker',id(31))).rows[0].v.case;expect((await save(db,id(34),'external_worker',id(31),1,refreshed,'-12.50',attempt.split,attempt.note)).rows[0].v.revision).toBe(2);
+   await db.exec('RESET ROLE; ALTER TABLE public.paid_period_assertion_cases DISABLE TRIGGER paid_period_case_immutable');
+   await db.query("UPDATE public.paid_period_assertion_cases SET original_snapshot=original_snapshot||'{\"changed\":true}'::jsonb WHERE id=$1",[id(33)]);await db.exec('SET ROLE authenticated');
+   await expect(read(db,'external_worker',id(31))).rejects.toThrow(/Related case original paid-period evidence differs/);
    await db.exec('RESET ROLE');
    expect((await db.query<{gross:string;net:string}>('SELECT gross::text,net::text FROM public.historical_external_worker_payroll WHERE request_id=$1',[id(30)])).rows[0]).toEqual({gross:'600.00',net:'500.00'});
   }finally{await db.close();}
