@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import React from 'react';
-import {cleanup,fireEvent,render,screen,within} from '@testing-library/react';
+import {cleanup,fireEvent,render,screen,within,waitFor} from '@testing-library/react';
 import {afterEach,beforeEach,describe,expect,it,vi} from 'vitest';
 const m=vi.hoisted(()=>({rpc:vi.fn(),auth:{user:{id:'10000000-0000-4000-8000-000000000001'},isFounder:true,assurance:'ready'}}));
 vi.mock('@/lib/supabase/client',()=>({createClient:()=>({rpc:m.rpc})}));
@@ -37,4 +37,13 @@ describe('external worker payroll evidence preview',()=>{
   m.auth.assurance='checking';cleanup();render(React.createElement(HistoricalExternalWorker));expect(screen.queryByRole('button')).toBeNull();
  });
  it('keeps retry on a mismatching lookup and sends nothing without retry storage',async()=>{m.rpc.mockImplementation(async(name:string)=>name==='record_historical_external_worker_payroll'?Promise.reject(Error('lost')):name==='historical_external_worker_lookup'?{data:{...row,net:'851.00'},error:null}:reply(name));await form();fill();confirm();await screen.findByText(/Outcome not verified/);fireEvent.click(screen.getByRole('button',{name:'Check exact request'}));await screen.findByText(/Could not verify the exact request/);expect(sessionStorage.getItem(key)).toBeTruthy();cleanup();sessionStorage.clear();m.rpc.mockClear();await form();fill();vi.spyOn(Storage.prototype,'setItem').mockImplementation(()=>{throw Error('unavailable');});confirm();await screen.findByText(/no request was sent/);expect(m.rpc.mock.calls.some(([name])=>name==='record_historical_external_worker_payroll')).toBe(false);});
+ it('does not recreate missing retry evidence or clear a changed retry',async()=>{
+  m.rpc.mockImplementation(async(name:string)=>name==='record_historical_external_worker_payroll'?Promise.reject(Error('lost')):reply(name));await form();fill();confirm();await screen.findByText(/Outcome not verified/);
+  const original=sessionStorage.getItem(key)!;sessionStorage.removeItem(key);fireEvent.click(screen.getByRole('button',{name:'Retry exact request'}));await screen.findByText(/no request was sent this time/);expect(sessionStorage.getItem(key)).toBeNull();expect(m.rpc.mock.calls.filter(([name])=>name==='record_historical_external_worker_payroll')).toHaveLength(1);
+  cleanup();sessionStorage.setItem(key,original);render(React.createElement(HistoricalExternalWorker));fireEvent.click(screen.getByRole('button',{name:'Experimental historical worker payroll evidence'}));fireEvent.click(screen.getByRole('button',{name:'Review stopping retry'}));sessionStorage.setItem(key,'changed');fireEvent.click(screen.getByRole('button',{name:'I investigated; stop retry'}));expect(screen.getByText(/Nothing was cleared/)).toBeTruthy();expect(sessionStorage.getItem(key)).toBe('changed');
+ });
+ it('keeps retry evidence when a response arrives after leaving the panel',async()=>{
+  let resolve!:(v:unknown)=>void;m.rpc.mockImplementation((name:string)=>name==='record_historical_external_worker_payroll'?new Promise(r=>{resolve=r;}):Promise.resolve(reply(name)));await form();fill();confirm();await waitFor(()=>expect(sessionStorage.getItem(key)).toBeTruthy());cleanup();resolve({data:{request_id:request,replayed:false},error:null});await Promise.resolve();await Promise.resolve();expect(sessionStorage.getItem(key)).toBeTruthy();
+ });
+
 });

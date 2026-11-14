@@ -20,14 +20,14 @@ export function HistoricalExternalWorker(){
  return <section className="rounded-2xl border border-surface-border bg-white p-4 text-xs sm:p-5"><button type="button" aria-expanded={open} onClick={()=>setOpen(v=>!v)} className="min-h-11 font-semibold text-navy">Experimental historical worker payroll evidence</button>{open&&<Contents key={`${user.id}:${assurance}`} userId={user.id}/>}</section>;
 }
 function Contents({userId}:{userId:string}){
- const storageKey=JSON.stringify(['historical-external-worker-v1',userId]);const alive=useRef(false),seq=useRef(0),busyRef=useRef(false),active=useRef('');
+ const storageKey=JSON.stringify(['historical-external-worker-v1',userId]);const alive=useRef(false),seq=useRef(0),busyRef=useRef(false),active=useRef(''),observed=useRef<{raw:string|null}|null>(null),stopSnapshot=useRef<{raw:string|null}|null>(null);
  const [ready,setReady]=useState(false),[storageError,setStorageError]=useState(false),[pending,setPending]=useState<ExternalAttempt|null>(null);
  const [catalog,setCatalog]=useState<ExternalWorker[]|null>(null),[workerId,setWorkerId]=useState(''),[start,setStart]=useState('');
  const [reviewState,setReviewState]=useState<{key:string;review:ExternalReview;list:{total:number;items:ExternalRow[]}}|null>(null);
  const [paidOn,setPaidOn]=useState(''),[gross,setGross]=useState(''),[bale,setBale]=useState('0'),[other,setOther]=useState('0'),[net,setNet]=useState(''),[note,setNote]=useState('');
  const [confirmation,setConfirmation]=useState<ExternalAttempt|null>(null),[ack,setAck]=useState(false),[stop,setStop]=useState(false),[busy,setBusy]=useState(false),[error,setError]=useState(''),[message,setMessage]=useState('');
  const worker=catalog?.find(w=>w.id===workerId),key=JSON.stringify([userId,workerId,start]);active.current=key;const current=reviewState?.key===key?reviewState:null;
- useEffect(()=>{const sequence=seq;alive.current=true;try{const raw=sessionStorage.getItem(storageKey);if(raw)setPending(parseExternalAttempt(JSON.parse(raw),userId));}catch{setStorageError(true);}setReady(true);return()=>{alive.current=false;sequence.current++;};},[storageKey,userId]);
+ useEffect(()=>{const sequence=seq;alive.current=true;try{const raw=sessionStorage.getItem(storageKey);observed.current={raw};if(raw)setPending(parseExternalAttempt(JSON.parse(raw),userId));}catch{setStorageError(true);}setReady(true);return()=>{alive.current=false;sequence.current++;};},[storageKey,userId]);
  async function catalogLoad(){
   if(busyRef.current)return;busyRef.current=true;setBusy(true);setError('');const token=++seq.current;
   try{const {data,error}=await createClient().rpc('historical_external_worker_catalog');if(error)throw error;const c=parseExternalCatalog(data);if(alive.current&&token===seq.current){setCatalog(c);setWorkerId('');setReviewState(null);}}
@@ -51,35 +51,36 @@ function Contents({userId}:{userId:string}){
    const a=parseExternalAttempt({request:crypto.randomUUID(),actor:userId,worker:r.worker,start,paid_on:paidOn,gross,bale,other,net,note:note.trim()},userId);setAck(false);setConfirmation(a);
   }catch{setError('Check identity, overlapping records, Philippine date and all amounts before continuing. Gross must equal Bale plus other deductions plus net.');}
  }
- async function send(a:ExternalAttempt){
-  if(busyRef.current||storageError)return;busyRef.current=true;setBusy(true);setError('');setMessage('');let stored=false;
+ async function send(a:ExternalAttempt,retry=false){
+  if(busyRef.current||storageError)return;busyRef.current=true;setBusy(true);setError('');setMessage('');let stored=false;const token=++seq.current;
   try{
-   const old=sessionStorage.getItem(storageKey);if(old&&JSON.stringify(parseExternalAttempt(JSON.parse(old),userId))!==JSON.stringify(a))throw Error('Retry differs');
+   const old=sessionStorage.getItem(storageKey);if((retry&&!old)||(old&&JSON.stringify(parseExternalAttempt(JSON.parse(old),userId))!==JSON.stringify(a)))throw Error('Retry differs');
    if(!old)sessionStorage.setItem(storageKey,JSON.stringify(a));const copy=sessionStorage.getItem(storageKey);if(!copy||JSON.stringify(parseExternalAttempt(JSON.parse(copy),userId))!==JSON.stringify(a))throw Error('Retry storage unavailable');
-   stored=true;if(alive.current){setPending(a);setConfirmation(null);}
+   stored=true;observed.current={raw:copy};if(alive.current&&token===seq.current){setPending(a);setConfirmation(null);}
    const {data,error}=await createClient().rpc('record_historical_external_worker_payroll',externalArguments(a));if(error)throw error;
    if(!data||data.request_id!==a.request||typeof data.replayed!=='boolean')throw Error('Unverified response');
-   const saved=sessionStorage.getItem(storageKey);if(!saved||JSON.stringify(parseExternalAttempt(JSON.parse(saved),userId))!==JSON.stringify(a))throw Error('Retry changed');sessionStorage.removeItem(storageKey);
+   if(!alive.current||token!==seq.current)return;const saved=sessionStorage.getItem(storageKey);if(!saved||JSON.stringify(parseExternalAttempt(JSON.parse(saved),userId))!==JSON.stringify(a))throw Error('Retry changed');sessionStorage.removeItem(storageKey);observed.current={raw:null};
    if(alive.current){setPending(null);setReviewState(null);setMessage('Historical assertion saved. No voucher, advance, transfer or project cost was created. Reload and inspect.');}
-  }catch{if(alive.current){setError(stored?'Outcome not verified. It may already be recorded; inspect or retry exactly.':'Retry storage could not be verified; no request was sent.');if(!stored)setStorageError(true);}}
+  }catch{if(alive.current){setError(stored?'Outcome not verified. It may already be recorded; inspect or retry exactly.':'Retry storage could not be verified; no request was sent this time. An earlier request may still complete.');if(!stored)setStorageError(true);}}
   finally{busyRef.current=false;if(alive.current)setBusy(false);}
  }
  async function inspect(){
-  if(!pending||busyRef.current)return;busyRef.current=true;setBusy(true);setError('');
+  if(!pending||busyRef.current)return;busyRef.current=true;setBusy(true);setError('');const token=++seq.current;
   try{const {data,error}=await createClient().rpc('historical_external_worker_lookup',{p_request:pending.request});if(error)throw error;
    if(data===null){if(alive.current)setMessage('No matching assertion is visible yet. A request may still be in flight; this is not proof of failure.');return;}
    const item=parseExternalList({total:1,offset:0,items:[data]},pending.worker.id).items[0];if(!externalRowMatchesAttempt(item,pending))throw Error('Mismatch');
-   const saved=sessionStorage.getItem(storageKey);if(!saved||JSON.stringify(parseExternalAttempt(JSON.parse(saved),userId))!==JSON.stringify(pending))throw Error('Retry changed');sessionStorage.removeItem(storageKey);
+   if(!alive.current||token!==seq.current)return;const saved=sessionStorage.getItem(storageKey);if(!saved||JSON.stringify(parseExternalAttempt(JSON.parse(saved),userId))!==JSON.stringify(pending))throw Error('Retry changed');sessionStorage.removeItem(storageKey);observed.current={raw:null};
    if(alive.current){setPending(null);setReviewState(null);setMessage('Matching assertion verified. No payment or transaction was made by this application. Reload history.');}
   }catch{if(alive.current)setError('Could not verify the exact request. Investigate before another entry.');}
   finally{busyRef.current=false;if(alive.current)setBusy(false);}
  }
- function stopRetry(){try{sessionStorage.removeItem(storageKey);setPending(null);setStorageError(false);setStop(false);setReviewState(null);setMessage('Retry stopped; this does not cancel a request. Independently investigate before another entry.');}catch{setError('Could not clear retry storage.');}}
+ function reviewStop(){try{const raw=sessionStorage.getItem(storageKey);if(!observed.current||raw!==observed.current.raw)throw Error('Retry changed');if(pending&&(!raw||JSON.stringify(parseExternalAttempt(JSON.parse(raw),userId))!==JSON.stringify(pending)))throw Error('Retry changed');stopSnapshot.current={raw};setStop(true);setError('');}catch{setStop(false);setError('Retry data changed or could not be read. Nothing was cleared; investigate before continuing.');}}
+ function stopRetry(){try{if(!stopSnapshot.current||!observed.current||sessionStorage.getItem(storageKey)!==stopSnapshot.current.raw||observed.current.raw!==stopSnapshot.current.raw)throw Error('Retry changed');if(pending&&(!stopSnapshot.current.raw||JSON.stringify(parseExternalAttempt(JSON.parse(stopSnapshot.current.raw),userId))!==JSON.stringify(pending)))throw Error('Retry changed');sessionStorage.removeItem(storageKey);observed.current={raw:null};stopSnapshot.current=null;setPending(null);setStorageError(false);setStop(false);setReviewState(null);setMessage('Retry stopped; this does not cancel a request. Independently investigate before another entry.');}catch{stopSnapshot.current=null;setStop(false);setError('Retry data changed or could not be read. Nothing was cleared; investigate before continuing.');}}
  return <div className="space-y-3 border-t border-surface-border pt-3 text-ink-secondary">
   <p className="rounded-xl bg-status-warning-bg p-3">Only for a worker week already paid externally with no existing voucher. This saves a human assertion, not proof, a payslip, a voucher, an advance, a transfer or a project cost. Verify the person, ledger, payment and Bale independently. It cannot be edited or reversed in this draft; a mistake can block new records for the week. Do not use in live finance.</p>
   {error&&<p role="alert">{error}</p>}{message&&<p role="status">{message}</p>}
-  {(pending||storageError)&&<div className="space-y-2"><p>A request may still complete. Closing the tab or clearing storage can lose retry details; that does not cancel the request.</p>{pending&&<><p className="break-words">Worker {pending.worker.name} · {pending.start} · external payment {pending.paid_on} · gross ₱{pending.gross} · Bale ₱{pending.bale} · other ₱{pending.other} · net ₱{pending.net}.</p><p className="break-all">Request {pending.request} · {pending.note}</p><div className="flex flex-wrap gap-2"><Button type="button" variant="secondary" size="sm" disabled={busy} onClick={inspect}>Check exact request</Button><Button type="button" variant="secondary" size="sm" disabled={busy} onClick={()=>void send(pending)}>Retry exact request</Button></div></>}
-   <Button type="button" variant="ghost" size="sm" disabled={busy} onClick={()=>setStop(v=>!v)}>Review stopping retry</Button>{stop&&<div><p>Stopping does not cancel or undo a request. Investigate before entering again.</p><Button type="button" variant="danger" size="sm" disabled={busy} onClick={stopRetry}>I investigated; stop retry</Button></div>}</div>}
+  {(pending||storageError)&&<div className="space-y-2"><p>A request may still complete. Closing the tab or clearing storage can lose retry details; that does not cancel the request.</p>{pending&&<><p className="break-words">Worker {pending.worker.name} · {pending.start} · external payment {pending.paid_on} · gross ₱{pending.gross} · Bale ₱{pending.bale} · other ₱{pending.other} · net ₱{pending.net}.</p><p className="break-all">Request {pending.request} · {pending.note}</p><div className="flex flex-wrap gap-2"><Button type="button" variant="secondary" size="sm" disabled={busy} onClick={inspect}>Check exact request</Button><Button type="button" variant="secondary" size="sm" disabled={busy} onClick={()=>void send(pending,true)}>Retry exact request</Button></div></>}
+   <Button type="button" variant="ghost" size="sm" disabled={busy} onClick={reviewStop}>Review stopping retry</Button>{stop&&<div><p>Stopping does not cancel or undo a request. Investigate before entering again.</p><Button type="button" variant="danger" size="sm" disabled={busy} onClick={stopRetry}>I investigated; stop retry</Button></div>}</div>}
   {ready&&!pending&&!storageError&&<><Button type="button" variant="secondary" size="sm" disabled={busy} onClick={catalogLoad}>{catalog?'Reload workers':'Load workers'}</Button>
    {catalog&&<><div className="grid gap-3 sm:grid-cols-2"><Select label="Worker for historical evidence" value={workerId} disabled={busy} onChange={e=>{setWorkerId(e.target.value);setReviewState(null);setConfirmation(null);}}><option value="">Choose worker</option>{catalog.map(w=><option key={w.id} value={w.id}>{w.name} · {w.position} · {w.active?'active':'archived'} · {w.id}</option>)}</Select><Input label="Sunday of paid week" type="date" min="1900-01-01" max="9998-12-24" value={start} disabled={busy} onChange={e=>{setStart(e.target.value);setReviewState(null);setConfirmation(null);}}/></div>
     <Button type="button" variant="secondary" size="sm" disabled={busy||!worker||!start} onClick={loadReview}>Review week and existing evidence</Button></>}
