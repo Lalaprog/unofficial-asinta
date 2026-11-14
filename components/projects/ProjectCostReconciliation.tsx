@@ -3,11 +3,12 @@ import React,{useEffect,useRef,useState} from 'react';
 import {Button} from '@/components/ui/Button';
 import {createClient} from '@/lib/supabase/client';
 import {costCents,estimateProjectCost,formatCostCents,parseCostSnapshot,type CostChoice,type CostSnapshot} from '@/lib/projects/projectCostReconciliation';
-import {historicalWorkerAttributionPreviewEnabled,historicalCostReviewPreviewEnabled,projectCostReviewLedgerPreviewEnabled} from '@/lib/finance/featureAvailability';
+import {historicalWorkerAttributionPreviewEnabled,historicalCostReviewPreviewEnabled,projectCostReviewLedgerPreviewEnabled,projectCostCorrectionPreviewEnabled} from '@/lib/finance/featureAvailability';
 import {ProjectCostReviewLedger} from './ProjectCostReviewLedger';
 import {ProjectAdjustmentSignals} from './ProjectAdjustmentSignals';
 import {HistoricalWorkerAttributions} from './HistoricalWorkerAttributions';
 import {HistoricalCostReview} from './HistoricalCostReview';
+import {ProjectCorrectionEvidence} from './ProjectCorrectionEvidence';
 
 /** Temporary review scratchpad only. It never records classifications or costs. */
 export function ProjectCostReconciliation({projectId,userId}:{projectId:string;userId:string}){
@@ -42,6 +43,7 @@ export function ProjectCostReconciliation({projectId,userId}:{projectId:string;u
   </>}
   {historicalCostReviewPreviewEnabled()&&<HistoricalCostReview key={`${scope}:combined`} projectId={projectId} userId={userId}/>}
   {historicalWorkerAttributionPreviewEnabled()&&<HistoricalWorkerAttributions key={`${scope}:attributions`} projectId={projectId} userId={userId} />}
+  {projectCostCorrectionPreviewEnabled()&&<ProjectCorrectionEvidence key={`${scope}:corrections`} projectId={projectId} userId={userId} />}
   {projectCostReviewLedgerPreviewEnabled()&&!historicalCostReviewPreviewEnabled()&&<ProjectCostReviewLedger key={`${scope}:ledger`} projectId={projectId} userId={userId} snapshot={snapshot} raw={snapshot?snapshotEvidence:null} choices={choices} reasons={reasons} />}
  </section>;
 }

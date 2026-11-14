@@ -18,11 +18,7 @@ suite('correction attribution PostgreSQL races (synthetic candidate)',()=>{
   const o=(await admin.query("SELECT (SELECT count(*) FROM pg_class c JOIN pg_namespace n ON n.oid=c.relnamespace WHERE n.nspname='public' AND c.relkind IN ('r','p','v','m','S'))::int objects,(SELECT count(*) FROM pg_namespace WHERE nspname IN ('auth','app_private','storage'))::int schemas")).rows[0];if(o.objects||o.schemas)throw Error('Database must be empty');
   await admin.query("DO $$BEGIN IF NOT EXISTS(SELECT 1 FROM pg_roles WHERE rolname='anon') THEN CREATE ROLE anon; END IF; IF NOT EXISTS(SELECT 1 FROM pg_roles WHERE rolname='authenticated') THEN CREATE ROLE authenticated; END IF; IF NOT EXISTS(SELECT 1 FROM pg_roles WHERE rolname='service_role') THEN CREATE ROLE service_role; END IF; END$$;");
   const prefix='CREATE ROLE anon; CREATE ROLE authenticated; CREATE ROLE service_role; ';if(!baseFixture.startsWith(prefix))throw Error('Fixture bootstrap changed');await admin.query(baseFixture.slice(prefix.length));
-  await admin.query(`BEGIN; ${sql('paid_payroll_adjustments')} COMMIT;
-   CREATE TABLE public.historical_external_worker_payroll(request_id uuid PRIMARY KEY,original jsonb);
-   CREATE TABLE public.paid_period_assertion_cases(id uuid PRIMARY KEY,source_kind text,external_worker_id uuid REFERENCES public.historical_external_worker_payroll(request_id),original_snapshot jsonb,difference numeric,status text);
-   CREATE FUNCTION public.paid_period_assertion_snapshot(text,uuid) RETURNS jsonb LANGUAGE sql STABLE AS $$SELECT original FROM public.historical_external_worker_payroll WHERE request_id=$2$$;
-   BEGIN; ${sql('project_cost_correction_attribution')} COMMIT;`);
+  for(const name of ['supervisor_table_foundation','supervisor_rpc_rollout','supervisor_payroll_preview','historical_external_worker_payroll','supervisor_payroll_ledger','paid_period_assertion_adjustments','paid_payroll_adjustments','project_cost_correction_attribution'])await admin.query(`BEGIN; ${sql(name)} COMMIT;`);
   const snapshot=(await admin.query('SELECT app_private.paid_adjustment_voucher_snapshot(p) v FROM public.payroll p WHERE id=$1',[voucher])).rows[0].v;
   for(const c of [first,second])await c.query(`SET ROLE authenticated; SET test.uid='${founder}'; SET test.assurance='yes'; SET lock_timeout='4s'`);
   await first.query('SELECT public.open_paid_payroll_adjustment($1,$2,$3,50,$4)',[id(1),voucher,snapshot,'Synthetic case']);
@@ -39,5 +35,24 @@ suite('correction attribution PostgreSQL races (synthetic candidate)',()=>{
    const rows=(await admin.query('SELECT revision,gross_change::text FROM public.project_cost_correction_attributions ORDER BY revision')).rows;expect(rows).toEqual([{revision:1,gross_change:'50.00'},{revision:2,gross_change:'40.00'}]);
   }finally{await first.query('ROLLBACK');await second.query('ROLLBACK');}
  },15000);
- it('refuses repeatable-read writers',async()=>{await first.query('BEGIN ISOLATION LEVEL REPEATABLE READ');try{await expect(record(first,id(5),2,'20.00')).rejects.toMatchObject({code:'P1002'});}finally{await first.query('ROLLBACK');}});
+ it('holds Founder role stable during an attribution decision',async()=>{
+  await first.query('BEGIN');await admin.query('BEGIN');try{
+   await record(first,id(6),2,'20.00');let done=false;const demotion=admin.query("UPDATE public.users SET role='supervisor' WHERE id=$1",[founder]).finally(()=>{done=true;});await pause();expect(done).toBe(false);await first.query('COMMIT');await demotion;await admin.query('ROLLBACK');
+   expect((await first.query("SELECT public.project_cost_correction_attribution('voucher',$1,NULL) v",[id(1)])).rows[0].v.latest_revision).toBe(3);
+  }finally{await first.query('ROLLBACK');await admin.query('ROLLBACK');}
+ },15000);
+ it('serializes with the real external-period case writer without changing the original',async()=>{
+  const review=(await first.query("SELECT public.historical_external_worker_review($1,'2024-11-03') v",[voucher])).rows[0].v;
+  await first.query("SELECT public.record_historical_external_worker_payroll($1,$2,'2024-11-03','2024-11-09',600,100,0,500,'Synthetic ledger',$3,true)",[id(10),voucher,JSON.stringify(review.worker)]);
+  const original=(await first.query("SELECT public.paid_period_assertion_case_list('external_worker',$1) v",[id(10)])).rows[0].v.snapshot;
+  await first.query("SELECT public.open_paid_period_assertion_case($1,'external_worker',$2,$3,30,'Synthetic A')",[id(11),id(10),original]);await first.query("SELECT public.resolve_paid_period_assertion_case($1,'no_transfer',NULL,'Reviewed A',true)",[id(11)]);
+  const expected=(await first.query("SELECT public.project_cost_correction_attribution('external_worker',$1,NULL) v",[id(11)])).rows[0].v.case;
+  await first.query("SELECT public.open_paid_period_assertion_case($1,'external_worker',$2,$3,10,'Synthetic B')",[id(12),id(10),original]);
+  await first.query('BEGIN');await second.query('BEGIN');try{
+   await first.query("SELECT public.resolve_paid_period_assertion_case($1,'no_transfer',NULL,'Reviewed B',true)",[id(12)]);
+   let done=false;const write=second.query("SELECT public.record_project_cost_correction_attribution($1,'external_worker',$2,0,$3,20,$4,'Reviewed',true) v",[id(13),id(11),expected,JSON.stringify([{project_id:site,gross_change:'20.00'}])]).finally(()=>{done=true;});await pause();expect(done).toBe(false);await first.query('COMMIT');expect((await write).rows[0].v.replayed).toBe(false);await second.query('COMMIT');
+   expect((await admin.query('SELECT gross::text,net::text FROM public.historical_external_worker_payroll WHERE request_id=$1',[id(10)])).rows[0]).toEqual({gross:'600.00',net:'500.00'});
+  }finally{await first.query('ROLLBACK');await second.query('ROLLBACK');}
+ },15000);
+ it('refuses repeatable-read writers',async()=>{await first.query('BEGIN ISOLATION LEVEL REPEATABLE READ');try{await expect(record(first,id(5),3,'20.00')).rejects.toMatchObject({code:'P1002'});}finally{await first.query('ROLLBACK');}});
 });

@@ -4,9 +4,10 @@ import {cleanup,fireEvent,render,screen,within} from '@testing-library/react';
 import {afterEach,beforeEach,describe,expect,it,vi} from 'vitest';
 const m=vi.hoisted(()=>({rpc:vi.fn()}));
 vi.mock('@/lib/supabase/client',()=>({createClient:()=>({rpc:m.rpc})}));
+vi.mock('@/lib/auth/authContext',()=>({useAuth:()=>({user:{id:actor},isFounder:true,assurance:'ready'})}));
 vi.mock('@/lib/reminders/scheduler',()=>({getManilaClock:()=>({dateIso:'2026-10-15'})}));
 import {PaidPeriodAssertionCases} from '@/components/payroll/PaidPeriodAssertionCases';
-import {paidPeriodAssertionCasesPreviewEnabled} from '@/lib/finance/featureAvailability';
+import {paidPeriodAssertionCasesPreviewEnabled,projectCostCorrectionPreviewEnabled} from '@/lib/finance/featureAvailability';
 import {parsePeriodCases,parsePeriodSnapshot,type PeriodSnapshot} from '@/lib/payroll/paidPeriodCases';
 const id=(n:number)=>`12000000-0000-4000-8000-${String(n).padStart(12,'0')}`,actor=id(1),source=id(2),person=id(3),caseId=id(4);
 const snapshot:PeriodSnapshot={kind:'supervisor',id:source,person_id:person,name:'Supervisor',start:'2024-12-01',end:'2024-12-15',paid_on:'2024-12-15',gross:'600.00',net:'600.00',status:'paid',details:{daily_rate:'600.00',half_day_units:2,source_fingerprint:'a'.repeat(64),created_by:actor,created_at:'2026-10-01T00:00:00Z',approved_by:actor,approved_at:'2026-10-01T00:00:00Z',paid_by:actor,recorded_paid_at:'2026-10-01T00:00:00Z'}};
@@ -20,6 +21,12 @@ function confirm(name:string){const d=screen.getByRole('dialog');expect((within(
 beforeEach(()=>{sessionStorage.clear();m.rpc.mockReset();vi.spyOn(crypto,'randomUUID').mockReturnValue(caseId);});afterEach(()=>{cleanup();vi.restoreAllMocks();vi.unstubAllEnvs();});
 describe('original paid-period cases UI',()=>{
  it('requires an independent default-off gate',()=>{vi.stubEnv('NEXT_PUBLIC_FINANCE_FOUNDATION_PREVIEW','true');vi.stubEnv('NEXT_PUBLIC_PAID_PERIOD_ASSERTION_CASES_PREVIEW','false');expect(paidPeriodAssertionCasesPreviewEnabled()).toBe(false);vi.stubEnv('NEXT_PUBLIC_PAID_PERIOD_ASSERTION_CASES_PREVIEW','true');expect(paidPeriodAssertionCasesPreviewEnabled()).toBe(true);vi.stubEnv('NEXT_PUBLIC_FINANCE_FOUNDATION_PREVIEW','false');expect(paidPeriodAssertionCasesPreviewEnabled()).toBe(false);});
+ it('requires a separate correction gate and never offers Supervisor project costs',async()=>{
+  vi.stubEnv('NEXT_PUBLIC_DEVELOPMENT_FINANCE_CUTOVER','true');vi.stubEnv('NEXT_PUBLIC_PROJECT_COST_CORRECTION_PREVIEW','false');expect(projectCostCorrectionPreviewEnabled()).toBe(false);
+  vi.stubEnv('NEXT_PUBLIC_PROJECT_COST_CORRECTION_PREVIEW','true');expect(projectCostCorrectionPreviewEnabled()).toBe(true);
+  const settled={...pending,status:'no_transfer',resolved_by:actor,resolved_at:'2026-10-02T00:00:00Z',resolution_note:'No transfer'};await load([settled]);expect(screen.queryByText('Project-cost correction evidence')).toBeNull();cleanup();
+  const workerCase={...settled,source_kind:'external_worker',source_id:worker.id,original_snapshot:worker};await load([workerCase],worker);expect(screen.getByRole('button',{name:'Project-cost correction evidence'})).toBeTruthy();
+ });
  it('opens a Supervisor case from the exact paid snapshot after explicit acknowledgement',async()=>{await load();prepare();confirm('Open case');await screen.findByText(/Case action recorded/);expect(m.rpc).toHaveBeenCalledWith('open_paid_period_assertion_case',{p_id:caseId,p_kind:'supervisor',p_source:source,p_expected:snapshot,p_difference:'75.25',p_reason:'Late leave'});expect(sessionStorage.length).toBe(0);});
  it('records no-transfer resolution separately and blocks another pending case',async()=>{await load([pending]);expect((screen.getByRole('button',{name:'Review new case'}) as HTMLButtonElement).disabled).toBe(true);fireEvent.click(screen.getByRole('button',{name:'Resolve this case'}));const d=screen.getByRole('dialog');fireEvent.change(within(d).getByLabelText('Case resolution'),{target:{value:'no_transfer'}});fireEvent.change(within(d).getByLabelText('Case resolution explanation'),{target:{value:' Reviewed '}});confirm('Record resolution');await screen.findByText(/Case action recorded/);expect(m.rpc).toHaveBeenCalledWith('resolve_paid_period_assertion_case',{p_id:caseId,p_resolution:'no_transfer',p_settled_on:null,p_note:'Reviewed',p_ack:true});});
  it('supports external worker assertions and rejects a different source or partial list',async()=>{await load([],worker);prepare();confirm('Open case');await screen.findByText(/Case action recorded/);expect(m.rpc).toHaveBeenCalledWith('open_paid_period_assertion_case',expect.objectContaining({p_kind:'external_worker',p_source:worker.id,p_expected:worker}));expect(()=>parsePeriodCases({snapshot,total:1,items:[]},snapshot)).toThrow();expect(()=>parsePeriodSnapshot({...worker,net:'600.01'})).toThrow();expect(()=>parsePeriodSnapshot({...snapshot,details:{...snapshot.details,source_fingerprint:'invalid'}})).toThrow();});

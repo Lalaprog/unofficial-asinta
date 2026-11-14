@@ -153,3 +153,8 @@ export function paidAttendanceReviewPreviewEnabled(): boolean {
 export function paidAdjustmentsPreviewEnabled(): boolean {
   return financeFoundationEnabled() && (process.env.NEXT_PUBLIC_PAID_ADJUSTMENTS_PREVIEW === 'true' || developmentFinanceCutoverEnabled());
 }
+
+/** Separate opt-in for an uninstalled correction-evidence candidate; never enabled by the development cutover flag alone. */
+export function projectCostCorrectionPreviewEnabled(): boolean {
+  return financeFoundationEnabled() && process.env.NEXT_PUBLIC_PROJECT_COST_CORRECTION_PREVIEW === 'true';
+}

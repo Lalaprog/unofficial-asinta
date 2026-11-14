@@ -6,6 +6,8 @@ import {Input} from '@/components/ui/Input';
 import {Select} from '@/components/ui/Select';
 import {Modal} from '@/components/ui/Modal';
 import {useAuth} from '@/lib/auth/authContext';
+import {projectCostCorrectionPreviewEnabled} from '@/lib/finance/featureAvailability';
+import {ProjectCostCorrectionPanel} from './ProjectCostCorrectionPanel';
 import {createClient} from '@/lib/supabase/client';
 import {getManilaClock} from '@/lib/reminders/scheduler';
 import {adjustmentAttemptArguments,parseAdjustmentAttempt,parseAdjustmentList,sameSnapshot,snapshotFromReview,validDifference,verifyAdjustmentAttempt,type AdjustmentAttempt,type AdjustmentList,type PaidAdjustment} from '@/lib/payroll/paidAdjustments';
@@ -100,6 +102,7 @@ export function PaidAdjustmentPanel({voucher}:{voucher:PaidReviewVoucher}){
      {!sameSnapshot(item.original_voucher,snapshot)&&<p className="font-semibold text-status-warning">The original voucher differs from the version currently displayed. Investigate before resolving.</p>}
      {item.status!=='pending'&&<><p className="break-words">{item.status==='settled_external'?`External settlement recorded for ${item.settled_on}.`:'No transfer recorded.'} {item.resolution_note}</p><p className="break-all">Decision recorded by {item.resolved_by} at {item.resolved_at}. This is an assertion, not proof of settlement.</p></>}
      {item.status==='pending'&&<Button type="button" variant="secondary" size="sm" disabled={saving||blocked||!sameSnapshot(item.original_voucher,snapshot)} onClick={()=>prepareResolution(item)}>Resolve this case</Button>}
+     {item.status!=='pending'&&user?.id&&projectCostCorrectionPreviewEnabled()&&sameSnapshot(item.original_voucher,snapshot)&&<ProjectCostCorrectionPanel key={JSON.stringify([user.id,item])} actor={user.id} kind="voucher" item={item}/>}
     </li>)}</ul>}
     <div className="flex flex-wrap gap-2"><Button type="button" variant="secondary" size="sm" disabled={saving||current.list.offset===0} onClick={()=>load(Math.max(0,current.list!.offset-100))}>Previous cases</Button><Button type="button" variant="secondary" size="sm" disabled={saving||current.list.offset+current.list.items.length>=current.list.total} onClick={()=>load(current.list!.offset+100)}>Next cases</Button></div>
     <form onSubmit={prepareOpen} className="space-y-3 border-t border-surface-border pt-3"><p className="font-semibold text-navy">Open a separate case</p><Input label="Signed difference in pesos" inputMode="decimal" value={difference} onChange={e=>setDifference(e.target.value)} hint="Example: 50.25 or -50.25; no automatic payment or deduction."/><Input label="Reason for review" maxLength={500} value={reason} onChange={e=>setReason(e.target.value)}/><Button type="submit" variant="secondary" size="sm" disabled={saving||blocked}>Review new case</Button></form>
