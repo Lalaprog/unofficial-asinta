@@ -178,6 +178,11 @@ export function crossSiteIllustrationPreviewEnabled(): boolean {
   return projectCostCorrectionPreviewEnabled() && process.env.NEXT_PUBLIC_CROSS_SITE_ILLUSTRATION_PREVIEW === 'true';
 }
 
+/** Read-only source inspection and unsaved cross-site destination preview. */
+export function crossSiteSourceReviewPreviewEnabled(): boolean {
+  return correctedProjectCostReviewPreviewEnabled() && process.env.NEXT_PUBLIC_CROSS_SITE_SOURCE_REVIEW_PREVIEW === 'true';
+}
+
 /** Separate opt-in for correction-inclusive reviews; neither finance cutover nor
  * correction evidence alone enables this unfinished UI or verifies its backend. */
 export function correctedProjectCostReviewPreviewEnabled(): boolean {

@@ -19,7 +19,7 @@ describe('coordinated development build configuration',()=>{
  it('enables the complete coordinated surfaces but not unrelated categories or portraits',()=>{
   vi.stubEnv('NEXT_PUBLIC_DEVELOPMENT_FINANCE_CUTOVER','true');vi.stubEnv('NEXT_PUBLIC_DEVELOPMENT_CORRECTION_SUPABASE_REF','abcdefghijklmnopqrst');vi.stubEnv('NEXT_PUBLIC_SUPABASE_URL','https://abcdefghijklmnopqrst.supabase.co');
   for(const [name,fn] of Object.entries(finance)){
-   expect(fn(),name).toBe(!['supervisorPayrollRevisionPreviewEnabled','projectCostCorrectionPreviewEnabled','correctedProjectCostReviewPreviewEnabled','crossSiteIllustrationPreviewEnabled'].includes(name));
+   expect(fn(),name).toBe(!['supervisorPayrollRevisionPreviewEnabled','projectCostCorrectionPreviewEnabled','correctedProjectCostReviewPreviewEnabled','crossSiteIllustrationPreviewEnabled','crossSiteSourceReviewPreviewEnabled'].includes(name));
   }
   vi.stubEnv('NEXT_PUBLIC_SUPERVISOR_PAYROLL_REVISION_PREVIEW','true');
   expect(finance.supervisorPayrollRevisionPreviewEnabled()).toBe(true);
