@@ -299,6 +299,8 @@ suite('coordinated finance integration rehearsal, synthetic PostgreSQL only',()=
    // Exercise the narrow held source-review serialization candidate only inside this savepoint.
    await db.query("RESET ROLE; SET LOCAL app.cross_site_source_lock_reviewed='yes'");
    await db.query(readFileSync('supabase/drafts/project_cost_cross_site_source_review_serialization.sql','utf8'));
+   await db.query("SET LOCAL app.cross_site_attribution_lock_reviewed='yes'");
+   await db.query(readFileSync('supabase/drafts/project_cost_cross_site_attribution_serialization.sql','utf8'));
    await db.query('SET LOCAL ROLE authenticated');
    const initialAttribution=(await db.query("SELECT public.project_cost_correction_attribution('voucher',$1,NULL) v",[voucherCase])).rows[0].v;
    await db.query("SELECT public.record_project_cost_correction_attribution($1,'voucher',$2,1,$3::jsonb,0,$4::jsonb,'Synthetic site reallocation',true)",['70000000-0000-4000-8000-000000000092',voucherCase,JSON.stringify(initialAttribution.case),JSON.stringify([{project_id:site,gross_change:'-100.25'},{project_id:siteTwo,gross_change:'100.25'}])]);
