@@ -116,6 +116,14 @@ describe('dashboard project scope selector', () => {
     fireEvent.click(screen.getByRole('button', {name:'Retry dashboard data'}));
     expect(mocks.store.refresh).toHaveBeenCalledTimes(1);
   });
+  it('withholds partial financial totals when the shared list exceeds its bound', () => {
+    mocks.store.loadError='The last sync omitted 2 invoice(s) and 0 expense(s) beyond the shared-list limit. Totals and lists may be incomplete; investigate separately.';
+    render(React.createElement(FounderDashboard));
+    expect(screen.getByText(/omitted 2 invoice/)).toBeTruthy();
+    expect(screen.queryByRole('combobox',{name:'Project scope'})).toBeNull();
+    expect(screen.queryByText('All clear for now')).toBeNull();
+    expect(screen.queryByRole('button',{name:'Remind client'})).toBeNull();
+  });
   it('does not present legacy payroll and Bale as weekly cutover figures or claim all clear', () => {
     vi.stubEnv('NEXT_PUBLIC_DEVELOPMENT_FINANCE_CUTOVER','true');
     mocks.store.payroll=[{id:'legacy',worker_id:'w1',period_start:'2026-10-01',period_end:'2026-10-15',net_pay:900,status:'draft',created_at:'2026-10-16'}];

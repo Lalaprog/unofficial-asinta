@@ -8,7 +8,7 @@ const mock = vi.hoisted(() => ({
   assurance: 'ready' as 'ready' | 'required' | 'checking' | 'unavailable',
   projects: [] as any[], calls: [] as Array<{kind:string;table?:string;selection?:string;payload?:any}>,
   reloadError: false, nextLoad: null as null | Promise<{data:any[] | null; error:{message:string} | null}>, toast: vi.fn(),
-  tableFailure: null as null | {table:string; type:'error'|'throw'|'null'}, baleRows: [] as any[],
+  tableFailure: null as null | {table:string; type:'error'|'throw'|'null'}, baleRows: [] as any[], financialRows:{invoices:[] as any[],expenses:[] as any[]}, financialFailFrom:null as null|{table:'invoices'|'expenses';offset:number},
   founder: {id:'user', email:'founder@example.test', role:'founder'},
   supervisor: {id:'user', email:'founder@example.test', role:'supervisor'},
 }));
@@ -34,6 +34,13 @@ vi.mock('@/lib/supabase/client', () => ({createClient: () => ({
         }
         return {data:[],error:null};
       };
+      if(table==='invoices'||table==='expenses') {
+        const builder={order:()=>builder,range:async(from:number,to:number)=>{
+          const response=await result();if(response.error || response.data===null)return {...response,count:null};
+          if(mock.financialFailFrom?.table===table&&from>=mock.financialFailFrom.offset)return {data:null,count:null,error:{message:'later page failed'}};
+          const rows=mock.financialRows[table];return {data:rows.slice(from,to+1),count:rows.length,error:null};
+        }};return builder;
+      }
       if(table==='advance_requests') {
         let statuses:readonly string[]=[];
         const builder={in:(_column:string,selected:string[])=>{statuses=selected;return builder;},order:()=>builder,range:async(from:number,to:number)=>{
@@ -53,7 +60,7 @@ let store:ReturnType<typeof useDataStore>;
 function Probe(){store=useDataStore();return null;}
 const project = {id:'p',name:'Site',client_id:'private-client',location:'Lipa',budget_estimate:'90000',status:'active' as const,start_date:'2026-01-01',target_completion_date:'2026-12-31',created_at:'2026-01-01T00:00:00Z'};
 const setup = async () => {render(React.createElement(DataStoreProvider,null,React.createElement(Probe)));await waitFor(()=>expect(store.isLoaded).toBe(true));};
-beforeEach(()=>{mock.role='founder';mock.assurance='ready';mock.projects=[project];mock.calls=[];mock.reloadError=false;mock.nextLoad=null;mock.tableFailure=null;mock.baleRows=[];mock.toast.mockReset();sessionStorage.clear();});
+beforeEach(()=>{mock.role='founder';mock.assurance='ready';mock.projects=[project];mock.calls=[];mock.reloadError=false;mock.nextLoad=null;mock.tableFailure=null;mock.baleRows=[];mock.financialRows={invoices:[],expenses:[]};mock.financialFailFrom=null;mock.toast.mockReset();sessionStorage.clear();});
 afterEach(()=>cleanup());
 
 describe('project privacy in the shared store',()=>{
@@ -135,6 +142,23 @@ describe('project privacy in the shared store',()=>{
     expect(store.loadError).toBeNull();
     expect(store.projects[0].name).toBe('Changed');
     expect(sessionStorage.getItem(cacheKey)).not.toBe(before);
+  });
+  it('retains the last batch and tab cache if a later financial page fails',async()=>{
+    mock.financialRows.expenses=Array.from({length:501},(_,i)=>({id:`expense-${i}`,amount:5}));
+    await setup();const key='bale-ledger-cache:v4:user:founder',previous=sessionStorage.getItem(key);
+    mock.financialRows.expenses=mock.financialRows.expenses.map(row=>({...row,amount:20}));mock.financialFailFrom={table:'expenses',offset:500};
+    await act(async()=>{await store.refresh()});
+    expect(store.loadError).toContain('sync failed');expect(store.expenses[0].amount).toBe(5);expect(sessionStorage.getItem(key)).toBe(previous);
+    mock.financialFailFrom=null;await act(async()=>{await store.refresh()});expect(store.loadError).toBeNull();expect(store.expenses[0].amount).toBe(20);
+  });
+  it('loads later financial pages and warns rather than presenting an over-limit list as complete',async()=>{
+    mock.financialRows.invoices=Array.from({length:3002},(_,i)=>({id:`invoice-${i}`,amount:10,amount_paid:0}));
+    mock.financialRows.expenses=Array.from({length:501},(_,i)=>({id:`expense-${i}`,amount:5}));
+    await setup();
+    expect(store.invoices).toHaveLength(3000);expect(store.expenses).toHaveLength(501);
+    expect(store.loadError).toContain('omitted 2 invoice(s) and 0 expense(s)');
+    mock.financialRows.invoices=mock.financialRows.invoices.slice(0,501);
+    await act(async()=>{await store.refresh()});expect(store.loadError).toBeNull();expect(store.invoices).toHaveLength(501);
   });
   it('loads open Bale records ahead of capped history and records explicit coverage',async()=>{
     mock.baleRows=[...Array.from({length:2100},(_,i)=>({id:`history-${i}`,status:'rejected',requested_amount:10})),{id:'old-open',status:'pending_approval',requested_amount:100}];

@@ -4,6 +4,7 @@ import { isInvoiceOverdue } from '@/lib/invoices/overdue';
 import { manilaDateISO } from '@/lib/dates/manila';
 import { verifyBaleReviewRows } from '@/lib/attendance/baleReview';
 import { loadBaleRequests, mergeLoadedBaleRequest, type BaleRequestCoverage } from '@/lib/attendance/loadBaleRequests';
+import { loadFinancialRows } from '@/lib/data/loadFinancialRows';
 
 import React, { createContext, useContext, useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import type { SupabaseClient, PostgrestError } from '@supabase/supabase-js';
@@ -297,8 +298,8 @@ export const DataStoreProvider: React.FC<{ children: React.ReactNode }> = ({ chi
       try {
         const results = await Promise.all([
           supabase.rpc('visible_projects').order('created_at', { ascending: false }),
-          supabase.from('invoices').select('*').order('created_at', { ascending: false }),
-          supabase.from('expenses').select('*').order('created_at', { ascending: false }),
+          loadFinancialRows(supabase,'invoices').then(result=>({...result,error:null})),
+          loadFinancialRows(supabase,'expenses').then(result=>({...result,error:null})),
           supabase.from('workers').select('*').order('created_at', { ascending: true }),
           supabase.from('clients').select('*').order('created_at', { ascending: true }),
           supabase.from('advances').select('*').order('created_at', { ascending: false }),
@@ -359,7 +360,10 @@ export const DataStoreProvider: React.FC<{ children: React.ReactNode }> = ({ chi
         setProjectSupervisors(nextProjectSupervisors);
         setUsers(nextUsers);
         setIsLoaded(true);
-        setLoadError(null);
+        const omittedInvoices=results[1].omitted, omittedExpenses=results[2].omitted;
+        setLoadError(omittedInvoices || omittedExpenses
+          ? `The last sync omitted ${omittedInvoices} invoice(s) and ${omittedExpenses} expense(s) beyond the shared-list limit. Totals and lists may be incomplete; investigate separately.`
+          : null);
 
         if (user?.id && typeof window !== 'undefined') {
           try {

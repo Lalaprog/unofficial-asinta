@@ -3,6 +3,7 @@ import React from 'react';
 import {act,cleanup,render,waitFor} from '@testing-library/react';
 import {afterEach,beforeEach,describe,expect,it,vi} from 'vitest';
 
+vi.mock('@/lib/data/loadFinancialRows',()=>({loadFinancialRows:async()=>({data:[],omitted:0})}));
 const m=vi.hoisted(()=>({decision:vi.fn(),toast:vi.fn(),rows:[] as any[],user:{id:'founder',role:'founder'},assurance:'ready'}));
 vi.mock('@/lib/auth/authContext',()=>({useAuth:()=>({user:m.user,assurance:m.assurance,isLoading:false})}));
 vi.mock('@/components/ui/Toast',()=>({useToast:()=>({showToast:m.toast})}));
