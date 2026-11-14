@@ -138,6 +138,11 @@ suite('coordinated finance integration rehearsal, synthetic PostgreSQL only',()=
    await db.query('SAVEPOINT denied_manual_deduction');
    await expect(db.query("SELECT public.record_advance_deduction_atomic((SELECT issued_advance_id FROM public.advance_requests WHERE id=$1),10)",[request])).rejects.toThrow(/Weekly Bale is immutable/);
    await db.query('ROLLBACK TO SAVEPOINT denied_manual_deduction; RELEASE SAVEPOINT denied_manual_deduction');
+   await db.query('SAVEPOINT denied_legacy_cancellation');
+   await expect(db.query("SELECT public.set_advance_status_atomic((SELECT issued_advance_id FROM public.advance_requests WHERE id=$1),'cancelled')",[request])).rejects.toThrow(/Weekly Bale is immutable/);
+   await db.query('ROLLBACK TO SAVEPOINT denied_legacy_cancellation; RELEASE SAVEPOINT denied_legacy_cancellation; RESET ROLE; SAVEPOINT denied_owner_cancellation');
+   await expect(db.query("UPDATE public.advances SET status='cancelled' WHERE id=(SELECT issued_advance_id FROM public.advance_requests WHERE id=$1)",[request])).rejects.toThrow(/Weekly Bale is immutable/);
+   await db.query('ROLLBACK TO SAVEPOINT denied_owner_cancellation; RELEASE SAVEPOINT denied_owner_cancellation; SET LOCAL ROLE authenticated');
    await db.query("SELECT public.record_attendance_time_detail('70000000-0000-4000-8000-000000000003',$1,'2024-08-04T08:00:00Z',8,2,'Synthetic overtime')",[attendance]);
    await db.query("SELECT public.submit_worker_allowance('70000000-0000-4000-8000-000000000004',$1,'2024-08-04T08:00:00Z',50.25,'Synthetic allowance')",[attendance]);
    await db.query('SAVEPOINT denied_unsourced_insert');

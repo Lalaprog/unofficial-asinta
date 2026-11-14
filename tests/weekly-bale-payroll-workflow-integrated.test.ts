@@ -185,6 +185,21 @@ describe('weekly Bale through worker payroll: candidate UI and synthetic SQL',()
    expect((await db.query("SELECT has_table_privilege('service_role','public.weekly_worker_draft_sources','INSERT') AS service_write,has_table_privilege('authenticated','public.weekly_worker_draft_sources','INSERT') AS client_write")).rows).toEqual([{service_write:false,client_write:false}]);
   }finally{await db.close();}
  },30000);
+ it('blocks legacy cancellation and privileged direct changes to a released weekly Bale',async()=>{
+  const db=await fixture();try{
+   const req=(await db.query<{id:string}>('INSERT INTO public.advance_requests(worker_id,project_id,requested_amount,submitted_by) VALUES($1,$2,100.25,$3) RETURNING id',[worker,site,supervisor])).rows[0].id;
+   await db.exec(`SET test.uid='${founder}';SET test.clock='2024-11-05T04:00:00Z'`);await db.query("SELECT public.review_advance_request($1,'approve')",[req]);
+   await db.exec(`SET test.uid='${supervisor}';SET test.clock='2024-11-06T04:00:00Z'`);await db.query('SELECT public.record_weekly_bale_release($1)',[req]);
+   await db.exec(`SET test.uid='${founder}'`);const advance=(await db.query<{id:string}>('SELECT issued_advance_id id FROM public.advance_requests WHERE id=$1',[req])).rows[0].id;
+   await expect(db.query("SELECT public.set_advance_status_atomic($1,'cancelled')",[advance])).rejects.toThrow(/Weekly Bale is immutable/);
+   await db.exec('RESET ROLE');await expect(db.query("UPDATE public.advances SET status='cancelled' WHERE id=$1",[advance])).rejects.toThrow(/Weekly Bale is immutable/);
+   await expect(db.query('DELETE FROM public.advances WHERE id=$1',[advance])).rejects.toThrow(/Weekly Bale is immutable/);
+   expect((await db.query('SELECT status,amount_deducted::text FROM public.advances WHERE id=$1',[advance])).rows).toEqual([{status:'active',amount_deducted:'0.00'}]);
+   await db.exec(`SET ROLE service_role;SET test.uid=''`);
+   await expect(db.query('SELECT public.issue_advance_request($1)',[req])).rejects.toThrow(/permission denied/);
+   await expect(db.query('SELECT public.record_advance_deduction_atomic($1,1)',[advance])).rejects.toThrow(/permission denied/);
+  }finally{await db.close();}
+ },30000);
  it('refuses Bale cutover while an old outstanding advance remains',async()=>{
   const db=await fixture(false);try{
    await db.exec("RESET ROLE; SET test.uid=''");await db.query("INSERT INTO public.advances(id,worker_id,project_id,date,amount,amount_deducted,status,reason) VALUES($1,$2,$3,'2024-10-30',100,0,'active','Legacy')",['70000000-0000-4000-8000-000000000013',worker,site]);
