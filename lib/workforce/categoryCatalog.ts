@@ -9,6 +9,8 @@ const isObject=(v:unknown):v is Record<string,unknown>=>!!v&&typeof v==='object'
 const validLabel=(v:unknown):v is string=>typeof v==='string'&&v.trim()===v&&v.length>0&&v.length<=80&&!/[\x00-\x1f\x7f]/.test(v);
 const validRevision=(v:unknown):v is number=>typeof v==='number'&&Number.isSafeInteger(v)&&v>=1&&v<=2147483647;
 export function categoryPreviewEnabled():boolean {return process.env.NEXT_PUBLIC_WORKER_CATEGORY_PREVIEW==='true';}
+/** Requires the catalog and the separately installed workforce cutover. */
+export function categoryWorkforceEnabled():boolean {return categoryPreviewEnabled()&&process.env.NEXT_PUBLIC_WORKER_CATEGORY_WORKFORCE_PREVIEW==='true';}
 export function parseCategory(raw:unknown):WorkerCategory {
  if(!isObject(raw)||typeof raw.id!=='string'||!uuid.test(raw.id)||!validLabel(raw.label)||typeof raw.archived!=='boolean'||!validRevision(raw.revision))throw new Error('Invalid category response');
  return {id:raw.id,label:raw.label,archived:raw.archived,revision:raw.revision};

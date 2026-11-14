@@ -54,6 +54,8 @@ import { HistorySheetRecords } from '@/components/attendance/HistorySheetRecords
 import { AttendanceHistoryCalendar } from '@/components/attendance/AttendanceHistoryCalendar';
 import { SupervisorFoundationPanels } from '@/components/attendance/SupervisorFoundationPanels';
 import { WorkerCategoryFoundation } from '@/components/workforce/WorkerCategoryFoundation';
+import { WorkerCategorySelect } from '@/components/workforce/WorkerCategorySelect';
+import { CATEGORY_CHANGED, useActiveCategories } from '@/lib/workforce/useActiveCategories';
 import { AssignmentHistory } from '@/components/workforce/AssignmentHistory';
 import { assignmentHistoryPreviewEnabled } from '@/lib/workforce/assignmentHistory';
 import { weeklyWorkerCutoverMode } from '@/lib/finance/featureAvailability';
@@ -128,6 +130,7 @@ function AttendancePageInner() {
   const searchParams = useSearchParams();
   const { showToast } = useToast();
   const pendingApprovals = usePendingApprovals(isFounder, user?.id);
+  const categories = useActiveCategories(user?.id, assurance);
   const {
     users,
     workers,
@@ -144,6 +147,8 @@ function AttendancePageInner() {
     updateAttendanceRecord,
     getProjectsForSupervisor,
   } = useDataStore();
+
+  useEffect(() => { if (!categories.enabled) return; const changed = () => { void refresh(); }; window.addEventListener(CATEGORY_CHANGED, changed); return () => window.removeEventListener(CATEGORY_CHANGED, changed); }, [categories.enabled, refresh]);
 
   // Accessible projects for user
   const accessibleProjects =
@@ -813,11 +818,11 @@ function AttendancePageInner() {
 
   const handleAddWorkerSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!workerName.trim() || isAddingWorker) return;
+    if (!workerName.trim() || isAddingWorker || (categories.enabled && !categories.items?.some(c=>c.label===workerPosition))) return;
     setIsAddingWorker(true);
     const created = await createWorker({
       name: workerName.trim(),
-      position: workerPosition.trim() || 'Mason',
+      position: categories.enabled ? workerPosition : workerPosition.trim() || 'Mason',
       pay_rate: parseFloat(workerRate) || 0,
       pay_rate_type: 'daily',
       contact_number: workerPhone.trim() || '—',
@@ -846,7 +851,7 @@ function AttendancePageInner() {
 
   const handleEditWorkerSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!editingWorker || isSavingWorker) return;
+    if (!editingWorker || isSavingWorker || (categories.enabled && editWorkerPosition!==editingWorker.position && !categories.items?.some(c=>c.label===editWorkerPosition))) return;
     setIsSavingWorker(true);
     const updated = await updateWorker(editingWorker.id, {
       name: editWorkerName.trim(),
@@ -2143,6 +2148,7 @@ function AttendancePageInner() {
                     />
                   </div>
 
+                  {categories.enabled ? <WorkerCategorySelect categories={categories} label="Craft / Position" value={workerPosition} onChange={setWorkerPosition}/> : (
                   <Select
                     label="Craft / Position"
                     value={workerPosition}
@@ -2159,6 +2165,7 @@ function AttendancePageInner() {
                       { label: 'Skilled Laborer', value: 'Laborer' },
                     ]}
                   />
+                  )}
 
                   <Input
                     label="Daily Rate (₱)"
@@ -2184,6 +2191,7 @@ function AttendancePageInner() {
                     variant="primary"
                     size="md"
                     isLoading={isAddingWorker}
+                    disabled={categories.enabled && !categories.items?.some(c=>c.label===workerPosition)}
                     leftIcon={<UserPlus className="h-4 w-4" />}
                     className="w-full sm:w-auto"
                   >
@@ -2388,12 +2396,13 @@ function AttendancePageInner() {
             />
 
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-              <Input
+              {categories.enabled && !users.some(u=>u.id===editingWorker.id&&u.role==='supervisor') ? <WorkerCategorySelect categories={categories} label="Craft / Position" value={editWorkerPosition} onChange={setEditWorkerPosition} allowUnchanged={editWorkerPosition===editingWorker.position}/> : <Input
                 label="Craft / Position"
                 value={editWorkerPosition}
                 onChange={(e) => setEditWorkerPosition(e.target.value)}
+                readOnly={categories.enabled}
                 required
-              />
+              />}
 
               <Input
                 label="Contact Number"
@@ -2444,7 +2453,7 @@ function AttendancePageInner() {
               <Button type="button" variant="secondary" onClick={() => setEditingWorker(null)}>
                 Cancel
               </Button>
-              <Button type="submit" variant="primary" isLoading={isSavingWorker}>
+              <Button type="submit" variant="primary" isLoading={isSavingWorker} disabled={categories.enabled && editWorkerPosition!==editingWorker.position && !categories.items?.some(c=>c.label===editWorkerPosition)}>
                 Save Worker
               </Button>
             </div>

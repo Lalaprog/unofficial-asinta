@@ -4,9 +4,10 @@ import React,{useEffect,useRef,useState} from 'react';
 import { Button } from '@/components/ui/Button';
 import { Input } from '@/components/ui/Input';
 import { createClient } from '@/lib/supabase/client';
-import { parseCategoryAttempt,parseCategoryCatalog,parseCategoryHistory,parseCategoryResult,prepareCategoryAttempt,type CategoryAction,type CategoryAttempt,type CategoryEvent,type WorkerCategory } from '@/lib/workforce/categoryCatalog';
+import { categoryWorkforceEnabled,parseCategoryAttempt,parseCategoryCatalog,parseCategoryHistory,parseCategoryResult,prepareCategoryAttempt,type CategoryAction,type CategoryAttempt,type CategoryEvent,type WorkerCategory } from '@/lib/workforce/categoryCatalog';
+import {CATEGORY_CHANGED} from '@/lib/workforce/useActiveCategories';
 
-/** Draft-only: this catalog does not change worker positions or grouping. */
+/** Founder-only management; the database enforces authorization. */
 export function WorkerCategoryManager({userId}:{userId:string}) {
  const [open,setOpen]=useState(false);
  return <section className="rounded-2xl border border-surface-border bg-white p-4">
@@ -44,6 +45,7 @@ function CategoryContents({userId}:{userId:string}) {
    if(rpcError)throw rpcError;
    const result=parseCategoryResult(data,attempt);
    sessionStorage.removeItem(storageKey);
+   window.dispatchEvent(new Event(CATEGORY_CHANGED));
    if(alive.current){setPending(null);setCatalog(null);setEdit(null);setName('');setMessage(result.replayed?'The original request was confirmed. Refresh the catalog before another change.':'Change recorded. Refresh the catalog before another change.');}
   }catch{
    if(alive.current)setError(stored?'The outcome is not confirmed. The change may have been saved. Retry the same request, or inspect the catalog and history before stopping the retry.':'The retry record could not be stored, so no request was sent this time. A previous attempt may still have been saved; inspect the catalog and history.');
@@ -59,7 +61,7 @@ function CategoryContents({userId}:{userId:string}) {
   catch{setError('Could not clear the saved retry. No new changes are available.');}
  }
  return <div className="space-y-4 border-t border-surface-border pt-4 text-xs">
-  <p className="rounded-lg bg-status-warning-bg p-3 text-ink-secondary">Experimental catalog only. This does not change existing worker positions, historic records, worker registration or craft groups. Categories are not yet used by the workforce screens. Do not use this as a completed category rollout.</p>
+  <p className="rounded-lg bg-status-warning-bg p-3 text-ink-secondary">{categoryWorkforceEnabled()?'Only the Founder can change these categories. Renaming updates current worker craft labels and may require unpaid payroll drafts to be reviewed again; paid records are not rewritten. Archived categories remain on existing workers but cannot be chosen for new registrations. Refresh workforce after changes.':'Experimental catalog only. This does not change existing worker positions, historic records, worker registration or craft groups. Categories are not yet used by the workforce screens.'}</p>
   {storageError&&<p role="alert" className="text-status-danger">{storageError}</p>}
   {error&&<p role="alert" className="text-status-danger">{error}</p>}{message&&<p role="status" className="text-ink-secondary">{message}</p>}
   {pending&&<div className="space-y-2 rounded-lg border border-status-warning/25 bg-status-warning-bg p-3">
