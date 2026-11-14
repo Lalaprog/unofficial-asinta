@@ -104,7 +104,7 @@ describe('weekly Bale through worker payroll: candidate UI and synthetic SQL',()
    // Supervisor records a release only after acknowledging the simulated cash handover.
    render(React.createElement(WeeklyBaleReleasePanel));fireEvent.click(screen.getByRole('button',{name:'Experimental weekly Bale release'}));fireEvent.click(screen.getByRole('button',{name:'Load releases'}));
    await screen.findByText(/Test Worker.*Site One.*100.25/);fireEvent.click(screen.getByRole('button',{name:'Review external release'}));fireEvent.click(screen.getByRole('checkbox',{name:/verified this external release/}));fireEvent.click(screen.getByRole('button',{name:'Record release'}));
-   await screen.findByText(/Release not confirmed/);fireEvent.click(screen.getByRole('button',{name:'Load releases'}));await screen.findByText('Release recorded · Wednesday 2024-11-06');expect(screen.queryByRole('button',{name:'Review external release'})).toBeNull();cleanup();
+   await screen.findByText(/Release not confirmed/);cleanup();render(React.createElement(WeeklyBaleReleasePanel));fireEvent.click(screen.getByRole('button',{name:'Experimental weekly Bale release'}));await screen.findByText(/A Bale release record may have been sent/);fireEvent.click(screen.getByRole('button',{name:'Load releases'}));await screen.findByText('Release recorded · Wednesday 2024-11-06');expect(screen.queryByRole('button',{name:'Review external release'})).toBeNull();fireEvent.click(screen.getByRole('checkbox',{name:/I investigated the original request/}));fireEvent.click(screen.getByRole('button',{name:'Clear release warning after review'}));cleanup();
    // Manual deductions are blocked; the weekly payment records the full amount once.
    await db.exec('RESET ROLE');await expect(db.query("UPDATE public.advances SET amount_deducted=10,status='partially_deducted' WHERE worker_id=$1",[worker])).rejects.toThrow(/Weekly Bale is immutable/);await db.exec('SET ROLE authenticated');
    // Founder uses the actual weekly preview and revision-aware voucher actions.
@@ -154,15 +154,19 @@ describe('weekly Bale through worker payroll: candidate UI and synthetic SQL',()
       weekly_worker_draft_details:{query:'SELECT public.weekly_worker_draft_details($1) v',params:[args.p_id]},
       approve_weekly_worker_draft:{query:'SELECT public.approve_weekly_worker_draft($1,$2) v',params:[args.p_id,args.p_expected_revision]},
       refresh_weekly_worker_draft:{query:'SELECT public.refresh_weekly_worker_draft($1,$2,$3) v',params:[args.p_request,args.p_id,args.p_expected_revision]},
+      weekly_bale_release_list:{query:'SELECT public.weekly_bale_release_list($1) v',params:[args.p_start]},
+      record_weekly_bale_release:{query:'SELECT public.record_weekly_bale_release($1) v',params:[args.p_request_id]},
      };
      const call=calls[name];if(!call)throw Error(`Unexpected RPC ${name}`);return {data:(await db.query<{v:unknown}>(call.query,call.params)).rows[0].v,error:null};
     }catch(error){return {data:null,error};}
    });
-   const refreshId='70000000-0000-4000-8000-000000000005';vi.spyOn(crypto,'randomUUID').mockReturnValueOnce(voucher).mockReturnValueOnce(refreshId);
+   const refreshId='70000000-0000-4000-8000-000000000005';vi.spyOn(crypto,'randomUUID').mockReturnValueOnce(voucher).mockReturnValueOnce('70000000-0000-4000-8000-000000000006').mockReturnValueOnce('70000000-0000-4000-8000-000000000007').mockReturnValueOnce(refreshId).mockReturnValue('70000000-0000-4000-8000-000000000008');
    render(React.createElement(WeeklyWorkerPreview));fireEvent.click(screen.getByRole('button',{name:/Weekly worker planning preview/}));fireEvent.click(screen.getByRole('button',{name:'Load preview'}));await screen.findByRole('button',{name:'Review new draft'});
    fireEvent.click(screen.getByRole('button',{name:'Review new draft'}));fireEvent.click(screen.getByRole('button',{name:'Create draft'}));await screen.findByText(/Saved status: draft/);expect(screen.getByText(/gross ₱600.00 · Bale ₱0.00 · net ₱600.00/)).toBeTruthy();
-   // A separate authorized Supervisor records the Wednesday cash handover after the draft.
-   await db.exec(`SET test.uid='${supervisor}';SET test.clock='2024-11-06T04:00:00Z'`);await db.query('SELECT public.record_weekly_bale_release($1)',[req]);await db.exec(`SET test.uid='${founder}'`);
+   // A separate authorized Supervisor records and reads back the Wednesday handover after the draft.
+   cleanup();mock.actor=supervisor;mock.founder=false;mock.supervisor=true;await db.exec(`SET test.uid='${supervisor}';SET test.clock='2024-11-06T04:00:00Z'`);
+   render(React.createElement(WeeklyBaleReleasePanel));fireEvent.click(screen.getByRole('button',{name:'Experimental weekly Bale release'}));fireEvent.click(screen.getByRole('button',{name:'Load releases'}));await screen.findByText(/Test Worker.*Site One.*100.25/);fireEvent.click(screen.getByRole('button',{name:'Review external release'}));fireEvent.click(screen.getByRole('checkbox',{name:/verified this external release/}));fireEvent.click(screen.getByRole('button',{name:'Record release'}));await screen.findByText(/External release recorded and read back/);expect(sessionStorage.getItem(JSON.stringify(['weekly-bale-release-unconfirmed-v1',supervisor]))).toBeNull();cleanup();
+   mock.actor=founder;mock.founder=true;mock.supervisor=false;await db.exec(`SET test.uid='${founder}'`);render(React.createElement(WeeklyWorkerPreview));fireEvent.click(screen.getByRole('button',{name:/Weekly worker planning preview/}));fireEvent.click(screen.getByRole('button',{name:'Load preview'}));await screen.findByRole('button',{name:'Load voucher details'});fireEvent.click(screen.getByRole('button',{name:'Load voucher details'}));await screen.findByText(/Saved status: draft/);
    fireEvent.click(screen.getByRole('button',{name:'Review approval'}));fireEvent.click(screen.getByRole('button',{name:'Confirm approval'}));await screen.findByText(/Outcome not confirmed/);
    await db.exec('RESET ROLE');expect((await db.query('SELECT status,bale_deduction::text bale FROM public.payroll WHERE id=$1',[voucher])).rows).toEqual([{status:'draft',bale:'0.00'}]);await db.exec('SET ROLE authenticated');
    // Only after inspecting the original synthetic voucher can the warning be cleared.
