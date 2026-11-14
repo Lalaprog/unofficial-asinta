@@ -16,6 +16,7 @@ describe('batch payslip flow',()=>{
   await waitFor(()=>expect(screen.getByText('Alba')).toBeTruthy());
   expect(mocks.rpc).toHaveBeenCalledWith('payslip_batch_snapshot',{p_start:'2026-10-25',p_end:'2026-10-31'});
   const document=screen.getByLabelText('Payslip page 1');
+  expect(within(document).getByText('Current craft: Mason (not a historical snapshot)')).toBeTruthy();
   expect(within(document).getByText(/DRAFT/)).toBeTruthy();expect(within(document).getByText(/₱1,100.00/)).toBeTruthy();
   expect(document.textContent).not.toMatch(/rate/i);expect(document.querySelector('svg,img')).toBeNull();
   fireEvent.change(screen.getByLabelText('Payslip period start'),{target:{value:'2026-10-18'}});

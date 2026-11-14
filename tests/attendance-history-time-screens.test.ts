@@ -15,9 +15,9 @@ beforeEach(()=>{vi.stubEnv('NEXT_PUBLIC_FINANCE_FOUNDATION_PREVIEW','true');vi.s
 describe('time detail screen integration',()=>{
  it('shows regular/OT on expanded Attendance History and reloads when the editor closes',async()=>{
   render(React.createElement(HistorySheetRecords,{sheet:{date:row.date,project_id:'site',project_name:'Site',record_count:1,present_count:1,half_day_count:0,absent_count:0,leave_count:0,pending_count:0},filters:{projectId:'site',status:'all',date:row.date,search:''},userId:'founder',revision:0,isFounder:true,reviewing:false,onReview:vi.fn(),onEdit:vi.fn()}));
-  await screen.findByText('Regular 8.00 h · OT 2.50 h');fireEvent.click(screen.getByRole('button',{name:'Regular / OT'}));fireEvent.click(screen.getByRole('button',{name:'Close mocked detail'}));await screen.findByText('Regular 8.00 h · OT 2.50 h');expect(mock.rpc.mock.calls.filter(c=>c[0]==='attendance_history_time_batch')).toHaveLength(2);
+  expect(screen.getByText(/Current craft: Mason; historical craft not recorded/)).toBeTruthy();await screen.findByText('Regular 8.00 h · OT 2.50 h');fireEvent.click(screen.getByRole('button',{name:'Regular / OT'}));fireEvent.click(screen.getByRole('button',{name:'Close mocked detail'}));await screen.findByText('Regular 8.00 h · OT 2.50 h');expect(mock.rpc.mock.calls.filter(c=>c[0]==='attendance_history_time_batch')).toHaveLength(2);
  });
  it('also shows the details on Project Workforce Logs and refreshes with the log',async()=>{
-  render(React.createElement(ProjectWorkforceLogs,{projectId:'site',userId:'founder'}));await screen.findByText('Regular 8.00 h · OT 2.50 h');fireEvent.click(screen.getByRole('button',{name:'Refresh logs'}));await screen.findByText('Regular 8.00 h · OT 2.50 h');expect(mock.rpc.mock.calls.filter(c=>c[0]==='attendance_history_time_batch')).toHaveLength(2);
+  render(React.createElement(ProjectWorkforceLogs,{projectId:'site',userId:'founder'}));expect(screen.getByText(/Current craft: Mason \(historical craft not recorded\)/)).toBeTruthy();await screen.findByText('Regular 8.00 h · OT 2.50 h');fireEvent.click(screen.getByRole('button',{name:'Refresh logs'}));await screen.findByText('Regular 8.00 h · OT 2.50 h');expect(mock.rpc.mock.calls.filter(c=>c[0]==='attendance_history_time_batch')).toHaveLength(2);
  });
 });

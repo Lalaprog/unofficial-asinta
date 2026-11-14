@@ -38,7 +38,7 @@ export function HistorySheetRecords({sheet, filters, userId, revision, isFounder
             <div className="min-w-0 space-y-0.5">
               <div className="flex flex-wrap items-center gap-1.5">
                 <span className="break-words font-bold text-navy">{rec.worker_name || 'Worker (details unavailable)'}</span>
-                {rec.worker_position && <span className="text-[11px] text-ink-secondary">({rec.worker_position})</span>}
+                {rec.worker_position && <span className="text-[11px] text-ink-secondary">(Current craft: {rec.worker_position}; historical craft not recorded)</span>}
                 {isUnverifiedSelf && <Badge variant="warning" size="sm">Pending Founder Approval (Held from Payroll)</Badge>}
                 {rec.is_supervisor && rec.is_founder_override && <Badge variant="success" size="sm">Founder Approved ✓</Badge>}
                 {!rec.is_supervisor && rec.is_founder_override && <Badge variant="navy" size="sm">Founder Override</Badge>}
