@@ -40,11 +40,17 @@ describe('corrected project cost preview (synthetic, read-only candidate)',()=>{
   }
   const excluded=decisions();excluded.corrections[`voucher:${voucherCase}`]=choice('exclude','Evidence unavailable');const missing=snapshot();missing.corrections[0].evidence.attribution=null;missing.corrections[0].site_gross_change=null;await setSnapshot(db,missing);expect(await calculate(db,missing,excluded)).toMatchObject({correction_gross:'-20.00',excluded_cases:1,incomplete:true});
  }finally{await db.close();}},30000);
- it('blocks overlaps and duplicate included source cases, but allows a documented exclusion',async()=>{const db=await setup();try{
+ it('requires an exact distinct-effects assertion for multiple cases and bounds their combined effect',async()=>{const db=await setup();try{
   const overlap=snapshot();overlap.historical_review.historical[0].overlapping_vouchers=1;await setSnapshot(db,overlap);await expect(calculate(db,overlap)).rejects.toThrow(/overlap/);
-  const duplicate=snapshot();duplicate.corrections.push(item('voucher',id(7),voucher,'10.00'));duplicate.historical_review.base.adjustment_cases.push({case_id:id(7)});await setSnapshot(db,duplicate);
-  const d=decisions();d.corrections[`voucher:${id(7)}`]=choice('include','Another case');await expect(calculate(db,duplicate,d)).rejects.toThrow(/Multiple included corrections/);
-  d.corrections[`voucher:${id(7)}`]=choice('exclude','Duplicate under investigation');expect(await calculate(db,duplicate,d)).toMatchObject({correction_gross:'5.00',excluded_cases:1});
+  const multiple=snapshot();multiple.corrections.push(item('voucher',id(7),voucher,'10.00'));multiple.historical_review.base.adjustment_cases.push({case_id:id(7)});await setSnapshot(db,multiple);
+  const d=decisions();d.corrections[`voucher:${id(7)}`]=choice('include','Another case');await expect(calculate(db,multiple,d)).rejects.toThrow(/distinct-effects review/);
+  const review={case_ids:[`voucher:${voucherCase}`,`voucher:${id(7)}`].sort(),note:'Independent original documents checked',non_overlapping:true};
+  const combined={...d,source_reviews:{[`voucher:${voucher}`]:review}};
+  expect(await calculate(db,multiple,combined)).toMatchObject({correction_gross:'15.00',incomplete_total:'1115.00',excluded_cases:0});
+  for(const altered of [{...review,case_ids:[review.case_ids[0]]},{...review,case_ids:[...review.case_ids].reverse()},{...review,note:' '},{...review,non_overlapping:false}])await expect(calculate(db,multiple,{...d,source_reviews:{[`voucher:${voucher}`]:altered}})).rejects.toThrow(/distinct-effects review/);
+  await expect(calculate(db,multiple,{...combined,source_reviews:{...combined.source_reviews,'voucher:unexpected':review}})).rejects.toThrow(/source review/);
+  multiple.corrections[0].site_gross_change='-400.00';multiple.corrections[2].site_gross_change='-201.00';await setSnapshot(db,multiple);await expect(calculate(db,multiple,combined)).rejects.toThrow(/invalidates original site cost/);
+  d.corrections[`voucher:${id(7)}`]=choice('exclude','Duplicate under investigation');multiple.corrections[0].site_gross_change='25.00';await setSnapshot(db,multiple);expect(await calculate(db,multiple,d)).toMatchObject({correction_gross:'5.00',excluded_cases:1});
  }finally{await db.close();}},30000);
  it('does not treat a missing inventory as an empty zero-cost snapshot',async()=>{const db=await setup();try{
   const invalid={project_id:site,historical_review:{project_id:site,base:{captured_at:'2026-11-14T00:00:00Z'}},corrections:[]};await setSnapshot(db,invalid);
@@ -67,6 +73,16 @@ describe('separate corrected review ledger (synthetic candidate)',()=>{
   const changed=snapshot();changed.historical_review.base.expenses[0].amount='90.00';await setSnapshot(db,changed);saved=await read(db);expect(saved).toMatchObject({freshness:'changed',result:{incomplete_total:'1105.00'}});await expect(record(db,id(21),1,sent)).rejects.toThrow(/evidence changed/);expect(await record(db,id(20),0,sent)).toMatchObject({replayed:true});
   expect(await record(db,id(21),1,changed)).toMatchObject({revision:2,replayed:false});expect(await read(db)).toMatchObject({revision:2,freshness:'matches',result:{incomplete_total:'1095.00'}});expect(await read(db,1)).toMatchObject({revision:1,freshness:'changed'});
   await db.exec('RESET ROLE');await expect(db.query("UPDATE public.project_cost_corrected_reviews SET note='tamper'")).rejects.toThrow(/immutable/);await expect(db.query('DELETE FROM public.project_cost_corrected_reviews')).rejects.toThrow(/immutable/);
+ }finally{await db.close();}},30000);
+ it('retains exact multi-case assertions in immutable revisions and retries',async()=>{const db=await setup();try{
+  const s=snapshot();s.corrections.push(item('voucher',id(7),voucher,'10.00'));s.historical_review.base.adjustment_cases.push({case_id:id(7)});await setSnapshot(db,s);
+  const d=decisions();d.corrections[`voucher:${id(7)}`]=choice('include','Separate case');
+  const review={case_ids:[`voucher:${voucherCase}`,`voucher:${id(7)}`].sort(),note:'Separate source evidence checked',non_overlapping:true};
+  const combined={...d,source_reviews:{[`voucher:${voucher}`]:review}};
+  expect(await record(db,id(40),0,s,combined)).toMatchObject({revision:1,replayed:false});
+  expect(await record(db,id(40),0,s,combined)).toMatchObject({revision:1,replayed:true});
+  expect(await read(db)).toMatchObject({revision:1,choices:{source_reviews:combined.source_reviews},result:{incomplete_total:'1115.00'}});
+  const changed={...combined,source_reviews:{[`voucher:${voucher}`]:{...review,note:'Changed assertion'}}};await expect(record(db,id(40),0,s,changed)).rejects.toThrow(/different details/);
  }finally{await db.close();}},30000);
  it('requires permissions, acknowledgement, current evidence and read committed',async()=>{const db=await setup();try{
   await expect(record(db,id(30),0,snapshot(),decisions(),'Reviewed',false)).rejects.toThrow(/Invalid corrected review/);

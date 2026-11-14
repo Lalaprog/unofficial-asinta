@@ -12,7 +12,8 @@ const total=(x:unknown):bigint=>{if(typeof x!=='string'||!/^(?:0|[1-9]\d{0,13})\
 const signedTotal=(x:unknown):bigint=>{if(typeof x!=='string')throw Error('Invalid signed total');return x.startsWith('-')?-total(x.slice(1)):total(x);};
 export type CorrectedCase={key:string;kind:CorrectionKind;id:string;sourceId:string;sourceInSnapshot:boolean;status:string;reason:string;difference:string;siteChange:string|null;review:CorrectionReview;pendingSibling:boolean};
 export type CorrectedInventory={raw:unknown;historical:HistoricalCostSnapshot;cases:CorrectedCase[]};
-export type CorrectedChoices={expenses:Record<string,ReviewDecision>;historical:Record<string,ReviewDecision>;corrections:Record<string,ReviewDecision>};
+export type CorrectedSourceReview={case_ids:string[];note:string;non_overlapping:true};
+export type CorrectedChoices={expenses:Record<string,ReviewDecision>;historical:Record<string,ReviewDecision>;corrections:Record<string,ReviewDecision>;source_reviews?:Record<string,CorrectedSourceReview>};
 export type CorrectedTotals={expenses:bigint;excludedExpenses:bigint;paid:bigint;historical:bigint;excludedHistorical:bigint;correction:bigint;excludedCases:number;total:bigint};
 export const formatSignedCost=(n:bigint)=>n<0n?`−${formatCostCents(-n)}`:formatCostCents(n);
 /** Validate all bounded evidence; missing or malformed case data is not zero. */
@@ -58,20 +59,33 @@ function decision(raw:unknown,correction:boolean):ReviewDecision{
 }
 /** Independent exact-cent verification of the server's deliberately incomplete preview. */
 export function calculateCorrected(inv:CorrectedInventory,raw:unknown):{choices:CorrectedChoices;totals:CorrectedTotals}{
- if(!obj(raw)||Object.keys(raw).sort().join(',')!=='corrections,expenses,historical'||!obj(raw.expenses)||!obj(raw.historical)||!obj(raw.corrections))throw Error('Review every item');
+ if(!obj(raw)||!['corrections,expenses,historical','corrections,expenses,historical,source_reviews'].includes(Object.keys(raw).sort().join(','))||!obj(raw.expenses)||!obj(raw.historical)||!obj(raw.corrections)||('source_reviews' in raw&&!obj(raw.source_reviews)))throw Error('Review every item');
  const choices:CorrectedChoices={expenses:{},historical:{},corrections:{}};
  if(Object.keys(raw.expenses).length!==inv.historical.base.expenses.length||Object.keys(raw.historical).length!==inv.historical.historical.length||Object.keys(raw.corrections).length!==inv.cases.length)throw Error('Review every item');
  let expenses=0n,excludedExpenses=0n,paid=0n,historical=0n,excludedHistorical=0n,correction=0n,excludedCases=0;
  for(const e of inv.historical.base.expenses){const d=decision(raw.expenses[e.id],false);choices.expenses[e.id]=d;if(d.decision==='include')expenses+=costCents(e.amount);else excludedExpenses+=costCents(e.amount);}
  for(const p of inv.historical.base.paid)paid+=costCents(p.gross);
  for(const h of inv.historical.historical){const d=decision(raw.historical[h.requestId],false);choices.historical[h.requestId]=d;if(d.decision==='include'){if(h.overlappingVouchers)throw Error('Investigate historical voucher overlap');historical+=costCents(h.siteGross);}else excludedHistorical+=costCents(h.siteGross);}
- const included=new Set<string>();
+ const included=new Map<string,{ids:string[];original:bigint;effect:bigint}>();
  for(const c of inv.cases){const d=decision(raw.corrections[c.key],true);choices.corrections[c.key]=d;if(d.decision==='exclude'){excludedCases++;continue;}
   if(!c.sourceInSnapshot||c.status==='pending'||c.pendingSibling||!c.review.attribution||c.review.attribution.case_changed||c.siteChange===null)throw Error('Correction requires current resolved source evidence');
-  const source=`${c.kind}:${c.sourceId}`;if(included.has(source))throw Error('Multiple included corrections for one original');included.add(source);
+  const source=`${c.kind}:${c.sourceId}`;
   const original=c.kind==='voucher'?inv.historical.base.paid.find(p=>p.payrollId===c.sourceId)?.gross:inv.historical.historical.find(h=>h.sourceId===c.sourceId&&choices.historical[h.requestId]?.decision==='include'&&h.overlappingVouchers===0)?.siteGross;
-  if(original===undefined)throw Error('Correction original is not included');const effect=correctionAmount(c.siteChange).cents;if(costCents(original)+effect<0n)throw Error('Correction exceeds original site cost');correction+=effect;
+  if(original===undefined)throw Error('Correction original is not included');const effect=correctionAmount(c.siteChange).cents;
+  const group=included.get(source)??{ids:[],original:costCents(original),effect:0n};
+  if(group.original!==costCents(original))throw Error('Correction originals differ');group.ids.push(c.key);group.effect+=effect;included.set(source,group);correction+=effect;
  }
+ const reviews=obj(raw.source_reviews)?raw.source_reviews:{};let required=0;
+ for(const [source,group] of included){
+  if(group.original+group.effect<0n)throw Error('Correction exceeds original site cost');
+  if(group.ids.length>1){required++;const review=reviews[source],ids=group.ids.sort();
+   if(!obj(review)||Object.keys(review).sort().join(',')!=='case_ids,non_overlapping,note'||review.non_overlapping!==true||!text(review.note,300)||!Array.isArray(review.case_ids)||JSON.stringify(review.case_ids)!==JSON.stringify(ids))throw Error('Multiple included corrections require an exact distinct-effects review');
+   (choices.source_reviews??={})[source]={case_ids:ids,note:review.note,non_overlapping:true};
+  }
+ }
+ if(Object.keys(reviews).length!==required)throw Error('Unexpected or missing source review');
+ // Preserve the optional empty map for exact stored request replay.
+ if('source_reviews' in raw&&!choices.source_reviews)choices.source_reviews={};
  const result=expenses+paid+historical+correction;if(result<0n||result>=10000000000000000n)throw Error('Invalid corrected total');
  return {choices,totals:{expenses,excludedExpenses,paid,historical,excludedHistorical,correction,excludedCases,total:result}};
 }

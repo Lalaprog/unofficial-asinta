@@ -19,6 +19,18 @@ describe('corrected review response validation',()=>{
   const parsed=parseCorrectedInventory(pending,site);expect(parsed.cases[0]).toMatchObject({status:'pending',siteChange:null,pendingSibling:true});expect(()=>calculateCorrected(parsed,choices)).toThrow(/current resolved/);
   const excluded=structuredClone(choices);excluded.corrections[`voucher:${caseId}`]={decision:'exclude',reason:'Pending case investigated later'};expect(calculateCorrected(parsed,excluded).totals).toMatchObject({excludedCases:1,total:105050n});
  });
+ it('independently checks multiple same-original cases, exact assertions and the combined site amount',()=>{
+  const parsed=parseCorrectedInventory(inventory,site),second=structuredClone(parsed.cases[0]);second.id='bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb';second.key=`voucher:${second.id}`;second.siteChange='-10.00';parsed.cases.push(second);
+  const d=structuredClone(choices);d.corrections[second.key]={decision:'include',reason:'Separate review'};
+  expect(()=>calculateCorrected(parsed,d)).toThrow(/distinct-effects review/);
+  const source=`voucher:${second.sourceId}`,review={case_ids:[parsed.cases[0].key,second.key].sort(),note:'Separate original evidence checked',non_overlapping:true};
+  const withReview={...d,source_reviews:{[source]:review}};
+  expect(calculateCorrected(parsed,withReview).totals).toMatchObject({correction:-2250n,total:102800n});
+  expect(()=>calculateCorrected(parsed,{...d,source_reviews:{[source]:{...review,case_ids:[second.key]}}})).toThrow(/distinct-effects/);
+  expect(()=>calculateCorrected(parsed,{...d,source_reviews:{[source]:{...review,non_overlapping:false}}})).toThrow(/distinct-effects/);
+  expect(()=>calculateCorrected(parsed,{...withReview,source_reviews:{...withReview.source_reviews,extra:review}})).toThrow(/source review/);
+  parsed.cases[0].siteChange='-350.00';second.siteChange='-300.01';expect(()=>calculateCorrected(parsed,withReview)).toThrow(/exceeds original/);
+ });
  it('rejects malformed evidence, stale cases, excluded originals and incomplete decisions',()=>{
   const bad=structuredClone(inventory);bad.corrections[0].site_gross_change='-10.00';expect(()=>parseCorrectedInventory(bad,site)).toThrow(/split differs/);
   expect(()=>parseCorrectedInventory({...inventory,project_id:request},site)).toThrow();const parsed=parseCorrectedInventory(inventory,site);

@@ -6,7 +6,7 @@ if(process.argv.length!==2)throw Error('No arguments expected');
 const pinned=[
  ['supabase/release/development-correction-attribution.sql','9c77f30cc857a3d66cbb4e81851b76c8738c394543a1d31e79a7f643204c9ff1'],
  ['supabase/drafts/project_cost_correction_inventory.sql','8363739c53e3a5f60f208e58f779429fbd3a76907fb1e4552415092815fed1a9'],
- ['supabase/drafts/project_cost_corrected_preview.sql','103c4d2b2ccb0b38a1d23abe3f02c8cd6480e1f9012d3bbc859c3ab03de1e37a'],
+ ['supabase/drafts/project_cost_corrected_preview.sql','775af2bd36dcda536db802c2291294750442ee862ac43e464391af4226df5493'],
  ['supabase/drafts/project_cost_corrected_review_ledger.sql','a339e5c9d14cb98d0981e0ffd526b8756487cdf2971fff6cb300c21ba27b1c4d'],
 ];
 const parts=pinned.map(([path,hash])=>{const text=readFileSync(path,'utf8');if(createHash('sha256').update(text).digest('hex')!==hash)throw Error(`${path} changed; review and re-pin`);if(/^\s*(?:BEGIN|COMMIT|ROLLBACK|SAVEPOINT|RELEASE|PREPARE\s+TRANSACTION)\s*;/im.test(text)||/^\s*\\/m.test(text))throw Error(`Unexpected transaction control in ${path}`);return text;});

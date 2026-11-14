@@ -290,6 +290,29 @@ suite('coordinated finance integration rehearsal, synthetic PostgreSQL only',()=
    const retry={marker:{requestId:'70000000-0000-4000-8000-000000000097',projectId:site,actorId:founder,expectedRevision:0},raw:correctionInventory,choices:localCorrected.choices,note:'Synthetic corrected review'};
    const restored=parseStoredCorrectedAttempt(serializeCorrectedAttempt(retry,site,founder),site,founder);
    expect(restored.attempt&&savedMatchesCorrectedAttempt(parsedSaved,restored.attempt)).toBe(true);
+   // A real second resolved voucher case invalidates the first attribution's
+   // sibling snapshot. Re-review both, then bind the distinct-effects assertion
+   // to the exact selected cases; the whole exercise is rolled back to a savepoint.
+   await db.query('SAVEPOINT multi_case_review');
+   const secondVoucherCase='70000000-0000-4000-8000-000000000094';
+   await db.query("SELECT public.open_paid_payroll_adjustment($1,$2,$3,10,'Separate synthetic correction')",[secondVoucherCase,voucher,correctionSnapshot]);
+   await db.query("SELECT public.resolve_paid_payroll_adjustment($1,'no_transfer',NULL,'Separate synthetic resolution')",[secondVoucherCase]);
+   for(const [caseId,requestId,revision,gross,split] of [
+    [voucherCase,'70000000-0000-4000-8000-000000000095',1,'0.00',[]],
+    [secondVoucherCase,'70000000-0000-4000-8000-000000000096',0,'-10.00',[{project_id:site,gross_change:'-10.00'}]],
+   ] as const){
+    const evidence=(await db.query("SELECT public.project_cost_correction_attribution('voucher',$1,NULL) v",[caseId])).rows[0].v;
+    await db.query("SELECT public.record_project_cost_correction_attribution($1,'voucher',$2,$3,$4::jsonb,$5::numeric,$6::jsonb,'Synthetic separate case review',true)",[requestId,caseId,revision,JSON.stringify(evidence.case),gross,JSON.stringify(split)]);
+   }
+   const multiInventory=(await db.query('SELECT public.project_cost_correction_inventory($1) v',[site])).rows[0].v;
+   const multiChoices={...correctedChoices,corrections:{...correctedChoices.corrections,[`voucher:${secondVoucherCase}`]:{decision:'include',reason:'Separate original records'}},source_reviews:{[`voucher:${voucher}`]:{case_ids:[`voucher:${voucherCase}`,`voucher:${secondVoucherCase}`].sort(),note:'Independent gross effects checked',non_overlapping:true}}};
+   const parsedMulti=parseCorrectedInventory(multiInventory,site),localMulti=calculateCorrected(parsedMulti,multiChoices);
+   const multiPreview=(await db.query('SELECT public.project_cost_corrected_preview($1,$2::jsonb,$3::jsonb,true) v',[site,JSON.stringify(multiInventory),JSON.stringify(multiChoices)])).rows[0].v;
+   expect(verifyCorrectedTotals(multiPreview,site,localMulti.totals)).toMatchObject({correction:-3000n,total:218285n});
+   expect((await db.query(recordCorrected,['70000000-0000-4000-8000-000000000093',site,1,JSON.stringify(multiInventory),JSON.stringify(multiChoices),'Synthetic multiple-case review'])).rows[0].v).toMatchObject({revision:2,replayed:false});
+   const multiSaved=parseCorrectedSaved((await db.query('SELECT public.project_cost_corrected_review($1,NULL) v',[site])).rows[0].v,site);
+   expect(multiSaved).toMatchObject({found:true,revision:2,choices:{source_reviews:multiChoices.source_reviews},totals:{total:218285n}});
+   await db.query('ROLLBACK TO SAVEPOINT multi_case_review; RELEASE SAVEPOINT multi_case_review');
    expect((await db.query('SELECT public.project_cost_review($1) v',[site])).rows[0].v).toMatchObject({freshness:'changed',incomplete_total:'2212.85'});
    const caseRaw=(await db.query('SELECT public.project_cost_historical_review($1) v',[site])).rows[0].v;
    await db.query('SAVEPOINT flagged_historical_review');

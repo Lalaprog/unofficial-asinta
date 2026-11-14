@@ -8,7 +8,7 @@ vi.mock('@/lib/supabase/client',()=>({createClient:()=>({rpc:mock.rpc})}));
 import {CorrectedProjectCostReview} from '@/components/projects/CorrectedProjectCostReview';
 import {ProjectCostReconciliation} from '@/components/projects/ProjectCostReconciliation';
 import {correctedProjectCostReviewPreviewEnabled} from '@/lib/finance/featureAvailability';
-import {actor,caseId,choices,expense,history,inventory,result,saved,site} from './helpers/corrected-cost-ui-fixture';
+import {actor,caseId,choices,expense,history,inventory,result,saved,site,voucher} from './helpers/corrected-cost-ui-fixture';
 const request='bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb',key=`corrected-cost-review:${actor}:${site}`;
 function standardRpc(){mock.rpc.mockImplementation(async(name:string,args:Record<string,unknown>)=>{
  if(name==='project_cost_correction_inventory')return {data:inventory,error:null};
@@ -33,6 +33,23 @@ describe('corrected project review UI, gated experimental candidate',()=>{
   fireEvent.change(screen.getByLabelText(`Reason for correction voucher:${caseId}`),{target:{value:'Changed reason'}});expect(screen.queryByText('Incomplete reviewed total: ₱1,038.00')).toBeNull();expect((screen.getByRole('button',{name:'Save corrected review'}) as HTMLButtonElement).disabled).toBe(true);
   fireEvent.change(screen.getByLabelText(`Reason for correction voucher:${caseId}`),{target:{value:'Original documents checked'}});fireEvent.click(screen.getByRole('button',{name:'Verify corrected preview'}));await screen.findByText('Incomplete reviewed total: ₱1,038.00');fireEvent.click(screen.getByRole('checkbox',{name:/I reviewed the evidence and decisions/}));fireEvent.click(screen.getByRole('button',{name:'Save corrected review'}));
   await screen.findByText(/Corrected review recorded and verified/);expect(sessionStorage.getItem(key)).toBeNull();expect(mock.rpc.mock.calls.filter(([name])=>name==='record_project_cost_corrected_review')).toHaveLength(1);expect(screen.getByText(/Corrected revision 1/)).toBeTruthy();
+ });
+ it('requires a specific non-overlap assertion for multiple corrections and clears it when decisions change',async()=>{
+  const secondId='cccccccc-cccc-4ccc-8ccc-cccccccccccc',multi=structuredClone(inventory),first=multi.corrections[0],second=structuredClone(first);
+  second.case_id=secondId;second.evidence.case_id=secondId;second.evidence.case.id=secondId;second.evidence.case.related_cases[0].id=secondId;
+  const siblings=[first.evidence.case.related_cases[0],second.evidence.case.related_cases[0]];
+  first.evidence.case.related_cases=structuredClone(siblings);second.evidence.case.related_cases=structuredClone(siblings);
+  first.evidence.attribution.case_snapshot=structuredClone(first.evidence.case);second.evidence.attribution.case_snapshot=structuredClone(second.evidence.case);
+  multi.corrections.push(second);multi.historical_review.base.adjustment_cases.push({...multi.historical_review.base.adjustment_cases[0],case_id:secondId});
+  mock.rpc.mockImplementation(async(name:string)=>name==='project_cost_correction_inventory'?{data:multi,error:null}:name==='project_cost_corrected_preview'?{data:{...result,correction_gross:'-25.00',incomplete_total:'1025.50'},error:null}:{data:null,error:Error('unexpected')});
+  render(panel());fireEvent.click(screen.getByRole('button',{name:'Review costs including worker corrections'}));fireEvent.click(screen.getByRole('button',{name:'Load corrected evidence'}));await screen.findByText(/Snapshot captured/);
+  fireEvent.click(within(screen.getByRole('group',{name:`Corrected expense ${expense}`})).getByLabelText('Include expense'));fireEvent.click(within(screen.getByRole('group',{name:`Corrected historical ${history}`})).getByLabelText('Include historical original'));
+  for(const id of [caseId,secondId]){fireEvent.click(within(screen.getByRole('group',{name:`Corrected case voucher:${id}`})).getByLabelText('Include correction'));fireEvent.change(screen.getByLabelText(`Reason for correction voucher:${id}`),{target:{value:'Separate records checked'}});}
+  const verify=screen.getByRole('button',{name:'Verify corrected preview'}) as HTMLButtonElement;expect(verify.disabled).toBe(true);
+  const source=`voucher:${voucher}`,noteLabel=`Why these case effects are distinct for ${source}`;
+  fireEvent.change(screen.getByLabelText(noteLabel),{target:{value:'Different correction documents'}});fireEvent.click(screen.getByRole('checkbox',{name:/I reviewed these exact cases/}));expect(verify.disabled).toBe(false);fireEvent.click(verify);await screen.findByText('Incomplete reviewed total: ₱1,025.50');
+  expect(mock.rpc.mock.calls.find(([name])=>name==='project_cost_corrected_preview')?.[1]).toMatchObject({p_choices:{source_reviews:{[source]:{case_ids:[`voucher:${caseId}`,`voucher:${secondId}`].sort(),note:'Different correction documents',non_overlapping:true}}}});
+  fireEvent.change(screen.getByLabelText(`Reason for correction voucher:${secondId}`),{target:{value:'Changed decision reason'}});expect(verify.disabled).toBe(true);expect((screen.getByRole('checkbox',{name:/I reviewed these exact cases/}) as HTMLInputElement).checked).toBe(false);
  });
  it('restores an exact uncertain request after navigation and retries the same evidence',async()=>{let writes=0;mock.rpc.mockImplementation(async(name:string,args:Record<string,unknown>)=>name==='record_project_cost_corrected_review'?(++writes===1?{data:null,error:Error('lost')}:{data:{request_id:request,project_id:site,revision:1,replayed:true},error:null}):name==='project_cost_correction_inventory'?{data:inventory,error:null}:name==='project_cost_corrected_preview'?{data:result,error:null}:name==='project_cost_corrected_review'?{data:args.p_revision===null?{project_id:site,found:false,latest_revision:0}:saved(request),error:null}:{data:null,error:Error('unexpected')});
   await prepare();fireEvent.click(screen.getByRole('checkbox',{name:/I reviewed the evidence and decisions/}));fireEvent.click(screen.getByRole('button',{name:'Save corrected review'}));await screen.findByText(/outcome is unconfirmed/);const stored=JSON.parse(sessionStorage.getItem(key)!);expect(stored.version).toBe(1);expect(stored.raw).toEqual(inventory);expect(stored.choices).toEqual(choices);

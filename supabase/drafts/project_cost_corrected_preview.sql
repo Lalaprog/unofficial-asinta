@@ -9,10 +9,12 @@ DO $preflight$ BEGIN
 END $preflight$;
 CREATE FUNCTION public.project_cost_corrected_preview(p_project uuid,p_snapshot jsonb,p_choices jsonb,p_ack boolean) RETURNS jsonb
 LANGUAGE plpgsql STABLE SECURITY DEFINER SET search_path='' AS $$
-DECLARE v_now jsonb;v_base jsonb;v_history jsonb;v_cases jsonb;v_group text;v_choices jsonb;v_row jsonb;v_choice jsonb;v_case jsonb;v_evidence jsonb;v_key text;v_source text;v_original numeric;v_effect numeric;v_exp numeric:=0;v_excluded_exp numeric:=0;v_paid numeric:=0;v_hist numeric:=0;v_excluded_hist numeric:=0;v_correction numeric:=0;v_excluded_cases integer:=0;v_total numeric;v_seen_sources text[]:='{}';
+DECLARE v_now jsonb;v_base jsonb;v_history jsonb;v_cases jsonb;v_group text;v_choices jsonb;v_row jsonb;v_choice jsonb;v_case jsonb;v_evidence jsonb;v_key text;v_source text;v_source_key text;v_original numeric;v_effect numeric;v_exp numeric:=0;v_excluded_exp numeric:=0;v_paid numeric:=0;v_hist numeric:=0;v_excluded_hist numeric:=0;v_correction numeric:=0;v_excluded_cases integer:=0;v_total numeric;v_sources jsonb:='{}'::jsonb;v_source_reviews jsonb;v_source_entry jsonb;v_expected_ids jsonb;v_required_reviews integer:=0;
 BEGIN
  IF auth.uid() IS NULL OR NOT coalesce(public.is_founder(),false) OR NOT coalesce(public.session_assurance_satisfied(),false) THEN RAISE EXCEPTION 'Founder access with required assurance required' USING ERRCODE='42501'; END IF;
- IF p_project IS NULL OR p_ack IS DISTINCT FROM true OR jsonb_typeof(p_snapshot) IS DISTINCT FROM 'object' OR octet_length(p_snapshot::text)>2097152 OR jsonb_typeof(p_choices) IS DISTINCT FROM 'object' OR octet_length(p_choices::text)>500000 OR (SELECT count(*) FROM jsonb_object_keys(p_choices))<>3 OR NOT(p_choices ?& ARRAY['expenses','historical','corrections']) THEN RAISE EXCEPTION 'Invalid corrected review input' USING ERRCODE='22023'; END IF;
+ IF p_project IS NULL OR p_ack IS DISTINCT FROM true OR jsonb_typeof(p_snapshot) IS DISTINCT FROM 'object' OR octet_length(p_snapshot::text)>2097152 OR jsonb_typeof(p_choices) IS DISTINCT FROM 'object' OR octet_length(p_choices::text)>500000 OR (SELECT count(*) FROM jsonb_object_keys(p_choices)) NOT IN (3,4) OR NOT(p_choices ?& ARRAY['expenses','historical','corrections']) OR (SELECT count(*) FROM jsonb_object_keys(p_choices))<>(CASE WHEN p_choices ? 'source_reviews' THEN 4 ELSE 3 END) THEN RAISE EXCEPTION 'Invalid corrected review input' USING ERRCODE='22023'; END IF;
+ v_source_reviews:=coalesce(p_choices->'source_reviews','{}'::jsonb);
+ IF jsonb_typeof(v_source_reviews) IS DISTINCT FROM 'object' THEN RAISE EXCEPTION 'Invalid source reviews' USING ERRCODE='22023'; END IF;
  -- Compare the server's statement snapshot with the full reviewed inventory.
  -- Capture time alone is not financial evidence. A later change still requires
  -- a new read: this preview neither locks writers nor closes a period.
@@ -64,11 +66,7 @@ BEGIN
   IF coalesce((v_row->>'source_in_snapshot')::boolean,false) IS NOT TRUE OR v_evidence->'attribution' IS NULL OR v_evidence->'attribution'='null'::jsonb OR (v_evidence->'attribution'->>'case_changed')::boolean IS DISTINCT FROM false OR coalesce(v_case->>'status','') NOT IN ('settled_external','no_transfer') OR jsonb_typeof(v_case->'related_cases') IS DISTINCT FROM 'array' OR EXISTS(SELECT 1 FROM jsonb_array_elements(CASE WHEN jsonb_typeof(v_case->'related_cases')='array' THEN v_case->'related_cases' ELSE '[]'::jsonb END) s WHERE coalesce(s->>'status','') NOT IN ('settled_external','no_transfer')) OR v_row->>'site_gross_change' IS NULL THEN RAISE EXCEPTION 'Included correction lacks current resolved source evidence' USING ERRCODE='22023'; END IF;
   v_source:=CASE v_row->>'kind' WHEN 'voucher' THEN v_case->>'payroll_id' WHEN 'external_worker' THEN v_case->>'external_worker_id' ELSE NULL END;
   IF v_source IS NULL THEN RAISE EXCEPTION 'Correction source unavailable' USING ERRCODE='22023'; END IF;
-  -- Conservative limitation: no two included cases against the same original
-  -- in this preview. A human must investigate and exclude possible duplicates;
-  -- legitimate multiple incremental corrections require a future workflow.
-  IF (v_row->>'kind'||':'||v_source)=ANY(v_seen_sources) THEN RAISE EXCEPTION 'Multiple included corrections for one original require separate reconciliation' USING ERRCODE='22023'; END IF;
-  v_seen_sources:=array_append(v_seen_sources,v_row->>'kind'||':'||v_source);
+  v_source_key:=(v_row->>'kind')||':'||v_source;
   IF v_row->>'kind'='voucher' THEN
    SELECT (a->>'gross')::numeric INTO v_original FROM jsonb_array_elements(v_base->'paid_allocations') a WHERE a->>'payroll_id'=v_source;
   ELSE
@@ -76,9 +74,28 @@ BEGIN
   END IF;
   IF v_original IS NULL THEN RAISE EXCEPTION 'Correction original is not included in this site review' USING ERRCODE='22023'; END IF;
   v_effect:=(v_row->>'site_gross_change')::numeric;
-  IF v_effect='NaN'::numeric OR abs(v_effect)>=10000000000 OR v_effect<>round(v_effect,2) OR v_original+v_effect<0 THEN RAISE EXCEPTION 'Correction exceeds or invalidates original site cost' USING ERRCODE='22023'; END IF;
+  IF v_effect='NaN'::numeric OR abs(v_effect)>=10000000000 OR v_effect<>round(v_effect,2) THEN RAISE EXCEPTION 'Correction exceeds or invalidates original site cost' USING ERRCODE='22023'; END IF;
+  v_source_entry:=coalesce(v_sources->v_source_key,jsonb_build_object('original',v_original,'effect',0,'cases','[]'::jsonb));
+  IF (v_source_entry->>'original')::numeric IS DISTINCT FROM v_original THEN RAISE EXCEPTION 'Correction originals differ' USING ERRCODE='22023'; END IF;
+  v_source_entry:=jsonb_set(v_source_entry,'{effect}',to_jsonb((v_source_entry->>'effect')::numeric+v_effect));
+  v_source_entry:=jsonb_set(v_source_entry,'{cases}',(v_source_entry->'cases')||jsonb_build_array(v_key));
+  v_sources:=jsonb_set(v_sources,ARRAY[v_source_key],v_source_entry,true);
   v_correction:=v_correction+v_effect;
  END LOOP;
+ -- An explicit, auditable assertion is required for every original with more
+ -- than one included case. It binds the exact selected case IDs and states the
+ -- reviewed effects are distinct, not duplicate/overlapping. This is human
+ -- evidence, not proof that the assertion or the source records are complete.
+ FOR v_source_key,v_source_entry IN SELECT key,value FROM jsonb_each(v_sources) LOOP
+  IF (v_source_entry->>'original')::numeric+(v_source_entry->>'effect')::numeric<0 THEN RAISE EXCEPTION 'Correction exceeds or invalidates original site cost' USING ERRCODE='22023'; END IF;
+  IF jsonb_array_length(v_source_entry->'cases')>1 THEN
+   v_required_reviews:=v_required_reviews+1;
+   SELECT jsonb_agg(value ORDER BY value COLLATE "C") INTO v_expected_ids FROM jsonb_array_elements_text(v_source_entry->'cases');
+   v_choice:=v_source_reviews->v_source_key;
+   IF jsonb_typeof(v_choice) IS DISTINCT FROM 'object' OR (SELECT count(*) FROM jsonb_object_keys(CASE WHEN jsonb_typeof(v_choice)='object' THEN v_choice ELSE '{}'::jsonb END))<>3 OR NOT(v_choice ?& ARRAY['case_ids','note','non_overlapping']) OR v_choice->'case_ids' IS DISTINCT FROM v_expected_ids OR v_choice->'non_overlapping' IS DISTINCT FROM 'true'::jsonb OR jsonb_typeof(v_choice->'note') IS DISTINCT FROM 'string' OR length(btrim(v_choice->>'note')) NOT BETWEEN 1 AND 300 OR btrim(v_choice->>'note') IS DISTINCT FROM v_choice->>'note' OR (v_choice->>'note') ~ '[[:cntrl:]]' THEN RAISE EXCEPTION 'Multiple included corrections require an exact distinct-effects review' USING ERRCODE='22023'; END IF;
+  END IF;
+ END LOOP;
+ IF (SELECT count(*) FROM jsonb_object_keys(v_source_reviews))<>v_required_reviews THEN RAISE EXCEPTION 'Unexpected or missing source review' USING ERRCODE='22023'; END IF;
  v_total:=v_exp+v_paid+v_hist+v_correction;
  IF v_total<0 OR v_total>=100000000000000 THEN RAISE EXCEPTION 'Invalid corrected total' USING ERRCODE='22023'; END IF;
  RETURN jsonb_build_object('project_id',p_project,'included_expenses',v_exp::numeric(16,2)::text,'excluded_expenses',v_excluded_exp::numeric(16,2)::text,'paid_gross',v_paid::numeric(16,2)::text,'historical_gross',v_hist::numeric(16,2)::text,'excluded_historical',v_excluded_hist::numeric(16,2)::text,'correction_gross',v_correction::numeric(16,2)::text,'excluded_cases',v_excluded_cases,'incomplete_total',v_total::numeric(16,2)::text,'incomplete',true);
