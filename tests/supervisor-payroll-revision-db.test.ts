@@ -52,6 +52,15 @@ describe('Supervisor payroll revision upgrade (synthetic only)',()=>{
   await db.exec(`SET test.uid='${founder}'; SET test.assurance='no'`);await expect(db.query('SELECT public.supervisor_payroll_revision_history($1,NULL)',[id(10)])).rejects.toThrow(/Founder access/i);
   await db.exec('RESET ROLE');expect((await db.query<{anon:boolean;service:boolean}>("SELECT has_function_privilege('anon','public.supervisor_payroll_revision_history(uuid,bigint)','EXECUTE') anon,has_function_privilege('service_role','public.supervisor_payroll_revision_history(uuid,bigint)','EXECUTE') service")).rows[0]).toEqual({anon:false,service:false});
  }finally{await db.close();}},30000);
+ it('paginates 51 revision events without skipping or duplicating and rejects conflicting evidence',async()=>{const db=await setup();try{
+  await create(db);await db.exec('RESET ROLE');await db.exec(`BEGIN; ${sql('supervisor_payroll_revision_history')} COMMIT;`);
+  await db.exec(`INSERT INTO public.supervisor_payroll_revision_events(request_id,payroll_id,actor_id,action,expected_revision,arguments,before_row,after_row) SELECT ('88000000-0000-4000-8000-'||lpad(n::text,12,'0'))::uuid,'${id(10)}','${founder}','refresh',n,'{}',to_jsonb(p),to_jsonb(p) FROM generate_series(0,50) n CROSS JOIN public.supervisor_period_payroll p WHERE p.id='${id(10)}'; SET ROLE authenticated; SET test.uid='${founder}'; SET test.assurance='yes'`);
+  const first=(await db.query<{v:{items:{revision:string}[];has_more:boolean}}>('SELECT public.supervisor_payroll_revision_history($1,NULL) v',[id(10)])).rows[0].v;
+  expect(first.items).toHaveLength(50);expect(first.has_more).toBe(true);expect(first.items[0].revision).toBe('50');expect(first.items[49].revision).toBe('1');
+  const second=(await db.query<{v:{items:{revision:string}[];has_more:boolean}}>('SELECT public.supervisor_payroll_revision_history($1,1) v',[id(10)])).rows[0].v;expect(second.items.map(x=>x.revision)).toEqual(['0']);expect(second.has_more).toBe(false);
+  await db.exec(`RESET ROLE; INSERT INTO public.supervisor_payroll_revision_events(request_id,payroll_id,actor_id,action,expected_revision,arguments,before_row,after_row) SELECT '${id(49)}','${id(10)}','${founder}','refresh',0,'{}',to_jsonb(p),to_jsonb(p) FROM public.supervisor_period_payroll p WHERE p.id='${id(10)}'; SET ROLE authenticated`);
+  await expect(db.query('SELECT public.supervisor_payroll_revision_history($1,NULL)',[id(10)])).rejects.toThrow(/Duplicate revision evidence/i);
+ }finally{await db.close();}},30000);
  it('rolls back the upgrade if a legacy decision grant is inherited',async()=>{
   const db=new PGlite();try{await db.exec(baseFixture);for(const name of ['supervisor_table_foundation','supervisor_rpc_rollout','supervisor_payroll_preview','supervisor_payroll_ledger'])await db.exec(`BEGIN; ${sql(name)} COMMIT;`);
    await db.exec('CREATE ROLE legacy_inherited; GRANT EXECUTE ON FUNCTION public.transition_supervisor_period_payroll(uuid,uuid,text,date,boolean) TO legacy_inherited; GRANT legacy_inherited TO authenticated');
