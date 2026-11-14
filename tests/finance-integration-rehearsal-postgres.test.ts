@@ -111,6 +111,8 @@ suite('coordinated finance integration rehearsal, synthetic PostgreSQL only',()=
    // Correction evidence and inventory are drafts, installed here only inside
    // the disposable rolled-back rehearsal, not in the development database.
    await db.query(readFileSync('supabase/drafts/project_cost_correction_attribution.sql','utf8'));
+   // Separate candidate: validated original-site context only; no cross-site posting.
+   await db.query(readFileSync('supabase/drafts/project_cost_correction_original_context.sql','utf8'));
    await db.query(readFileSync('supabase/drafts/project_cost_correction_inventory.sql','utf8'));
    await db.query(readFileSync('supabase/drafts/project_cost_corrected_preview.sql','utf8'));
    await db.query(readFileSync('supabase/drafts/project_cost_corrected_review_ledger.sql','utf8'));
@@ -258,6 +260,10 @@ suite('coordinated finance integration rehearsal, synthetic PostgreSQL only',()=
    // Inventory links both original source types, distinguishing absent evidence
    // from an explicitly reviewed zero, without changing a saved cost review.
    const voucherCase='70000000-0000-4000-8000-000000000012';
+   // Original sites are validated through the real bounded readers; this is
+   // context, not proof of a human decision or a cross-site posting.
+   expect((await db.query("SELECT public.project_cost_correction_original_context('voucher',$1) v",[voucherCase])).rows[0].v).toMatchObject({source_id:voucher,original_gross:'800.25',sites:[{project_id:site,gross:'800.25'}]});
+   expect((await db.query("SELECT public.project_cost_correction_original_context('external_worker',$1) v",[historicalCase])).rows[0].v).toMatchObject({source_id:historicalId,original_gross:'600.00',sites:[{project_id:site,gross:'400.25'},{project_id:siteTwo,gross:'199.75'}]});
    let correctionInventory=(await db.query('SELECT public.project_cost_correction_inventory($1) v',[site])).rows[0].v;
    expect(correctionInventory.corrections).toEqual(expect.arrayContaining([
     expect.objectContaining({kind:'voucher',case_id:voucherCase,source_in_snapshot:true,site_gross_change:null}),

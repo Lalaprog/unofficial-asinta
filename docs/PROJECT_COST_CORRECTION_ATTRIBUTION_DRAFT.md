@@ -48,6 +48,12 @@ A further read-only development catalog inspection found the nine selected sourc
 
 A PostgreSQL concurrency test models an unlocked source changing after a review captures its snapshot but before its transaction commits, and verifies that a later read reports changed evidence. This is an intentional limitation, not a source lock or a guarantee that a user sees every subsequent change. The fixture stubs the inventory; it does not establish the behavior of all real source writers.
 
+## Original-site context for cross-site work (uninstalled)
+
+`supabase/drafts/project_cost_correction_original_context.sql` is a separate, read-only candidate for establishing where the *original* voucher or external-worker assertion was allocated. It reuses the verified case reader and the bounded historical site review for every original site, requires the original site amounts to sum to the recorded gross, rejects inconsistent identities and historical voucher overlap, and fails rather than returning a partial result for zero or more than 50 sites. Its local synthetic tests use stubbed dependency readers; the finance PostgreSQL CI rehearsal also exercises the real dependency chain. Check that CI result before relying on it. The function is not installed or connected to the UI, inventory, preview or held release artifact.
+
+This is evidence context, not a site inclusion decision, proof of external payment, proof that the original was included in another review, a cross-project balance or a guarantee of future freshness. The bounded site reader can reject an otherwise valid source if unrelated site evidence exceeds its limits or is inconsistent. A source may change after the statement snapshot; privileged writers and concurrency still require review. Cross-site reallocation into a site without an included original **remains blocked**. The future integration must bind original-site evidence and explicit decisions across sites without assuming missing evidence is zero or counting the same cost twice.
+
 Before use, verify the latest CI's real PostgreSQL chain including the client parser, test real authenticated/browser/accessibility and uncertain-outcome flows, audit the presentation of the two review histories, validate the new human-attested multi-case workflow, design cross-site reallocation safely, audit real writer locks and privileges, run hosted rollback rehearsal and establish recovery. Never silently assume an unreviewed case is zero.
 
 
