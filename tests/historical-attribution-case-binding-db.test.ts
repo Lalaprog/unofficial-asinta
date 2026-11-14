@@ -100,6 +100,10 @@ describe('historical attribution case-binding held candidate',()=>{
    await expect(db.query(original,[id(2),id(1),JSON.stringify(source),JSON.stringify(split),'Reviewed',true])).rejects.toThrow(/permission denied/);
    await expect(db.query('SELECT * FROM public.historical_attribution_write_permits')).rejects.toThrow(/permission denied/);
    await expect(run(id(2),reviewed,{note:''})).rejects.toThrow();
+   await db.exec("RESET ROLE;CREATE FUNCTION public.fail_bound_barrier_test() RETURNS trigger LANGUAGE plpgsql AS $$BEGIN RAISE EXCEPTION 'binding failure';END$$;CREATE TRIGGER fail_bound_barrier_test BEFORE INSERT ON public.historical_attribution_case_bindings FOR EACH ROW EXECUTE FUNCTION public.fail_bound_barrier_test();SET ROLE authenticated");
+   await expect(run(id(2),reviewed)).rejects.toThrow(/binding failure/);
+   await db.exec('RESET ROLE');for(const table of ['historical_attribution_write_permits','historical_worker_attributions','historical_worker_attribution_sites','historical_attribution_case_bindings'])expect((await db.query<{n:number}>(`SELECT count(*)::int n FROM public.${table}`)).rows[0].n).toBe(0);
+   await db.exec('DROP TRIGGER fail_bound_barrier_test ON public.historical_attribution_case_bindings;SET ROLE authenticated');
    expect((await run(id(2),reviewed)).rows[0].v.replayed).toBe(false);expect((await run(id(2),reviewed)).rows[0].v.replayed).toBe(true);
    await db.exec('RESET ROLE');
    expect((await db.query<{n:number}>('SELECT count(*)::int n FROM public.historical_attribution_write_permits')).rows[0].n).toBe(0);
