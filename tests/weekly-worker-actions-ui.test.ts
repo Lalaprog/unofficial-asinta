@@ -134,9 +134,18 @@ describe('revision-aware draft refresh UI (independent gate)',()=>{
   render(React.createElement(WeeklyWorkerActions,{...props,row:existing}));fireEvent.click(screen.getByRole('button',{name:'Retry exact refresh'}));await screen.findByText(/Refresh outcome not confirmed/);
   expect(mock.rpc.mock.calls.filter(c=>c[0]==='refresh_weekly_worker_draft')).toHaveLength(0);expect(sessionStorage.length).toBe(1);
  });
+ it.each(['changed refresh','new return'])('does not send a refresh when %s appears during the voucher read',async(change)=>{
+  enable();vi.stubEnv('NEXT_PUBLIC_WEEKLY_WORKER_RETURN_PREVIEW','true');const refreshKey=JSON.stringify(['weekly-worker-refresh-v1','founder',worker,start]),returnKey=JSON.stringify(['weekly-worker-return-v1','founder',worker,start]);
+  const attempt={request,payroll:id,revision:0};sessionStorage.setItem(refreshKey,JSON.stringify(attempt));let resolve!:(value:unknown)=>void;mock.rpc.mockReturnValueOnce(new Promise(r=>{resolve=r;}));
+  render(React.createElement(WeeklyWorkerActions,{...props,row:existing}));fireEvent.click(screen.getByRole('button',{name:'Retry exact refresh'}));
+  if(change==='changed refresh')sessionStorage.setItem(refreshKey,JSON.stringify({...attempt,revision:1}));else sessionStorage.setItem(returnKey,JSON.stringify({...attempt,reason:'Other request'}));
+  resolve({data:version(0),error:null});await screen.findByText(/Refresh outcome not confirmed/);expect(mock.rpc.mock.calls.filter(c=>c[0]==='refresh_weekly_worker_draft')).toHaveLength(0);const protectedKey=change==='changed refresh'?refreshKey:returnKey,protectedValue=sessionStorage.getItem(protectedKey);expect(protectedValue).not.toBeNull();
+  fireEvent.click(screen.getByRole('button',{name:'Review stopping retry'}));fireEvent.click(screen.getByRole('button',{name:'I investigated; stop retrying'}));expect(await screen.findByText(/Could not clear retry record/)).toBeTruthy();expect(sessionStorage.getItem(protectedKey)).toBe(protectedValue);
+ });
  it('fails closed on corrupt or unavailable retry storage without sending a refresh',async()=>{
   enable();sessionStorage.setItem(JSON.stringify(['weekly-worker-refresh-v1','founder',worker,start]),'broken');
   render(React.createElement(WeeklyWorkerActions,{...props,row:existing}));expect(await screen.findByText(/refresh or return may have been sent/)).toBeTruthy();expect(screen.queryByRole('button',{name:'Load voucher details'})).toBeNull();expect(mock.rpc).not.toHaveBeenCalled();
+  fireEvent.click(screen.getByRole('button',{name:'Review stopping retry'}));fireEvent.click(screen.getByRole('button',{name:'I investigated; stop retrying'}));expect(await screen.findByText(/Retry stopped/)).toBeTruthy();expect(sessionStorage.length).toBe(0);
  });
 });
 
@@ -182,6 +191,14 @@ describe('approved voucher return and revision-bound payment UI',()=>{
   const view=render(React.createElement(WeeklyWorkerActions,{...props,row:existing}));fireEvent.click(screen.getByRole('button',{name:'Retry exact return'}));await screen.findByText(/Return outcome not confirmed/);expect(mock.rpc.mock.calls.filter(c=>c[0]==='return_weekly_worker_to_draft')).toHaveLength(0);view.unmount();sessionStorage.clear();mock.rpc.mockReset();
   mock.rpc.mockImplementation(async(name:string)=>name==='weekly_worker_draft_details'?{data:{...details('approved'),draft_revision:2},error:null}:{data:null,error:{message:'Voucher revision changed'}});
   render(React.createElement(WeeklyWorkerActions,{...props,row:existing}));fireEvent.click(screen.getByRole('button',{name:'Load voucher details'}));await screen.findByText(/Saved status: approved/);fireEvent.click(screen.getByRole('button',{name:'Review external payment'}));fireEvent.change(screen.getByLabelText('Actual external payment date'),{target:{value:end}});fireEvent.click(screen.getByRole('checkbox',{name:/I verified the external payment/}));fireEvent.click(screen.getByRole('button',{name:'Record payment'}));await screen.findByText(/Voucher revision changed/);expect(screen.queryByText(/Saved status: paid/)).toBeNull();
+ });
+ it.each(['changed return','new refresh'])('does not send a return when %s appears during the voucher read',async(change)=>{
+  enable();const refreshKey=JSON.stringify(['weekly-worker-refresh-v1','founder',worker,start]),returnKey=JSON.stringify(['weekly-worker-return-v1','founder',worker,start]);
+  const attempt={request,payroll:id,revision:0,reason:'Attendance'};sessionStorage.setItem(returnKey,JSON.stringify(attempt));let resolve!:(value:unknown)=>void;mock.rpc.mockReturnValueOnce(new Promise(r=>{resolve=r;}));
+  render(React.createElement(WeeklyWorkerActions,{...props,row:existing}));fireEvent.click(screen.getByRole('button',{name:'Retry exact return'}));
+  if(change==='changed return')sessionStorage.setItem(returnKey,JSON.stringify({...attempt,reason:'Changed'}));else sessionStorage.setItem(refreshKey,JSON.stringify({request,payroll:id,revision:0}));
+  resolve({data:{...details('approved'),draft_revision:0},error:null});await screen.findByText(/Return outcome not confirmed/);expect(mock.rpc.mock.calls.filter(c=>c[0]==='return_weekly_worker_to_draft')).toHaveLength(0);const protectedKey=change==='changed return'?returnKey:refreshKey,protectedValue=sessionStorage.getItem(protectedKey);expect(protectedValue).not.toBeNull();
+  fireEvent.click(screen.getByRole('button',{name:'Review stopping retry'}));fireEvent.click(screen.getByRole('button',{name:'I investigated; stop retrying'}));expect(await screen.findByText(/Could not clear retry record/)).toBeTruthy();expect(sessionStorage.getItem(protectedKey)).toBe(protectedValue);
  });
  it('fails closed when result is stale or retry storage is corrupted',async()=>{
   enable();vi.spyOn(crypto,'randomUUID').mockReturnValue(request);let count=0;mock.rpc.mockImplementation(async(name:string)=>name==='weekly_worker_draft_details'?{data:{...details(count++<2?'approved':'draft'),draft_revision:count<=2?0:2},error:null}:{data:{payroll_id:id,replayed:false,revision:1},error:null});

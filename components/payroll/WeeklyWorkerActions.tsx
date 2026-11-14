@@ -22,9 +22,9 @@ export function WeeklyWorkerActions({row,start,end,userId,projects,previewDate}:
  const returnStorageKey=JSON.stringify(['weekly-worker-return-v1',userId,row.worker.id,start]);
  const [retryReady,setRetryReady]=useState(!refreshEnabled),[retryError,setRetryError]=useState(false),[pending,setPending]=useState<WeeklyRefreshAttempt|null>(null),[stopRetry,setStopRetry]=useState(false);
  const viewKey=JSON.stringify([storageKey,previewDate,refreshEnabled,returnEnabled]);
- const busy=useRef(false),mounted=useRef(true),activeKey=useRef(viewKey);activeKey.current=viewKey;
- useEffect(()=>{mounted.current=true;setRetryReady(!refreshEnabled);setPending(null);setPendingReturn(null);setReturnReason('');setReturnAck(false);setRetryError(false);setStopRetry(false);setDetails(null);setMessage('');setLocked(false);setConfirm(null);setSaving(false);
-  if(refreshEnabled){try{const saved=sessionStorage.getItem(storageKey);setPending(saved?parseWeeklyRefreshAttempt(JSON.parse(saved)):null);if(returnEnabled){const returned=sessionStorage.getItem(returnStorageKey);setPendingReturn(returned?parseWeeklyReturnAttempt(JSON.parse(returned)):null);}}catch{setRetryError(true);}setRetryReady(true);}
+ const busy=useRef(false),mounted=useRef(true),activeKey=useRef(viewKey),observedRetry=useRef<{refresh:string|null;returned:string|null}|null>(null);activeKey.current=viewKey;
+ useEffect(()=>{mounted.current=true;observedRetry.current=null;setRetryReady(!refreshEnabled);setPending(null);setPendingReturn(null);setReturnReason('');setReturnAck(false);setRetryError(false);setStopRetry(false);setDetails(null);setMessage('');setLocked(false);setConfirm(null);setSaving(false);
+  if(refreshEnabled){try{const saved=sessionStorage.getItem(storageKey),returned=returnEnabled?sessionStorage.getItem(returnStorageKey):null;observedRetry.current={refresh:saved,returned};setPending(saved?parseWeeklyRefreshAttempt(JSON.parse(saved)):null);if(returnEnabled)setPendingReturn(returned?parseWeeklyReturnAttempt(JSON.parse(returned)):null);}catch{setRetryError(true);}setRetryReady(true);}
   return()=>{mounted.current=false;};
  },[refreshEnabled,returnEnabled,returnStorageKey,storageKey,viewKey]);
  const existing=row.vouchers.length===1&&row.vouchers[0].period_start===start&&row.vouchers[0].period_end===end?row.vouchers[0]:null;
@@ -50,12 +50,15 @@ export function WeeklyWorkerActions({row,start,end,userId,projects,previewDate}:
    const saved=sessionStorage.getItem(storageKey);
    if(saved&&JSON.stringify(parseWeeklyRefreshAttempt(JSON.parse(saved)))!==JSON.stringify(attempt))throw new Error('A different retry is pending');
    if(!saved){sessionStorage.setItem(storageKey,JSON.stringify(attempt));}
-   if(JSON.stringify(parseWeeklyRefreshAttempt(JSON.parse(sessionStorage.getItem(storageKey)||'null')))!==JSON.stringify(attempt))throw new Error('Could not preserve the exact retry');
+   const preserved=sessionStorage.getItem(storageKey);if(JSON.stringify(parseWeeklyRefreshAttempt(JSON.parse(preserved||'null')))!==JSON.stringify(attempt))throw new Error('Could not preserve the exact retry');
+   if(observedRetry.current)observedRetry.current.refresh=preserved;
    stored=true;if(mounted.current&&activeKey.current===viewKey){setPending(attempt);setConfirm(null);}
    // Revalidate the worker and original period even for a retry recovered from
    // browser storage; never use storage as authority for a financial target.
    await read(attempt.payroll);
    if(!mounted.current||activeKey.current!==viewKey)return;
+   if(JSON.stringify(parseWeeklyRefreshAttempt(JSON.parse(sessionStorage.getItem(storageKey)||'null')))!==JSON.stringify(attempt))throw new Error('Retry record changed');
+   if(returnEnabled&&sessionStorage.getItem(returnStorageKey)!==null)throw new Error('A return retry is pending');
    if(getManilaClock().dateIso!==previewDate)throw new Error('Philippine date changed');
    const {data,error}=await createClient().rpc('refresh_weekly_worker_draft',{p_request:attempt.request,p_id:attempt.payroll,p_expected_revision:attempt.revision});
    if(error)throw new Error(error.message);
@@ -67,7 +70,7 @@ export function WeeklyWorkerActions({row,start,end,userId,projects,previewDate}:
     !Array.isArray(received.unmarked_dates)||JSON.stringify(received.unmarked_dates)!==JSON.stringify(c.unmarked_dates))throw new Error('Draft changed after refresh; investigate before proceeding');
    if(!mounted.current||activeKey.current!==viewKey)return;
    if(JSON.stringify(parseWeeklyRefreshAttempt(JSON.parse(sessionStorage.getItem(storageKey)||'null')))!==JSON.stringify(attempt))throw new Error('Retry record changed');
-   sessionStorage.removeItem(storageKey);
+   sessionStorage.removeItem(storageKey);if(observedRetry.current)observedRetry.current.refresh=null;
    if(mounted.current&&activeKey.current===viewKey){setPending(null);setDetails(updated);setConfirm(null);setStopRetry(false);setMessage('Draft refreshed. Review the new saved revision and source records before approval.');}
   }catch(e){if(mounted.current&&activeKey.current===viewKey){setDetails(null);setConfirm(null);if(!stored)setRetryError(true);setMessage(stored?'Refresh outcome not confirmed. Retry the exact request or investigate before stopping; it may still be processing.':`Retry storage could not be verified: ${e instanceof Error?e.message:'Unknown error'}. No new request was intentionally sent; investigate before proceeding.`);}}
   finally{busy.current=false;if(mounted.current&&activeKey.current===viewKey)setSaving(false);}
@@ -80,10 +83,13 @@ export function WeeklyWorkerActions({row,start,end,userId,projects,previewDate}:
    const saved=sessionStorage.getItem(returnStorageKey);
    if(saved&&JSON.stringify(parseWeeklyReturnAttempt(JSON.parse(saved)))!==JSON.stringify(attempt))throw new Error('A different return retry is pending');
    if(!saved)sessionStorage.setItem(returnStorageKey,JSON.stringify(attempt));
-   if(JSON.stringify(parseWeeklyReturnAttempt(JSON.parse(sessionStorage.getItem(returnStorageKey)||'null')))!==JSON.stringify(attempt))throw new Error('Could not preserve the exact retry');
+   const preserved=sessionStorage.getItem(returnStorageKey);if(JSON.stringify(parseWeeklyReturnAttempt(JSON.parse(preserved||'null')))!==JSON.stringify(attempt))throw new Error('Could not preserve the exact retry');
+   if(observedRetry.current)observedRetry.current.returned=preserved;
    stored=true;if(mounted.current&&activeKey.current===viewKey){setPendingReturn(attempt);setConfirm(null);}
    await read(attempt.payroll);
    if(!mounted.current||activeKey.current!==viewKey)return;
+   if(JSON.stringify(parseWeeklyReturnAttempt(JSON.parse(sessionStorage.getItem(returnStorageKey)||'null')))!==JSON.stringify(attempt))throw new Error('Retry record changed');
+   if(sessionStorage.getItem(storageKey)!==null)throw new Error('A refresh retry is pending');
    if(getManilaClock().dateIso!==previewDate)throw new Error('Philippine date changed');
    const {data,error}=await createClient().rpc('return_weekly_worker_to_draft',{p_request:attempt.request,p_id:attempt.payroll,p_expected_revision:attempt.revision,p_reason:attempt.reason});
    if(error)throw new Error(error.message);
@@ -92,13 +98,13 @@ export function WeeklyWorkerActions({row,start,end,userId,projects,previewDate}:
    if(updated.status!=='draft'||updated.draft_revision!==attempt.revision+1)throw new Error('Voucher changed after return; investigate before proceeding');
    if(!mounted.current||activeKey.current!==viewKey)return;
    if(JSON.stringify(parseWeeklyReturnAttempt(JSON.parse(sessionStorage.getItem(returnStorageKey)||'null')))!==JSON.stringify(attempt))throw new Error('Retry record changed');
-   sessionStorage.removeItem(returnStorageKey);setPendingReturn(null);setDetails(updated);setConfirm(null);setReturnReason('');setReturnAck(false);setStopRetry(false);setMessage('Returned to draft. The saved amount is unchanged; refresh the draft and review its sources before a new approval. No payment was made or reversed.');
+   sessionStorage.removeItem(returnStorageKey);if(observedRetry.current)observedRetry.current.returned=null;setPendingReturn(null);setDetails(updated);setConfirm(null);setReturnReason('');setReturnAck(false);setStopRetry(false);setMessage('Returned to draft. The saved amount is unchanged; refresh the draft and review its sources before a new approval. No payment was made or reversed.');
   }catch(e){if(mounted.current&&activeKey.current===viewKey){setDetails(null);setConfirm(null);if(!stored)setRetryError(true);setMessage(stored?'Return outcome not confirmed. Retry the exact request or investigate before stopping; it may still be processing.':`Retry storage could not be verified: ${e instanceof Error?e.message:'Unknown error'}. No new request was intentionally sent; investigate before proceeding.`);}}
   finally{busy.current=false;if(mounted.current&&activeKey.current===viewKey)setSaving(false);}
  }
  function stopPending(){
   if(busy.current)return;
-  try{sessionStorage.removeItem(storageKey);if(returnEnabled)sessionStorage.removeItem(returnStorageKey);setPending(null);setPendingReturn(null);setRetryError(false);setStopRetry(false);setDetails(null);setLocked(true);setMessage('Retry stopped; this did not cancel or undo the request. Reload and independently inspect the voucher before taking any further action.');}
+  try{const observed=observedRetry.current;if(!observed||sessionStorage.getItem(storageKey)!==observed.refresh||(returnEnabled&&sessionStorage.getItem(returnStorageKey)!==observed.returned))throw new Error('Retry record changed');sessionStorage.removeItem(storageKey);if(returnEnabled)sessionStorage.removeItem(returnStorageKey);observedRetry.current={refresh:null,returned:null};setPending(null);setPendingReturn(null);setRetryError(false);setStopRetry(false);setDetails(null);setLocked(true);setMessage('Retry stopped; this did not cancel or undo the request. Reload and independently inspect the voucher before taking any further action.');}
   catch{setRetryError(true);setMessage('Could not clear retry record; investigate before continuing.');}
  }
  async function act(){
