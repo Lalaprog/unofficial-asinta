@@ -8,6 +8,7 @@ const pinned=[
  ['supabase/drafts/project_cost_correction_inventory.sql','8363739c53e3a5f60f208e58f779429fbd3a76907fb1e4552415092815fed1a9'],
  ['supabase/drafts/project_cost_corrected_preview.sql','775af2bd36dcda536db802c2291294750442ee862ac43e464391af4226df5493'],
  ['supabase/drafts/project_cost_corrected_review_ledger.sql','a339e5c9d14cb98d0981e0ffd526b8756487cdf2971fff6cb300c21ba27b1c4d'],
+ ['supabase/preflight/development-corrected-writer-audit.sql','aa19030da7bd968b49627327401dcbc81c07717205539e22f9293e3caf6ac738'],
 ];
 const parts=pinned.map(([path,hash])=>{const text=readFileSync(path,'utf8');if(createHash('sha256').update(text).digest('hex')!==hash)throw Error(`${path} changed; review and re-pin`);if(/^\s*(?:BEGIN|COMMIT|ROLLBACK|SAVEPOINT|RELEASE|PREPARE\s+TRANSACTION)\s*;/im.test(text)||/^\s*\\/m.test(text))throw Error(`Unexpected transaction control in ${path}`);return text;});
 const preflight=`
@@ -33,5 +34,5 @@ BEGIN
  END LOOP;
 END $corrected_development_preflight$;
 `;
-const artifact=`-- NOT APPROVED FOR EXECUTION. Development preparation only. One managed transaction required.\n-- Pinned files:\n${pinned.map(([p,h])=>`-- ${p} ${h}`).join('\n')}\nDO $manual_hold$ BEGIN IF current_setting('app.corrected_development_reviewed',true) IS DISTINCT FROM 'yes' THEN RAISE EXCEPTION 'Corrected review preparation is held pending target verification and rehearsal'; END IF; END $manual_hold$;\n${parts[0]}\n${preflight}\n${parts.slice(1).join('\n')}\nDO $corrected_development_postflight$ BEGIN\n IF EXISTS(SELECT 1 FROM public.project_cost_corrected_reviews) OR NOT coalesce((SELECT relrowsecurity FROM pg_class WHERE oid='public.project_cost_corrected_reviews'::regclass),false) THEN RAISE EXCEPTION 'Corrected review postflight failed'; END IF;\nEND $corrected_development_postflight$;\n`;
+const artifact=`-- NOT APPROVED FOR EXECUTION. Development preparation only. One managed transaction required.\n-- Pinned files:\n${pinned.map(([p,h])=>`-- ${p} ${h}`).join('\n')}\nDO $manual_hold$ BEGIN IF current_setting('app.corrected_development_reviewed',true) IS DISTINCT FROM 'yes' THEN RAISE EXCEPTION 'Corrected review preparation is held pending target verification and rehearsal'; END IF; END $manual_hold$;\n${parts[0]}\n${preflight}\n${parts[4]}\n${parts.slice(1,4).join('\n')}\nDO $corrected_development_postflight$ BEGIN\n IF EXISTS(SELECT 1 FROM public.project_cost_corrected_reviews) OR NOT coalesce((SELECT relrowsecurity FROM pg_class WHERE oid='public.project_cost_corrected_reviews'::regclass),false) THEN RAISE EXCEPTION 'Corrected review postflight failed'; END IF;\nEND $corrected_development_postflight$;\n`;
 writeFileSync('supabase/release/development-corrected-review.sql',artifact);

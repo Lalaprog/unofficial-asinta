@@ -6,7 +6,7 @@ import {describe,expect,it} from 'vitest';
 import {PGlite} from '@electric-sql/pglite';
 const generator=readFileSync('scripts/build-development-corrected-review.mjs','utf8');
 const artifact=readFileSync('supabase/release/development-corrected-review.sql','utf8');
-const paths=['supabase/release/development-correction-attribution.sql','supabase/drafts/project_cost_correction_inventory.sql','supabase/drafts/project_cost_corrected_preview.sql','supabase/drafts/project_cost_corrected_review_ledger.sql'];
+const paths=['supabase/release/development-correction-attribution.sql','supabase/drafts/project_cost_correction_inventory.sql','supabase/drafts/project_cost_corrected_preview.sql','supabase/drafts/project_cost_corrected_review_ledger.sql','supabase/preflight/development-corrected-writer-audit.sql'];
 function fixture(){const dir=mkdtempSync(join(tmpdir(),'corrected-release-'));mkdirSync(join(dir,'scripts'));writeFileSync(join(dir,'scripts/build.mjs'),generator);for(const path of paths){mkdirSync(dirname(join(dir,path)),{recursive:true});writeFileSync(join(dir,path),readFileSync(path));}return dir;}
 describe('development corrected review preparation artifact',()=>{
  it('is pinned, deterministic, and explicitly not approved',()=>{const dir=fixture();try{execFileSync('node',['scripts/build.mjs'],{cwd:dir});const built=readFileSync(join(dir,'supabase/release/development-corrected-review.sql'),'utf8');expect(built).toBe(artifact);expect(built).toContain('NOT APPROVED FOR EXECUTION');expect(built).toContain('Corrected review dependency drift');expect(built).toContain('Development source data changed');for(const path of paths)expect(built).toContain(readFileSync(path,'utf8'));}finally{rmSync(dir,{recursive:true,force:true});}});
