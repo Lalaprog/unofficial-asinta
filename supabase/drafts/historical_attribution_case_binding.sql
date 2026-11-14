@@ -20,6 +20,16 @@ DO $hold$ BEGIN
     to_regprocedure('public.record_historical_attribution_with_cases(uuid,uuid,jsonb,jsonb,text,boolean,jsonb)') IS NOT NULL OR
     to_regprocedure('public.historical_attribution_case_binding(uuid)') IS NOT NULL OR
     to_regprocedure('public.guard_historical_attribution_case_binding()') IS NOT NULL THEN RAISE EXCEPTION 'Historical case-binding objects already exist'; END IF;
+ -- Selected dependencies must be the exact bodies whose ordering and replay
+ -- behavior this candidate exercises. This is not an exhaustive writer audit.
+ IF EXISTS (SELECT 1 FROM (VALUES
+  ('public.record_historical_worker_attribution(uuid,uuid,jsonb,jsonb,text,boolean)','77d94425c8d1529a1ac25a6b4ba8fa0000586b3a2db88559b993064ed14b7403','v'),
+  ('public.historical_worker_attribution(uuid)','2bb4d81bf395add1e1df773a560575e95b0fd15eaa727c202f4e4c281e03779d','s'),
+  ('public.paid_period_assertion_case_list(text,uuid)','ca15174233d43ffac3f4ca821a1f1d3279a2a58026186bad54492c8e9c060583','s'),
+  ('public.open_paid_period_assertion_case(uuid,text,uuid,jsonb,numeric,text)','4b1ff44d02fa17a5ea8fc359288b84e4851f32e1924aa06145cc8089aeb49ce8','v'),
+  ('public.resolve_paid_period_assertion_case(uuid,text,date,text,boolean)','b16ee3003b157c2952613c85e7c7559389e4f3c8c686afcbdee15df92785742e','v')
+ ) AS expected(signature,sha,volatility) LEFT JOIN pg_catalog.pg_proc p ON p.oid=to_regprocedure(expected.signature)
+ WHERE p.oid IS NULL OR NOT p.prosecdef OR p.provolatile::text<>expected.volatility OR pg_catalog.pg_get_userbyid(p.proowner)<>'postgres' OR NOT coalesce(p.proconfig @> ARRAY['search_path=""'],false) OR pg_catalog.encode(pg_catalog.sha256(pg_catalog.convert_to(p.prosrc,'UTF8')),'hex')<>expected.sha) THEN RAISE EXCEPTION 'Historical case-binding dependency changed'; END IF;
 END $hold$;
 
 CREATE TABLE public.historical_attribution_case_bindings (
