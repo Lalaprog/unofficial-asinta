@@ -282,3 +282,55 @@ describe('experimental weekly Bale schedule (not deployed)',()=>{
   }finally{await db.close();}
  },30000);
 });
+
+describe('held idempotent weekly Bale request candidate',()=>{
+ const candidate=()=>sql('supabase/drafts/weekly_bale_idempotent_submission.sql');
+ const call=(db:PGlite,request:string,amount='100.25',w=worker,p=site)=>db.query<{result:{replayed:boolean;request:{id:string;status:string}}}>("SELECT public.submit_weekly_bale_request($1,$2,$3,$4,'2026-11-15') result",[request,w,p,amount]);
+ async function installed(){const db=await fixture(true);await db.exec(`RESET ROLE;BEGIN;SET LOCAL app.weekly_bale_idempotent_submission_reviewed='yes';${candidate()} COMMIT;SET ROLE authenticated`);return db;}
+ it('holds by default and refuses a disabled site guard without installing',async()=>{
+  const db=await fixture();try{await db.exec('RESET ROLE');await expect(db.exec(`BEGIN;${candidate()} COMMIT;`)).rejects.toThrow(/held pending/);await db.exec('ROLLBACK');
+   await db.exec('ALTER TABLE public.advance_requests DISABLE TRIGGER guard_advance_request_site');await expect(db.exec(`BEGIN;SET LOCAL app.weekly_bale_idempotent_submission_reviewed='yes';${candidate()} COMMIT;`)).rejects.toThrow(/missing or disabled/);await db.exec('ROLLBACK');
+   expect((await db.query("SELECT to_regprocedure('public.submit_weekly_bale_request(uuid,uuid,uuid,numeric,date)') IS NULL absent")).rows[0]).toEqual({absent:true});
+  }finally{await db.close();}
+ },30000);
+ it('creates one request, audit and notification and replays exact details after the window closes',async()=>{
+  const db=await installed();try{
+   const first=(await call(db,id(301))).rows[0].result;expect(first).toMatchObject({replayed:false,request:{id:id(301),status:'pending_approval'}});
+   await time(db,'2026-11-18T04:00:00Z');expect((await call(db,id(301))).rows[0].result).toMatchObject({replayed:true,request:{id:id(301)}});
+   await expect(call(db,id(302))).rejects.toThrow(/open Sunday through Tuesday/);
+   await db.exec('RESET ROLE');expect((await db.query<{n:number}>('SELECT count(*)::int n FROM public.advance_requests WHERE id=$1',[id(301)])).rows[0].n).toBe(1);
+   expect((await db.query<{n:number}>("SELECT count(*)::int n FROM public.audit_log WHERE table_name='advance_requests' AND record_id=$1",[id(301)])).rows[0].n).toBe(1);
+   expect((await db.query<{n:number}>('SELECT count(*)::int n FROM public.user_notifications WHERE advance_request_id=$1',[id(301)])).rows[0].n).toBe(1);
+   expect((await db.query<{n:number}>('SELECT count(*)::int n FROM public.weekly_bale_requests WHERE request_id=$1',[id(301)])).rows[0].n).toBe(1);
+  }finally{await db.close();}
+ },30000);
+ it('never turns an unsaved old-week request into a new-week request',async()=>{
+  const db=await installed();try{
+   await time(db,'2026-11-22T04:00:00Z');
+   await expect(call(db,id(306))).rejects.toThrow(/week changed/);
+   await db.exec('RESET ROLE');expect((await db.query<{n:number}>('SELECT count(*)::int n FROM public.advance_requests WHERE id=$1',[id(306)])).rows[0].n).toBe(0);
+   expect((await db.query<{n:number}>('SELECT count(*)::int n FROM public.user_notifications WHERE advance_request_id=$1',[id(306)])).rows[0].n).toBe(0);
+  }finally{await db.close();}
+ },30000);
+ it('rolls the request and weekly marker back if audit insertion fails',async()=>{
+  const db=await installed();try{
+   await db.exec("RESET ROLE; CREATE FUNCTION public.test_reject_request_audit() RETURNS trigger LANGUAGE plpgsql AS $$BEGIN IF NEW.record_id='00000000-0000-0000-0000-000000000307'::uuid THEN RAISE EXCEPTION 'synthetic audit failure'; END IF; RETURN NEW; END$$; CREATE TRIGGER test_reject_request_audit BEFORE INSERT ON public.audit_log FOR EACH ROW EXECUTE FUNCTION public.test_reject_request_audit(); SET ROLE authenticated");
+   await expect(call(db,id(307))).rejects.toThrow(/synthetic audit failure/);await db.exec('RESET ROLE');
+   expect((await db.query<{n:number}>('SELECT count(*)::int n FROM public.advance_requests WHERE id=$1',[id(307)])).rows[0].n).toBe(0);
+   expect((await db.query<{n:number}>('SELECT count(*)::int n FROM public.weekly_bale_requests WHERE request_id=$1',[id(307)])).rows[0].n).toBe(0);
+  }finally{await db.close();}
+ },30000);
+ it('rejects changed details, another actor, unauthorized site and malformed amounts',async()=>{
+  const db=await installed();try{
+   await call(db,id(303));await expect(call(db,id(303),'100.26')).rejects.toThrow(/unavailable or details differ/);
+   await role(db,outsider);await expect(call(db,id(303))).rejects.toThrow(/unavailable or details differ/);await expect(call(db,id(304))).rejects.toThrow(/Project access required/);
+   await role(db,founder);await expect(call(db,id(303))).rejects.toThrow(/Supervisor access required/);await role(db,supervisor);
+   for(const amount of ['0','-1','1.001','100000000','NaN'])await expect(call(db,id(305),amount)).rejects.toThrow(/Invalid Bale request/);
+   await db.exec("SET test.assurance='no'");await expect(call(db,id(303))).rejects.toThrow(/Supervisor access required/);
+  }finally{await db.close();}
+ },30000);
+ it('keeps anon and service roles out of the RPC and preserves the legacy insert path',async()=>{
+  const db=await installed();try{await db.exec('RESET ROLE');expect((await db.query("SELECT has_function_privilege('anon','public.submit_weekly_bale_request(uuid,uuid,uuid,numeric,date)','EXECUTE') anon,has_function_privilege('authenticated','public.submit_weekly_bale_request(uuid,uuid,uuid,numeric,date)','EXECUTE') auth,has_function_privilege('service_role','public.submit_weekly_bale_request(uuid,uuid,uuid,numeric,date)','EXECUTE') service")).rows[0]).toEqual({anon:false,auth:true,service:false});await db.exec('SET ROLE authenticated');expect(await submit(db)).toBeTruthy();
+  }finally{await db.close();}
+ },30000);
+});

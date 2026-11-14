@@ -90,6 +90,8 @@ interface DataStoreContextType {
     worker_id: string;
     project_id: string;
     requested_amount: number;
+    request_id?: string;
+    request_period_start?: string;
   }) => Promise<AdvanceRequest | null>;
   reviewAdvanceRequest: (id: string, decision: 'approve' | 'reject') => Promise<boolean>;
   approveAdvanceRequests: (ids: string[]) => Promise<boolean>;
@@ -926,15 +928,17 @@ export const DataStoreProvider: React.FC<{ children: React.ReactNode }> = ({ chi
     worker_id: string;
     project_id: string;
     requested_amount: number;
+    request_id?: string;
+    request_period_start?: string;
   }): Promise<AdvanceRequest | null> => {
-    if (!user?.id || !Number.isFinite(data.requested_amount) || data.requested_amount <= 0) {
+    if (!user?.id || (Boolean(data.request_id) !== Boolean(data.request_period_start)) || !Number.isFinite(data.requested_amount) || data.requested_amount <= 0) {
       showToast('error', 'Enter a valid requested amount before submitting.');
       return null;
     }
 
-    const row = await runMutation('Submit Bale request', (db) =>
-      db
-        .from('advance_requests')
+    const response = await runMutation('Submit Bale request', (db) => data.request_id
+      ? db.rpc('submit_weekly_bale_request', {p_request:data.request_id, p_worker:data.worker_id, p_project:data.project_id, p_amount:round2(data.requested_amount), p_period_start:data.request_period_start})
+      : db.from('advance_requests')
         .insert({
           worker_id: data.worker_id,
           project_id: data.project_id,
@@ -944,12 +948,13 @@ export const DataStoreProvider: React.FC<{ children: React.ReactNode }> = ({ chi
         .select()
         .single()
     );
+    const row = data.request_id ? (response && typeof response.replayed === 'boolean' ? response.request : null) : response;
     const mapped = row ? mapAdvanceRequest(row) : null;
-    if (!mapped || typeof mapped.id !== 'string' || !mapped.id || mapped.worker_id !== data.worker_id ||
+    if (!mapped || typeof mapped.id !== 'string' || !mapped.id || (data.request_id && mapped.id !== data.request_id) || mapped.worker_id !== data.worker_id ||
         mapped.project_id !== data.project_id || mapped.submitted_by !== user.id ||
         mapped.requested_amount !== round2(data.requested_amount)) return null;
-    setAdvanceRequests((prev) => [mapped, ...prev]);
-    showToast('success', 'Bale request sent to the Founder for approval.');
+    setAdvanceRequests((prev) => [mapped, ...prev.filter(request => request.id !== mapped.id)]);
+    showToast('success', data.request_id && response?.replayed ? 'Existing Bale request confirmed. Check its current status.' : 'Bale request sent to the Founder for approval.');
     return mapped;
   };
 

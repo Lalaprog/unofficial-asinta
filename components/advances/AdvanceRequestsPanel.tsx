@@ -6,8 +6,10 @@ import { useAuth } from '@/lib/auth/authContext';
 import { useDataStore } from '@/lib/data/store';
 import { useBaleProjectWorkers } from '@/lib/attendance/useBaleProjectWorkers';
 import { useBaleRequestSubmissionGuard } from '@/lib/attendance/useBaleRequestSubmissionGuard';
+import { getManilaClock } from '@/lib/reminders/scheduler';
+import { workerPayrollPeriod } from '@/lib/payroll/periods';
 import { useWeeklyBaleStatuses } from '@/lib/attendance/useWeeklyBaleStatuses';
-import { weeklyBaleExpiryHealthPreviewEnabled, weeklyBaleReleasePreviewEnabled, weeklyWorkerCutoverMode } from '@/lib/finance/featureAvailability';
+import { weeklyBaleExpiryHealthPreviewEnabled, weeklyBaleReleasePreviewEnabled, weeklyBaleIdempotentSubmissionPreviewEnabled, weeklyWorkerCutoverMode } from '@/lib/finance/featureAvailability';
 import { WeeklyBaleExpiryHealth } from '@/components/advances/WeeklyBaleExpiryHealth';
 import type { AdvanceRequest, AdvanceRequestStatus } from '@/types';
 import { formatDatePH, formatPeso, formatPesoCompact } from '@/lib/email/format';
@@ -115,6 +117,7 @@ export function AdvanceRequestsPanel() {
   );
   const team = useBaleProjectWorkers(user?.id, selectedProjectId, isSupervisor && requestModalOpen);
   const weeklyMode = weeklyBaleReleasePreviewEnabled();
+  const idempotentSubmission = weeklyBaleIdempotentSubmissionPreviewEnabled();
   const cutoverMode = weeklyWorkerCutoverMode();
   const submissionGuard = useBaleRequestSubmissionGuard(user?.id, weeklyMode && isSupervisor);
   const submissionScope = JSON.stringify([user?.id, isSupervisor, weeklyMode]);
@@ -333,16 +336,18 @@ export function AdvanceRequestsPanel() {
     const amount = Number(requestedAmount);
     if ((cutoverMode && !weeklyMode) || (weeklyMode && submissionGuard.status !== 'ready') || submitLock.current || team.status !== 'ready' || !activeWorkers.some((worker) => worker.id === selectedWorkerId) || !selectedProjectId || !Number.isFinite(amount) || amount <= 0) return;
     submitLock.current = true;
-    const marker = weeklyMode ? submissionGuard.begin() : null;
+    const marker = weeklyMode ? submissionGuard.begin(idempotentSubmission ? {worker:selectedWorkerId,project:selectedProjectId,amount:(Math.round(amount*100)/100).toFixed(2),period:workerPayrollPeriod(getManilaClock().dateIso).start} : undefined) : null;
     if (weeklyMode && !marker) { submitLock.current = false; return; }
+    const requestId = idempotentSubmission && marker ? (JSON.parse(marker) as {request:string}).request : undefined;
     setIsSubmitting(true);
     try {
       const created = await createAdvanceRequest({
         worker_id: selectedWorkerId,
         project_id: selectedProjectId,
         requested_amount: amount,
+        ...(requestId && marker ? {request_id:requestId,request_period_start:(JSON.parse(marker) as {period:string}).period} : {}),
       });
-      const verified = created && (!weeklyMode || (typeof created.id === 'string' && !!created.id && created.worker_id === selectedWorkerId && created.project_id === selectedProjectId && created.submitted_by === user?.id && created.requested_amount === Math.round(amount * 100) / 100));
+      const verified = created && (!weeklyMode || (typeof created.id === 'string' && !!created.id && (!requestId || created.id===requestId) && created.worker_id === selectedWorkerId && created.project_id === selectedProjectId && created.submitted_by === user?.id && created.requested_amount === Math.round(amount * 100) / 100));
       const confirmed = verified && (!weeklyMode || (marker && submissionGuard.confirmed(marker)));
       if (activeSubmissionScope.current === submissionScope) {
         if (confirmed) setRequestModalOpen(false);
@@ -360,6 +365,23 @@ export function AdvanceRequestsPanel() {
       submitLock.current = false;
       setIsSubmitting(false);
     }
+  };
+
+  const retryUncertainRequest = async () => {
+    if (!idempotentSubmission || !isSupervisor || submitLock.current) return;
+    submitLock.current = true;
+    const saved = submissionGuard.retry();
+    if (!saved) { submitLock.current = false; return; }
+    setIsSubmitting(true);
+    try {
+      const {attempt,marker} = saved;
+      const created = await createAdvanceRequest({worker_id:attempt.worker,project_id:attempt.project,requested_amount:Number(attempt.amount),request_id:attempt.request,request_period_start:attempt.period});
+      const verified = created && created.id===attempt.request && created.worker_id===attempt.worker && created.project_id===attempt.project && created.submitted_by===attempt.actor && created.requested_amount===Number(attempt.amount);
+      const confirmed = verified && submissionGuard.confirmed(marker);
+      if (!confirmed && activeSubmissionScope.current===submissionScope) showToast('error','Request outcome is still unconfirmed. Investigate before sending another.');
+    } catch {
+      if (activeSubmissionScope.current===submissionScope) showToast('error','Request outcome is still unconfirmed. Investigate before sending another.');
+    } finally { submitLock.current=false; setIsSubmitting(false); }
   };
 
   const handleReview = async (id: string, decision: 'approve' | 'reject') => {
@@ -513,6 +535,10 @@ export function AdvanceRequestsPanel() {
       {weeklyMode && isSupervisor && submissionGuard.status === 'pending' && <section role="alert" className="space-y-2 rounded-xl bg-status-warning-bg p-3 text-xs text-ink-secondary">
         <p>A Bale request may have been sent, but its result was not confirmed. Refresh and check the request list with the Founder before submitting another. An empty list does not prove the request failed; it may still be processing. Do not give or request money again based on this warning.</p>
         <p>This warning is only in this browser tab. Closing it or clearing storage may erase the warning; another tab or device can still send a request.</p>
+        {idempotentSubmission && submissionGuard.pendingAttempt && <div className="space-y-2">
+          <p>Exact retry: worker {submissionGuard.pendingAttempt.worker} · site {submissionGuard.pendingAttempt.project} · ₱{submissionGuard.pendingAttempt.amount} · week starting {submissionGuard.pendingAttempt.period}. This may confirm a previous save or send it if it was not saved; check the request list first.</p>
+          <Button type="button" size="sm" variant="secondary" disabled={isSubmitting} onClick={()=>void retryUncertainRequest()}>Retry exact Bale request</Button>
+        </div>}
         <label className="flex items-start gap-2"><input type="checkbox" checked={reviewedUncertainSubmission} onChange={e=>setReviewedUncertainSubmission(e.target.checked)} />I investigated the earlier request and understand that clearing this warning does not cancel it.</label>
         <Button type="button" size="sm" variant="secondary" disabled={!reviewedUncertainSubmission || isSubmitting} onClick={()=>{if(submissionGuard.clearAfterReview())setReviewedUncertainSubmission(false);}}>Clear warning after review</Button>
       </section>}

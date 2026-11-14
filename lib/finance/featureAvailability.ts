@@ -29,6 +29,11 @@ export function weeklyBaleReleasePreviewEnabled(): boolean {
   return coordinatedWeeklyWritePreviewEnabled();
 }
 
+/** Exact request retry requires the separately installed submission RPC. */
+export function weeklyBaleIdempotentSubmissionPreviewEnabled(): boolean {
+  return weeklyBaleReleasePreviewEnabled() && process.env.NEXT_PUBLIC_WEEKLY_BALE_IDEMPOTENT_SUBMISSION_PREVIEW === 'true';
+}
+
 /** Read-only health remains visible during a partially configured cutover so
  * an operator can investigate; the RPC and independent monitoring are required. */
 export function weeklyBaleExpiryHealthPreviewEnabled(): boolean {

@@ -102,6 +102,9 @@ suite('coordinated finance integration rehearsal, synthetic PostgreSQL only',()=
    // External health signal is a separate draft, installed only in this test transaction.
    await db.query(readFileSync('supabase/drafts/weekly_bale_external_monitor.sql','utf8'));
    expect((await db.query("SELECT has_function_privilege('authenticated','public.weekly_bale_external_monitor_healthy()','EXECUTE') allowed")).rows[0].allowed).toBe(false);
+   // Separate held submission RPC, exercised only inside this synthetic rollback.
+   await db.query("SET LOCAL app.weekly_bale_idempotent_submission_reviewed='yes'");
+   await db.query(readFileSync('supabase/drafts/weekly_bale_idempotent_submission.sql','utf8'));
    // The review ledger is also separate from the generated chain, and never
    // posts money or makes the bounded snapshot complete.
    await db.query(readFileSync('supabase/drafts/project_cost_review_ledger.sql','utf8'));
@@ -153,7 +156,10 @@ suite('coordinated finance integration rehearsal, synthetic PostgreSQL only',()=
    // Controlled clock exists only in this disposable transaction.
    await db.query("CREATE OR REPLACE FUNCTION public.weekly_bale_clock() RETURNS timestamptz LANGUAGE sql VOLATILE SET search_path='' AS $$SELECT current_setting('test.clock')::timestamptz$$");
    await db.query(`SET LOCAL ROLE authenticated; SET LOCAL test.uid='${supervisor}'; SET LOCAL test.assurance='yes'; SET LOCAL test.clock='2024-08-04T04:00:00Z'`);
-   const request=(await db.query('INSERT INTO public.advance_requests(worker_id,project_id,requested_amount,submitted_by) VALUES($1,$2,100.25,$3) RETURNING id',[worker,site,supervisor])).rows[0].id;
+   const request='70000000-0000-4000-8000-000000000700';
+   const submission=()=>db.query("SELECT public.submit_weekly_bale_request($1,$2,$3,100.25,'2024-08-04') v",[request,worker,site]);
+   expect((await submission()).rows[0].v).toMatchObject({replayed:false,request:{id:request}});
+   expect((await submission()).rows[0].v).toMatchObject({replayed:true,request:{id:request}});
    await db.query(`SET LOCAL test.uid='${founder}'; SET LOCAL test.clock='2024-08-06T04:00:00Z'`);
    await db.query("SELECT public.review_advance_request($1,'approve')",[request]);
    await db.query(`SET LOCAL test.uid='${supervisor}'; SET LOCAL test.clock='2024-08-07T04:00:00Z'`);

@@ -16,11 +16,21 @@ describe('coordinated development build configuration',()=>{
   expect(finance.weeklyBaleReleasePreviewEnabled()).toBe(false);
   expect(ownedEquipmentPreviewEnabled()).toBe(false);
  });
+ it('keeps exact Bale retry off unless both the coordinated weekly controls and explicit opt-in are enabled',()=>{
+  vi.stubEnv('NEXT_PUBLIC_WEEKLY_BALE_IDEMPOTENT_SUBMISSION_PREVIEW','true');
+  expect(finance.weeklyBaleIdempotentSubmissionPreviewEnabled()).toBe(false);
+  vi.stubEnv('NEXT_PUBLIC_DEVELOPMENT_FINANCE_CUTOVER','true');
+  expect(finance.weeklyBaleIdempotentSubmissionPreviewEnabled()).toBe(true);
+  vi.stubEnv('NEXT_PUBLIC_WEEKLY_BALE_IDEMPOTENT_SUBMISSION_PREVIEW','false');
+  expect(finance.weeklyBaleIdempotentSubmissionPreviewEnabled()).toBe(false);
+ });
  it('enables the complete coordinated surfaces but not unrelated categories or portraits',()=>{
   vi.stubEnv('NEXT_PUBLIC_DEVELOPMENT_FINANCE_CUTOVER','true');vi.stubEnv('NEXT_PUBLIC_DEVELOPMENT_CORRECTION_SUPABASE_REF','abcdefghijklmnopqrst');vi.stubEnv('NEXT_PUBLIC_SUPABASE_URL','https://abcdefghijklmnopqrst.supabase.co');
   for(const [name,fn] of Object.entries(finance)){
-   expect(fn(),name).toBe(!['supervisorPayrollRevisionPreviewEnabled','projectCostCorrectionPreviewEnabled','correctedProjectCostReviewPreviewEnabled','crossSiteIllustrationPreviewEnabled','crossSiteSourceReviewPreviewEnabled','crossSiteLedgerPreviewEnabled'].includes(name));
+   expect(fn(),name).toBe(!['weeklyBaleIdempotentSubmissionPreviewEnabled','supervisorPayrollRevisionPreviewEnabled','projectCostCorrectionPreviewEnabled','correctedProjectCostReviewPreviewEnabled','crossSiteIllustrationPreviewEnabled','crossSiteSourceReviewPreviewEnabled','crossSiteLedgerPreviewEnabled'].includes(name));
   }
+  vi.stubEnv('NEXT_PUBLIC_WEEKLY_BALE_IDEMPOTENT_SUBMISSION_PREVIEW','true');
+  expect(finance.weeklyBaleIdempotentSubmissionPreviewEnabled()).toBe(true);
   vi.stubEnv('NEXT_PUBLIC_SUPERVISOR_PAYROLL_REVISION_PREVIEW','true');
   expect(finance.supervisorPayrollRevisionPreviewEnabled()).toBe(true);
   vi.stubEnv('NEXT_PUBLIC_PROJECT_COST_CORRECTION_PREVIEW','true');

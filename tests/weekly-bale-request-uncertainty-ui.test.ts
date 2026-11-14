@@ -4,19 +4,19 @@ import {PGlite} from '@electric-sql/pglite';
 import {cleanup,fireEvent,render,screen,waitFor,within} from '@testing-library/react';
 import {afterEach,beforeEach,describe,expect,it,vi} from 'vitest';
 
-const mock=vi.hoisted(()=>({submit:vi.fn()}));
+const mock=vi.hoisted(()=>({submit:vi.fn(),idempotent:false}));
 vi.mock('next/navigation',()=>({useRouter:()=>({replace:vi.fn()}),useSearchParams:()=>new URLSearchParams('tab=requests')}));
 vi.mock('@/lib/auth/authContext',()=>({useAuth:()=>({user:{id:'sup'},isFounder:false,isSupervisor:true})}));
 vi.mock('@/components/ui/Toast',()=>({useToast:()=>({showToast:vi.fn()})}));
 vi.mock('@/components/ui/Modal',()=>({Modal:({isOpen,title,children}:{isOpen:boolean;title:string;children:React.ReactNode})=>isOpen?React.createElement('div',{role:'dialog','aria-label':title},children):null}));
-vi.mock('@/lib/finance/featureAvailability',()=>({weeklyBaleExpiryHealthPreviewEnabled:()=>false,weeklyBaleReleasePreviewEnabled:()=>true,weeklyWorkerCutoverMode:()=>true}));
+vi.mock('@/lib/finance/featureAvailability',()=>({weeklyBaleExpiryHealthPreviewEnabled:()=>false,weeklyBaleReleasePreviewEnabled:()=>true,weeklyBaleIdempotentSubmissionPreviewEnabled:()=>mock.idempotent,weeklyWorkerCutoverMode:()=>true}));
 vi.mock('@/lib/attendance/useWeeklyBaleStatuses',()=>({useWeeklyBaleStatuses:()=>({data:{items:[]},loading:false,error:'',refresh:vi.fn()})}));
 vi.mock('@/lib/attendance/useBaleProjectWorkers',()=>({useBaleProjectWorkers:(_user:string,project:string,enabled:boolean)=>({status:enabled&&project?'ready':'idle',workers:[{id:'w1',name:'Ada',position:'Mason'}],someDetailsUnavailable:false,reload:vi.fn()})}));
 const projects=[{id:'a',name:'Site A'}];
 vi.mock('@/lib/data/store',()=>({useDataStore:()=>({advanceRequests:[],projects,workers:[],users:[],getProjectsForSupervisor:()=>projects,createAdvanceRequest:mock.submit,reviewAdvanceRequest:vi.fn(),approveAdvanceRequests:vi.fn(),issueAdvanceRequest:vi.fn()})}));
 import {AdvanceRequestsPanel} from '@/components/advances/AdvanceRequestsPanel';
 const markerKey='bale-request-unconfirmed-v1:sup';
-beforeEach(()=>{sessionStorage.clear();mock.submit.mockReset();});
+beforeEach(()=>{sessionStorage.clear();mock.submit.mockReset();mock.idempotent=false;});
 afterEach(()=>{cleanup();vi.restoreAllMocks();sessionStorage.clear();});
 async function submit(){
  fireEvent.click(screen.getByRole('button',{name:'New Bale Request'}));
@@ -51,6 +51,19 @@ describe('weekly Bale submission uncertainty',()=>{
    expect(mock.submit).toHaveBeenCalledTimes(1);expect((await db.query('SELECT count(*)::int n FROM requests')).rows[0]).toEqual({n:1});
   }finally{await db.close();}
  },30000);
+ it('retries the exact saved request id and details after an ambiguous response',async()=>{
+  mock.idempotent=true;mock.submit.mockResolvedValueOnce(null).mockImplementationOnce(async(input:{request_id:string;worker_id:string;project_id:string;requested_amount:number})=>({id:input.request_id,worker_id:input.worker_id,project_id:input.project_id,submitted_by:'sup',requested_amount:input.requested_amount}));
+  const view=render(React.createElement(AdvanceRequestsPanel));await submit();await screen.findByRole('button',{name:'Retry exact Bale request'});
+  const original=mock.submit.mock.calls[0][0];expect(original.request_id).toMatch(/^[0-9a-f-]{36}$/);
+  view.unmount();render(React.createElement(AdvanceRequestsPanel));
+  fireEvent.click(await screen.findByRole('button',{name:'Retry exact Bale request'}));
+  await waitFor(()=>expect(mock.submit).toHaveBeenCalledTimes(2));expect(mock.submit.mock.calls[1][0]).toEqual(original);
+  await waitFor(()=>expect(sessionStorage.getItem(markerKey)).toBeNull());expect(screen.queryByText(/A Bale request may have been sent/)).toBeNull();
+ });
+ it('does not offer an exact retry for an old opaque warning',async()=>{
+  mock.idempotent=true;sessionStorage.setItem(markerKey,'old-warning-only');render(React.createElement(AdvanceRequestsPanel));
+  await screen.findByText(/A Bale request may have been sent/);expect(screen.queryByRole('button',{name:'Retry exact Bale request'})).toBeNull();expect(mock.submit).not.toHaveBeenCalled();
+ });
  it('removes the warning only after a matching successful response',async()=>{
   mock.submit.mockResolvedValue({id:'request',worker_id:'w1',project_id:'a',submitted_by:'sup',requested_amount:125.5});
   render(React.createElement(AdvanceRequestsPanel));await submit();

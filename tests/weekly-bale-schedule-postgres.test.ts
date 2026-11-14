@@ -41,6 +41,7 @@ suite('weekly Bale schedule on disposable PostgreSQL',()=>{
   await admin.query(readFileSync('supabase/drafts/weekly_bale_status_batch.sql','utf8'));
   await admin.query(readFileSync('supabase/drafts/weekly_bale_scheduler.sql','utf8'));
   await admin.query(readFileSync('supabase/drafts/weekly_bale_external_monitor.sql','utf8'));
+  await admin.query(`BEGIN;SET LOCAL app.weekly_bale_idempotent_submission_reviewed='yes';${readFileSync('supabase/drafts/weekly_bale_idempotent_submission.sql','utf8')} COMMIT;`);
   await admin.query(`DO $$BEGIN IF NOT EXISTS(SELECT 1 FROM pg_roles WHERE rolname='asinta_expiry_monitor_test') THEN CREATE ROLE asinta_expiry_monitor_test LOGIN; END IF; END$$;
    GRANT USAGE ON SCHEMA public TO asinta_expiry_monitor_test; GRANT EXECUTE ON FUNCTION public.weekly_bale_external_monitor_healthy() TO asinta_expiry_monitor_test;
    CREATE OR REPLACE FUNCTION public.weekly_bale_clock() RETURNS timestamptz LANGUAGE sql VOLATILE SET search_path='' AS $$SELECT current_setting('test.clock')::timestamptz$$;`);
@@ -182,4 +183,18 @@ suite('weekly Bale schedule on disposable PostgreSQL',()=>{
    expect((await admin.query("SELECT actor_id FROM public.audit_log WHERE record_id=$1 AND action='update'",[request])).rows).toEqual([{actor_id:null}]);
   }finally{await first.query('ROLLBACK');}
  },15000);
+ it('serializes concurrent identical submission retries and rejects changed details',async()=>{
+  const request=id(800),rpc=(c:Client,amount='100.25')=>c.query("SELECT public.submit_weekly_bale_request($1,$2,$3,$4,'2026-11-15') result",[request,worker,site,amount]);
+  await Promise.all([first.query(`SET ROLE authenticated;SET test.uid='${supervisor}';SET test.assurance='yes';SET test.clock='2026-11-15T04:00:00Z'`),second.query(`SET ROLE authenticated;SET test.uid='${supervisor}';SET test.assurance='yes';SET test.clock='2026-11-15T04:00:00Z'`)]);
+  await first.query('BEGIN');await second.query('BEGIN');try{
+   expect((await rpc(first)).rows[0].result).toMatchObject({replayed:false,request:{id:request}});
+   let finished=false;const retry=rpc(second).finally(()=>{finished=true});await pause();expect(finished).toBe(false);
+   await first.query('COMMIT');expect((await retry).rows[0].result).toMatchObject({replayed:true,request:{id:request}});await second.query('COMMIT');
+   await expect(rpc(second,'99.00')).rejects.toThrow(/unavailable or details differ/);
+   expect((await admin.query('SELECT count(*)::int n FROM public.advance_requests WHERE id=$1',[request])).rows[0].n).toBe(1);
+   expect((await admin.query("SELECT count(*)::int n FROM public.audit_log WHERE table_name='advance_requests' AND record_id=$1",[request])).rows[0].n).toBe(1);
+   expect((await admin.query('SELECT count(*)::int n FROM public.user_notifications WHERE advance_request_id=$1',[request])).rows[0].n).toBe(1);
+  }finally{await first.query('ROLLBACK');await second.query('ROLLBACK');}
+ },15000);
+
 });
