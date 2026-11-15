@@ -1,7 +1,8 @@
-import {calculateCrossSite,calculateHistoricalCrossSite,parseCrossSiteContext,verifyCrossSiteTotals,type CrossSiteTotals} from './crossSiteCostReview';
+import {CROSS_SITE_SOURCE_REVIEW_BYTES,calculateCrossSite,calculateHistoricalCrossSite,parseCrossSiteContext,verifyCrossSiteTotals,type CrossSiteTotals} from './crossSiteCostReview';
 import {parseCorrectedInventory,parseCorrectedSaved,type CorrectedChoices,type CorrectedInventory,type CorrectedSaved} from './correctedCostReview';
 import {sameAttributionEvidence} from '@/lib/payroll/historicalAttribution';
 import {parseReviewMarker,validReviewNote,type ReviewMarker} from './projectCostReview';
+import {parseRecordedCostCoverage} from './recordedCostCoverage';
 
 const obj=(v:unknown):v is Record<string,unknown>=>!!v&&typeof v==='object'&&!Array.isArray(v);
 const uuid=(v:unknown):v is string=>typeof v==='string'&&/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/.test(v);
@@ -55,6 +56,15 @@ export function verifyCrossSiteOverview(ordinary:CorrectedSaved|null,cross:Cross
  if(crossChoices.source_reviews&&Object.keys(crossChoices.source_reviews).length===0)delete crossChoices.source_reviews;
  if(ordinaryChoices.source_reviews&&Object.keys(ordinaryChoices.source_reviews).length===0)delete ordinaryChoices.source_reviews;
  if(!sameAttributionEvidence(ordinaryChoices,crossChoices))throw Error('Review decisions differ');
+}
+/** All evidence here must come from the single-statement overview RPC. */
+export function parseAtomicCrossSiteOverview(raw:unknown,projectId:string){
+ if(!obj(raw)||Object.keys(raw).sort().join(',')!=='coverage,cross,project_id,sources'||raw.project_id!==projectId||!obj(raw.sources)||size(raw.sources)>CROSS_SITE_SOURCE_REVIEW_BYTES)throw Error('Invalid cross-site overview');
+ const coverage=parseRecordedCostCoverage(raw.coverage,projectId),header=parseCrossSiteSavedHeader(raw.cross,projectId);
+ if(!header.found){if(Object.keys(raw.sources).length)throw Error('Unexpected cross-site source evidence');return {coverage,cross:null};}
+ if(Object.values(header.refs).reduce((sum,refs)=>sum+refs.length,0)>100)throw Error('Too many source revisions');
+ const cross=verifyCrossSiteSaved(header,raw.sources);verifyCrossSiteOverview(coverage.review.found?coverage.review:null,cross);
+ return {coverage,cross};
 }
 const canonical=(v:unknown):unknown=>Array.isArray(v)?v.map(canonical):obj(v)?Object.fromEntries(Object.keys(v).sort().map(k=>[k,canonical(v[k])])):v;
 const equal=(a:unknown,b:unknown)=>JSON.stringify(canonical(a))===JSON.stringify(canonical(b));

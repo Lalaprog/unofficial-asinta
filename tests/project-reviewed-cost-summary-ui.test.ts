@@ -45,27 +45,27 @@ describe('reviewed project cost overview',()=>{
   await screen.findByText(/incoming correction from another project/);expect(screen.queryByText(/Reviewed cost: ₱/)).toBeNull();
  });
  it('substitutes a matching, independently verified cross-site review without adding the two totals',async()=>{
-  for(const flag of ['FINANCE_FOUNDATION_PREVIEW','PROJECT_COST_CORRECTION_PREVIEW','CORRECTED_PROJECT_COST_REVIEW_PREVIEW','CROSS_SITE_SOURCE_REVIEW_PREVIEW','CROSS_SITE_LEDGER_PREVIEW'])vi.stubEnv(`NEXT_PUBLIC_${flag}`,'true');
+  for(const flag of ['FINANCE_FOUNDATION_PREVIEW','PROJECT_COST_CORRECTION_PREVIEW','CORRECTED_PROJECT_COST_REVIEW_PREVIEW','CROSS_SITE_SOURCE_REVIEW_PREVIEW','CROSS_SITE_LEDGER_PREVIEW','CROSS_SITE_ATOMIC_OVERVIEW'])vi.stubEnv(`NEXT_PUBLIC_${flag}`,'true');
   const f=crossFixture();
   const ordinary={project_id:f.ids.other,found:true,latest_revision:1,revision:1,request_id:f.ids.request,actor_id:f.ids.actor,recorded_at:'2024-12-15T00:00:00Z',note:'Reviewed destination',freshness:'matches',snapshot:f.destination,choices:{...f.destinationChoices,corrections:{[key]:{decision:'exclude',reason:'Cross-site review required'}}},result:{...f.destinationResult,correction_gross:'0.00',excluded_cases:1,incomplete_total:'0.00'}};
   const cross={...ordinary,request_id:f.ids.expense,choices:f.destinationChoices,cross_sites:f.contexts,result:f.destinationResult};
-  m.rpc.mockImplementation(async(name:string,args:Record<string,unknown>)=>name==='project_cost_cross_site_review'?{data:cross,error:null}:name==='project_cost_corrected_review'&&args.p_project===f.ids.site?{data:f.sourceSaved,error:null}:{data:covered(ordinary,f.ids.other),error:null});
+  m.rpc.mockImplementation(async(name:string)=>name==='project_cost_cross_site_overview'?{data:{project_id:f.ids.other,coverage:covered(ordinary,f.ids.other),cross,sources:f.sourceReviews},error:null}:{data:covered(ordinary,f.ids.other),error:null});
   render(panel(f.ids.other));await screen.findByText('Reviewed cross-site cost: ₱100.25');expect(screen.queryByText('Reviewed cost: ₱0.00')).toBeNull();expect(screen.getByText(/do not add them together/)).toBeTruthy();
-  expect(m.rpc).toHaveBeenCalledWith('project_cost_corrected_review',{p_project:f.ids.site,p_revision:1});
+  expect(m.rpc).toHaveBeenCalledWith('project_cost_cross_site_overview',{p_project:f.ids.other});expect(m.rpc).not.toHaveBeenCalledWith('project_cost_corrected_review',expect.anything());
  });
  it('shows a verified cross-site review when no ordinary destination review exists',async()=>{
-  for(const flag of ['FINANCE_FOUNDATION_PREVIEW','PROJECT_COST_CORRECTION_PREVIEW','CORRECTED_PROJECT_COST_REVIEW_PREVIEW','CROSS_SITE_SOURCE_REVIEW_PREVIEW','CROSS_SITE_LEDGER_PREVIEW'])vi.stubEnv(`NEXT_PUBLIC_${flag}`,'true');
+  for(const flag of ['FINANCE_FOUNDATION_PREVIEW','PROJECT_COST_CORRECTION_PREVIEW','CORRECTED_PROJECT_COST_REVIEW_PREVIEW','CROSS_SITE_SOURCE_REVIEW_PREVIEW','CROSS_SITE_LEDGER_PREVIEW','CROSS_SITE_ATOMIC_OVERVIEW'])vi.stubEnv(`NEXT_PUBLIC_${flag}`,'true');
   const f=crossFixture();const cross={found:true,project_id:f.ids.other,latest_revision:1,revision:1,request_id:f.ids.request,actor_id:f.ids.actor,recorded_at:'2024-12-15T00:00:00Z',note:'Reviewed destination',freshness:'matches',snapshot:f.destination,choices:f.destinationChoices,cross_sites:f.contexts,result:f.destinationResult};
-  m.rpc.mockImplementation(async(name:string,args:Record<string,unknown>)=>name==='project_cost_cross_site_review'?{data:cross,error:null}:args?.p_project===f.ids.site?{data:f.sourceSaved,error:null}:{data:covered({project_id:f.ids.other,found:false,latest_revision:0},f.ids.other),error:null});
+  const empty=covered({project_id:f.ids.other,found:false,latest_revision:0},f.ids.other);m.rpc.mockImplementation(async(name:string)=>name==='project_cost_cross_site_overview'?{data:{project_id:f.ids.other,coverage:empty,cross,sources:f.sourceReviews},error:null}:{data:empty,error:null});
   render(panel(f.ids.other));await screen.findByText('Reviewed cross-site cost: ₱100.25');expect(screen.queryByText(/No saved cost review yet/)).toBeNull();
  });
  it.each(['source stale','destination stale','different decisions','missing source','corrupt result'])('hides an unverifiable cross-site overview: %s',async change=>{
-  for(const flag of ['FINANCE_FOUNDATION_PREVIEW','PROJECT_COST_CORRECTION_PREVIEW','CORRECTED_PROJECT_COST_REVIEW_PREVIEW','CROSS_SITE_SOURCE_REVIEW_PREVIEW','CROSS_SITE_LEDGER_PREVIEW'])vi.stubEnv(`NEXT_PUBLIC_${flag}`,'true');
+  for(const flag of ['FINANCE_FOUNDATION_PREVIEW','PROJECT_COST_CORRECTION_PREVIEW','CORRECTED_PROJECT_COST_REVIEW_PREVIEW','CROSS_SITE_SOURCE_REVIEW_PREVIEW','CROSS_SITE_LEDGER_PREVIEW','CROSS_SITE_ATOMIC_OVERVIEW'])vi.stubEnv(`NEXT_PUBLIC_${flag}`,'true');
   const f=crossFixture();
   const ordinary={project_id:f.ids.other,found:true,latest_revision:1,revision:1,request_id:f.ids.request,actor_id:f.ids.actor,recorded_at:'2024-12-15T00:00:00Z',note:'Reviewed destination',freshness:'matches',snapshot:f.destination,choices:{...f.destinationChoices,corrections:{[key]:{decision:'exclude',reason:'Cross-site review required'}}},result:{...f.destinationResult,correction_gross:'0.00',excluded_cases:1,incomplete_total:'0.00'}};
   const cross={...ordinary,request_id:f.ids.expense,choices:structuredClone(f.destinationChoices),cross_sites:f.contexts,result:{...f.destinationResult}};
   if(change==='source stale')f.sourceSaved.freshness='changed';if(change==='destination stale')cross.freshness='changed';if(change==='different decisions')(cross.choices.historical as Record<string,unknown>).extra={decision:'include',reason:null};if(change==='corrupt result')cross.result.incomplete_total='200.00';
-  m.rpc.mockImplementation(async(name:string,args:Record<string,unknown>)=>name==='project_cost_cross_site_review'?{data:cross,error:null}:name==='project_cost_corrected_review'&&args.p_project===f.ids.site?(change==='missing source'?{data:null,error:Error('Missing')}:{data:f.sourceSaved,error:null}):{data:covered(ordinary,f.ids.other),error:null});
+  m.rpc.mockImplementation(async(name:string)=>name==='project_cost_cross_site_overview'?{data:{project_id:f.ids.other,coverage:covered(ordinary,f.ids.other),cross,sources:change==='missing source'?{}:f.sourceReviews},error:null}:{data:covered(ordinary,f.ids.other),error:null});
   render(panel(f.ids.other));await screen.findByText(/incoming correction from another project/);expect(screen.queryByText(/Reviewed cross-site cost:/)).toBeNull();
  });
  it('rejects a non-latest result',async()=>{

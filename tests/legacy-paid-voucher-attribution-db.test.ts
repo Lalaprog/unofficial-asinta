@@ -16,7 +16,7 @@ async function setup(){const db=new PGlite();await db.exec(baseFixture);await db
  SET ROLE authenticated;SET test.uid='${founder}';SET test.assurance='yes';`);return db;}
 async function read(db:PGlite){return (await db.query<{v:Record<string,unknown>}>('SELECT public.legacy_paid_voucher_attribution($1) v',[voucher])).rows[0].v;}
 const expectedWorker={id:voucher,name:'Test Worker',position:'Mason',active:true};
-async function record(db:PGlite,id:string,expected:unknown,split:unknown,note='Checked original payroll',worker:unknown=expectedWorker){return (await db.query<{v:unknown}>('SELECT public.record_legacy_paid_voucher_attribution($1,$2,$3::jsonb,$4::jsonb,$5::jsonb,$6,true) v',[id,voucher,JSON.stringify(expected),JSON.stringify(worker),JSON.stringify(split),note])).rows[0].v;}
+async function record(db:PGlite,id:string,expected:unknown,split:unknown,note='Checked original payroll',worker:unknown=expectedWorker,cases:unknown=[]){return (await db.query<{v:unknown}>('SELECT public.record_legacy_paid_voucher_attribution($1,$2,$3::jsonb,$4::jsonb,$5::jsonb,$6,true,$7::jsonb) v',[id,voucher,JSON.stringify(expected),JSON.stringify(worker),JSON.stringify(split),note,JSON.stringify(cases)])).rows[0].v;}
 const split=[{project_id:site,gross:'400.00'},{project_id:other,gross:'200.00'}];
 describe('held legacy paid voucher site attribution',()=>{
  it('records one exact gross split without modifying payroll, retries and detects later cases',async()=>{const db=await setup();try{
@@ -31,6 +31,18 @@ describe('held legacy paid voucher site attribution',()=>{
   await db.exec(`UPDATE public.workers SET name='Renamed worker' WHERE id='${voucher}';SET ROLE authenticated`);expect(await read(db)).toMatchObject({found:true,source_changed:true});await expect(record(db,request,expected,split)).rejects.toThrow(/source evidence changed/);
   await db.exec(`RESET ROLE;UPDATE public.workers SET name='Test Worker' WHERE id='${voucher}';INSERT INTO public.paid_payroll_adjustment_cases VALUES('${request2}','${voucher}','pending');SET ROLE authenticated`);
   expect(await read(db)).toMatchObject({found:true,source_changed:false,case_count:1,risks:['correction_cases']});expect(await record(db,request,expected,split)).toMatchObject({replayed:true});
+ }finally{await db.close();}},30000);
+ it('binds the reviewed case set and refuses newly created or changed cases before attribution',async()=>{const db=await setup();try{
+  const initial=await read(db),expected=initial.voucher;
+  await db.exec(`RESET ROLE;INSERT INTO public.paid_payroll_adjustment_cases VALUES('${request2}','${voucher}','pending');SET ROLE authenticated`);
+  await expect(record(db,request,expected,split)).rejects.toThrow(/Correction cases changed/);
+  const withCase=await read(db);expect(withCase).toMatchObject({eligible:true,risks:['correction_cases']});
+  await db.exec(`RESET ROLE;UPDATE public.paid_payroll_adjustment_cases SET status='no_transfer' WHERE id='${request2}';SET ROLE authenticated`);
+  await expect(record(db,request,expected,split,'Checked original payroll',expectedWorker,withCase.cases)).rejects.toThrow(/Correction cases changed/);
+  const reviewed=await read(db);expect(await record(db,request,expected,split,'Checked original payroll',expectedWorker,reviewed.cases)).toMatchObject({replayed:false});
+  await db.exec(`RESET ROLE;INSERT INTO public.paid_payroll_adjustment_cases VALUES('f1000000-0000-4000-8000-000000000003','${voucher}','pending');SET ROLE authenticated`);
+  expect(await record(db,request,expected,split,'Checked original payroll',expectedWorker,reviewed.cases)).toMatchObject({replayed:true});
+  await expect(record(db,request,expected,split,'Checked original payroll',expectedWorker,[])).rejects.toThrow(/Retry differs/);
  }finally{await db.close();}},30000);
  it('rejects invalid or stale splits and leaves no partial evidence',async()=>{const db=await setup();try{const expected=(await read(db)).voucher;
   for(const bad of [[{project_id:site,gross:'599.99'}],[{project_id:site,gross:'600.00'},{project_id:site,gross:'1.00'}],[{project_id:site,gross:'-600.00'}],[{project_id:site,gross:'600'}],[{project_id:request2,gross:'600.00'}]])await expect(record(db,request,expected,bad)).rejects.toThrow();

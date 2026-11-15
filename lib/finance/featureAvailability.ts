@@ -203,6 +203,11 @@ export function crossSiteSourceReviewPreviewEnabled(): boolean {
   return correctedProjectCostReviewPreviewEnabled() && process.env.NEXT_PUBLIC_CROSS_SITE_SOURCE_REVIEW_PREVIEW === 'true';
 }
 
+/** Same-snapshot cross-site overview requires its separately installed reader. */
+export function crossSiteAtomicOverviewEnabled(): boolean {
+  return crossSiteLedgerPreviewEnabled() && process.env.NEXT_PUBLIC_CROSS_SITE_ATOMIC_OVERVIEW === 'true';
+}
+
 /** Read-only recorded-cost estimate, separately gated until its matching RPC is installed and checked. */
 export function simpleRecordedCostPreviewEnabled(): boolean {
   return correctedProjectCostReviewPreviewEnabled() && process.env.NEXT_PUBLIC_SIMPLE_RECORDED_COST_PREVIEW === 'true';
