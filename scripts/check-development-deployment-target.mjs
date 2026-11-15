@@ -14,6 +14,9 @@ const requiredFlags = [
   'NEXT_PUBLIC_WEEKLY_BALE_IDEMPOTENT_SUBMISSION_PREVIEW',
   'NEXT_PUBLIC_PROJECT_COST_CORRECTION_PREVIEW',
   'NEXT_PUBLIC_CORRECTED_PROJECT_COST_REVIEW_PREVIEW',
+  // The installed development backend revokes the legacy attribution writer.
+  // A production-target release must use the matching case-bound client.
+  'NEXT_PUBLIC_HISTORICAL_CASE_BINDING_PREVIEW',
 ];
 if (production && (
   env.VERCEL_GIT_COMMIT_REF !== 'arena/e137cf5b-unofficial-asinta' ||
