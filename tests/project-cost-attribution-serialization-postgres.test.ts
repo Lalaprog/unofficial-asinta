@@ -40,4 +40,29 @@ suite('cross-site known-attribution serialization, PostgreSQL 17',()=>{
  it('blocks the real voucher attribution writer until the destination commits, then reports changed evidence',async()=>{const current=await snapshot(a,site);await a.query('BEGIN');try{await cross(a,id(5),0,site,current);const pending=voucher(b,id(6),2,'30.00');await waitForLock(b,true);await a.query('COMMIT');expect((await pending).rows[0].v.revision).toBe(3);}finally{await a.query('ROLLBACK');}const r=(await b.query<{v:{freshness:string}}>('SELECT public.project_cost_cross_site_review($1,1) v',[site])).rows[0].v;expect(r.freshness).toBe('changed');expect((await cross(a,id(5),0,site,current)).rows[0].v).toMatchObject({revision:1,replayed:true});},15000);
  it('does not claim external attribution serialization: a concurrent change can make the review stale',async()=>{const current=await snapshot(a,site);await a.query('BEGIN');try{await cross(a,id(7),1,site,current);expect((await external(b,id(8),1,'20.00')).rows[0].v.revision).toBe(2);await a.query('COMMIT');}finally{await a.query('ROLLBACK');}const r=(await b.query<{v:{freshness:string}}>('SELECT public.project_cost_cross_site_review($1,2) v',[site])).rows[0].v;expect(r.freshness).toBe('changed');},15000);
  it('serializes two destination saves that list the same voucher in opposite mixed-case order',async()=>{const first=await snapshot(a,site),second=await snapshot(b,siteTwo);await a.query('BEGIN');try{await cross(a,id(9),2,site,first);const pending=cross(b,id(13),0,siteTwo,second);await waitForLock(b,true);await a.query('COMMIT');expect((await pending).rows[0].v.revision).toBe(1);}finally{await a.query('ROLLBACK');}},15000);
+ it('serializes external and previously omitted voucher attributions in both directions',async()=>{
+  const candidate=file('project_cost_cross_site_all_attribution_serialization');
+  await expect(admin.query(`BEGIN;${candidate} COMMIT;`)).rejects.toThrow(/held for synthetic/);await admin.query('ROLLBACK');
+  await admin.query('BEGIN');await admin.query('GRANT UPDATE(note) ON public.project_cost_correction_attributions TO authenticated');await admin.query("SET LOCAL app.cross_site_all_attribution_lock_reviewed='synthetic-only'");await expect(admin.query(candidate)).rejects.toThrow(/direct write access changed/);await admin.query('ROLLBACK');
+  await admin.query(`BEGIN;SET LOCAL app.cross_site_all_attribution_lock_reviewed='synthetic-only';${candidate} COMMIT;`);
+  // Stub only the downstream inventory: a case appears at a destination only
+  // if its latest actual attribution names that destination.
+  await admin.query(`CREATE OR REPLACE FUNCTION public.project_cost_correction_inventory(p uuid) RETURNS jsonb LANGUAGE sql STABLE SECURITY DEFINER AS $$
+   SELECT jsonb_build_object('project_id',p,'historical_review',jsonb_build_object('base',jsonb_build_object('captured_at','2026-01-01T00:00:00Z')),'corrections',coalesce((
+    SELECT jsonb_agg(jsonb_build_object('kind',a.source_kind,'case_id',coalesce(a.voucher_case_id,a.external_case_id),'revision',a.revision) ORDER BY a.source_kind,coalesce(a.voucher_case_id,a.external_case_id))
+    FROM public.project_cost_correction_attributions a JOIN public.project_cost_correction_sites s ON s.request_id=a.request_id
+    WHERE s.project_id=p AND a.revision=(SELECT max(z.revision) FROM public.project_cost_correction_attributions z WHERE z.source_kind=a.source_kind AND coalesce(z.voucher_case_id,z.external_case_id)=coalesce(a.voucher_case_id,a.external_case_id))),'[]'::jsonb))$$;`);
+  const externalTo=(c:Client,req:string,rev:number,amount:string)=>c.query("SELECT public.record_project_cost_correction_attribution($1,'external_worker',$2,$3,$4::jsonb,$5::numeric,$6::jsonb,'Reviewed',true) v",[req,id(11),rev,JSON.stringify(externalEvidence),amount,JSON.stringify([{project_id:siteTwo,gross_change:amount}])]);
+  const voucherTo=(c:Client,req:string,rev:number,amount:string)=>c.query("SELECT public.record_project_cost_correction_attribution($1,'voucher',$2,$3,$4::jsonb,$5::numeric,$6::jsonb,'Reviewed',true) v",[req,id(1),rev,JSON.stringify(voucherEvidence),amount,JSON.stringify([{project_id:siteTwo,gross_change:amount}])]);
+  const old=await snapshot(b,siteTwo);await a.query('BEGIN');try{
+   await externalTo(a,id(21),2,'20.00');const pending=cross(b,id(22),1,siteTwo,old).then(()=>null,e=>e);await waitForLock(b);await a.query('COMMIT');expect(await pending).toMatchObject({code:'40001'});
+  }finally{await a.query('ROLLBACK');}
+  const current=await snapshot(a,siteTwo);await a.query('BEGIN');try{
+   await cross(a,id(23),1,siteTwo,current);const pending=externalTo(b,id(24),3,'15.00');await waitForLock(b);await a.query('COMMIT');await pending;
+  }finally{await a.query('ROLLBACK');}
+  expect((await b.query<{v:{freshness:string}}>('SELECT public.project_cost_cross_site_review($1,2) v',[siteTwo])).rows[0].v.freshness).toBe('changed');
+  const withoutVoucher=await snapshot(b,siteTwo);await a.query('BEGIN');try{
+   await voucherTo(a,id(25),3,'25.00');const pending=cross(b,id(26),2,siteTwo,withoutVoucher).then(()=>null,e=>e);await waitForLock(b);await a.query('COMMIT');expect(await pending).toMatchObject({code:'40001'});
+  }finally{await a.query('ROLLBACK');}
+ },30000);
 });
