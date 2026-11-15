@@ -74,6 +74,19 @@ describe('project roles and workforce logs', () => {
     mocks.assurance='ready';view.rerender(React.createElement(ProjectDetailPage));expect(screen.getByRole('region',{name:'Reviewed project cost'})).toBeTruthy();
     vi.stubEnv('NEXT_PUBLIC_CORRECTED_PROJECT_COST_REVIEW_PREVIEW','false');view.rerender(React.createElement(ProjectDetailPage));expect(screen.queryByRole('region',{name:'Reviewed project cost'})).toBeNull();
   });
+  it('opens the requested cost review from the overview without automatically loading evidence', () => {
+    vi.stubEnv('NEXT_PUBLIC_FINANCE_FOUNDATION_PREVIEW','true');vi.stubEnv('NEXT_PUBLIC_PROJECT_COST_RECONCILIATION_PREVIEW','true');vi.stubEnv('NEXT_PUBLIC_PROJECT_COST_CORRECTION_PREVIEW','true');vi.stubEnv('NEXT_PUBLIC_CORRECTED_PROJECT_COST_REVIEW_PREVIEW','true');
+    vi.stubEnv('NEXT_PUBLIC_DEVELOPMENT_FINANCE_CUTOVER','true');vi.stubEnv('NEXT_PUBLIC_DEVELOPMENT_CORRECTION_SUPABASE_REF','abcdefghijklmnopqrst');vi.stubEnv('NEXT_PUBLIC_SUPABASE_URL','https://abcdefghijklmnopqrst.supabase.co');
+    mocks.founder=true;render(React.createElement(ProjectDetailPage));
+    fireEvent.click(screen.getByRole('button',{name:'Open cost review'}));
+    const button=screen.getByRole('button',{name:'Review costs including worker corrections'});
+    expect(button.getAttribute('aria-expanded')).toBe('true');expect(document.activeElement).toBe(button);
+    expect(mocks.rpc.mock.calls.filter(([name])=>name==='project_cost_correction_inventory')).toHaveLength(0);
+    fireEvent.click(screen.getByRole('button',{name:'Overview & Summary'}));
+    fireEvent.click(screen.getByRole('button',{name:'Review expense and payroll evidence'}));
+    expect(document.activeElement?.textContent).toBe('Experimental project-cost review');
+    expect(screen.getByRole('button',{name:'Review costs including worker corrections'}).getAttribute('aria-expanded')).toBe('false');
+  });
   it('keeps Founder client information and financial tools', () => {
     mocks.founder = true;
     render(React.createElement(ProjectDetailPage));

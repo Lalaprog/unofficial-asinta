@@ -68,6 +68,11 @@ export default function ProjectDetailPage() {
   const assignedSupervisors = users.filter((u) => assignedSupervisorIds.includes(u.id));
 
   const [activeTab, setActiveTab] = useState<'overview' | 'invoices' | 'expenses' | 'tools' | 'attendance' | 'workers'>('overview');
+  const [costReviewTarget, setCostReviewTarget] = useState<'corrected' | 'scratch' | null>(null);
+  const openCostReview = (target: 'corrected' | 'scratch') => {
+    setCostReviewTarget(target);
+    setActiveTab('expenses');
+  };
   const expenseTotals = useExpenseTotals(user?.id, isFounder, project ? [id] : []);
   const [isEditModalOpen, setIsEditModalOpen] = useState(false);
   const [isDeleteDialogOpen, setIsDeleteDialogOpen] = useState(false);
@@ -242,7 +247,7 @@ export default function ProjectDetailPage() {
           ].map((tab) => (
             <button
               key={tab.id}
-              onClick={() => setActiveTab(tab.id as any)}
+              onClick={() => { setCostReviewTarget(null); setActiveTab(tab.id as any); }}
               aria-pressed={activeTab === tab.id}
               className={`min-h-11 px-3 sm:px-4 py-2 text-xs font-semibold text-center break-words transition-[color,border-color,transform] duration-200 motion-safe:active:scale-[0.96] sm:motion-safe:active:scale-[0.98] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-brand border-b-2 ${
                 tab.id === 'overview' ? 'col-span-2 sm:col-span-1' : ''
@@ -292,9 +297,9 @@ export default function ProjectDetailPage() {
             )}
 
             {isFounder && expenseTotals.status === 'error' && <div role="alert" className="text-xs text-status-danger">Expense totals could not be loaded. <Button type="button" variant="secondary" size="sm" onClick={expenseTotals.refresh}>Retry expense totals</Button></div>}
-            {isFounder && <p className="text-xs text-ink-secondary">Expense totals cover recorded expense entries only; payroll and rentals are not yet integrated automatically. <Button type="button" variant="secondary" size="sm" onClick={expenseTotals.refresh}>Refresh expense totals</Button></p>}
-            {isFounder && assurance === 'ready' && user?.id && correctedProjectCostReviewPreviewEnabled() && <ProjectReviewedCostSummary projectId={id} userId={user.id} onReview={()=>setActiveTab('expenses')} />}
-            {isFounder && assurance === 'ready' && user?.id && projectCostReconciliationPreviewEnabled() && <ProjectPaidPayrollSummary projectId={id} userId={user.id} onReview={()=>setActiveTab('expenses')} />}
+            {isFounder && <p className="text-xs text-ink-secondary">Expense totals cover recorded expense entries only. Paid worker payroll is not included here; where enabled, it can be reviewed separately. A rental is counted only through its recorded expense. <Button type="button" variant="secondary" size="sm" onClick={expenseTotals.refresh}>Refresh expense totals</Button></p>}
+            {isFounder && assurance === 'ready' && user?.id && correctedProjectCostReviewPreviewEnabled() && <ProjectReviewedCostSummary projectId={id} userId={user.id} onReview={()=>openCostReview('corrected')} />}
+            {isFounder && assurance === 'ready' && user?.id && projectCostReconciliationPreviewEnabled() && <ProjectPaidPayrollSummary projectId={id} userId={user.id} onReview={()=>openCostReview('scratch')} />}
 
             {/* Project Site Details */}
             <div className={`grid grid-cols-1 gap-6 ${isFounder ? 'lg:grid-cols-2' : ''}`}>
@@ -429,7 +434,7 @@ export default function ProjectDetailPage() {
         )}
 
         {/* TAB 3: EXPENSES (Founder only) */}
-        {activeTab === 'expenses' && isFounder && <ProjectExpenseLedger projectId={id} userId={user?.id} onRefreshTotals={expenseTotals.refresh} />}
+        {activeTab === 'expenses' && isFounder && <ProjectExpenseLedger projectId={id} userId={user?.id} onRefreshTotals={expenseTotals.refresh} reviewTarget={costReviewTarget} />}
 
         {/* TAB 4: TOOLS */}
         {activeTab === 'tools' && (

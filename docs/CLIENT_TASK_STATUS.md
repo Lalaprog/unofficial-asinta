@@ -1,5 +1,9 @@
 # Client task status — working progress, not release approval
 
+## Project-cost review navigation follow-up
+
+The branch now sends the Founder overview's review buttons directly to the relevant expense reconciliation section and focuses it; the corrected review opens without automatically loading evidence or making a decision. Corrected expense rows now show their category, exact ID, AI-hint caveat and any confirmed rental details to help distinguish similar records. Separate cost-panel React keys avoid duplicate sibling identities. This is an accessibility and review-workflow improvement, not an automatic or complete ledger; expense/payroll duplicates and missing or cross-site historical/correction evidence still require reconciliation. It has not been deployed to the development website.
+
 ## Latest development website alignment
 
 Vercel production deployment `dpl_9g6wJcHYrp83KQtTZY4RsZUx8P6o` now serves branch commit `e569255936aaa4600a814b02f9db576a913971d0` on the website aliases. Its build log confirms the enabled development configuration matched the installed development project URL; the public sign-in page loaded. Production-scoped development flags remain configured and the one-time release SHA marker was removed. This is still a development system, not permission to use real financial records; real signed-in workflows and device behavior are unverified. GitHub main remains older, the branch is not yet merged, and a fresh old-source deployment could undo this alignment. See [the cutover record](DEVELOPMENT_WEBSITE_CUTOVER.md).

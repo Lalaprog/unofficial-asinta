@@ -27,6 +27,17 @@ async function prepare(){render(panel());fireEvent.click(screen.getByRole('butto
 beforeEach(()=>{sessionStorage.clear();mock.rpc.mockReset();mock.user=actor;mock.founder=true;mock.assurance='ready';vi.spyOn(crypto,'randomUUID').mockReturnValue(request);standardRpc();});
 afterEach(()=>{cleanup();sessionStorage.clear();vi.restoreAllMocks();vi.unstubAllEnvs();});
 describe('corrected project review UI, gated experimental candidate',()=>{
+ it('opens and focuses the review from the overview without loading or saving anything',()=>{
+  render(React.createElement(CorrectedProjectCostReview,{projectId:site,userId:actor,openFromOverview:true}));
+  const button=screen.getByRole('button',{name:'Review costs including worker corrections'});
+  expect(button.getAttribute('aria-expanded')).toBe('true');expect(document.activeElement).toBe(button);
+  expect(screen.getByRole('button',{name:'Load corrected evidence'})).toBeTruthy();expect(mock.rpc).not.toHaveBeenCalled();
+ });
+ it('identifies each expense clearly in the corrected review',async()=>{
+  render(panel());fireEvent.click(screen.getByRole('button',{name:'Review costs including worker corrections'}));fireEvent.click(screen.getByRole('button',{name:'Load corrected evidence'}));
+  const group=await screen.findByRole('group',{name:`Corrected expense ${expense}`});
+  expect(within(group).getByText(/category: materials/)).toBeTruthy();expect(within(group).getByText(`Expense ${expense}`)).toBeTruthy();expect(within(group).getByText(/No AI Bale flag; still verify/)).toBeTruthy();
+ });
  it('is independently off, needs correction evidence gate and never auto-loads',()=>{vi.stubEnv('NEXT_PUBLIC_DEVELOPMENT_FINANCE_CUTOVER','true');vi.stubEnv('NEXT_PUBLIC_DEVELOPMENT_CORRECTION_SUPABASE_REF','abcdefghijklmnopqrst');vi.stubEnv('NEXT_PUBLIC_SUPABASE_URL','https://abcdefghijklmnopqrst.supabase.co');vi.stubEnv('NEXT_PUBLIC_PROJECT_COST_CORRECTION_PREVIEW','true');vi.stubEnv('NEXT_PUBLIC_CORRECTED_PROJECT_COST_REVIEW_PREVIEW','false');expect(correctedProjectCostReviewPreviewEnabled()).toBe(false);const view=render(React.createElement(ProjectCostReconciliation,{projectId:site,userId:actor}));expect(screen.queryByRole('button',{name:'Review costs including worker corrections'})).toBeNull();vi.stubEnv('NEXT_PUBLIC_CORRECTED_PROJECT_COST_REVIEW_PREVIEW','true');view.rerender(React.createElement(ProjectCostReconciliation,{projectId:site,userId:actor}));expect(screen.getByRole('button',{name:'Review costs including worker corrections'})).toBeTruthy();expect(mock.rpc).not.toHaveBeenCalled();vi.stubEnv('NEXT_PUBLIC_PROJECT_COST_CORRECTION_PREVIEW','false');expect(correctedProjectCostReviewPreviewEnabled()).toBe(false);});
  it('requires explicit decisions, notes, verification and acknowledgement, then verifies saved data',async()=>{await prepare();expect(mock.rpc.mock.calls.find(([name])=>name==='project_cost_corrected_preview')?.[1]).toMatchObject({p_choices:choices,p_snapshot:inventory,p_ack:true});
   fireEvent.click(screen.getByRole('checkbox',{name:/I reviewed the evidence and decisions/}));expect((screen.getByRole('button',{name:'Save corrected review'}) as HTMLButtonElement).disabled).toBe(false);

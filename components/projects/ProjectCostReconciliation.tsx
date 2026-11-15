@@ -12,7 +12,9 @@ import {HistoricalCostReview} from './HistoricalCostReview';
 import {ProjectCorrectionEvidence} from './ProjectCorrectionEvidence';
 
 /** Temporary review scratchpad only. It never records classifications or costs. */
-export function ProjectCostReconciliation({projectId,userId}:{projectId:string;userId:string}){
+export function ProjectCostReconciliation({projectId,userId,reviewTarget=null}:{projectId:string;userId:string;reviewTarget?:'corrected'|'scratch'|null}){
+ const scratchTarget=useRef<HTMLHeadingElement>(null);
+ useEffect(()=>{if(reviewTarget==='scratch')scratchTarget.current?.focus();},[reviewTarget]);
  const [rawSnapshot,setSnapshot]=useState<CostSnapshot|null>(null),[snapshotEvidence,setSnapshotEvidence]=useState<unknown>(null),[snapshotScope,setSnapshotScope]=useState(''),[loading,setLoading]=useState(false),[error,setError]=useState('');
  const [choices,setChoices]=useState<Record<string,CostChoice>>({}),[reasons,setReasons]=useState<Record<string,string>>({}),[ack,setAck]=useState(false);const alive=useRef(false),seq=useRef(0),busy=useRef(false),scope=JSON.stringify([projectId,userId]),active=useRef(scope);active.current=scope;const snapshot=snapshotScope===scope?rawSnapshot:null;
  useEffect(()=>{const sequence=seq;sequence.current++;alive.current=true;busy.current=false;setLoading(false);setSnapshot(null);setSnapshotEvidence(null);setChoices({});setReasons({});setAck(false);setError('');return()=>{alive.current=false;sequence.current++;busy.current=false;};},[projectId,userId]);
@@ -24,7 +26,7 @@ export function ProjectCostReconciliation({projectId,userId}:{projectId:string;u
  const reviewed=!!snapshot&&snapshot.expenses.every(e=>choices[e.id]==='include'||choices[e.id]==='exclude');
  const estimate=snapshot&&reviewed&&ack?estimateProjectCost(snapshot,choices):null;
  return <section className="rounded-xl border border-surface-border bg-white p-4 space-y-3 text-xs text-ink-secondary">
-  <h4 className="text-sm font-bold text-navy">Experimental project-cost review</h4>
+  <h4 ref={scratchTarget} tabIndex={-1} className="text-sm font-bold text-navy">Experimental project-cost review</h4>
   <p>This temporary scratchpad compares recorded expenses, paid worker allocations and confirmed rental links from one database snapshot. It saves nothing and does not prove payment or a final project cost.</p>
   <p className="rounded-lg bg-status-warning-bg p-3">Review each expense for Bale, payroll or rental duplicates before choosing. A confirmed rental is already represented by its linked expense—never add it again. The AI Bale hint is not proof. Legacy or externally paid payroll, correction amounts, missing allocations and unrecorded expenses may be absent from the estimate. Matching voucher adjustment cases are shown separately, without allocating them. Check original records and other projects independently.</p>
   <Button type="button" size="sm" variant="secondary" disabled={loading} onClick={load}>{snapshot?'Reload review snapshot':'Load review snapshot'}</Button>
@@ -45,7 +47,7 @@ export function ProjectCostReconciliation({projectId,userId}:{projectId:string;u
   {historicalCostReviewPreviewEnabled()&&<HistoricalCostReview key={`${scope}:combined`} projectId={projectId} userId={userId}/>}
   {historicalWorkerAttributionPreviewEnabled()&&<HistoricalWorkerAttributions key={`${scope}:attributions`} projectId={projectId} userId={userId} />}
   {projectCostCorrectionPreviewEnabled()&&<ProjectCorrectionEvidence key={`${scope}:corrections`} projectId={projectId} userId={userId} />}
-  {correctedProjectCostReviewPreviewEnabled()&&<CorrectedProjectCostReview key={`${scope}:corrected-review`} projectId={projectId} userId={userId} />}
+  {correctedProjectCostReviewPreviewEnabled()&&<CorrectedProjectCostReview key={`${scope}:corrected-review`} projectId={projectId} userId={userId} openFromOverview={reviewTarget==='corrected'} />}
   {projectCostReviewLedgerPreviewEnabled()&&!historicalCostReviewPreviewEnabled()&&<ProjectCostReviewLedger key={`${scope}:ledger`} projectId={projectId} userId={userId} snapshot={snapshot} raw={snapshot?snapshotEvidence:null} choices={choices} reasons={reasons} />}
  </section>;
 }
