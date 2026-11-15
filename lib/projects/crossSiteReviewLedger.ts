@@ -1,5 +1,6 @@
 import {calculateCrossSite,calculateHistoricalCrossSite,parseCrossSiteContext,verifyCrossSiteTotals,type CrossSiteTotals} from './crossSiteCostReview';
-import {parseCorrectedInventory,parseCorrectedSaved,type CorrectedChoices,type CorrectedInventory} from './correctedCostReview';
+import {parseCorrectedInventory,parseCorrectedSaved,type CorrectedChoices,type CorrectedInventory,type CorrectedSaved} from './correctedCostReview';
+import {sameAttributionEvidence} from '@/lib/payroll/historicalAttribution';
 import {parseReviewMarker,validReviewNote,type ReviewMarker} from './projectCostReview';
 
 const obj=(v:unknown):v is Record<string,unknown>=>!!v&&typeof v==='object'&&!Array.isArray(v);
@@ -32,6 +33,23 @@ export function verifyCrossSiteSaved(header:CrossSiteSavedHeader,sourceReviews:u
  if(!obj(sourceReviews))throw Error('Missing source reviews');
  for(const [caseKey,refs] of Object.entries(header.refs)){const group=sourceReviews[caseKey];if(!obj(group))throw Error('Missing source reviews');for(const ref of refs){const saved=parseCorrectedSaved(group[ref.projectId],ref.projectId);if(!saved.found)throw Error('Missing source revision');if(saved.freshness==='unavailable')sourceFreshness='unavailable';else if(sourceFreshness!=='unavailable'&&(saved.freshness==='changed'||saved.latestRevision!==saved.revision))sourceFreshness='changed';}}
  return {...header,choices:calc.choices,totals:calc.totals,sourceFreshness};
+}
+/** The destination review is an alternative calculation, not an amount to add
+ * to the ordinary review. Require identical evidence and all other decisions,
+ * and require every incoming item to be included in the cross-site review. */
+export function verifyCrossSiteOverview(ordinary:CorrectedSaved|null,cross:CrossSiteSaved):void{
+ if(cross.revision!==cross.latestRevision||cross.freshness!=='matches'||cross.sourceFreshness!=='matches')throw Error('Review is not current');
+ const incoming=cross.inventory.cases.filter(c=>!c.sourceInSnapshot);
+ if(!incoming.length||cross.totals.crossSiteCases!==incoming.length||incoming.some(c=>cross.choices.corrections[c.key]?.decision!=='include'))throw Error('Incoming corrections are incomplete');
+ if(!ordinary)return;
+ if(ordinary.revision!==ordinary.latestRevision||ordinary.freshness!=='matches')throw Error('Review is not current');
+ if(!sameAttributionEvidence(withoutCapture(ordinary.inventory.raw),withoutCapture(cross.inventory.raw)))throw Error('Review evidence differs');
+ const ordinaryChoices=structuredClone(ordinary.choices),crossChoices=structuredClone(cross.choices);
+ for(const c of incoming){
+  if(ordinaryChoices.corrections[c.key]?.decision!=='exclude'||crossChoices.corrections[c.key]?.decision!=='include')throw Error('Incoming correction is not included');
+  delete ordinaryChoices.corrections[c.key];delete crossChoices.corrections[c.key];
+ }
+ if(!sameAttributionEvidence(ordinaryChoices,crossChoices))throw Error('Review decisions differ');
 }
 const canonical=(v:unknown):unknown=>Array.isArray(v)?v.map(canonical):obj(v)?Object.fromEntries(Object.keys(v).sort().map(k=>[k,canonical(v[k])])):v;
 const equal=(a:unknown,b:unknown)=>JSON.stringify(canonical(a))===JSON.stringify(canonical(b));
