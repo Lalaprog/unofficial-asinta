@@ -1,5 +1,6 @@
 import {describe,expect,it} from 'vitest';
 import {parseSimpleRecordedCost} from '@/lib/projects/simpleRecordedCost';
+import {parseLegacyRecordedSnapshot} from '@/lib/projects/legacyRecordedCostCoverage';
 import {inventory,saved,site} from './helpers/corrected-cost-ui-fixture';
 const request='bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb';
 function snapshot(){return {project_id:site,coverage:{project_id:site,captured_at:inventory.historical_review.base.captured_at,unallocated_paid:0,attendance_matches:0,inconsistent_allocations:0,unattributed_history:0,review:{project_id:site,found:false,latest_revision:0}},inventory:structuredClone(inventory)};}
@@ -22,6 +23,14 @@ describe('simple recorded cost',()=>{
  it('rejects snapshots with different capture times or malformed coverage',()=>{
   const v=snapshot();v.coverage.captured_at='2024-12-12T00:00:00Z';expect(()=>parseSimpleRecordedCost(v,site)).toThrow(/different times/);
   const b=snapshot();b.coverage.attendance_matches=1;expect(()=>parseSimpleRecordedCost(b,site)).toThrow(/attendance/);
+ });
+ it('uses one combined snapshot to retain simple costs when legacy support is enabled',()=>{
+  const ordinary=snapshot(),legacy={...ordinary.coverage,legacy_site_attributions:0,changed_legacy_attributions:0,legacy_review:{project_id:site,found:false,latest_revision:0}};
+  const combined={project_id:site,legacy,ordinary};expect(parseLegacyRecordedSnapshot(combined,site).simple?.totals?.total).toBe(103800n);
+  expect(parseLegacyRecordedSnapshot({...combined,legacy:{...legacy,legacy_site_attributions:1}},site).simple).toBeNull();
+  const changed=parseLegacyRecordedSnapshot({...combined,legacy:{...legacy,changed_legacy_attributions:1}},site).simple;expect(changed?.totals).toBeNull();expect(changed?.issues.join(' ')).toMatch(/older voucher/);
+  expect(()=>parseLegacyRecordedSnapshot({...combined,legacy:{...legacy,captured_at:'2024-12-12T00:00:00Z'}},site)).toThrow(/snapshots differ/);
+  expect(()=>parseLegacyRecordedSnapshot({...combined,legacy:{...legacy,inconsistent_allocations:1}},site)).toThrow(/snapshots differ/);
  });
  it('asks for explicit review for multiple case effects on the same original',()=>{
   const v=snapshot(),secondId='cccccccc-cccc-4ccc-8ccc-cccccccccccc',first=v.inventory.corrections[0],second=structuredClone(first);

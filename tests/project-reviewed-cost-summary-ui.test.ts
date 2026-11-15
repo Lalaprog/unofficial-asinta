@@ -18,6 +18,14 @@ describe('reviewed project cost overview',()=>{
   m.rpc.mockResolvedValueOnce({data:snapshot,error:null}).mockResolvedValueOnce({data:risk,error:null});render(panel());await screen.findByText('Recorded cost so far: ₱1,038.00');expect(screen.getByText(/not proof of payment or a complete accounting/)).toBeTruthy();expect(m.rpc).toHaveBeenCalledWith('project_recorded_cost_snapshot',{p_project:site});
   fireEvent.click(screen.getByRole('button',{name:'Refresh reviewed cost'}));await screen.findByText(/Recorded cost needs review/);expect(screen.getByText(/Some expenses may duplicate/)).toBeTruthy();expect(screen.queryByText(/Recorded cost so far/)).toBeNull();
  });
+ it('keeps the simple amount with older-pay support enabled but hides it for an affected site',async()=>{
+  for(const flag of ['FINANCE_FOUNDATION_PREVIEW','PROJECT_COST_CORRECTION_PREVIEW','CORRECTED_PROJECT_COST_REVIEW_PREVIEW','SIMPLE_RECORDED_COST_PREVIEW','LEGACY_VOUCHER_ATTRIBUTION_PREVIEW'])vi.stubEnv(`NEXT_PUBLIC_${flag}`,'true');
+  const empty={project_id:site,found:false,latest_revision:0},coverage={...covered(empty),captured_at:inventory.historical_review.base.captured_at};
+  const ordinary={project_id:site,coverage,inventory:structuredClone(inventory)},legacy={...coverage,legacy_site_attributions:0,changed_legacy_attributions:0,legacy_review:empty};
+  m.rpc.mockResolvedValueOnce({data:{project_id:site,legacy,ordinary},error:null}).mockResolvedValueOnce({data:{project_id:site,legacy:{...legacy,legacy_site_attributions:1},ordinary},error:null});
+  render(panel());await screen.findByText('Recorded cost so far: ₱1,038.00');expect(m.rpc).toHaveBeenCalledWith('project_cost_legacy_recorded_snapshot',{p_project:site});
+  fireEvent.click(screen.getByRole('button',{name:'Refresh reviewed cost'}));await screen.findByText(/Older voucher attribution exists/);expect(screen.queryByText(/Recorded cost so far/)).toBeNull();
+ });
  it('shows verified expenses, payroll and signed corrections without double adding them',async()=>{
   m.rpc.mockResolvedValue({data:covered(saved(request)),error:null});const open=vi.fn();render(panel(site,actor,open));
   await screen.findByText('Reviewed cost: ₱1,038.00');expect(screen.getByText(/Included expenses ₱50.25.*paid worker payroll ₱600.00.*included historical payroll ₱400.25.*corrections −₱12.50/)).toBeTruthy();

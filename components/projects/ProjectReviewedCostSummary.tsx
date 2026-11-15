@@ -9,7 +9,7 @@ import {crossSiteAtomicOverviewEnabled,legacyVoucherAttributionPreviewEnabled,si
 import {parseSimpleRecordedCost,type SimpleRecordedCost} from '@/lib/projects/simpleRecordedCost';
 import {parseAtomicCrossSiteOverview,type CrossSiteSaved} from '@/lib/projects/crossSiteReviewLedger';
 import {parseRecordedCostCoverage} from '@/lib/projects/recordedCostCoverage';
-import {matchingLegacyOverview,parseLegacyCrossSiteOverview,parseLegacyRecordedCoverage} from '@/lib/projects/legacyRecordedCostCoverage';
+import {matchingLegacyOverview,parseLegacyCrossSiteOverview,parseLegacyRecordedCoverage,parseLegacyRecordedSnapshot} from '@/lib/projects/legacyRecordedCostCoverage';
 import type {LegacyCostSaved} from '@/lib/projects/legacyVoucherCostReview';
 import Link from 'next/link';
 
@@ -30,11 +30,12 @@ function Summary({projectId,onReview}:{projectId:string;userId:string;onReview:(
   void (async()=>{
    try {
     const client=createClient();
-    const legacyEnabled=legacyVoucherAttributionPreviewEnabled(),simpleEnabled=!legacyEnabled&&simpleRecordedCostPreviewEnabled();
-    const {data,error}=await client.rpc(legacyEnabled?'project_cost_legacy_recorded_coverage':simpleEnabled?'project_recorded_cost_snapshot':'project_cost_recorded_coverage',{p_project:projectId});
+    const legacyEnabled=legacyVoucherAttributionPreviewEnabled(),simpleEnabled=simpleRecordedCostPreviewEnabled();
+    const {data,error}=await client.rpc(legacyEnabled&&simpleEnabled?'project_cost_legacy_recorded_snapshot':legacyEnabled?'project_cost_legacy_recorded_coverage':simpleEnabled?'project_recorded_cost_snapshot':'project_cost_recorded_coverage',{p_project:projectId});
     if(error)throw error;
-    const legacyCoverage=legacyEnabled?parseLegacyRecordedCoverage(data,projectId):null;
-    const simple=simpleEnabled?parseSimpleRecordedCost(data,projectId):null;
+    const combined=legacyEnabled&&simpleEnabled?parseLegacyRecordedSnapshot(data,projectId):null;
+    const legacyCoverage=combined?.legacy??(legacyEnabled?parseLegacyRecordedCoverage(data,projectId):null);
+    const simple=combined?combined.simple:simpleEnabled?parseSimpleRecordedCost(data,projectId):null;
     const checked=legacyCoverage??simple?.coverage??parseRecordedCostCoverage(data,projectId),review=checked.review;
     if(review.found&&review.revision!==review.latestRevision)throw Error('Not the latest review');
     if(!active)return;

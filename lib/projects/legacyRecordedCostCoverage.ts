@@ -2,6 +2,7 @@ import {sameAttributionEvidence} from '@/lib/payroll/historicalAttribution';
 import {parseRecordedCostCoverage} from './recordedCostCoverage';
 import {hasUnsupportedLegacyIncoming,legacyCostMatchesBase,parseLegacyCostSaved,type LegacyCostSaved} from './legacyVoucherCostReview';
 import {parseAtomicCrossSiteOverview} from './crossSiteReviewLedger';
+import {parseSimpleRecordedCost} from './simpleRecordedCost';
 
 /** All readers in this response share the same statement snapshot. */
 export function parseLegacyRecordedCoverage(raw:unknown,projectId:string){
@@ -12,6 +13,23 @@ export function parseLegacyRecordedCoverage(raw:unknown,projectId:string){
  if(review.found&&review.freshness==='matches'&&review.inventory.legacy.length!==siteAttributions)throw Error('Legacy site evidence differs');
  return {...base,siteAttributions,changedAttributions,legacyReview:review};
 }
+/** Use the simple amount only when the same snapshot confirms that this site
+ * has no older voucher split or incoming legacy correction. */
+export function parseLegacyRecordedSnapshot(raw:unknown,projectId:string){
+ if(!raw||typeof raw!=='object'||Array.isArray(raw))throw Error('Invalid legacy recorded snapshot');const v=raw as Record<string,unknown>;
+ if(Object.keys(v).sort().join(',')!=='legacy,ordinary,project_id'||v.project_id!==projectId||!v.legacy||typeof v.legacy!=='object'||Array.isArray(v.legacy)||!v.ordinary||typeof v.ordinary!=='object'||Array.isArray(v.ordinary))throw Error('Invalid legacy snapshot scope');
+ const legacyRaw=v.legacy as Record<string,unknown>,ordinary=v.ordinary as Record<string,unknown>;
+ if(!ordinary.coverage||typeof ordinary.coverage!=='object'||Array.isArray(ordinary.coverage))throw Error('Missing ordinary coverage');
+ const coverageRaw=ordinary.coverage as Record<string,unknown>,legacy=parseLegacyRecordedCoverage(legacyRaw,projectId),base=parseRecordedCostCoverage(coverageRaw,projectId);
+ if(legacy.capturedAt!==base.capturedAt||legacy.inconsistentAllocations!==base.inconsistentAllocations||legacy.unattributedHistory!==base.unattributedHistory||!sameAttributionEvidence(legacyRaw.review,coverageRaw.review))throw Error('Coverage snapshots differ');
+ if(legacy.siteAttributions>0)return {legacy,simple:null};
+ // Valid older splits elsewhere should not look like unallocated vouchers.
+ // The legacy coverage and ordinary inventory were captured together.
+ const simple=parseSimpleRecordedCost({...ordinary,coverage:legacyRaw},projectId);
+ if(legacy.changedAttributions>0)return {legacy,simple:{...simple,totals:null,issues:[...simple.issues,'An older voucher split or its corrections changed and needs investigation.']}};
+ return {legacy,simple};
+}
+
 /** The legacy-coverage and ordinary cross-site results must share one RPC. */
 export function parseLegacyCrossSiteOverview(raw:unknown,projectId:string){
  if(!raw||typeof raw!=='object'||Array.isArray(raw))throw Error('Invalid combined overview');const v=raw as Record<string,unknown>;

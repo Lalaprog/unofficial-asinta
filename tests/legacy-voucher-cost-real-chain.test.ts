@@ -8,6 +8,7 @@ const mock=vi.hoisted(()=>({rpc:vi.fn()}));
 vi.mock('@/lib/supabase/client',()=>({createClient:()=>({rpc:mock.rpc})}));
 import {LegacyVoucherCostReview} from '@/components/projects/LegacyVoucherCostReview';
 import {LegacyCorrectionContext} from '@/components/payroll/LegacyCorrectionContext';
+import {parseLegacyRecordedSnapshot} from '@/lib/projects/legacyRecordedCostCoverage';
 import {parseAdjustmentList} from '@/lib/payroll/paidAdjustments';
 import {parseCorrectionReview} from '@/lib/payroll/projectCostCorrection';
 import {ProjectReviewedCostSummary} from '@/components/projects/ProjectReviewedCostSummary';
@@ -32,12 +33,23 @@ async function setup(upgrade=false){const db=new PGlite();try{
  CREATE FUNCTION public.project_historical_worker_attributions(p_project uuid) RETURNS jsonb LANGUAGE sql STABLE AS $$SELECT jsonb_build_object('project_id',p_project,'items','[]'::jsonb)$$;
  INSERT INTO public.payroll VALUES('${legacy}','${worker}','2024-10-06','2024-10-12','paid',400,50,0,350,8);`);
  for(const path of candidatePaths)await db.exec(`BEGIN;${readFileSync(path,'utf8')} COMMIT;`);
- for(const name of ['project_cost_historical_review','project_cost_correction_attribution','project_cost_correction_inventory','project_cost_corrected_preview','project_cost_corrected_review_ledger','project_cost_recorded_coverage','legacy_paid_voucher_attribution','project_cost_legacy_voucher_preview','project_cost_legacy_review_ledger','project_cost_legacy_correction_context','project_cost_legacy_corrected_source','project_cost_legacy_recorded_coverage'])await db.exec(`BEGIN;${sql(name)} COMMIT;`);
+ for(const name of ['project_cost_historical_review','project_cost_correction_attribution','project_cost_correction_inventory','project_cost_corrected_preview','project_cost_corrected_review_ledger','project_cost_recorded_coverage','project_recorded_cost_snapshot','legacy_paid_voucher_attribution','project_cost_legacy_voucher_preview','project_cost_legacy_review_ledger','project_cost_legacy_correction_context','project_cost_legacy_corrected_source','project_cost_legacy_recorded_coverage','project_cost_legacy_recorded_snapshot'])await db.exec(`BEGIN;${sql(name)} COMMIT;`);
  if(upgrade)await db.exec(`BEGIN;SET LOCAL app.legacy_correction_candidate='synthetic-only';${sql('project_cost_legacy_corrected_review_upgrade')} COMMIT;`);
  await db.exec(`SET ROLE authenticated;SET test.uid='${founder}';SET test.assurance='yes'`);return db;
  }catch(error){await db.close();throw error;}}
 afterEach(()=>{cleanup();sessionStorage.clear();vi.restoreAllMocks();vi.unstubAllEnvs();mock.rpc.mockReset();});
 describe('held legacy voucher through real local corrected-cost chain',()=>{
+ it('combines simple costs and older-pay coverage without omitting a split',async()=>{const db=await setup(true);try{
+  const third=id(99);await db.exec('RESET ROLE');await db.query('INSERT INTO public.projects VALUES($1,$2)',[third,'Unaffected site']);await db.exec('SET ROLE authenticated');
+  const combined=()=>read(db,'SELECT public.project_cost_legacy_recorded_snapshot($1) v',[third]);
+  expect(parseLegacyRecordedSnapshot(await combined(),third).simple?.totals).toBeNull(); // unallocated voucher
+  const source=await read(db,'SELECT public.legacy_paid_voucher_attribution($1) v',[legacy]) as {voucher:unknown;worker:unknown;cases:unknown};
+  await read(db,'SELECT public.record_legacy_paid_voucher_attribution($1,$2,$3::jsonb,$4::jsonb,$5::jsonb,$6,true,$7::jsonb) v',[attrib,legacy,j(source.voucher),j(source.worker),j([{project_id:site,gross:'250.00'},{project_id:other,gross:'150.00'}]),'Old ledger checked',j(source.cases)]);
+  expect(parseLegacyRecordedSnapshot(await combined(),third)).toMatchObject({legacy:{siteAttributions:0,unallocatedPaid:0},simple:{totals:{total:0n}}});
+  expect(parseLegacyRecordedSnapshot(await read(db,'SELECT public.project_cost_legacy_recorded_snapshot($1) v',[site]),site)).toMatchObject({legacy:{siteAttributions:1},simple:null});
+  await db.exec(`RESET ROLE;UPDATE public.workers SET name='Changed worker' WHERE id='${worker}';SET ROLE authenticated`);const changed=parseLegacyRecordedSnapshot(await combined(),third);expect(changed.legacy.changedAttributions).toBe(1);expect(changed.simple?.totals).toBeNull();
+  await db.exec(`RESET ROLE;SET ROLE authenticated;SET test.uid='${supervisor}'`);await expect(combined()).rejects.toThrow(/Founder/);
+ }finally{await db.close();}},60000);
  it('includes the split once, saves verified evidence, retries and detects later correction',async()=>{const db=await setup();try{
  const before=parseLegacyRecordedCoverage(await read(db,'SELECT public.project_cost_legacy_recorded_coverage($1) v',[site]),site);expect(before).toMatchObject({unallocatedPaid:1,siteAttributions:0,changedAttributions:0});
  const source=await read(db,'SELECT public.legacy_paid_voucher_attribution($1) v',[legacy]) as {voucher:unknown;worker:unknown;cases:unknown};
