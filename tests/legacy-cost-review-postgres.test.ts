@@ -30,4 +30,15 @@ suite('legacy review writer serialization, synthetic PostgreSQL',()=>{
   await a.query('BEGIN');try{await save(a,id(3),1,await snapshot(a));const waiting=b.query('UPDATE public.expenses SET amount=102 WHERE id=1');await waitForLock(b);await a.query('COMMIT');await waiting;}finally{await a.query('ROLLBACK');}
   expect((await b.query<{v:{freshness:string}}>('SELECT public.project_cost_legacy_review($1,NULL) v',[site])).rows[0].v.freshness).toBe('changed');expect((await admin.query('SELECT count(*)::int n FROM public.project_cost_legacy_reviews')).rows[0].n).toBe(2);
  },15000);
+ it('serializes the legacy attribution leading table locks in both directions',async()=>{
+  // The legacy attribution writer takes these five locks before changing its
+  // evidence. Exercise its actual lock order, not an unlocked mock writer.
+  const leading='LOCK TABLE public.users,public.workers,public.projects,public.advances,public.payroll IN SHARE ROW EXCLUSIVE MODE';
+  await admin.query('CREATE TABLE public.advances(id uuid)');
+  const s=await snapshot(a);await a.query('BEGIN');await b.query('RESET ROLE');
+  try{await save(a,id(4),2,s);await b.query('BEGIN');const waiting=b.query(leading);await waitForLock(b);await a.query('COMMIT');await waiting;await b.query('COMMIT');}finally{await a.query('ROLLBACK');await b.query('ROLLBACK');await b.query('SET ROLE authenticated');}
+  const before=await snapshot(a);await b.query('RESET ROLE');await b.query('BEGIN');
+  try{await b.query(leading);await b.query('UPDATE public.expenses SET amount=103 WHERE id=1');const waiting=save(a,id(5),3,before).then(()=>null,e=>e);await waitForLock(a);await b.query('COMMIT');expect(await waiting).toMatchObject({code:'40001'});}finally{await b.query('ROLLBACK');await b.query('SET ROLE authenticated');}
+  expect((await admin.query('SELECT count(*)::int n FROM public.project_cost_legacy_reviews')).rows[0].n).toBe(3);
+ },15000);
 });

@@ -9,11 +9,11 @@ import {crossSiteAtomicOverviewEnabled,legacyVoucherAttributionPreviewEnabled,si
 import {parseSimpleRecordedCost,type SimpleRecordedCost} from '@/lib/projects/simpleRecordedCost';
 import {parseAtomicCrossSiteOverview,type CrossSiteSaved} from '@/lib/projects/crossSiteReviewLedger';
 import {parseRecordedCostCoverage} from '@/lib/projects/recordedCostCoverage';
-import {matchingLegacyOverview,parseLegacyCrossSiteOverview,parseLegacyRecordedCoverage,parseLegacyRecordedSnapshot} from '@/lib/projects/legacyRecordedCostCoverage';
+import {matchingLegacyBase,matchingLegacyOverview,parseLegacyCrossSiteOverview,parseLegacyRecordedCoverage,parseLegacyRecordedSnapshot} from '@/lib/projects/legacyRecordedCostCoverage';
 import type {LegacyCostSaved} from '@/lib/projects/legacyVoucherCostReview';
 import Link from 'next/link';
 
-type State = {status:'loading'|'empty'|'error'|'stale'|'incoming'|'legacy-unavailable'|'legacy-changed'} | {status:'ready';review:CorrectedSaved} | {status:'cross';review:CrossSiteSaved} | {status:'legacy';review:LegacyCostSaved} | {status:'recorded';snapshot:SimpleRecordedCost} | {status:'needs-review';snapshot:SimpleRecordedCost};
+type State = {status:'loading'|'empty'|'error'|'stale'|'incoming'|'legacy-unavailable'|'legacy-changed'} | {status:'ready';review:CorrectedSaved} | {status:'cross';review:CrossSiteSaved} | {status:'legacy';review:LegacyCostSaved} | {status:'mixed';cross:CrossSiteSaved;legacy:LegacyCostSaved;total:bigint} | {status:'recorded';snapshot:SimpleRecordedCost} | {status:'needs-review';snapshot:SimpleRecordedCost};
 
 /** Latest independently checked saved review, not an automatic accounting posting. */
 export function ProjectReviewedCostSummary(props:{projectId:string;userId:string;onReview:()=>void}) {
@@ -42,12 +42,14 @@ function Summary({projectId,onReview}:{projectId:string;userId:string;onReview:(
     setCoverage(checked);
     if(legacyCoverage){
      setLegacySignals({siteAttributions:legacyCoverage.siteAttributions,changedAttributions:legacyCoverage.changedAttributions});
-     if(legacyCoverage.siteAttributions>0){const matching=matchingLegacyOverview(legacyCoverage);setState(matching?{status:'legacy',review:matching}:{status:'legacy-unavailable'});return;}
+     if(legacyCoverage.siteAttributions>0){const matching=matchingLegacyOverview(legacyCoverage);if(matching){setState({status:'legacy',review:matching});return;}if(!crossSiteAtomicOverviewEnabled()||!matchingLegacyBase(legacyCoverage)){setState({status:'legacy-unavailable'});return;}}
     }
-    if(simple&&!review.found&&simple.totals){setState({status:'recorded',snapshot:simple});return;}
-    if(simple&&!review.found&&(!crossSiteAtomicOverviewEnabled()||!!legacyCoverage?.changedAttributions)){setState({status:'needs-review',snapshot:simple});return;}
-    if(review.found&&review.freshness!=='matches'){setState({status:'stale'});return;}
-    if(review.found&&!review.inventory.cases.some(c=>!c.sourceInSnapshot)){setState({status:'ready',review});return;}
+    if(!legacyCoverage?.siteAttributions){
+     if(simple&&!review.found&&simple.totals){setState({status:'recorded',snapshot:simple});return;}
+     if(simple&&!review.found&&(!crossSiteAtomicOverviewEnabled()||!!legacyCoverage?.changedAttributions)){setState({status:'needs-review',snapshot:simple});return;}
+     if(review.found&&review.freshness!=='matches'){setState({status:'stale'});return;}
+     if(review.found&&!review.inventory.cases.some(c=>!c.sourceInSnapshot)){setState({status:'ready',review});return;}
+    }
     // Every source and, when enabled, legacy coverage must come from one
     // database snapshot; never combine separate browser requests.
     if(!crossSiteAtomicOverviewEnabled()){setState({status:review.found?'incoming':'empty'});return;}
@@ -55,14 +57,14 @@ function Summary({projectId,onReview}:{projectId:string;userId:string;onReview:(
      const response=await client.rpc(legacyEnabled?'project_cost_legacy_cross_site_overview':'project_cost_cross_site_overview',{p_project:projectId});if(response.error)throw response.error;
      if(legacyEnabled){const current=parseLegacyCrossSiteOverview(response.data,projectId);if(!active)return;
       setCoverage(current.legacy);setLegacySignals({siteAttributions:current.legacy.siteAttributions,changedAttributions:current.legacy.changedAttributions});
-      if(current.legacy.siteAttributions>0){const matching=matchingLegacyOverview(current.legacy);setState(matching?{status:'legacy',review:matching}:{status:'legacy-unavailable'});return;}
+      if(current.legacy.siteAttributions>0){const matching=matchingLegacyOverview(current.legacy);setState(matching?{status:'legacy',review:matching}:current.mixed?{status:'mixed',...current.mixed}:{status:'legacy-unavailable'});return;}
       if(current.legacy.changedAttributions>0){setState({status:'legacy-changed'});return;}
       setState(current.cross?{status:'cross',review:current.cross}:{status:current.legacy.review.found?'incoming':'empty'});return;
      }
      const current=parseAtomicCrossSiteOverview(response.data,projectId);if(!active)return;
      setCoverage(current.coverage);
      setState(current.cross?{status:'cross',review:current.cross}:simple?{status:'needs-review',snapshot:simple}:{status:current.coverage.review.found?'incoming':'empty'});
-    }catch{if(active)setState(simple&&!review.found?{status:'needs-review',snapshot:simple}:{status:review.found?'incoming':'error'});}
+    }catch{if(active)setState(legacyCoverage?.siteAttributions?{status:'legacy-unavailable'}:simple&&!review.found?{status:'needs-review',snapshot:simple}:{status:review.found?'incoming':'error'});}
    } catch {if(active)setState({status:'error'});}
   })();
   return ()=>{active=false;};
@@ -88,6 +90,7 @@ function Summary({projectId,onReview}:{projectId:string;userId:string;onReview:(
   {state.status==='legacy-unavailable'&&<p role="alert">Older voucher attribution exists for this site, but a matching current older-voucher cost review could not be verified. The ordinary total is hidden; open the cost review and investigate changed sources or corrections.</p>}
   {state.status==='legacy-changed'&&<p role="alert">An older voucher split or its corrections changed and needs investigation. The cross-site total is hidden until the evidence can be checked.</p>}
   {legacy&&<div aria-live="polite" className="space-y-1 rounded-lg bg-surface-inset p-3"><p className="font-semibold text-navy">Reviewed cost including older vouchers: {formatCostCents(legacy.totals.total)}</p><p>Ordinary review {formatCostCents(legacy.totals.base.total)} + included older voucher gross {formatCostCents(legacy.totals.included)}. Excluded older voucher gross {formatCostCents(legacy.totals.excluded)}.</p><p>Older-voucher review revision {legacy.revision}, recorded {legacy.recordedAt}. This replaces the ordinary review amount; do not add them. It is incomplete, can become stale and does not prove payment.</p></div>}
+  {state.status==='mixed'&&<div aria-live="polite" className="space-y-1 rounded-lg bg-surface-inset p-3"><p className="font-semibold text-navy">Reviewed cost including older pay and incoming corrections: {formatCostCents(state.total)}</p><p>Cross-site review {formatCostCents(state.cross.totals.total)} + included older voucher gross {formatCostCents(state.legacy.totals.included)}. The ordinary review is already included; do not add it again.</p><p>Cross-site revision {state.cross.revision} and older-voucher revision {state.legacy.revision} were checked together. Results can change and do not prove completeness or payment.</p></div>}
   {cross&&<div aria-live="polite" className="space-y-1 rounded-lg bg-surface-inset p-3">
    <p className="font-semibold text-navy">Reviewed cross-site cost: {formatCostCents(cross.totals.total)}</p>
    <p>Included expenses {formatCostCents(cross.totals.expenses)} + paid worker payroll {formatCostCents(cross.totals.paid)} + included historical payroll {formatCostCents(cross.totals.historical)} + corrections {formatSignedCost(cross.totals.correction)}, including incoming {formatCostCents(cross.totals.crossSiteGross)}.</p>

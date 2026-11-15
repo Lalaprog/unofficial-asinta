@@ -38,17 +38,36 @@ export function parseLegacyCrossSiteOverview(raw:unknown,projectId:string){
  if(!ordinaryCoverage||typeof ordinaryCoverage!=='object'||Array.isArray(ordinaryCoverage))throw Error('Missing ordinary coverage');
  const coverageRaw=ordinaryCoverage as Record<string,unknown>,legacy=parseLegacyRecordedCoverage(legacyRaw,projectId);
  if(legacyRaw.captured_at!==coverageRaw.captured_at||!sameAttributionEvidence(legacyRaw.review,coverageRaw.review))throw Error('Coverage snapshots differ');
- // An existing older split needs the dedicated legacy-inclusive review. Never
- // substitute an ordinary cross-site result that omits that older split.
- if(legacy.siteAttributions>0||legacy.changedAttributions>0)return {legacy,cross:null};
+ if(legacy.changedAttributions>0)return {legacy,cross:null,mixed:null};
+ if(legacy.siteAttributions>0){
+  const saved=matchingLegacyBase(legacy);
+  if(!saved)return {legacy,cross:null,mixed:null};
+  // A legacy correction already contained in the corrected older voucher must
+  // stay excluded from the cross-site review. Other incoming cases require
+  // their normal, independently verified source-site reviews.
+  const excluded=new Set<string>();
+  for(const c of saved.inventory.base.cases){if(c.sourceInSnapshot)continue;
+   if(saved.inventory.legacy.some(v=>v.payrollId===c.sourceId&&c.kind==='voucher'&&v.corrected?.cases.some(x=>x.id===c.id&&sameAttributionEvidence(x.review,c.review))))excluded.add(c.key);
+  }
+  const atomic=parseAtomicCrossSiteOverview(ordinaryRaw,projectId,excluded);
+  if(!atomic.cross)return {legacy,cross:null,mixed:null};
+  const total=atomic.cross.totals.total+saved.totals.included;
+  if(total>=10000000000000000n)throw Error('Combined total exceeds limit');
+  return {legacy,cross:null,mixed:{cross:atomic.cross,legacy:saved,total}};
+ }
  const atomic=parseAtomicCrossSiteOverview(ordinaryRaw,projectId);
- return {legacy,cross:atomic.cross};
+ return {legacy,cross:atomic.cross,mixed:null};
 }
 
-/** A legacy review replaces the ordinary one only if decisions and sources
- * match; do not add two whole reviews or show an out-of-date selection. */
-export function matchingLegacyOverview(coverage:ReturnType<typeof parseLegacyRecordedCoverage>):LegacyCostSaved|null{
+/** Both alternatives must use the same current ordinary evidence and choices. */
+export function matchingLegacyBase(coverage:ReturnType<typeof parseLegacyRecordedCoverage>):LegacyCostSaved|null{
  const base=coverage.review,legacy=coverage.legacyReview;
- if(!base.found||base.revision!==base.latestRevision||base.freshness!=='matches'||!legacy.found||legacy.freshness!=='matches'||hasUnsupportedLegacyIncoming(legacy.inventory,base.choices,base.inventory)||!legacyCostMatchesBase(legacy.inventory,base.inventory.raw)||!sameAttributionEvidence(base.choices,legacy.choices))return null;
+ if(coverage.changedAttributions>0||!base.found||base.revision!==base.latestRevision||base.freshness!=='matches'||!legacy.found||legacy.freshness!=='matches'||!legacyCostMatchesBase(legacy.inventory,base.inventory.raw)||!sameAttributionEvidence(base.choices,legacy.choices))return null;
+ return legacy;
+}
+/** A legacy-only review cannot stand in for unrelated incoming corrections. */
+export function matchingLegacyOverview(coverage:ReturnType<typeof parseLegacyRecordedCoverage>):LegacyCostSaved|null{
+ const legacy=matchingLegacyBase(coverage),base=coverage.review;
+ if(!legacy||!base.found||hasUnsupportedLegacyIncoming(legacy.inventory,base.choices,base.inventory))return null;
  return legacy;
 }

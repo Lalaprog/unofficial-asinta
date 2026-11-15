@@ -37,10 +37,15 @@ export function verifyCrossSiteSaved(header:CrossSiteSavedHeader,sourceReviews:u
 }
 /** The destination review is an alternative calculation, not an amount to add
  * to the ordinary review. Require identical evidence and all other decisions,
- * and require every incoming item to be included in the cross-site review. */
-export function verifyCrossSiteOverview(ordinary:CorrectedSaved|null,cross:CrossSiteSaved):void{
+ * and require every incoming item to be included in the cross-site review,
+ * except exclusions independently proven by the combined older-voucher verifier. */
+export function verifyCrossSiteOverview(ordinary:CorrectedSaved|null,cross:CrossSiteSaved,legacyExcluded:ReadonlySet<string>=new Set()):void{
  if(cross.revision!==cross.latestRevision||cross.freshness!=='matches'||cross.sourceFreshness!=='matches')throw Error('Review is not current');
- const incoming=cross.inventory.cases.filter(c=>!c.sourceInSnapshot);
+ const allIncoming=cross.inventory.cases.filter(c=>!c.sourceInSnapshot);
+ // Only the combined legacy verifier may supply these keys, after proving each
+ // excluded case belongs to its independently verified older voucher source.
+ if([...legacyExcluded].some(key=>!allIncoming.some(c=>c.key===key)||cross.choices.corrections[key]?.decision!=='exclude'))throw Error('Legacy incoming decision differs');
+ const incoming=allIncoming.filter(c=>!legacyExcluded.has(c.key));
  if(!incoming.length||cross.totals.crossSiteCases!==incoming.length||incoming.some(c=>cross.choices.corrections[c.key]?.decision!=='include'))throw Error('Incoming corrections are incomplete');
  if(!ordinary)return;
  if(ordinary.revision!==ordinary.latestRevision||ordinary.freshness!=='matches')throw Error('Review is not current');
@@ -58,12 +63,12 @@ export function verifyCrossSiteOverview(ordinary:CorrectedSaved|null,cross:Cross
  if(!sameAttributionEvidence(ordinaryChoices,crossChoices))throw Error('Review decisions differ');
 }
 /** All evidence here must come from the single-statement overview RPC. */
-export function parseAtomicCrossSiteOverview(raw:unknown,projectId:string){
+export function parseAtomicCrossSiteOverview(raw:unknown,projectId:string,legacyExcluded:ReadonlySet<string>=new Set()){
  if(!obj(raw)||Object.keys(raw).sort().join(',')!=='coverage,cross,project_id,sources'||raw.project_id!==projectId||!obj(raw.sources)||size(raw.sources)>CROSS_SITE_SOURCE_REVIEW_BYTES)throw Error('Invalid cross-site overview');
  const coverage=parseRecordedCostCoverage(raw.coverage,projectId),header=parseCrossSiteSavedHeader(raw.cross,projectId);
  if(!header.found){if(Object.keys(raw.sources).length)throw Error('Unexpected cross-site source evidence');return {coverage,cross:null};}
  if(Object.values(header.refs).reduce((sum,refs)=>sum+refs.length,0)>100)throw Error('Too many source revisions');
- const cross=verifyCrossSiteSaved(header,raw.sources);verifyCrossSiteOverview(coverage.review.found?coverage.review:null,cross);
+ const cross=verifyCrossSiteSaved(header,raw.sources);verifyCrossSiteOverview(coverage.review.found?coverage.review:null,cross,legacyExcluded);
  return {coverage,cross};
 }
 const canonical=(v:unknown):unknown=>Array.isArray(v)?v.map(canonical):obj(v)?Object.fromEntries(Object.keys(v).sort().map(k=>[k,canonical(v[k])])):v;
