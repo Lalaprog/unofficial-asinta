@@ -3,11 +3,13 @@
 import React, {useEffect, useState} from 'react';
 import {Button} from '@/components/ui/Button';
 import {createClient} from '@/lib/supabase/client';
-import {formatSignedCost,parseCorrectedSaved,type CorrectedSaved} from '@/lib/projects/correctedCostReview';
+import {formatSignedCost,type CorrectedSaved} from '@/lib/projects/correctedCostReview';
 import {formatCostCents} from '@/lib/projects/projectCostReconciliation';
 import {crossSiteLedgerPreviewEnabled} from '@/lib/finance/featureAvailability';
 import {CROSS_SITE_SOURCE_REVIEW_BYTES} from '@/lib/projects/crossSiteCostReview';
 import {parseCrossSiteSavedHeader,verifyCrossSiteSaved,verifyCrossSiteOverview,type CrossSiteSaved} from '@/lib/projects/crossSiteReviewLedger';
+import {parseRecordedCostCoverage} from '@/lib/projects/recordedCostCoverage';
+import Link from 'next/link';
 
 type State = {status:'loading'|'empty'|'error'|'stale'|'incoming'} | {status:'ready';review:CorrectedSaved} | {status:'cross';review:CrossSiteSaved};
 
@@ -17,18 +19,20 @@ export function ProjectReviewedCostSummary(props:{projectId:string;userId:string
 }
 function Summary({projectId,onReview}:{projectId:string;userId:string;onReview:()=>void}) {
  const [state,setState]=useState<State>({status:'loading'});
+ const [coverage,setCoverage]=useState<ReturnType<typeof parseRecordedCostCoverage>|null>(null);
  const [refresh,setRefresh]=useState(0);
  useEffect(()=>{
   let active=true;
-  setState({status:'loading'});
+  setState({status:'loading'});setCoverage(null);
   void (async()=>{
    try {
     const client=createClient();
-    const {data,error}=await client.rpc('project_cost_corrected_review',{p_project:projectId,p_revision:null});
+    const {data,error}=await client.rpc('project_cost_recorded_coverage',{p_project:projectId});
     if(error)throw error;
-    const review=parseCorrectedSaved(data,projectId);
+    const checked=parseRecordedCostCoverage(data,projectId),review=checked.review;
     if(review.found&&review.revision!==review.latestRevision)throw Error('Not the latest review');
     if(!active)return;
+    setCoverage(checked);
     if(review.found&&review.freshness!=='matches'){setState({status:'stale'});return;}
     if(review.found&&!review.inventory.cases.some(c=>!c.sourceInSnapshot)){setState({status:'ready',review});return;}
     // Never add two full reviews. If both exist, only substitute a cross-site
@@ -56,6 +60,11 @@ function Summary({projectId,onReview}:{projectId:string;userId:string;onReview:(
   <h3 className="text-sm font-semibold text-navy">Reviewed project cost</h3>
   <p>Combines paid worker payroll with the expenses, historical payroll and original-period corrections selected in the latest saved review. It is not added to the expense figures above.</p>
   {state.status==='loading'&&<p role="status">Checking the latest cost review…</p>}
+  {coverage&&<div className="rounded-lg bg-status-warning-bg p-3 space-y-1" aria-label="Recorded payroll coverage signals">
+   <p className="font-semibold text-navy">Check missing payroll attribution</p>
+   <p>Across all projects: {coverage.unallocatedPaid} positive paid voucher(s) without site allocations, {coverage.inconsistentAllocations} with allocation totals that differ from voucher gross, and {coverage.unattributedHistory} historical worker payment record(s) without a site split. {coverage.attendanceMatches} unallocated voucher(s) have attendance at this site during their periods.</p>
+   <p>These are investigation signals, not proof that the amounts belong to this site. Missing attendance or outside records cannot be detected; even zero signals do not prove completeness. Captured {coverage.capturedAt}; results can change. <Link href="/payroll" className="underline">Open payroll evidence</Link>.</p>
+  </div>}
   {state.status==='empty'&&<p>No saved cost review yet. Open the review to check expenses, payroll and corrections before combining them.</p>}
   {state.status==='stale'&&<p role="alert">The saved cost review is out of date or its sources could not be checked. Its total is hidden; reload the review before using it.</p>}
   {state.status==='incoming'&&<p role="alert">This review has an incoming correction from another project. Its total is hidden because a matching current cross-site review could not be verified. Open the cost review to investigate.</p>}

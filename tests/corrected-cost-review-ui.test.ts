@@ -27,6 +27,23 @@ async function prepare(){render(panel());fireEvent.click(screen.getByRole('butto
 beforeEach(()=>{sessionStorage.clear();mock.rpc.mockReset();mock.user=actor;mock.founder=true;mock.assurance='ready';vi.spyOn(crypto,'randomUUID').mockReturnValue(request);standardRpc();});
 afterEach(()=>{cleanup();sessionStorage.clear();vi.restoreAllMocks();vi.unstubAllEnvs();});
 describe('corrected project review UI, gated experimental candidate',()=>{
+ it('loads evidence and latest review in one action, and stops when evidence fails',async()=>{
+  render(panel());fireEvent.click(screen.getByRole('button',{name:'Review costs including worker corrections'}));fireEvent.click(screen.getByRole('button',{name:'Load evidence and latest review'}));
+  await screen.findByText(/No corrected review was returned/);expect(screen.getByText(/Snapshot captured/)).toBeTruthy();expect(mock.rpc.mock.calls.map(([name])=>name)).toEqual(['project_cost_correction_inventory','project_cost_corrected_review']);
+  cleanup();mock.rpc.mockReset().mockResolvedValue({data:null,error:Error('offline')});render(panel());fireEvent.click(screen.getByRole('button',{name:'Review costs including worker corrections'}));fireEvent.click(screen.getByRole('button',{name:'Load evidence and latest review'}));await screen.findByText(/Could not verify correction inventory/);expect(mock.rpc).toHaveBeenCalledTimes(1);
+ });
+ it('bulk-includes only personally checked unflagged unchosen expenses',async()=>{
+  const flagged='cccccccc-cccc-4ccc-8ccc-cccccccccccc',duplicate='dddddddd-dddd-4ddd-8ddd-dddddddddddd',third='eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee',labor='ffffffff-ffff-4fff-8fff-ffffffffffff',copy=structuredClone(inventory),base=copy.historical_review.base.expenses[0];
+  copy.historical_review.base.expenses=[{...base,id:labor,description:'Helper',category:'labor'},{...base,id:third,description:'Duplicate'},{...base,id:duplicate,description:'Duplicate'},{...base,id:flagged,description:'Bale',ai_bale_detection:false},base];
+  mock.rpc.mockImplementation(async(name:string)=>name==='project_cost_correction_inventory'?{data:copy,error:null}:{data:null,error:Error('unexpected')});
+  render(panel());fireEvent.click(screen.getByRole('button',{name:'Review costs including worker corrections'}));fireEvent.click(screen.getByRole('button',{name:'Load corrected evidence'}));await screen.findByText(/Snapshot captured/);
+  const button=screen.getByRole('button',{name:'Include checked unflagged expenses'}) as HTMLButtonElement;expect(button.disabled).toBe(true);
+  fireEvent.click(screen.getByRole('checkbox',{name:/I personally checked these remaining unflagged expenses/}));fireEvent.click(button);
+  expect((within(screen.getByRole('group',{name:`Corrected expense ${expense}`})).getByLabelText('Include expense') as HTMLInputElement).checked).toBe(true);
+  for(const id of [flagged,duplicate,third,labor])expect((within(screen.getByRole('group',{name:`Corrected expense ${id}`})).getByLabelText('Include expense') as HTMLInputElement).checked).toBe(false);
+  expect(within(screen.getByRole('group',{name:`Corrected expense ${flagged}`})).getByText(/Possible payroll or Bale overlap/)).toBeTruthy();
+  expect(screen.queryByText(/Incomplete reviewed total:/)).toBeNull();
+ });
  it('warns about matching expenses without making an inclusion decision',async()=>{
   const duplicate='cccccccc-cccc-4ccc-8ccc-cccccccccccc',copy=structuredClone(inventory);
   copy.historical_review.base.expenses.unshift({...copy.historical_review.base.expenses[0],id:duplicate,description:' SAND '});

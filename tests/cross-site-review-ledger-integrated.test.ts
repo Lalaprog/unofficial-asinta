@@ -28,6 +28,7 @@ describe('cross-site ledger UI against synthetic database',()=>{
   for(const flag of ['FINANCE_FOUNDATION_PREVIEW','PROJECT_COST_CORRECTION_PREVIEW','CORRECTED_PROJECT_COST_REVIEW_PREVIEW','CROSS_SITE_SOURCE_REVIEW_PREVIEW','CROSS_SITE_LEDGER_PREVIEW'])vi.stubEnv(`NEXT_PUBLIC_${flag}`,'true');
   const ordinary={project_id:f.ids.other,found:true,latest_revision:1,revision:1,request_id:f.ids.request,actor_id:f.ids.actor,recorded_at:'2024-12-15T00:00:00Z',note:'Reviewed destination',freshness:'matches',snapshot:f.destination,choices:{...f.destinationChoices,corrections:{[key]:{decision:'exclude',reason:'Needs cross-site review'}}},result:{...f.destinationResult,correction_gross:'0.00',excluded_cases:1,incomplete_total:'0.00'}};
   let lose=true;const writes:unknown[]=[];m.rpc.mockReset().mockImplementation(async(name:string,a:Record<string,unknown>)=>{try{let r;
+   if(name==='project_cost_recorded_coverage'&&a.p_project===f.ids.other)return {data:{project_id:f.ids.other,captured_at:'2024-12-15T00:00:00Z',unallocated_paid:0,attendance_matches:0,inconsistent_allocations:0,unattributed_history:0,review:ordinary},error:null};
    if(name==='project_cost_corrected_review'&&a.p_project===f.ids.other)return {data:ordinary,error:null};
    if(name==='project_cost_cross_site_review')r=await db.query<{v:unknown}>('SELECT public.project_cost_cross_site_review($1,$2) v',[a.p_project,a.p_revision]);
    else if(name==='project_cost_corrected_review')r=await db.query<{v:unknown}>('SELECT public.project_cost_corrected_review($1,$2) v',[a.p_project,a.p_revision]);

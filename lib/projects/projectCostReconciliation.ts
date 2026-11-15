@@ -54,6 +54,12 @@ export function potentialDuplicateExpenses(expenses:CostExpense[]):Map<string,st
  for(const ids of Array.from(groups.values()))if(ids.length>1)for(const id of ids)result.set(id,ids.filter(other=>other!==id));
  return result;
 }
+/** Keyword/category clue only. Labour entries can be legitimate independent costs;
+ * absence of a clue never proves an expense does not duplicate worker payroll. */
+export function potentialPayrollOverlap(expense:CostExpense):boolean {
+ const text=expense.description.normalize('NFKC').toLowerCase();
+ return expense.category.trim().toLowerCase()==='labor' || /\b(bale|payroll|wages?|salary|salaries|sweldo|suweldo|sahod|allowances?|cash\s+advance|labou?r)\b/u.test(text);
+}
 export type CostChoice='include'|'exclude';
 /** Pure scratch calculation; caller must review every row before displaying it. */
 export function estimateProjectCost(snapshot:CostSnapshot,choices:Record<string,CostChoice>):{expenses:bigint;excluded:bigint;payroll:bigint;total:bigint}{
