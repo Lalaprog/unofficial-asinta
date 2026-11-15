@@ -27,7 +27,7 @@ suite('complete historical cross-site chain and selected races, PostgreSQL 17',(
   await admin.query(`BEGIN;SET LOCAL app.cross_site_source_lock_reviewed='yes';${sql('project_cost_cross_site_source_review_serialization')} COMMIT;`);
   await admin.query(`BEGIN;SET LOCAL app.cross_site_attribution_lock_reviewed='yes';${sql('project_cost_cross_site_attribution_serialization')} COMMIT;`);
   await admin.query(`BEGIN;SET LOCAL app.asinta_development_historical_cross_site_cutover='reviewed-target';${readFileSync('supabase/release/development-historical-cross-site-candidate.sql','utf8')} COMMIT;`);
-  await a.query(`SET ROLE authenticated;SET test.uid='${founder}';SET test.assurance='yes'`);await b.query(`SET ROLE authenticated;SET test.uid='${founder}';SET test.assurance='yes';SET application_name='complete-chain-b'`);
+  await a.query(`SET ROLE authenticated;SET test.uid='${founder}';SET test.assurance='yes';SET application_name='complete-chain-a'`);await b.query(`SET ROLE authenticated;SET test.uid='${founder}';SET test.assurance='yes';SET application_name='complete-chain-b'`);
  },60000);
  afterAll(async()=>{await Promise.all([admin?.end(),a?.end(),b?.end()]);});
  it('saves signed grouped effects, blocks a real case writer, and hides stale results',async()=>{
@@ -47,4 +47,82 @@ suite('complete historical cross-site chain and selected races, PostgreSQL 17',(
   const saved=await read(a,'SELECT public.project_cost_cross_site_review($1,NULL) v',[dest]) as {freshness:string};expect(['changed','unavailable']).toContain(saved.freshness);
   expect((await admin.query("SELECT count(*)::int n FROM public.payroll WHERE period_start='2024-11-03'")).rows[0].n).toBe(0);
  },60000);
+ it('serializes real expense evidence in both orders and fails closed on timeout',async()=>{
+  const project=id(30),expense=id(31),second=id(32),third=id(33);
+  await admin.query("INSERT INTO public.projects(id,name) VALUES($1,'Expense race')",[project]);
+  await admin.query("CREATE POLICY expenses_founder_insert ON public.expenses FOR INSERT TO authenticated WITH CHECK (public.is_founder())");
+  const emptyChoices={expenses:{},historical:{},corrections:{}};
+  const initial=await inventory(a,project);
+  const save=(request:string,snapshot:unknown,choices:unknown,rev:number)=>read(a,'SELECT public.record_project_cost_corrected_review($1,$2,$3,$4::jsonb,$5::jsonb,$6,true) v',[request,project,rev,j(snapshot),j(choices),'Expense race review']);
+  const insert=(request:string)=>b.query("INSERT INTO public.expenses(id,project_id,description,category,amount,expense_date) VALUES($1,$2,'Synthetic expense','materials',25,'2024-11-04')",[request,project]);
+  await a.query('BEGIN');
+  try {
+   await save(id(34),initial,emptyChoices,0);
+   const pending=insert(expense); await waitForLock();
+   expect((await admin.query('SELECT count(*)::int n FROM public.expenses WHERE id=$1',[expense])).rows[0].n).toBe(0);
+   await a.query('COMMIT'); await pending;
+  } finally { await a.query('ROLLBACK'); }
+  const first=await read(a,'SELECT public.project_cost_corrected_review($1,NULL) v',[project]) as {freshness:string};
+  expect(['changed','unavailable']).toContain(first.freshness);
+  const captured=await inventory(a,project),parsed=parseCorrectedInventory(captured,project);
+  const choices={...emptyChoices,expenses:Object.fromEntries(parsed.historical.base.expenses.map(e=>[e.id,{decision:'include',reason:null}]))};
+  await b.query('BEGIN');
+  try {
+   await insert(second);
+   await expect(save(id(35),captured,choices,1)).rejects.toMatchObject({code:'55P03'});
+   expect((await admin.query('SELECT count(*)::int n FROM public.project_cost_corrected_reviews WHERE project_id=$1',[project])).rows[0].n).toBe(1);
+   await b.query('COMMIT');
+  } finally { await b.query('ROLLBACK'); }
+  await expect(save(id(36),captured,choices,1)).rejects.toMatchObject({code:'40001'});
+  const updated=await inventory(a,project),parsedUpdated=parseCorrectedInventory(updated,project);
+  const updatedChoices={...emptyChoices,expenses:Object.fromEntries(parsedUpdated.historical.base.expenses.map(e=>[e.id,{decision:'include',reason:null}]))};
+  calculateCorrected(parsedUpdated,updatedChoices);
+  const committed=await save(id(37),updated,updatedChoices,1) as {revision:number};expect(committed.revision).toBe(2);
+  await a.query('BEGIN');
+  try {
+   // A review's locks are transaction-scoped even after the function returns.
+   await save(id(38),updated,updatedChoices,2);
+   const pending=insert(third); await waitForLock();
+   await a.query('ROLLBACK'); await pending;
+  } finally { await a.query('ROLLBACK'); }
+  expect((await admin.query('SELECT count(*)::int n FROM public.project_cost_corrected_reviews WHERE request_id=$1',[id(38)])).rows[0].n).toBe(0);
+ },30000);
+
+ it('denies unassured and non-Founder review writers and direct review-table writes',async()=>{
+  const project=id(30),snapshot=await inventory(a,project),choices={expenses:{},historical:{},corrections:{}};
+  await b.query("SET test.uid='00000000-0000-0000-0000-000000000002'");
+  await expect(read(b,'SELECT public.record_project_cost_corrected_review($1,$2,0,$3::jsonb,$4::jsonb,$5,true) v',[id(40),project,j(snapshot),j(choices),'Denied'])).rejects.toMatchObject({code:'42501'});
+  await b.query(`SET test.uid='${founder}';SET test.assurance='no'`);
+  await expect(read(b,'SELECT public.record_project_cost_cross_site_review($1,$2,0,$3::jsonb,$4::jsonb,$5::jsonb,$6,true) v',[id(41),project,j(snapshot),j(choices),'{}','Denied'])).rejects.toMatchObject({code:'42501'});
+  await b.query("SET test.assurance='yes'");
+  await expect(b.query("DELETE FROM public.project_cost_corrected_reviews WHERE project_id=$1",[project])).rejects.toMatchObject({code:'42501'});
+  for(const role of ['anon','service_role']){
+   await b.query(`RESET ROLE; SET ROLE ${role}`);
+   await expect(read(b,'SELECT public.record_project_cost_cross_site_review($1,$2,0,$3::jsonb,$4::jsonb,$5::jsonb,$6,true) v',[id(42),project,j(snapshot),j(choices),'{}','Denied'])).rejects.toMatchObject({code:'42501'});
+  }
+  await b.query('RESET ROLE;SET ROLE authenticated');
+ },15000);
+
+ it('aborts one transaction rather than partially committing an opposed user-lock cycle',async()=>{
+  // A concurrent user update holds a row-exclusive relation lock while it
+  // waits on the Founder row; review capture then requests a SHARE relation
+  // lock. This deliberately exercises a realistic reversed lock order.
+  const project=id(30),snapshot=await inventory(a,project),parsed=parseCorrectedInventory(snapshot,project);
+  const choices={expenses:Object.fromEntries(parsed.historical.base.expenses.map(e=>[e.id,{decision:'include',reason:null}])),historical:{},corrections:{}};
+  await admin.query('CREATE POLICY users_founder_update ON public.users FOR UPDATE TO authenticated USING (public.is_founder()) WITH CHECK (public.is_founder())');
+  await a.query('BEGIN');
+  try {
+   await a.query('SELECT id FROM public.users WHERE id=$1 FOR SHARE',[founder]);
+   const other=b.query("UPDATE public.users SET name='Updated synthetic Founder' WHERE id=$1",[founder]).then(()=>null,e=>e as {code?:string});
+   await waitForLock();
+   const mine=await read(a,'SELECT public.record_project_cost_corrected_review($1,$2,2,$3::jsonb,$4::jsonb,$5,true) v',[id(44),project,j(snapshot),j(choices),'Lock race']).then(()=>null,e=>e as {code?:string});
+   if(mine) await a.query('ROLLBACK'); else await a.query('COMMIT');
+   const theirs=await other;
+   expect([mine?.code,theirs?.code].filter(Boolean)).toHaveLength(1);
+   expect(['40P01','55P03']).toContain((mine||theirs)?.code);
+   const counts=await admin.query("SELECT (SELECT count(*)::int FROM public.project_cost_corrected_reviews WHERE request_id=$1) r,(SELECT count(*)::int FROM public.users WHERE id=$2 AND name='Updated synthetic Founder') c",[id(44),founder]);
+   expect(counts.rows[0].r+counts.rows[0].c).toBe(1);
+  } finally { await a.query('ROLLBACK'); }
+ },15000);
+
 });
