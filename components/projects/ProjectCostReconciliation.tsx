@@ -15,7 +15,7 @@ import {HistoricalCostReview} from './HistoricalCostReview';
 import {ProjectCorrectionEvidence} from './ProjectCorrectionEvidence';
 
 /** Temporary review scratchpad only. It never records classifications or costs. */
-export function ProjectCostReconciliation({projectId,userId,reviewTarget=null}:{projectId:string;userId:string;reviewTarget?:'corrected'|'scratch'|null}){
+export function ProjectCostReconciliation({projectId,userId,reviewTarget=null,scratchEnabled=true}:{projectId:string;userId:string;reviewTarget?:'corrected'|'scratch'|null;scratchEnabled?:boolean}){
  const scratchTarget=useRef<HTMLHeadingElement>(null);
  const primaryReview=correctedProjectCostReviewPreviewEnabled();
  const [advancedOpen,setAdvancedOpen]=useState(reviewTarget==='scratch');
@@ -33,8 +33,8 @@ export function ProjectCostReconciliation({projectId,userId,reviewTarget=null}:{
  const estimate=snapshot&&reviewed&&ack?estimateProjectCost(snapshot,choices):null;
  const duplicates=potentialDuplicateExpenses(snapshot?.expenses??[]);
  return <section className="rounded-xl border border-surface-border bg-white p-4 space-y-3 text-xs text-ink-secondary">
-  {primaryReview&&<><h4 className="text-sm font-bold text-navy">Project cost review</h4><p>Use the main review for expenses, paid worker costs, historical pay and original-period corrections. Other tools remain available below when you need to investigate a record.</p><div id="cost-corrected-review" tabIndex={-1} className="scroll-mt-24"><CorrectedProjectCostReview key={`${scope}:corrected-review`} projectId={projectId} userId={userId} openFromOverview={reviewTarget==='corrected'} /></div><button type="button" className="min-h-11 font-semibold text-brand underline" aria-expanded={advancedOpen} aria-controls="advanced-project-cost-tools" onClick={()=>setAdvancedOpen(v=>!v)}>Other cost investigation tools</button></>}
-  <div id="advanced-project-cost-tools" hidden={primaryReview&&!advancedOpen} className="space-y-3">
+  {primaryReview&&<><h4 className="text-sm font-bold text-navy">Project cost review</h4><p>Use the main review for expenses, paid worker costs, historical pay and original-period corrections.{scratchEnabled?' Other tools remain available below when you need to investigate a record.':''}</p><div id="cost-corrected-review" tabIndex={-1} className="scroll-mt-24"><CorrectedProjectCostReview key={`${scope}:corrected-review`} projectId={projectId} userId={userId} openFromOverview={reviewTarget==='corrected'} /></div>{scratchEnabled&&<button type="button" className="min-h-11 font-semibold text-brand underline" aria-expanded={advancedOpen} aria-controls="advanced-project-cost-tools" onClick={()=>setAdvancedOpen(v=>!v)}>Other cost investigation tools</button>}</>}
+  {scratchEnabled&&<div id="advanced-project-cost-tools" hidden={primaryReview&&!advancedOpen} className="space-y-3">
   <h4 ref={scratchTarget} tabIndex={-1} className="text-sm font-bold text-navy">Experimental project-cost review</h4>
   <p>This temporary scratchpad compares recorded expenses, paid worker allocations and confirmed rental links from one database snapshot. It saves nothing and does not prove payment or a final project cost.</p>
   <WorkspaceJumpLinks label="Cost review tools" links={[
@@ -65,6 +65,6 @@ export function ProjectCostReconciliation({projectId,userId,reviewTarget=null}:{
   {historicalWorkerAttributionPreviewEnabled()&&<div id="cost-historical-evidence" tabIndex={-1} className="scroll-mt-24"><HistoricalWorkerAttributions key={`${scope}:attributions`} projectId={projectId} userId={userId} /></div>}
   {projectCostCorrectionPreviewEnabled()&&<div id="cost-correction-evidence" tabIndex={-1} className="scroll-mt-24"><ProjectCorrectionEvidence key={`${scope}:corrections`} projectId={projectId} userId={userId} /></div>}
   {projectCostReviewLedgerPreviewEnabled()&&!historicalCostReviewPreviewEnabled()&&<div id="cost-review-ledger" tabIndex={-1} className="scroll-mt-24"><ProjectCostReviewLedger key={`${scope}:ledger`} projectId={projectId} userId={userId} snapshot={snapshot} raw={snapshot?snapshotEvidence:null} choices={choices} reasons={reasons} /></div>}
-  </div>
+  </div>}
  </section>;
 }

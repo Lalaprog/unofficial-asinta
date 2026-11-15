@@ -88,6 +88,11 @@ describe('project roles and workforce logs', () => {
     expect(document.activeElement).toBe(payrollReview);expect(payrollReview.getAttribute('aria-expanded')).toBe('true');
     expect(screen.getByRole('button',{name:'Other cost investigation tools'}).getAttribute('aria-expanded')).toBe('false');
   });
+  it('opens the corrected review even when the optional scratchpad is disabled', () => {
+    vi.stubEnv('NEXT_PUBLIC_FINANCE_FOUNDATION_PREVIEW','true');vi.stubEnv('NEXT_PUBLIC_PROJECT_COST_RECONCILIATION_PREVIEW','false');vi.stubEnv('NEXT_PUBLIC_PROJECT_COST_CORRECTION_PREVIEW','true');vi.stubEnv('NEXT_PUBLIC_CORRECTED_PROJECT_COST_REVIEW_PREVIEW','true');
+    mocks.founder=true;render(React.createElement(ProjectDetailPage));fireEvent.click(screen.getByRole('button',{name:'Open cost review'}));
+    const button=screen.getByRole('button',{name:'Review costs including worker corrections'});expect(button.getAttribute('aria-expanded')).toBe('true');expect(document.activeElement).toBe(button);expect(screen.queryByRole('button',{name:'Load review snapshot'})).toBeNull();
+  });
   it('keeps the payroll shortcut working when the corrected review is disabled', () => {
     vi.stubEnv('NEXT_PUBLIC_FINANCE_FOUNDATION_PREVIEW','true');vi.stubEnv('NEXT_PUBLIC_PROJECT_COST_RECONCILIATION_PREVIEW','true');vi.stubEnv('NEXT_PUBLIC_CORRECTED_PROJECT_COST_REVIEW_PREVIEW','false');
     mocks.founder=true;render(React.createElement(ProjectDetailPage));fireEvent.click(screen.getByRole('button',{name:'Review expense and payroll evidence'}));

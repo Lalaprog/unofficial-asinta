@@ -4,7 +4,11 @@
 
 **Remaining implementation/release gaps:** The project overview still reports recorded expenses separately from paid worker gross allocations; it does not automatically provide the requested complete project cost. Reconciliation depends on explicit human review and may omit old pay, corrections or missing evidence. Supervisor database reads retain full-row historical and collision exceptions, rather than a strict column-minimized selected-site boundary. The account editor now rechecks its loaded profile, workforce link and complete assignment list before submitting, refusing a detected change or failed check; the reads and later write are still not atomic, so concurrent edits can still conflict after the check. Finance review locking and old or privileged paths need further validation. These are not resolved by the tests or UI changes below, and this branch is not yet a finished release.
 
-## Simplified project-cost workspace (latest branch-only work)
+## Main review follow-up (latest branch-only work)
+
+Opening the combined review now restores the latest saved choices only if the saved review is current and every source field matches the new inventory (except the server-assigned capture timestamp). Changed, stale or unavailable evidence never restores choices. Users still verify the preview and confirm a new save; multiple-correction non-overlap assertions must be reconfirmed. No review or payment is saved automatically. The project overview's review shortcut now also opens the corrected review when its own gate is enabled but the optional scratchpad is not. No hosted changes were made; these changes are not deployed and do not resolve the remaining complete-total and release gaps.
+
+## Simplified project-cost workspace (preceding branch-only work)
 
 The corrected project-cost review is now the first option when its separately gated backend is enabled. Both overview shortcuts lead to it; the unsaved scratch estimate and older investigation tools remain available under “Other cost investigation tools.” When the corrected review is not enabled, the existing scratchpad remains directly accessible. The combined “Load evidence and latest review” action stays primary; separate reload actions are tucked into “Other loading options.” This is a presentation and navigation simplification: it does not automatically classify expenses, bypass decisions, alter financial data, remove historical/correction support or make an incomplete amount complete. The current review and database rollout still need verification before release.
 

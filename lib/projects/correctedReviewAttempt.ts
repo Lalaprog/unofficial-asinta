@@ -33,12 +33,16 @@ function evidenceWithoutCaptureTime(value:unknown):unknown{
  delete copy.historical_review.base.captured_at;
  return copy;
 }
+/** Captures can have different timestamps even when all financial evidence matches. */
+export function sameCorrectedEvidence(a:unknown,b:unknown):boolean{
+ return JSON.stringify(canonical(evidenceWithoutCaptureTime(a)))===JSON.stringify(canonical(evidenceWithoutCaptureTime(b)));
+}
 /** A confirmed revision must contain the same reviewed evidence, not merely
  * reuse the request ID. Capture time is assigned by the server. */
 export function savedMatchesCorrectedAttempt(saved:CorrectedSaved,attempt:CorrectedAttempt):boolean{
  return saved.note===attempt.note &&
   JSON.stringify(canonical(saved.choices))===JSON.stringify(canonical(attempt.choices)) &&
-  JSON.stringify(canonical(evidenceWithoutCaptureTime(saved.inventory.raw)))===JSON.stringify(canonical(evidenceWithoutCaptureTime(attempt.raw)));
+  sameCorrectedEvidence(saved.inventory.raw,attempt.raw);
 }
 export function serializeCorrectedAttempt(attempt:CorrectedAttempt,projectId:string,actorId:string):string{
  const value=JSON.stringify({version:1,marker:attempt.marker,raw:attempt.raw,choices:attempt.choices,note:attempt.note});

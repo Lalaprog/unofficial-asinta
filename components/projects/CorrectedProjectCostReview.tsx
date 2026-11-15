@@ -14,7 +14,7 @@ import {PotentialPayrollOverlap} from './PotentialPayrollOverlap';
 import {correctionAmount,relatedCorrectionCases} from '@/lib/payroll/projectCostCorrection';
 import {parseReviewMarker,validReviewNote,verifyReviewWrite,type ReviewMarker} from '@/lib/projects/projectCostReview';
 import {calculateCorrected,formatSignedCost,parseCorrectedInventory,parseCorrectedSaved,verifyCorrectedTotals,type CorrectedChoices,type CorrectedInventory,type CorrectedSaved,type CorrectedTotals} from '@/lib/projects/correctedCostReview';
-import {parseStoredCorrectedAttempt,savedMatchesCorrectedAttempt,serializeCorrectedAttempt,type CorrectedAttempt} from '@/lib/projects/correctedReviewAttempt';
+import {parseStoredCorrectedAttempt,sameCorrectedEvidence,savedMatchesCorrectedAttempt,serializeCorrectedAttempt,type CorrectedAttempt} from '@/lib/projects/correctedReviewAttempt';
 
 type Saved={found:false;latestRevision:0}|CorrectedSaved;
 type Attempt=CorrectedAttempt;
@@ -55,13 +55,20 @@ function Contents({projectId,userId,openFromOverview}:{projectId:string;userId:s
 
  function choose(group:DecisionGroup,id:string,value:CostChoice){setChoices(old=>({...old,[group]:{...old[group],[id]:{decision:value,reason:value==='include'&&group!=='corrections'?null:''}}}));setBulkExpenseAck(false);setSourceReviews({});setAck('');setCrossAck('');setCrossPreview(null);}
  function reason(group:DecisionGroup,id:string,value:string){setChoices(old=>({...old,[group]:{...old[group],[id]:{...old[group][id],reason:value}}}));setSourceReviews({});setAck('');setCrossAck('');setCrossPreview(null);}
- async function loadInventory():Promise<boolean>{if(lock.current||pending||blocked)return false;lock.current=true;const token=++seq.current;setBusy(true);setError('');setMessage('');setInventory(null);setChoices(empty());setExpensePage(0);setBulkExpenseAck(false);setSourceReviews({});setCrossInputs({});setCrossPreview(null);setCrossAck('');setPreview(null);setAck('');
-  try{const {data,error}=await createClient().rpc('project_cost_correction_inventory',{p_project:projectId});if(error)throw error;const parsed=parseCorrectedInventory(data,projectId);if(alive.current&&seq.current===token){setInventory(parsed);return true;}return false;}
-  catch(e){if(alive.current&&seq.current===token)setError(e&&typeof e==='object'&&'code' in e&&e.code==='54000'?'This project exceeds a cost-review size limit. No total was calculated; larger-project review is not yet available. Do not delete records or assume missing evidence is zero.':'Could not verify correction inventory. Do not assume missing evidence is zero.');return false;}
+ async function loadInventory():Promise<CorrectedInventory|null>{if(lock.current||pending||blocked)return null;lock.current=true;const token=++seq.current;setBusy(true);setError('');setMessage('');setInventory(null);setChoices(empty());setExpensePage(0);setBulkExpenseAck(false);setSourceReviews({});setCrossInputs({});setCrossPreview(null);setCrossAck('');setPreview(null);setAck('');
+  try{const {data,error}=await createClient().rpc('project_cost_correction_inventory',{p_project:projectId});if(error)throw error;const parsed=parseCorrectedInventory(data,projectId);if(alive.current&&seq.current===token){setInventory(parsed);return parsed;}return null;}
+  catch(e){if(alive.current&&seq.current===token)setError(e&&typeof e==='object'&&'code' in e&&e.code==='54000'?'This project exceeds a cost-review size limit. No total was calculated; larger-project review is not yet available. Do not delete records or assume missing evidence is zero.':'Could not verify correction inventory. Do not assume missing evidence is zero.');return null;}
   finally{lock.current=false;if(alive.current&&seq.current===token)setBusy(false);}}
  async function read(rev:number|null){const {data,error}=await createClient().rpc('project_cost_corrected_review',{p_project:projectId,p_revision:rev});if(error)throw error;return parseCorrectedSaved(data,projectId);}
- async function loadSaved(rev:number|null){if(lock.current||pending||blocked)return;lock.current=true;setBusy(true);setError('');setMessage('');setSaved(null);setAck('');try{const result=await read(rev);if(rev!==null&&(!result.found||result.revision!==rev))throw Error('Wrong revision');if(alive.current)setSaved(result);}catch{if(alive.current)setError('Could not verify the corrected review; no empty result is assumed.');}finally{lock.current=false;if(alive.current)setBusy(false);}}
- async function startReview(){if(await loadInventory()&&alive.current)await loadSaved(null);}
+ async function loadSaved(rev:number|null):Promise<Saved|null>{if(lock.current||pending||blocked)return null;lock.current=true;setBusy(true);setError('');setMessage('');setSaved(null);setAck('');try{const result=await read(rev);if(rev!==null&&(!result.found||result.revision!==rev))throw Error('Wrong revision');if(alive.current){setSaved(result);return result;}return null;}catch{if(alive.current)setError('Could not verify the corrected review; no empty result is assumed.');return null;}finally{lock.current=false;if(alive.current)setBusy(false);}}
+ async function startReview(){const current=await loadInventory();if(!current||!alive.current)return;const token=seq.current;const previous=await loadSaved(null);if(!alive.current||seq.current!==token||!previous?.found||previous.revision!==previous.latestRevision||previous.freshness!=='matches')return;
+  if(!sameCorrectedEvidence(current.raw,previous.inventory.raw))return;
+  // Reuse only decisions already recorded against identical evidence. Preview,
+  // final acknowledgement and any multiple-case assertion are still renewed.
+  setChoices({expenses:previous.choices.expenses,historical:previous.choices.historical,corrections:previous.choices.corrections});
+  setSourceReviews(Object.fromEntries(Object.entries(previous.choices.source_reviews??{}).map(([source,r])=>[source,{note:r.note,confirmed:false}])));
+  setMessage('Previous decisions loaded because the evidence matches. Check them, verify the preview and confirm before saving again.');
+ }
  async function runPreview(){if(lock.current||!inventory||!calculated||pending||blocked)return;lock.current=true;setBusy(true);setError('');setMessage('');setPreview(null);setAck('');const token=++seq.current;const fp=fingerprint;
   try{const {data,error}=await createClient().rpc('project_cost_corrected_preview',{p_project:projectId,p_snapshot:inventory.raw,p_choices:calculated.choices,p_ack:true});if(error)throw error;const totals=verifyCorrectedTotals(data,projectId,calculated.totals);if(alive.current&&seq.current===token)setPreview({fingerprint:fp,totals});}
   catch{if(alive.current&&seq.current===token)setError('The corrected preview could not be verified. Reload the evidence and investigate any changed, missing or overlapping source.');}

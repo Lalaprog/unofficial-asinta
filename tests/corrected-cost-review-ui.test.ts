@@ -32,6 +32,32 @@ describe('corrected project review UI, gated experimental candidate',()=>{
   await screen.findByText(/No corrected review was returned/);expect(screen.getByText(/Snapshot captured/)).toBeTruthy();expect(mock.rpc.mock.calls.map(([name])=>name)).toEqual(['project_cost_correction_inventory','project_cost_corrected_review']);
   cleanup();mock.rpc.mockReset().mockResolvedValue({data:null,error:Error('offline')});render(panel());fireEvent.click(screen.getByRole('button',{name:'Review costs including worker corrections'}));fireEvent.click(screen.getByRole('button',{name:'Load evidence and latest review'}));await screen.findByText(/Could not verify correction inventory/);expect(mock.rpc).toHaveBeenCalledTimes(1);
  });
+ it('reuses prior choices only for identical current evidence, without verifying or saving automatically',async()=>{
+  const current=structuredClone(inventory);current.historical_review.base.captured_at='2024-12-12T00:00:00Z';
+  mock.rpc.mockImplementation(async(name:string)=>name==='project_cost_correction_inventory'?{data:current,error:null}:{data:saved(request),error:null});
+  render(panel());fireEvent.click(screen.getByRole('button',{name:'Review costs including worker corrections'}));fireEvent.click(screen.getByRole('button',{name:'Load evidence and latest review'}));
+  await screen.findByText(/Previous decisions loaded because the evidence matches/);
+  for(const [group,label] of [[`Corrected expense ${expense}`,'Include expense'],[`Corrected historical ${history}`,'Include historical original'],[`Corrected case voucher:${caseId}`,'Include correction']])expect((within(screen.getByRole('group',{name:group})).getByLabelText(label) as HTMLInputElement).checked).toBe(true);
+  expect((screen.getByRole('button',{name:'Save corrected review'}) as HTMLButtonElement).disabled).toBe(true);expect(screen.queryByText(/Verified at a point in time/)).toBeNull();
+  expect(mock.rpc.mock.calls.map(([name])=>name)).toEqual(['project_cost_correction_inventory','project_cost_corrected_review']);
+ });
+ it.each(['changed evidence','stale review','unavailable review'])('does not reuse decisions with %s',async kind=>{
+  const current=structuredClone(inventory);if(kind==='changed evidence')current.historical_review.base.expenses[0].amount='51.25';
+  const previous=saved(request);if(kind==='stale review')previous.freshness='changed';if(kind==='unavailable review')previous.freshness='unavailable';
+  mock.rpc.mockImplementation(async(name:string)=>name==='project_cost_correction_inventory'?{data:current,error:null}:{data:previous,error:null});
+  render(panel());fireEvent.click(screen.getByRole('button',{name:'Review costs including worker corrections'}));fireEvent.click(screen.getByRole('button',{name:'Load evidence and latest review'}));await screen.findByText(/Corrected revision 1/);
+  expect((within(screen.getByRole('group',{name:`Corrected expense ${expense}`})).getByLabelText('Include expense') as HTMLInputElement).checked).toBe(false);expect(screen.queryByText(/Previous decisions loaded/)).toBeNull();expect((screen.getByRole('button',{name:'Verify corrected preview'}) as HTMLButtonElement).disabled).toBe(true);
+ });
+ it('restores multiple-case notes but requires a new non-overlap confirmation',async()=>{
+  const secondId='cccccccc-cccc-4ccc-8ccc-cccccccccccc',multi=structuredClone(inventory),first=multi.corrections[0],second=structuredClone(first),source=`voucher:${voucher}`;
+  second.case_id=secondId;second.evidence.case_id=secondId;second.evidence.case.id=secondId;second.evidence.case.related_cases[0].id=secondId;
+  const siblings=[first.evidence.case.related_cases[0],second.evidence.case.related_cases[0]];first.evidence.case.related_cases=structuredClone(siblings);second.evidence.case.related_cases=structuredClone(siblings);first.evidence.attribution.case_snapshot=structuredClone(first.evidence.case);second.evidence.attribution.case_snapshot=structuredClone(second.evidence.case);
+  multi.corrections.push(second);multi.historical_review.base.adjustment_cases.push({...multi.historical_review.base.adjustment_cases[0],case_id:secondId});
+  const previous={...saved(request),snapshot:multi,choices:{...structuredClone(choices),corrections:{...choices.corrections,[`voucher:${secondId}`]:{decision:'include',reason:'Separate records checked'}},source_reviews:{[source]:{case_ids:[`voucher:${caseId}`,`voucher:${secondId}`].sort(),note:'Different documents',non_overlapping:true}}},result:{...result,correction_gross:'-25.00',incomplete_total:'1025.50'}};
+  mock.rpc.mockImplementation(async(name:string)=>name==='project_cost_correction_inventory'?{data:multi,error:null}:{data:previous,error:null});render(panel());fireEvent.click(screen.getByRole('button',{name:'Review costs including worker corrections'}));fireEvent.click(screen.getByRole('button',{name:'Load evidence and latest review'}));await screen.findByText(/Previous decisions loaded because the evidence matches/);
+  expect((screen.getByLabelText(`Why these case effects are distinct for ${source}`) as HTMLInputElement).value).toBe('Different documents');expect((screen.getByRole('checkbox',{name:/I reviewed these exact cases/}) as HTMLInputElement).checked).toBe(false);expect((screen.getByRole('button',{name:'Verify corrected preview'}) as HTMLButtonElement).disabled).toBe(true);
+  fireEvent.click(screen.getByRole('checkbox',{name:/I reviewed these exact cases/}));expect((screen.getByRole('button',{name:'Verify corrected preview'}) as HTMLButtonElement).disabled).toBe(false);
+ });
  it('explains a size-limit failure without showing or saving a partial total',async()=>{
   mock.rpc.mockResolvedValue({data:null,error:{code:'54000',message:'internal details'}});
   render(panel());fireEvent.click(screen.getByRole('button',{name:'Review costs including worker corrections'}));fireEvent.click(screen.getByRole('button',{name:'Load evidence and latest review'}));

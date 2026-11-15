@@ -7,7 +7,7 @@ import { WorkspaceJumpLinks } from '@/components/ui/WorkspaceJumpLinks';
 import { Badge } from '@/components/ui/Badge';
 import { formatPeso } from '@/lib/email/format';
 import { useExpenseLedger } from '@/lib/projects/useExpenseLedger';
-import { confirmedRentalPreviewEnabled, projectPaidWorkerEvidencePreviewEnabled, rentalConfirmationPreviewEnabled, projectCostReconciliationPreviewEnabled } from '@/lib/finance/featureAvailability';
+import { confirmedRentalPreviewEnabled, correctedProjectCostReviewPreviewEnabled, projectPaidWorkerEvidencePreviewEnabled, rentalConfirmationPreviewEnabled, projectCostReconciliationPreviewEnabled } from '@/lib/finance/featureAvailability';
 import { PaidWorkerEvidence } from '@/components/projects/PaidWorkerEvidence';
 import { ProjectCostReconciliation } from '@/components/projects/ProjectCostReconciliation';
 import { ConfirmedRentals } from '@/components/projects/ConfirmedRentals';
@@ -16,6 +16,7 @@ import { RentalConfirmation } from '@/components/projects/RentalConfirmation';
 export function ProjectExpenseLedger({projectId,userId,onRefreshTotals,reviewTarget=null}:{projectId:string;userId:string|undefined;onRefreshTotals:()=>void;reviewTarget?:'corrected'|'scratch'|null}) {
  const ledger=useExpenseLedger(userId,true,projectId,true);
  const [rentalRevision,setRentalRevision]=React.useState(0);
+ const scratchEnabled=projectCostReconciliationPreviewEnabled(),costReviewEnabled=scratchEnabled||correctedProjectCostReviewPreviewEnabled();
  if(!userId) return <p role="status" className="text-xs text-ink-secondary">Sign in to view recorded expenses.</p>;
  return <div className="animate-panel-enter animate-panel-lift space-y-4">
   <div className="flex flex-wrap items-center justify-between gap-2">
@@ -25,7 +26,7 @@ export function ProjectExpenseLedger({projectId,userId,onRefreshTotals,reviewTar
   <p className="text-xs text-ink-secondary">Recorded expense entries only, newest first. Paid worker allocations are not added to this expense ledger; where enabled, they can be reviewed separately. A confirmed rental is represented by its linked expense. Pages and totals can change as records are edited; refresh to review the latest data.</p>
   <WorkspaceJumpLinks label="Project cost sections" links={[
    {href:'#project-expense-entries',label:'Recorded expenses'},
-   ...(projectCostReconciliationPreviewEnabled() ? [{href:'#project-cost-review',label:'Cost review'}] : []),
+   ...(costReviewEnabled ? [{href:'#project-cost-review',label:'Cost review'}] : []),
    ...(projectPaidWorkerEvidencePreviewEnabled() ? [{href:'#project-payroll-evidence',label:'Paid worker evidence'}] : []),
    ...(confirmedRentalPreviewEnabled() || rentalConfirmationPreviewEnabled() ? [{href:'#project-rentals',label:'Rental records'}] : []),
   ]} />
@@ -44,7 +45,7 @@ export function ProjectExpenseLedger({projectId,userId,onRefreshTotals,reviewTar
    </div>
   </div>
   </div>
-  {projectCostReconciliationPreviewEnabled() && <div id="project-cost-review" tabIndex={-1} className="scroll-mt-24 focus-visible:outline focus-visible:outline-2 focus-visible:outline-brand"><ProjectCostReconciliation key={`reconciliation:${projectId}:${userId}`} projectId={projectId} userId={userId} reviewTarget={reviewTarget} /></div>}
+  {costReviewEnabled && <div id="project-cost-review" tabIndex={-1} className="scroll-mt-24 focus-visible:outline focus-visible:outline-2 focus-visible:outline-brand"><ProjectCostReconciliation key={`reconciliation:${projectId}:${userId}`} projectId={projectId} userId={userId} reviewTarget={reviewTarget} scratchEnabled={scratchEnabled} /></div>}
   {projectPaidWorkerEvidencePreviewEnabled() && <div id="project-payroll-evidence" tabIndex={-1} className="scroll-mt-24 focus-visible:outline focus-visible:outline-2 focus-visible:outline-brand"><PaidWorkerEvidence key={`paid:${projectId}:${userId}`} projectId={projectId} userId={userId} /></div>}
   {(confirmedRentalPreviewEnabled() || rentalConfirmationPreviewEnabled()) && <div id="project-rentals" tabIndex={-1} className="scroll-mt-24 space-y-4 focus-visible:outline focus-visible:outline-2 focus-visible:outline-brand">
    {confirmedRentalPreviewEnabled() && <ConfirmedRentals key={`rentals:${projectId}:${userId}:${rentalRevision}`} projectId={projectId} userId={userId} />}
