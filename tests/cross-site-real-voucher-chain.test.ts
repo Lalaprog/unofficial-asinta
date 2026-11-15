@@ -34,6 +34,7 @@ async function setup(){
   const candidate=sql('project_cost_cross_site_all_attribution_serialization');
   await expect(db.exec(`BEGIN;${candidate} COMMIT;`)).rejects.toThrow(/held for synthetic rehearsal/);await db.exec('ROLLBACK');
   await db.exec(`BEGIN;SET LOCAL app.cross_site_all_attribution_lock_reviewed='synthetic-only';${candidate} COMMIT;`);
+  await db.exec(`BEGIN;SET LOCAL app.cross_site_multicase_candidate='synthetic-only';${sql('project_cost_multi_case_upgrade')} COMMIT;`);
   await db.exec(`SET ROLE authenticated;SET test.uid='${founder}';SET test.assurance='yes'`);
   return db;
  }catch(e){await db.close();throw e;}
@@ -42,9 +43,12 @@ const inventory=(db:PGlite,project:string)=>read(db,'SELECT public.project_cost_
 async function saveOrdinary(db:PGlite,project:string,request:string){
  const raw=await inventory(db,project),parsed=parseCorrectedInventory(raw,project);
  const choices={expenses:Object.fromEntries(parsed.historical.base.expenses.map(e=>[e.id,{decision:'include',reason:null}])),historical:{},corrections:Object.fromEntries(parsed.cases.map(c=>[c.key,{decision:'include',reason:'Reviewed original correction'}]))};
- const calc=calculateCorrected(parsed,choices);
- const result=await read(db,'SELECT public.project_cost_corrected_preview($1,$2::jsonb,$3::jsonb,true) v',[project,j(raw),j(choices)]);verifyCorrectedTotals(result,project,calc.totals);
- await read(db,'SELECT public.record_project_cost_corrected_review($1,$2,0,$3::jsonb,$4::jsonb,$5,true) v',[request,project,j(raw),j(choices),'Reviewed source site']);
+ const grouped=new Map<string,string[]>();for(const c of parsed.cases){const key=`${c.kind}:${c.sourceId}`;grouped.set(key,[...(grouped.get(key)??[]),c.key]);}
+ const source_reviews=Object.fromEntries([...grouped].filter(([,ids])=>ids.length>1).map(([key,ids])=>[key,{case_ids:ids.sort(),note:'Distinct correction effects',non_overlapping:true}]));
+ const reviewed=Object.keys(source_reviews).length?{...choices,source_reviews}:choices;
+ const calc=calculateCorrected(parsed,reviewed);
+ const result=await read(db,'SELECT public.project_cost_corrected_preview($1,$2::jsonb,$3::jsonb,true) v',[project,j(raw),j(reviewed)]);verifyCorrectedTotals(result,project,calc.totals);
+ await read(db,'SELECT public.record_project_cost_corrected_review($1,$2,0,$3::jsonb,$4::jsonb,$5,true) v',[request,project,j(raw),j(reviewed),'Reviewed source site']);
  return read(db,'SELECT public.project_cost_corrected_review($1,NULL) v',[project]);
 }
 describe('complete voucher cross-site review chain, isolated synthetic database',()=>{
@@ -67,4 +71,16 @@ describe('complete voucher cross-site review chain, isolated synthetic database'
   await db.exec('RESET ROLE');expect((await db.query('SELECT status,gross_pay::text gross,net_pay::text net FROM public.payroll WHERE id=$1',[payroll])).rows[0]).toEqual({status:'paid',gross:'750.00',net:'650.00'});expect((await db.query('SELECT sum(gross)::text total FROM public.weekly_worker_paid_allocations WHERE payroll_id=$1',[payroll])).rows[0]).toEqual({total:'750.00'});
   await db.exec(`SET ROLE authenticated;SET test.uid='${supervisor}'`);await expect(inventory(db,destination)).rejects.toThrow(/Founder/);
  }finally{await db.close();}},60000);
+ it('keeps signed voucher sibling effects grouped and rejects a negative destination group',async()=>{const db=await setup();try{
+  await db.exec('RESET ROLE');const original=await read(db,'SELECT app_private.paid_adjustment_voucher_snapshot(p) v FROM public.payroll p WHERE id=$1',[payroll]);await db.exec('SET ROLE authenticated');
+  for(const n of [20,21]){await read(db,"SELECT public.open_paid_payroll_adjustment($1,$2,$3::jsonb,1,'Distinct correction') v",[id(n),payroll,j(original)]);await read(db,"SELECT public.resolve_paid_payroll_adjustment($1,'no_transfer',NULL,'Reallocation only') v",[id(n)]);}
+  for(const [n,a] of [[20,50],[21,-150]] as const){const evidence=await read(db,"SELECT public.project_cost_correction_attribution('voucher',$1,NULL) v",[id(n)]) as {case:unknown};await read(db,"SELECT public.record_project_cost_correction_attribution($1,'voucher',$2,0,$3::jsonb,0,$4::jsonb,'Distinct site effects',true) v",[id(n+10),id(n),j(evidence.case),j([{project_id:site,gross_change:(-a).toFixed(2)},{project_id:destination,gross_change:a.toFixed(2)}])]);}
+  const sourceA=await saveOrdinary(db,site,id(40)),sourceB=await saveOrdinary(db,other,id(41));const raw=await inventory(db,destination),inv=parseCorrectedInventory(raw,destination),keys=[20,21].map(n=>`voucher:${id(n)}`),sourceKey=`voucher:${payroll}`;
+  const choices={expenses:{},historical:{},corrections:Object.fromEntries(keys.map(key=>[key,{decision:'include',reason:'Reviewed original sites'}])),source_reviews:{[sourceKey]:{case_ids:keys,note:'Distinct correction effects',non_overlapping:true}}};
+  const contexts:Record<string,unknown>={},sources:Record<string,unknown>={};for(const [i,n] of [20,21].entries()){contexts[keys[i]]=await read(db,"SELECT public.project_cost_cross_site_review_context($1,'voucher',$2) v",[destination,id(n)]);sources[keys[i]]={[site]:sourceA,[other]:sourceB};}
+  expect(()=>calculateCrossSite(inv,choices,contexts,sources)).toThrow(/negative/);
+  await expect(read(db,'SELECT public.project_cost_cross_site_corrected_preview($1,$2::jsonb,$3::jsonb,$4::jsonb,true) v',[destination,j(raw),j(choices),j(contexts)])).rejects.toThrow(/negative/);
+  await expect(read(db,'SELECT public.record_project_cost_cross_site_review($1,$2,0,$3::jsonb,$4::jsonb,$5::jsonb,$6,true) v',[id(42),destination,j(raw),j(choices),j(contexts),'Destination reviewed'])).rejects.toThrow(/negative/);
+ }finally{await db.close();}},60000);
+
 });

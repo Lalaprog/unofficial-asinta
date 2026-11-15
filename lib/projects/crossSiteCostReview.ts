@@ -1,7 +1,7 @@
 import {sameAttributionEvidence} from '@/lib/payroll/historicalAttribution';
 import {parseAdjustmentList} from '@/lib/payroll/paidAdjustments';
 import {parsePeriodCases,parsePeriodSnapshot} from '@/lib/payroll/paidPeriodCases';
-import {correctionAmount,type CorrectionCase} from '@/lib/payroll/projectCostCorrection';
+import {correctionAmount,relatedCorrectionCases,type CorrectionCase} from '@/lib/payroll/projectCostCorrection';
 import {parseCrossSiteEvidence,verifyCrossSiteIllustration,type CrossSiteIllustration} from '@/lib/payroll/crossSiteIllustration';
 import {calculateCorrected,parseCorrectedSaved,verifyCorrectedTotals,type CorrectedCase,type CorrectedChoices,type CorrectedInventory,type CorrectedTotals} from './correctedCostReview';
 
@@ -30,7 +30,7 @@ export function parseCrossSiteContext(raw:unknown,projectId:string,c:CorrectedCa
  if(!Array.isArray(original.sites)||original.sites.some((v:unknown)=>obj(v)&&v.project_id===projectId))throw Error('Destination has an original allocation');
  const destination=illustration.sites.find(x=>x.project_id===projectId);
  const incoming=correctionAmount(c.siteChange).cents;
- if(!destination||incoming<=0n||destination.original_gross!=='0.00'||destination.gross_change!==c.siteChange||destination.corrected_gross!==c.siteChange)throw Error('Incoming amount differs');
+ if(!destination||incoming===0n||destination.original_gross!=='0.00'||destination.gross_change!==c.siteChange||destination.corrected_gross!==c.siteChange)throw Error('Incoming amount differs');
  if(raw.original_site_reviews.length!==original.sites.length)throw Error('Missing original-site review');
  const seen=new Set<string>();
  const sources=raw.original_site_reviews.map((x:unknown,index:number):CrossSiteSource=>{
@@ -50,6 +50,12 @@ function verifySources(context:CrossSiteContext,c:CorrectedCase,reviews:unknown,
   if(!saved.found||saved.revision!==source.revision||saved.requestId!==source.requestId||saved.actorId!==source.actorId||saved.recordedAt!==source.recordedAt||(requireCurrent&&(saved.freshness!=='matches'||saved.latestRevision!==saved.revision)))throw Error('Original review changed');
   const own=saved.inventory.cases.find(x=>x.key===c.key);
   if(!own||!own.sourceInSnapshot||own.sourceId!==c.sourceId||own.siteChange!==source.grossChange||!sameAttributionEvidence(own.review,c.review)||saved.choices.corrections[c.key]?.decision!=='include')throw Error('Original correction inclusion differs');
+  // Every sibling is part of this group: the source review must include all
+  // of them, with the same complete case inventory and current attributions.
+  for(const sibling of relatedCorrectionCases(c.review.case)){
+   const item=saved.inventory.cases.find(x=>x.kind===c.kind&&x.id===sibling.id);
+   if(!item||!item.sourceInSnapshot||item.sourceId!==c.sourceId||item.status==='pending'||!item.review.attribution||item.review.attribution.case_changed||saved.choices.corrections[item.key]?.decision!=='include'||!sameAttributionEvidence(item.review.case.related_cases,c.review.case.related_cases))throw Error('Original sibling inclusion differs');
+  }
   if(c.kind==='voucher'){
    const paid=saved.inventory.historical.base.paid.find(x=>x.payrollId===c.sourceId);
    if(!paid||paid.gross!==source.originalGross)throw Error('Original voucher inclusion differs');
@@ -63,17 +69,30 @@ function verifySources(context:CrossSiteContext,c:CorrectedCase,reviews:unknown,
 export function verifyCrossSiteSources(context:CrossSiteContext,c:CorrectedCase,reviews:unknown):void{
  verifySources(context,c,reviews,true);
 }
-/** Apply the existing complete decision checks with incoming cases temporarily
- * excluded; add back only individually verified positive incoming effects. */
+/** Verify and group all incoming effects per original source. Individual lines
+ * may be negative, but the combined destination cost for each source cannot. */
 function calculate(inv:CorrectedInventory,rawChoices:unknown,contexts:unknown,sourceReviews:unknown,requireCurrent:boolean):{choices:CorrectedChoices;totals:CrossSiteTotals;contexts:Record<string,CrossSiteContext>}{
  if(!obj(rawChoices)||!obj(rawChoices.corrections)||!obj(contexts)||!obj(sourceReviews)||bytes(sourceReviews)>CROSS_SITE_SOURCE_REVIEW_BYTES||bytes(contexts)>500000)throw Error('Invalid incoming choices');
- const choices=structuredClone(rawChoices),baseCorrections=choices.corrections as Record<string,unknown>,verified:Record<string,CrossSiteContext>={};let incoming=0n,count=0;
+ const choices=structuredClone(rawChoices),baseCorrections=choices.corrections as Record<string,unknown>,verified:Record<string,CrossSiteContext>={};
+ const groups=new Map<string,{ids:string[];amount:bigint}>();let incoming=0n,count=0;
  for(const c of inv.cases){const decision=baseCorrections[c.key];if(c.sourceInSnapshot||!obj(decision)||decision.decision!=='include')continue;
   const context=parseCrossSiteContext(contexts[c.key],inv.historical.base.projectId,c);verifySources(context,c,sourceReviews[c.key],requireCurrent);verified[c.key]=context;incoming+=context.incoming;count++;
+  const key=`${c.kind}:${c.sourceId}`,group=groups.get(key)??{ids:[],amount:0n};group.ids.push(c.key);group.amount+=context.incoming;groups.set(key,group);
   baseCorrections[c.key]={...decision,decision:'exclude'};
  }
  if(Object.keys(contexts).length!==count||Object.keys(sourceReviews).length!==count)throw Error('Unexpected or missing incoming context');
+ const baseReviews='source_reviews' in choices?choices.source_reviews:undefined;
+ if(baseReviews!==undefined&&!obj(baseReviews))throw Error('Invalid source reviews');
+ const incomingReviews:NonNullable<CorrectedChoices['source_reviews']>={};
+ for(const [key,group] of groups){
+  if(group.amount<0n||inv.cases.some(c=>!c.sourceInSnapshot&&`${c.kind}:${c.sourceId}`===key&&!group.ids.includes(c.key)))throw Error('Incomplete or negative incoming source group');
+  if(group.ids.length>1){const review=obj(baseReviews)?baseReviews[key]:null,ids=group.ids.sort();
+   if(!obj(review)||Object.keys(review).sort().join(',')!=='case_ids,non_overlapping,note'||review.non_overlapping!==true||typeof review.note!=='string'||review.note!==review.note.trim()||!review.note||review.note.length>300||/[\u0000-\u001f\u007f-\u009f]/.test(review.note)||!Array.isArray(review.case_ids)||JSON.stringify(review.case_ids)!==JSON.stringify(ids))throw Error('Multiple incoming corrections require an exact distinct-effects review');
+   incomingReviews[key]={case_ids:ids,note:review.note,non_overlapping:true};delete (baseReviews as Record<string,unknown>)[key];
+  }
+ }
  const base=calculateCorrected(inv,choices);const normalized=structuredClone(base.choices);
+ if(Object.keys(incomingReviews).length)normalized.source_reviews={...normalized.source_reviews,...incomingReviews};
  for(const key of Object.keys(verified))normalized.corrections[key]={...normalized.corrections[key],decision:'include'};
  const total=base.totals.total+incoming,correction=base.totals.correction+incoming,excludedCases=base.totals.excludedCases-count;
  if(total<0n||total>=10000000000000000n||correction<=-10000000000000000n||correction>=10000000000000000n||excludedCases<0)throw Error('Invalid incoming total');

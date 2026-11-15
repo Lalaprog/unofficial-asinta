@@ -49,6 +49,11 @@ export function verifyCrossSiteOverview(ordinary:CorrectedSaved|null,cross:Cross
   if(ordinaryChoices.corrections[c.key]?.decision!=='exclude'||crossChoices.corrections[c.key]?.decision!=='include')throw Error('Incoming correction is not included');
   delete ordinaryChoices.corrections[c.key];delete crossChoices.corrections[c.key];
  }
+ // The distinct-effects assertion for incoming cases has no counterpart in
+ // the ordinary review, where those cases are deliberately excluded.
+ for(const c of incoming)delete crossChoices.source_reviews?.[`${c.kind}:${c.sourceId}`];
+ if(crossChoices.source_reviews&&Object.keys(crossChoices.source_reviews).length===0)delete crossChoices.source_reviews;
+ if(ordinaryChoices.source_reviews&&Object.keys(ordinaryChoices.source_reviews).length===0)delete ordinaryChoices.source_reviews;
  if(!sameAttributionEvidence(ordinaryChoices,crossChoices))throw Error('Review decisions differ');
 }
 const canonical=(v:unknown):unknown=>Array.isArray(v)?v.map(canonical):obj(v)?Object.fromEntries(Object.keys(v).sort().map(k=>[k,canonical(v[k])])):v;

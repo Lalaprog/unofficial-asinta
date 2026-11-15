@@ -12,7 +12,7 @@ import {correctionAmount} from '@/lib/payroll/projectCostCorrection';
 /** Read-only evidence inspection; not a cross-site destination review. */
 export function CrossSiteSourceEvidence({projectId,userId,item,onChange}:{projectId:string;userId:string;item:CorrectedCase;onChange?:(key:string,value:{context:unknown;reviews:Record<string,unknown>}|null)=>void}){
  const {user,isFounder,assurance}=useAuth();
- if(!crossSiteSourceReviewPreviewEnabled()||user?.id!==userId||!isFounder||assurance!=='ready'||item.sourceInSnapshot||item.siteChange===null||correctionAmount(item.siteChange).cents<=0n)return null;
+ if(!crossSiteSourceReviewPreviewEnabled()||user?.id!==userId||!isFounder||assurance!=='ready'||item.sourceInSnapshot||item.siteChange===null||correctionAmount(item.siteChange).cents===0n)return null;
  return <Contents key={JSON.stringify([projectId,userId,item])} projectId={projectId} item={item} onChange={onChange}/>;
 }
 function Contents({projectId,item,onChange}:{projectId:string;item:CorrectedCase;onChange?:(key:string,value:{context:unknown;reviews:Record<string,unknown>}|null)=>void}){
@@ -31,7 +31,7 @@ function Contents({projectId,item,onChange}:{projectId:string;item:CorrectedCase
   <button type="button" className="min-h-11 font-semibold text-brand underline" disabled={busy} aria-expanded={open} onClick={()=>{if(open){setContext(null);setNotes({});setError('');onChange?.(item.key,null);}setOpen(v=>!v);}}>Inspect incoming source-site reviews</button>
   {open&&<div className="space-y-2"><p>Read-only inspection for this one case. It does not include the correction in this project, save a destination review, change payroll or prove payment. Source reviews can change immediately and their decisions can be wrong.</p>{error&&<p role="alert">{error}</p>}
    <Button type="button" size="sm" variant="secondary" disabled={busy} onClick={()=>void load()}>Load original-site reviews</Button>{busy&&<p role="status">Checking all original-site reviews…</p>}
-   {context&&<div><p>Incoming gross effect {formatCostCents(context.incoming)}. The original and correction were included in every checked original-site review at the time of each read; this is not proof of completeness or future freshness.</p><ul>{context.sources.map(s=><li key={s.projectId} className="break-words">Project {s.projectId} · original {formatCostCents(costCents(s.originalGross))} · correction {formatSignedCost(correctionAmount(s.grossChange).cents)} · revision {s.revision} · reviewer {s.actorId} · {s.recordedAt} · request {s.requestId}<p>Source review note: {notes[s.projectId]?.review}. Included correction reason: {notes[s.projectId]?.correction}.</p></li>)}</ul></div>}
+   {context&&<div><p>Incoming gross effect {formatSignedCost(context.incoming)}. All related cases must be reviewed together; this line is not a standalone project total. The original and corrections were included in every checked original-site review at the time of each read; this is not proof of completeness or future freshness.</p><ul>{context.sources.map(s=><li key={s.projectId} className="break-words">Project {s.projectId} · original {formatCostCents(costCents(s.originalGross))} · correction {formatSignedCost(correctionAmount(s.grossChange).cents)} · revision {s.revision} · reviewer {s.actorId} · {s.recordedAt} · request {s.requestId}<p>Source review note: {notes[s.projectId]?.review}. Included correction reason: {notes[s.projectId]?.correction}.</p></li>)}</ul></div>}
   </div>}
  </section>;
 }

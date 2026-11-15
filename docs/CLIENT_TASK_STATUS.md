@@ -60,3 +60,7 @@ This is the current working inventory for the 16 agreed areas, not a release sig
 The old and post-attribution corrected-review bundles and the cross-site development bundle now contain installed objects and must not be rerun against development.
 
 See [recorded craft installation](RECORDED_CRAFT_OBSERVATIONS.md), [release reconciliation](RELEASE_RECONCILIATION.md), [corrected-cost writer observations](DEVELOPMENT_CORRECTED_WRITER_OBSERVATIONS.md), [category installation record](WORKER_CATEGORY_WORKFORCE_CANDIDATE.md), [Supervisor revision record](SUPERVISOR_PAYROLL_REVISION_CANDIDATE.md), and [Bale operations](WEEKLY_BALE_EXPIRY_OPERATIONS.md) for details and cautions. Older design documents may describe earlier uninstalled states; the development migration history and this inventory take precedence for current installation status.
+
+### Uninstalled multi-case experiment
+
+A held multi-case cross-site candidate and matching default-off client changes are under development. Isolated historical and voucher chains exercised signed sibling effects, original-site inclusion, omission/overlap rejection and source-group nonnegativity; the historical chain also checked conservation and later-case staleness. They do not yet establish a safe coordinated hosted cutover or serialize all underlying evidence writers. The candidate is not installed and the multi-case cross-site UI is not enabled. No actual financial records or payments were created by these tests.
