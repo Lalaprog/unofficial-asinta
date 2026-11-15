@@ -42,6 +42,7 @@ function Summary({projectId,onReview}:{projectId:string;userId:string;onReview:(
     setCoverage(checked);
     if(legacyCoverage){
      setLegacySignals({siteAttributions:legacyCoverage.siteAttributions,changedAttributions:legacyCoverage.changedAttributions});
+     if(legacyCoverage.changedAttributions>0){setState({status:'legacy-changed'});return;}
      if(legacyCoverage.siteAttributions>0){const matching=matchingLegacyOverview(legacyCoverage);if(matching){setState({status:'legacy',review:matching});return;}if(!crossSiteAtomicOverviewEnabled()||!matchingLegacyBase(legacyCoverage)){setState({status:'legacy-unavailable'});return;}}
     }
     if(!legacyCoverage?.siteAttributions){
@@ -88,7 +89,7 @@ function Summary({projectId,onReview}:{projectId:string;userId:string;onReview:(
   {state.status==='stale'&&<p role="alert">The saved cost review is out of date or its sources could not be checked. Its total is hidden; reload the review before using it.</p>}
   {state.status==='incoming'&&<p role="alert">This review has an incoming correction from another project. Its total is hidden because a matching current cross-site review could not be verified. Open the cost review to investigate.</p>}
   {state.status==='legacy-unavailable'&&<p role="alert">Older voucher attribution exists for this site, but a matching current older-voucher cost review could not be verified. The ordinary total is hidden; open the cost review and investigate changed sources or corrections.</p>}
-  {state.status==='legacy-changed'&&<p role="alert">An older voucher split or its corrections changed and needs investigation. The cross-site total is hidden until the evidence can be checked.</p>}
+  {state.status==='legacy-changed'&&<p role="alert">An older voucher split or its corrections changed and needs investigation. The total is hidden until the evidence can be checked.</p>}
   {legacy&&<div aria-live="polite" className="space-y-1 rounded-lg bg-surface-inset p-3"><p className="font-semibold text-navy">Reviewed cost including older vouchers: {formatCostCents(legacy.totals.total)}</p><p>Ordinary review {formatCostCents(legacy.totals.base.total)} + included older voucher gross {formatCostCents(legacy.totals.included)}. Excluded older voucher gross {formatCostCents(legacy.totals.excluded)}.</p><p>Older-voucher review revision {legacy.revision}, recorded {legacy.recordedAt}. This replaces the ordinary review amount; do not add them. It is incomplete, can become stale and does not prove payment.</p></div>}
   {state.status==='mixed'&&<div aria-live="polite" className="space-y-1 rounded-lg bg-surface-inset p-3"><p className="font-semibold text-navy">Reviewed cost including older pay and incoming corrections: {formatCostCents(state.total)}</p><p>Cross-site review {formatCostCents(state.cross.totals.total)} + included older voucher gross {formatCostCents(state.legacy.totals.included)}. The ordinary review is already included; do not add it again.</p><p>Cross-site revision {state.cross.revision} and older-voucher revision {state.legacy.revision} were checked together. Results can change and do not prove completeness or payment.</p></div>}
   {cross&&<div aria-live="polite" className="space-y-1 rounded-lg bg-surface-inset p-3">

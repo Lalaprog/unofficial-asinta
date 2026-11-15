@@ -25,7 +25,17 @@ describe('reviewed project cost overview',()=>{
   m.rpc.mockResolvedValueOnce({data:{project_id:site,legacy,ordinary},error:null}).mockResolvedValueOnce({data:{project_id:site,legacy:{...legacy,legacy_site_attributions:1},ordinary},error:null}).mockResolvedValueOnce({data:{project_id:site,legacy:{...legacy,changed_legacy_attributions:1},ordinary},error:null});
   render(panel());await screen.findByText('Recorded cost so far: ₱1,038.00');expect(m.rpc).toHaveBeenCalledWith('project_cost_legacy_recorded_snapshot',{p_project:site});
   fireEvent.click(screen.getByRole('button',{name:'Refresh reviewed cost'}));await screen.findByText(/Older voucher attribution exists/);expect(screen.queryByText(/Recorded cost so far/)).toBeNull();
-  fireEvent.click(screen.getByRole('button',{name:'Refresh reviewed cost'}));await screen.findByText(/Recorded cost needs review/);expect(screen.getByText(/An older voucher split or its corrections changed/)).toBeTruthy();expect(m.rpc).not.toHaveBeenCalledWith('project_cost_legacy_cross_site_overview',expect.anything());
+  fireEvent.click(screen.getByRole('button',{name:'Refresh reviewed cost'}));await screen.findByText(/An older voucher split or its corrections changed/);expect(screen.queryByText(/Recorded cost so far/)).toBeNull();expect(m.rpc).not.toHaveBeenCalledWith('project_cost_legacy_cross_site_overview',expect.anything());
+ });
+ it.each([false,true])('hides an ordinary saved amount if any older split changed, simple mode %s',async simple=>{
+  for(const flag of ['FINANCE_FOUNDATION_PREVIEW','PROJECT_COST_CORRECTION_PREVIEW','CORRECTED_PROJECT_COST_REVIEW_PREVIEW','LEGACY_VOUCHER_ATTRIBUTION_PREVIEW'])vi.stubEnv(`NEXT_PUBLIC_${flag}`,'true');
+  if(simple)vi.stubEnv('NEXT_PUBLIC_SIMPLE_RECORDED_COST_PREVIEW','true');
+  const coverage={...covered(saved(request)),captured_at:inventory.historical_review.base.captured_at};
+  const legacy={...coverage,legacy_site_attributions:0,changed_legacy_attributions:1,legacy_review:{project_id:site,found:false,latest_revision:0}};
+  const ordinary={project_id:site,coverage,inventory:structuredClone(inventory)};
+  m.rpc.mockResolvedValue({data:simple?{project_id:site,legacy,ordinary}:legacy,error:null});
+  render(panel());await screen.findByText(/An older voucher split or its corrections changed/);
+  expect(screen.queryByText(/Reviewed cost: ₱/)).toBeNull();expect(screen.queryByText(/Recorded cost so far/)).toBeNull();
  });
  it('shows verified expenses, payroll and signed corrections without double adding them',async()=>{
   m.rpc.mockResolvedValue({data:covered(saved(request)),error:null});const open=vi.fn();render(panel(site,actor,open));
@@ -80,7 +90,7 @@ describe('reviewed project cost overview',()=>{
   const f=crossFixture(),empty=covered({project_id:f.ids.other,found:false,latest_revision:0},f.ids.other),legacy=(count:number)=>({...empty,legacy_site_attributions:count,changed_legacy_attributions:0,legacy_review:{project_id:f.ids.other,found:false,latest_revision:0}});
   const cross={found:true,project_id:f.ids.other,latest_revision:1,revision:1,request_id:f.ids.request,actor_id:f.ids.actor,recorded_at:'2024-12-15T00:00:00Z',note:'Reviewed destination',freshness:'matches',snapshot:f.destination,choices:f.destinationChoices,cross_sites:f.contexts,result:f.destinationResult};
   m.rpc.mockImplementation(async(name:string)=>name==='project_cost_legacy_cross_site_overview'?{data:{project_id:f.ids.other,legacy:{...legacy(change==='new split'?1:0),changed_legacy_attributions:change==='changed source'?1:0},ordinary:{project_id:f.ids.other,coverage:empty,cross,sources:f.sourceReviews}},error:null}:{data:legacy(0),error:null});
-  render(panel(f.ids.other));if(change==='new split'){await screen.findByText(/Older voucher attribution exists/);expect(screen.queryByText(/Reviewed cross-site cost:/)).toBeNull();}else if(change==='changed source'){await screen.findByText(/cross-site total is hidden/);expect(screen.queryByText(/Reviewed cross-site cost:/)).toBeNull();}else await screen.findByText('Reviewed cross-site cost: ₱100.25');
+  render(panel(f.ids.other));if(change==='new split'){await screen.findByText(/Older voucher attribution exists/);expect(screen.queryByText(/Reviewed cross-site cost:/)).toBeNull();}else if(change==='changed source'){await screen.findByText(/total is hidden/);expect(screen.queryByText(/Reviewed cross-site cost:/)).toBeNull();}else await screen.findByText('Reviewed cross-site cost: ₱100.25');
   expect(m.rpc).toHaveBeenCalledWith('project_cost_legacy_cross_site_overview',{p_project:f.ids.other});
  });
  it.each(['source stale','destination stale','different decisions','missing source','corrupt result'])('hides an unverifiable cross-site overview: %s',async change=>{
