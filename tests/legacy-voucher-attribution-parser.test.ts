@@ -16,7 +16,7 @@ describe('legacy voucher attribution evidence parsing',()=>{
   expect(()=>parseLegacyAttempt({...attempt,split:[{project_id:site,gross:'599.99'}]},actor,scope)).toThrow();
  });
  it('rejects changed amounts, inconsistent eligibility, unknown signals and false fresh claims',()=>{
-  for(const bad of [{...status,voucher:{...voucher,net_pay:'499.99'}},{...status,worker:{...worker,id:site}},{...status,risks:['unknown'],eligible:false},{...status,eligible:false},{...status,risks:['correction_cases'],eligible:true}])expect(()=>parseLegacyStatus(bad,scope)).toThrow();
+  for(const bad of [{...status,voucher:{...voucher,net_pay:'499.99'}},{...status,worker:{...worker,id:site}},{...status,risks:['unknown'],eligible:false},{...status,eligible:false},{...status,risks:['correction_cases'],eligible:false}])expect(()=>parseLegacyStatus(bad,scope)).toThrow();
   const saved={...status,eligible:false,found:true,request_id:request,snapshot:voucher,recorded_worker:{...worker,name:'Other'},split,note:'Checked',actor_id:actor,recorded_at:'2026-11-01T00:00:00Z',source_changed:false,case_count:0};
   expect(()=>parseLegacyStatus(saved,scope)).toThrow(/not flagged/);
  });

@@ -67,10 +67,12 @@ BEGIN
  IF EXISTS(SELECT 1 FROM public.payroll p WHERE p.id<>p_payroll AND p.worker_id=v_pay.worker_id AND p.period_start<=v_pay.period_end AND p.period_end>=v_pay.period_start) OR EXISTS(SELECT 1 FROM public.historical_external_worker_payroll h WHERE h.worker_id=v_pay.worker_id AND h.period_start<=v_pay.period_end AND h.period_end>=v_pay.period_start) THEN v_risks:=v_risks||jsonb_build_array('overlapping_payroll'); END IF;
  IF v_cases>0 THEN v_risks:=v_risks||jsonb_build_array('correction_cases'); END IF;
  SELECT * INTO v_saved FROM public.legacy_paid_voucher_attributions WHERE payroll_id=p_payroll;
- IF NOT FOUND THEN RETURN jsonb_build_object('payroll_id',p_payroll,'worker_name',v_worker.name,'worker',v_worker_snapshot,'voucher',v_snapshot,'eligible',jsonb_array_length(v_risks)=0,'risks',v_risks,'found',false); END IF;
+ -- A case does not change the original voucher's site split. It must be
+ -- reviewed separately before a corrected project total can be produced.
+ IF NOT FOUND THEN RETURN jsonb_build_object('payroll_id',p_payroll,'worker_name',v_worker.name,'worker',v_worker_snapshot,'voucher',v_snapshot,'eligible',v_risks IN ('[]'::jsonb,'["correction_cases"]'::jsonb),'risks',v_risks,'found',false); END IF;
  SELECT coalesce(jsonb_agg(jsonb_build_object('project_id',s.project_id,'gross',s.gross::text) ORDER BY s.project_id),'[]'::jsonb) INTO v_split FROM public.legacy_paid_voucher_attribution_sites s WHERE s.attribution_id=v_saved.request_id;
  IF v_split IS DISTINCT FROM v_saved.split OR (SELECT coalesce(sum(gross),0) FROM public.legacy_paid_voucher_attribution_sites WHERE attribution_id=v_saved.request_id) IS DISTINCT FROM (v_saved.voucher_snapshot->>'gross_pay')::numeric THEN RAISE EXCEPTION 'Saved attribution split differs; investigate' USING ERRCODE='22023'; END IF;
- v_source_changed:=v_snapshot IS DISTINCT FROM v_saved.voucher_snapshot OR v_worker_snapshot IS DISTINCT FROM v_saved.worker_snapshot OR jsonb_array_length(v_risks)>0;
+ v_source_changed:=v_snapshot IS DISTINCT FROM v_saved.voucher_snapshot OR v_worker_snapshot IS DISTINCT FROM v_saved.worker_snapshot OR v_risks NOT IN ('[]'::jsonb,'["correction_cases"]'::jsonb);
  RETURN jsonb_build_object('payroll_id',p_payroll,'worker_name',v_worker.name,'worker',v_worker_snapshot,'voucher',v_snapshot,'eligible',false,'risks',v_risks,'found',true,'request_id',v_saved.request_id,'snapshot',v_saved.voucher_snapshot,'recorded_worker',v_saved.worker_snapshot,'split',v_saved.split,'note',v_saved.note,'actor_id',v_saved.actor_id,'recorded_at',v_saved.recorded_at,'source_changed',v_source_changed,'case_count',v_cases);
 END $$;
 
@@ -93,8 +95,8 @@ BEGIN
  LOCK TABLE public.users,public.workers,public.projects,public.advances,public.payroll IN SHARE ROW EXCLUSIVE MODE;
  IF auth.uid() IS NULL OR NOT coalesce(public.is_founder(),false) OR NOT coalesce(public.session_assurance_satisfied(),false) THEN RAISE EXCEPTION 'Founder access with required assurance required' USING ERRCODE='42501'; END IF;
  PERFORM pg_catalog.pg_advisory_xact_lock(pg_catalog.hashtextextended('legacy-voucher-attribution-request:'||p_request::text,0));
- -- Both adjustment paths lock worker then voucher. Subsequent cases are
- -- signalled as changed; this evidence does not freeze or settle them.
+ -- Both adjustment paths lock worker then voucher. Cases are signalled
+ -- separately; the original split neither freezes nor settles them.
  PERFORM 1 FROM public.workers WHERE id=(SELECT worker_id FROM public.payroll WHERE id=p_payroll) FOR UPDATE;
  IF NOT FOUND THEN RAISE EXCEPTION 'Worker unavailable' USING ERRCODE='P0002'; END IF;
  PERFORM 1 FROM public.payroll WHERE id=p_payroll FOR UPDATE;

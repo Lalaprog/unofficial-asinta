@@ -30,7 +30,7 @@ describe('held legacy paid voucher site attribution',()=>{
   await expect(db.exec(`UPDATE public.legacy_paid_voucher_attribution_sites SET gross=1`)).rejects.toThrow(/immutable/);
   await db.exec(`UPDATE public.workers SET name='Renamed worker' WHERE id='${voucher}';SET ROLE authenticated`);expect(await read(db)).toMatchObject({found:true,source_changed:true});await expect(record(db,request,expected,split)).rejects.toThrow(/source evidence changed/);
   await db.exec(`RESET ROLE;UPDATE public.workers SET name='Test Worker' WHERE id='${voucher}';INSERT INTO public.paid_payroll_adjustment_cases VALUES('${request2}','${voucher}','pending');SET ROLE authenticated`);
-  expect(await read(db)).toMatchObject({found:true,source_changed:true,case_count:1,risks:['correction_cases']});await expect(record(db,request,expected,split)).rejects.toThrow(/source evidence changed/);
+  expect(await read(db)).toMatchObject({found:true,source_changed:false,case_count:1,risks:['correction_cases']});expect(await record(db,request,expected,split)).toMatchObject({replayed:true});
  }finally{await db.close();}},30000);
  it('rejects invalid or stale splits and leaves no partial evidence',async()=>{const db=await setup();try{const expected=(await read(db)).voucher;
   for(const bad of [[{project_id:site,gross:'599.99'}],[{project_id:site,gross:'600.00'},{project_id:site,gross:'1.00'}],[{project_id:site,gross:'-600.00'}],[{project_id:site,gross:'600'}],[{project_id:request2,gross:'600.00'}]])await expect(record(db,request,expected,bad)).rejects.toThrow();

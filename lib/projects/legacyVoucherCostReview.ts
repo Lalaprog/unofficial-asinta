@@ -1,18 +1,21 @@
-import {sameAttributionEvidence,attributionMoney} from '@/lib/payroll/historicalAttribution';
+import {sameAttributionEvidence} from '@/lib/payroll/historicalAttribution';
 import {parseLegacyStatus,type LegacyStatus} from '@/lib/payroll/legacyVoucherAttribution';
 import type {PaidReviewVoucher} from '@/lib/payroll/paidReview';
 import {calculateCorrected,parseCorrectedInventory,verifyCorrectedTotals,type CorrectedChoices,type CorrectedInventory,type CorrectedTotals} from './correctedCostReview';
 import {parseReviewMarker,validReviewNote,type ReviewDecision,type ReviewMarker} from './projectCostReview';
+import {parseLegacyCorrectedSource,type LegacyCorrectedSource} from './legacyCorrectedSource';
+import {correctionAmount} from '@/lib/payroll/projectCostCorrection';
 
 const obj=(x:unknown):x is Record<string,unknown>=>!!x&&typeof x==='object'&&!Array.isArray(x);
 const uuid=(x:unknown):x is string=>typeof x==='string'&&/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(x);
 const int=(x:unknown):x is number=>typeof x==='number'&&Number.isSafeInteger(x)&&x>=0&&x<=2147483647;
 const text=(x:unknown,max:number):x is string=>typeof x==='string'&&x===x.trim()&&x.length>0&&x.length<=max&&!/[\x00-\x1f\x7f-\x9f]/.test(x);
 const cents=(v:unknown):bigint=>{if(typeof v!=='string'||!/^(?:0|[1-9]\d{0,13})\.\d{2}$/.test(v))throw Error('Invalid legacy review total');const [a,b]=v.split('.');return BigInt(a)*100n+BigInt(b);};
-export type LegacyVoucherItem={requestId:string;payrollId:string;siteGross:string;status:Extract<LegacyStatus,{found:true}>};
+export type LegacyVoucherItem={requestId:string;payrollId:string;siteGross:string;status:Extract<LegacyStatus,{found:true}>;corrected:LegacyCorrectedSource|null};
 export type LegacyCostInventory={raw:unknown;base:CorrectedInventory;legacy:LegacyVoucherItem[]};
 export type LegacyCostTotals={base:CorrectedTotals;included:bigint;excluded:bigint;excludedCount:number;total:bigint};
-export type LegacyCostChoices=Record<string,ReviewDecision>;
+export type LegacyDecision=ReviewDecision & {case_review?:{case_ids:string[];note:string;non_overlapping:true}};
+export type LegacyCostChoices=Record<string,LegacyDecision>;
 /** Validate all source identities and amounts before using a server result. */
 export function parseLegacyCostInventory(raw:unknown,projectId:string):LegacyCostInventory{
  if(!obj(raw)||raw.project_id!==projectId||!uuid(projectId)||!Array.isArray(raw.legacy_vouchers)||raw.legacy_vouchers.length>500)throw Error('Invalid legacy inventory');
@@ -24,19 +27,27 @@ export function parseLegacyCostInventory(raw:unknown,projectId:string):LegacyCos
   // the review has no other voucher scope, so identity is additionally checked below.
   const scope={...v,worker_name:row.status.worker_name} as unknown as PaidReviewVoucher;
   const status=parseLegacyStatus(row.status,scope);
-  if(!status.found||status.source_changed||status.case_count!==0||status.request_id!==row.request_id||status.snapshot.id!==row.payroll_id||status.voucher.id!==row.payroll_id)throw Error('Legacy voucher changed or has corrections');
+  if(!status.found||status.source_changed||status.request_id!==row.request_id||status.snapshot.id!==row.payroll_id||status.voucher.id!==row.payroll_id)throw Error('Legacy voucher changed');
   if(seenRequests.has(row.request_id)||seenPayroll.has(row.payroll_id)||base.historical.base.paid.some(p=>p.payrollId===row.payroll_id))throw Error('Duplicate legacy voucher');
   seenRequests.add(row.request_id);seenPayroll.add(row.payroll_id);
-  const site=status.split.find(s=>s.project_id===projectId.toLowerCase());if(!site||attributionMoney(row.site_gross).cents!==attributionMoney(site.gross).cents)throw Error('Legacy site amount differs');
-  return {requestId:row.request_id,payrollId:row.payroll_id,siteGross:site.gross,status};
+  let corrected:LegacyCorrectedSource|null=null,siteGross:string;
+  if(row.corrected!==undefined){if(!obj(row.corrected)||!sameAttributionEvidence(row.corrected.original,row.status))throw Error('Legacy corrected source differs');corrected=parseLegacyCorrectedSource(row.corrected,status,projectId);siteGross=corrected.siteGross;}
+  else{if(status.case_count!==0)throw Error('Legacy corrections unavailable');const site=status.split.find(s=>s.project_id===projectId.toLowerCase());if(!site)throw Error('Legacy site unavailable');siteGross=site.gross;}
+  if(typeof row.site_gross!=='string'||correctionAmount(row.site_gross).cents!==correctionAmount(siteGross).cents||correctionAmount(siteGross).cents<0n)throw Error('Legacy site amount differs');
+  return {requestId:row.request_id,payrollId:row.payroll_id,siteGross,status,corrected};
  });
  return {raw,base,legacy};
 }
 export function calculateLegacyCost(inv:LegacyCostInventory,baseChoices:unknown,legacyChoices:unknown):{choices:CorrectedChoices;legacyChoices:LegacyCostChoices;totals:LegacyCostTotals}{
  if(!obj(legacyChoices)||Object.keys(legacyChoices).length!==inv.legacy.length)throw Error('Review every legacy voucher');
  const base=calculateCorrected(inv.base,baseChoices),choices:LegacyCostChoices={};let included=0n,excluded=0n,excludedCount=0;
- for(const row of inv.legacy){const d=legacyChoices[row.requestId];if(!obj(d)||Object.keys(d).sort().join(',')!=='decision,reason'||(d.decision!=='include'&&d.decision!=='exclude')||(d.decision==='include'?d.reason!==null:!text(d.reason,300)))throw Error('Invalid legacy decision');
-  choices[row.requestId]={decision:d.decision,reason:d.reason as string|null};const amount=attributionMoney(row.siteGross).cents;if(d.decision==='include')included+=amount;else{excluded+=amount;excludedCount++;}}
+ for(const row of inv.legacy){const d=legacyChoices[row.requestId];if(!obj(d)||(d.decision!=='include'&&d.decision!=='exclude')||(d.decision==='include'?d.reason!==null:!text(d.reason,300)))throw Error('Invalid legacy decision');
+  const cases=row.corrected?.cases??[],needsDistinct=d.decision==='include'&&cases.length>1;
+  if(Object.keys(d).sort().join(',')!==(needsDistinct?'case_review,decision,reason':'decision,reason'))throw Error('Invalid legacy decision fields');
+  const selected:LegacyDecision={decision:d.decision,reason:d.reason as string|null};
+  if(needsDistinct){const r=d.case_review,ids=cases.map(c=>c.id).sort();if(!obj(r)||Object.keys(r).sort().join(',')!=='case_ids,non_overlapping,note'||!Array.isArray(r.case_ids)||JSON.stringify(r.case_ids)!==JSON.stringify(ids)||r.non_overlapping!==true||!text(r.note,300))throw Error('Review distinct original-period corrections');selected.case_review={case_ids:ids,note:r.note,non_overlapping:true};}
+  for(const c of cases){const baseCase=inv.base.cases.find(b=>b.kind==='voucher'&&b.id===c.id);if(baseCase&&(!sameAttributionEvidence(baseCase.review,c.review)||base.choices.corrections[baseCase.key]?.decision!=='exclude'))throw Error('Legacy correction also appears in base');}
+  choices[row.requestId]=selected;const amount=correctionAmount(row.siteGross).cents;if(d.decision==='include')included+=amount;else{excluded+=amount;excludedCount++;}}
  const total=base.totals.total+included;if(total>=10000000000000000n)throw Error('Legacy cost exceeds limit');
  return {choices:base.choices,legacyChoices:choices,totals:{base:base.totals,included,excluded,excludedCount,total}};
 }
@@ -62,6 +73,9 @@ export function parseLegacyCostAttempt(serialized:string,projectId:string,actorI
 function noCapture(raw:unknown){const copy=JSON.parse(JSON.stringify(raw));delete copy.base.historical_review.base.captured_at;return copy;}
 export function legacyCostMatchesAttempt(saved:LegacyCostSaved,a:LegacyCostAttempt):boolean{
  return saved.requestId===a.marker.requestId&&saved.actorId===a.marker.actorId&&saved.revision===a.marker.expectedRevision+1&&saved.note===a.note&&sameAttributionEvidence(noCapture(saved.inventory.raw),noCapture(a.raw))&&sameAttributionEvidence(saved.choices,a.choices)&&sameAttributionEvidence(saved.legacyChoices,a.legacyChoices);
+}
+export function hasUnsupportedLegacyIncoming(inv:LegacyCostInventory,choices:CorrectedChoices,base:CorrectedInventory=inv.base):boolean{
+ return base.cases.some(c=>!c.sourceInSnapshot&&!(c.kind==='voucher'&&choices.corrections[c.key]?.decision==='exclude'&&inv.legacy.some(l=>l.corrected?.cases.some(x=>x.id===c.id&&sameAttributionEvidence(x.review,c.review)))));
 }
 export function legacyCostMatchesBase(inv:LegacyCostInventory,rawBase:unknown):boolean{
  const copy=JSON.parse(JSON.stringify(rawBase));delete copy.historical_review.base.captured_at;return sameAttributionEvidence(noCapture(inv.raw).base,copy);

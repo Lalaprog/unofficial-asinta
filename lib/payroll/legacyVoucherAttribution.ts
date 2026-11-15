@@ -20,10 +20,10 @@ function voucher(v:unknown,scope:PaidReviewVoucher):PaidVoucherSnapshot{
 export function parseLegacyStatus(raw:unknown,scope:PaidReviewVoucher):LegacyStatus{
  if(!object(raw)||raw.payroll_id!==scope.id||typeof raw.found!=='boolean'||typeof raw.eligible!=='boolean'||!Array.isArray(raw.risks)||raw.risks.some(r=>typeof r!=='string'||!allowedRisks.includes(r))||new Set(raw.risks).size!==raw.risks.length)throw Error('Invalid attribution status');
  const current=voucher(raw.voucher,scope),currentWorker=worker(raw.worker,scope.worker_id);if(raw.worker_name!==currentWorker.name)throw Error('Worker identity differs');
- if(!raw.found){if(raw.eligible!==(raw.risks.length===0))throw Error('Invalid eligibility');return {found:false,voucher:current,worker:currentWorker,eligible:raw.eligible,risks:raw.risks as string[]};}
+ if(!raw.found){if(raw.eligible!==(raw.risks.length===0||(raw.risks.length===1&&raw.risks[0]==='correction_cases')))throw Error('Invalid eligibility');return {found:false,voucher:current,worker:currentWorker,eligible:raw.eligible,risks:raw.risks as string[]};}
  if(raw.eligible!==false||!uuid(raw.request_id)||!uuid(raw.actor_id)||!note(raw.note)||typeof raw.recorded_at!=='string'||!Number.isFinite(Date.parse(raw.recorded_at))||typeof raw.source_changed!=='boolean'||!Number.isSafeInteger(raw.case_count)||Number(raw.case_count)<0)throw Error('Invalid attribution evidence');
  const original=voucher(raw.snapshot,scope),originalWorker=worker(raw.recorded_worker,scope.worker_id),split=parseAttributionSplit(raw.split,original.gross_pay);
- if(!raw.source_changed&&(!sameAttributionEvidence(current,original)||!sameAttributionEvidence(currentWorker,originalWorker)||raw.risks.length>0||raw.case_count!==0))throw Error('Changed source was not flagged');
+ if(!raw.source_changed&&(!sameAttributionEvidence(current,original)||!sameAttributionEvidence(currentWorker,originalWorker)||raw.risks.some(r=>r!=='correction_cases')||((raw.case_count===0)!==(raw.risks.length===0))))throw Error('Changed source was not flagged');
  return {found:true,voucher:current,worker:currentWorker,eligible:false,risks:raw.risks as string[],request_id:raw.request_id,snapshot:original,recorded_worker:originalWorker,split,note:raw.note,actor_id:raw.actor_id,recorded_at:raw.recorded_at,source_changed:raw.source_changed,case_count:Number(raw.case_count)};
 }
 export function parseLegacyAttempt(raw:unknown,actor:string,scope:PaidReviewVoucher):LegacyAttempt{

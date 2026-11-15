@@ -1,6 +1,6 @@
 import {sameAttributionEvidence} from '@/lib/payroll/historicalAttribution';
 import {parseRecordedCostCoverage} from './recordedCostCoverage';
-import {legacyCostMatchesBase,parseLegacyCostSaved,type LegacyCostSaved} from './legacyVoucherCostReview';
+import {hasUnsupportedLegacyIncoming,legacyCostMatchesBase,parseLegacyCostSaved,type LegacyCostSaved} from './legacyVoucherCostReview';
 
 /** All readers in this response share the same statement snapshot. */
 export function parseLegacyRecordedCoverage(raw:unknown,projectId:string){
@@ -15,6 +15,6 @@ export function parseLegacyRecordedCoverage(raw:unknown,projectId:string){
  * match; do not add two whole reviews or show an out-of-date selection. */
 export function matchingLegacyOverview(coverage:ReturnType<typeof parseLegacyRecordedCoverage>):LegacyCostSaved|null{
  const base=coverage.review,legacy=coverage.legacyReview;
- if(!base.found||base.revision!==base.latestRevision||base.freshness!=='matches'||base.inventory.cases.some(c=>!c.sourceInSnapshot)||!legacy.found||legacy.freshness!=='matches'||!legacyCostMatchesBase(legacy.inventory,base.inventory.raw)||!sameAttributionEvidence(base.choices,legacy.choices))return null;
+ if(!base.found||base.revision!==base.latestRevision||base.freshness!=='matches'||!legacy.found||legacy.freshness!=='matches'||hasUnsupportedLegacyIncoming(legacy.inventory,base.choices,base.inventory)||!legacyCostMatchesBase(legacy.inventory,base.inventory.raw)||!sameAttributionEvidence(base.choices,legacy.choices))return null;
  return legacy;
 }
