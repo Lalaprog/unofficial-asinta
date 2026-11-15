@@ -7,6 +7,9 @@ import {afterEach,describe,expect,it,vi} from 'vitest';
 const mock=vi.hoisted(()=>({rpc:vi.fn()}));
 vi.mock('@/lib/supabase/client',()=>({createClient:()=>({rpc:mock.rpc})}));
 import {LegacyVoucherCostReview} from '@/components/projects/LegacyVoucherCostReview';
+import {LegacyCorrectionContext} from '@/components/payroll/LegacyCorrectionContext';
+import {parseAdjustmentList} from '@/lib/payroll/paidAdjustments';
+import {parseCorrectionReview} from '@/lib/payroll/projectCostCorrection';
 import {ProjectReviewedCostSummary} from '@/components/projects/ProjectReviewedCostSummary';
 import {fixture,roles,candidatePaths,founder,supervisor,site,other,worker,payroll,baleExpense} from './helpers/project-cost-reconciliation-fixture';
 import {calculateCorrected,parseCorrectedInventory,parseCorrectedSaved} from '@/lib/projects/correctedCostReview';
@@ -68,9 +71,13 @@ describe('held legacy voucher through real local corrected-cost chain',()=>{
  const caseInfo=await read(db,"SELECT public.project_cost_correction_attribution('voucher',$1,NULL) v",[id(5)]) as {case:unknown};
  await read(db,"SELECT public.record_project_cost_correction_attribution($1,'voucher',$2,0,$3::jsonb,0,$4::jsonb,'Reviewed split',true) v",[id(6),id(5),j(caseInfo.case),j([{project_id:site,gross_change:'-50.00'},{project_id:other,gross_change:'50.00'}])]);
  const resolved=await read(db,'SELECT public.project_cost_legacy_correction_context($1) v',[id(5)]);expect(resolved).toMatchObject({correction:{case:{status:'no_transfer'},attribution:{case_changed:false}}});
+ const evidence=(resolved as {correction:{case:unknown}}).correction,item=parseAdjustmentList({total:1,offset:0,items:[evidence.case]},legacy,0).items[0],current=parseCorrectionReview(evidence,'voucher',item);
+ mock.rpc.mockImplementation(async(name:string,args:Record<string,unknown>)=>{try{if(name!=='project_cost_legacy_correction_context')throw Error('unexpected');return {data:await read(db,'SELECT public.project_cost_legacy_correction_context($1) v',[args.p_case]),error:null};}catch(error){return {data:null,error};}});
+ render(React.createElement(LegacyCorrectionContext,{item,review:current,projects:[{id:site,name:'Site One'},{id:other,name:'Site Two'}]}));fireEvent.click(screen.getByRole('button',{name:'Check original older-voucher split'}));fireEvent.click(screen.getByRole('button',{name:'Load original voucher split'}));await screen.findByText('Site One · ₱250.00');expect(screen.getByText('Site Two · ₱150.00')).toBeTruthy();cleanup();
  const corrected=await read(db,'SELECT public.project_cost_legacy_corrected_source($1) v',[legacy]);expect(corrected).toMatchObject({original_gross:'400.00',gross_change:'0.00',corrected_gross:'400.00',sites:[{project_id:site,original_gross:'250.00',gross_change:'-50.00',corrected_gross:'200.00'},{project_id:other,original_gross:'150.00',gross_change:'50.00',corrected_gross:'200.00'}]});
  await expect(read(db,'SELECT public.project_cost_legacy_voucher_inventory($1) v',[site])).rejects.toThrow(/changed|correction/);
  await db.exec(`RESET ROLE;UPDATE public.workers SET name='Renamed' WHERE id='${worker}';SET ROLE authenticated`);await expect(read(db,'SELECT public.project_cost_legacy_correction_context($1) v',[id(5)])).rejects.toMatchObject({code:'40001'});
+ render(React.createElement(LegacyCorrectionContext,{item,review:current,projects:[{id:site,name:'Site One'},{id:other,name:'Site Two'}]}));fireEvent.click(screen.getByRole('button',{name:'Check original older-voucher split'}));fireEvent.click(screen.getByRole('button',{name:'Load original voucher split'}));await screen.findByText(/No current older-voucher split could be verified/);expect(screen.queryByText('Site One · ₱250.00')).toBeNull();cleanup();
  await db.exec('RESET ROLE');expect((await db.query('SELECT gross_pay::text gross,net_pay::text net FROM public.payroll WHERE id=$1',[legacy])).rows[0]).toEqual({gross:'400.00',net:'350.00'});expect((await db.query('SELECT sum(gross)::text total FROM public.weekly_worker_paid_allocations WHERE payroll_id=$1',[payroll])).rows[0]).toEqual({total:'750.00'});
  }finally{await db.close();}},60000);
  it('reviews in the UI, retries a lost save, and displays only the matching legacy total',async()=>{const db=await setup();try{

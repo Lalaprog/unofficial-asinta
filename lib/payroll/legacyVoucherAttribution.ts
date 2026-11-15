@@ -2,6 +2,7 @@ import {attributionMoney,parseAttributionSplit,sameAttributionEvidence,type Attr
 import {isPaidVoucherSnapshot,type PaidVoucherSnapshot} from './paidAdjustments';
 import type {PaidReviewVoucher} from './paidReview';
 
+type LegacyVoucherScope=Pick<PaidReviewVoucher,'id'|'worker_id'|'period_start'|'period_end'|'gross_pay'|'bale_deduction'|'other_deductions'|'net_pay'>;
 export type LegacyWorker={id:string;name:string;position:string|null;active:boolean};
 export type LegacyCase=Record<string,unknown>&{id:string;payroll_id:string;status:string};
 export type LegacyAttempt={version:2;request:string;actor:string;voucher:PaidVoucherSnapshot;worker:LegacyWorker;cases:LegacyCase[];split:AttributionSplit[];note:string};
@@ -18,12 +19,12 @@ function cases(v:unknown,payroll:string):LegacyCase[]{
  let previous='';for(const c of v){if(!object(c)||!uuid(c.id)||c.payroll_id!==payroll||!['pending','settled_external','no_transfer'].includes(String(c.status))||c.id<=previous)throw Error('Invalid correction case evidence');previous=c.id;}
  return v as LegacyCase[];
 }
-function voucher(v:unknown,scope:PaidReviewVoucher):PaidVoucherSnapshot{
+function voucher(v:unknown,scope:LegacyVoucherScope):PaidVoucherSnapshot{
  if(!object(v)||Object.keys(v).sort().join(',')!=='bale_deduction,gross_pay,id,net_pay,other_deductions,period_end,period_start,status,worker_id'||!isPaidVoucherSnapshot(v)||!uuid(v.id)||!uuid(v.worker_id)||v.id!==scope.id||v.worker_id!==scope.worker_id||v.period_start!==scope.period_start||v.period_end!==scope.period_end)throw Error('Invalid voucher evidence');
  const values=[v.gross_pay,v.bale_deduction,v.other_deductions,v.net_pay].map(attributionMoney);const reviewed=[scope.gross_pay,scope.bale_deduction,scope.other_deductions,scope.net_pay].map(attributionMoney);
  if(values.some((amount,i)=>amount.cents!==reviewed[i].cents)||values[0].cents<=0n||values[0].cents-values[1].cents-values[2].cents!==values[3].cents)throw Error('Voucher amounts changed');return v;
 }
-export function parseLegacyStatus(raw:unknown,scope:PaidReviewVoucher):LegacyStatus{
+export function parseLegacyStatus(raw:unknown,scope:LegacyVoucherScope):LegacyStatus{
  if(!object(raw)||raw.payroll_id!==scope.id||typeof raw.found!=='boolean'||typeof raw.eligible!=='boolean'||!Array.isArray(raw.risks)||raw.risks.some(r=>typeof r!=='string'||!allowedRisks.includes(r))||new Set(raw.risks).size!==raw.risks.length)throw Error('Invalid attribution status');
  const current=voucher(raw.voucher,scope),currentWorker=worker(raw.worker,scope.worker_id),currentCases=cases(raw.cases,scope.id);if((currentCases.length>0)!==raw.risks.includes('correction_cases'))throw Error('Correction case signal differs');if(raw.worker_name!==currentWorker.name)throw Error('Worker identity differs');
  if(!raw.found){if(raw.eligible!==(raw.risks.length===0||(raw.risks.length===1&&raw.risks[0]==='correction_cases')))throw Error('Invalid eligibility');return {found:false,voucher:current,worker:currentWorker,cases:currentCases,eligible:raw.eligible,risks:raw.risks as string[]};}

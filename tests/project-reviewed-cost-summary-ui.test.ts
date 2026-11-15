@@ -66,6 +66,14 @@ describe('reviewed project cost overview',()=>{
   m.rpc.mockImplementation(async(name:string)=>name==='project_recorded_cost_snapshot'?{data:{project_id:f.ids.other,coverage:empty,inventory:f.destination},error:null}:name==='project_cost_cross_site_overview'?{data:{project_id:f.ids.other,coverage:empty,cross,sources:f.sourceReviews},error:null}:{data:null,error:Error('Unexpected reader')});
   render(panel(f.ids.other));await screen.findByText('Reviewed cross-site cost: ₱100.25');expect(screen.queryByText(/Recorded cost needs review/)).toBeNull();
  });
+ it.each([false,true])('checks legacy coverage and cross-site evidence in one snapshot (new older split: %s)',async newLegacy=>{
+  for(const flag of ['FINANCE_FOUNDATION_PREVIEW','PROJECT_COST_CORRECTION_PREVIEW','CORRECTED_PROJECT_COST_REVIEW_PREVIEW','CROSS_SITE_SOURCE_REVIEW_PREVIEW','CROSS_SITE_LEDGER_PREVIEW','CROSS_SITE_ATOMIC_OVERVIEW','LEGACY_VOUCHER_ATTRIBUTION_PREVIEW'])vi.stubEnv(`NEXT_PUBLIC_${flag}`,'true');
+  const f=crossFixture(),empty=covered({project_id:f.ids.other,found:false,latest_revision:0},f.ids.other),legacy=(count:number)=>({...empty,legacy_site_attributions:count,changed_legacy_attributions:0,legacy_review:{project_id:f.ids.other,found:false,latest_revision:0}});
+  const cross={found:true,project_id:f.ids.other,latest_revision:1,revision:1,request_id:f.ids.request,actor_id:f.ids.actor,recorded_at:'2024-12-15T00:00:00Z',note:'Reviewed destination',freshness:'matches',snapshot:f.destination,choices:f.destinationChoices,cross_sites:f.contexts,result:f.destinationResult};
+  m.rpc.mockImplementation(async(name:string)=>name==='project_cost_legacy_cross_site_overview'?{data:{project_id:f.ids.other,legacy:legacy(newLegacy?1:0),ordinary:{project_id:f.ids.other,coverage:empty,cross,sources:f.sourceReviews}},error:null}:{data:legacy(0),error:null});
+  render(panel(f.ids.other));if(newLegacy){await screen.findByText(/Older voucher attribution exists/);expect(screen.queryByText(/Reviewed cross-site cost:/)).toBeNull();}else await screen.findByText('Reviewed cross-site cost: ₱100.25');
+  expect(m.rpc).toHaveBeenCalledWith('project_cost_legacy_cross_site_overview',{p_project:f.ids.other});
+ });
  it.each(['source stale','destination stale','different decisions','missing source','corrupt result'])('hides an unverifiable cross-site overview: %s',async change=>{
   for(const flag of ['FINANCE_FOUNDATION_PREVIEW','PROJECT_COST_CORRECTION_PREVIEW','CORRECTED_PROJECT_COST_REVIEW_PREVIEW','CROSS_SITE_SOURCE_REVIEW_PREVIEW','CROSS_SITE_LEDGER_PREVIEW','CROSS_SITE_ATOMIC_OVERVIEW'])vi.stubEnv(`NEXT_PUBLIC_${flag}`,'true');
   const f=crossFixture();

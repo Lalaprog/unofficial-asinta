@@ -1,9 +1,10 @@
 import {PGlite} from '@electric-sql/pglite';
 import {readFileSync} from 'node:fs';
 import {describe,expect,it} from 'vitest';
-import {fixture,roles,candidatePaths,founder,supervisor,site,other,payroll} from './helpers/project-cost-reconciliation-fixture';
+import {fixture,roles,candidatePaths,founder,supervisor,site,other,payroll,worker} from './helpers/project-cost-reconciliation-fixture';
 import {parseCorrectedInventory,parseCorrectedSaved,calculateCorrected,verifyCorrectedTotals} from '@/lib/projects/correctedCostReview';
 import {calculateCrossSite,verifyCrossSiteTotals} from '@/lib/projects/crossSiteCostReview';
+import {parseLegacyCrossSiteOverview} from '@/lib/projects/legacyRecordedCostCoverage';
 import {parseCrossSiteSavedHeader,verifyCrossSiteSaved,verifyCrossSiteOverview,parseAtomicCrossSiteOverview} from '@/lib/projects/crossSiteReviewLedger';
 
 // Real voucher, allocation, expense, correction, inventory, review and
@@ -19,9 +20,12 @@ async function setup(){
  try{
   await db.exec(`${roles} ${fixture}`);
   await db.exec(`INSERT INTO public.projects VALUES('${destination}','Destination');
-   CREATE TABLE public.supervisor_period_payroll(id uuid PRIMARY KEY);
+   ALTER TABLE public.users ADD COLUMN name text;UPDATE public.users SET name=role;
+   ALTER TABLE public.workers ADD COLUMN position text,ADD COLUMN active boolean DEFAULT true;UPDATE public.workers SET position='Mason';
+   CREATE TABLE public.advances(id uuid PRIMARY KEY);
+   CREATE TABLE public.supervisor_period_payroll(id uuid PRIMARY KEY,supervisor_id uuid,supervisor_name text,period_start date,period_end date);
    CREATE TABLE public.paid_period_assertion_case_events(id uuid PRIMARY KEY);
-   CREATE TABLE public.historical_external_worker_payroll(request_id uuid PRIMARY KEY,original jsonb,gross numeric);
+   CREATE TABLE public.historical_external_worker_payroll(request_id uuid PRIMARY KEY,original jsonb,gross numeric,worker_id uuid,period_start date,period_end date);
    CREATE TABLE public.attendance(worker_id uuid,project_id uuid,date date);
    CREATE TABLE public.paid_period_assertion_cases(id uuid PRIMARY KEY,source_kind text,external_worker_id uuid,original_snapshot jsonb,difference numeric,status text);
    CREATE TABLE public.historical_worker_attributions(request_id uuid,source_id uuid);
@@ -36,7 +40,7 @@ async function setup(){
   await expect(db.exec(`BEGIN;${candidate} COMMIT;`)).rejects.toThrow(/held for synthetic rehearsal/);await db.exec('ROLLBACK');
   await db.exec(`BEGIN;SET LOCAL app.cost_evidence_lock_candidate='synthetic-only';${sql('project_cost_evidence_lock_rehearsal')} COMMIT;`);
   await db.exec(`BEGIN;SET LOCAL app.cross_site_multicase_candidate='synthetic-only';${sql('project_cost_multi_case_upgrade')} COMMIT;`);
-  for(const name of ['project_cost_recorded_coverage','project_cost_cross_site_overview'])await db.exec(`BEGIN;${sql(name)} COMMIT;`);
+  for(const name of ['project_cost_recorded_coverage','project_cost_cross_site_overview','legacy_paid_voucher_attribution','project_cost_legacy_voucher_preview','project_cost_legacy_review_ledger','project_cost_legacy_correction_context','project_cost_legacy_corrected_source','project_cost_legacy_recorded_coverage','project_cost_legacy_cross_site_overview'])await db.exec(`BEGIN;${sql(name)} COMMIT;`);
   await db.exec(`SET ROLE authenticated;SET test.uid='${founder}';SET test.assurance='yes'`);
   return db;
  }catch(e){await db.close();throw e;}
@@ -71,10 +75,17 @@ describe('complete voucher cross-site review chain, isolated synthetic database'
   const header=parseCrossSiteSavedHeader(await read(db,'SELECT public.project_cost_cross_site_review($1,NULL) v',[destination]),destination);expect(header.found).toBe(true);if(!header.found)throw Error('Missing review');
   const cross=verifyCrossSiteSaved(header,sources);verifyCrossSiteOverview(null,cross);expect(cross.totals.total).toBe(10000n);expect(cross.freshness).toBe('matches');
   const overview=await read(db,'SELECT public.project_cost_cross_site_overview($1) v',[destination]);expect(parseAtomicCrossSiteOverview(overview,destination).cross?.totals.total).toBe(10000n);
+  const withLegacy=await read(db,'SELECT public.project_cost_legacy_cross_site_overview($1) v',[destination]);expect(parseLegacyCrossSiteOverview(withLegacy,destination)).toMatchObject({legacy:{siteAttributions:0},cross:{totals:{total:10000n}}});
+  // An older split appearing after the previous read must prevent substituting
+  // a cross-site amount that doesn't include that newly attributed voucher.
+  await db.exec('RESET ROLE');await db.query("INSERT INTO public.payroll VALUES($1,$2,'2023-11-05','2023-11-11','paid',400,0,0,400,8)",[id(60),worker]);await db.exec('SET ROLE authenticated');
+  const older=await read(db,'SELECT public.legacy_paid_voucher_attribution($1) v',[id(60)]) as {voucher:unknown;worker:unknown;cases:unknown};
+  await read(db,'SELECT public.record_legacy_paid_voucher_attribution($1,$2,$3::jsonb,$4::jsonb,$5::jsonb,$6,true,$7::jsonb) v',[id(61),id(60),j(older.voucher),j(older.worker),j([{project_id:destination,gross:'400.00'}]),'Original older voucher checked',j(older.cases)]);
+  const combined=await read(db,'SELECT public.project_cost_legacy_cross_site_overview($1) v',[destination]);expect(parseLegacyCrossSiteOverview(combined,destination)).toMatchObject({legacy:{siteAttributions:1},cross:null});
   await db.exec('RESET ROLE');await db.query("UPDATE public.expenses SET description='Changed source expense' WHERE project_id=$1",[site]);await db.exec('SET ROLE authenticated');
   const stale=await read(db,'SELECT public.project_cost_cross_site_overview($1) v',[destination]);expect(()=>parseAtomicCrossSiteOverview(stale,destination)).toThrow(/current/);
   await db.exec('RESET ROLE');expect((await db.query('SELECT status,gross_pay::text gross,net_pay::text net FROM public.payroll WHERE id=$1',[payroll])).rows[0]).toEqual({status:'paid',gross:'750.00',net:'650.00'});expect((await db.query('SELECT sum(gross)::text total FROM public.weekly_worker_paid_allocations WHERE payroll_id=$1',[payroll])).rows[0]).toEqual({total:'750.00'});
-  await db.exec(`SET ROLE authenticated;SET test.uid='${supervisor}'`);await expect(inventory(db,destination)).rejects.toThrow(/Founder/);await expect(read(db,'SELECT public.project_cost_cross_site_overview($1) v',[destination])).rejects.toThrow(/Founder/);
+  await db.exec(`SET ROLE authenticated;SET test.uid='${supervisor}'`);await expect(inventory(db,destination)).rejects.toThrow(/Founder/);await expect(read(db,'SELECT public.project_cost_cross_site_overview($1) v',[destination])).rejects.toThrow(/Founder/);await expect(read(db,'SELECT public.project_cost_legacy_cross_site_overview($1) v',[destination])).rejects.toThrow(/Founder/);
  }finally{await db.close();}},60000);
  it('keeps signed voucher sibling effects grouped and rejects a negative destination group',async()=>{const db=await setup();try{
   await db.exec('RESET ROLE');const original=await read(db,'SELECT app_private.paid_adjustment_voucher_snapshot(p) v FROM public.payroll p WHERE id=$1',[payroll]);await db.exec('SET ROLE authenticated');

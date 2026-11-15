@@ -9,7 +9,7 @@ import {crossSiteAtomicOverviewEnabled,legacyVoucherAttributionPreviewEnabled,si
 import {parseSimpleRecordedCost,type SimpleRecordedCost} from '@/lib/projects/simpleRecordedCost';
 import {parseAtomicCrossSiteOverview,type CrossSiteSaved} from '@/lib/projects/crossSiteReviewLedger';
 import {parseRecordedCostCoverage} from '@/lib/projects/recordedCostCoverage';
-import {matchingLegacyOverview,parseLegacyRecordedCoverage} from '@/lib/projects/legacyRecordedCostCoverage';
+import {matchingLegacyOverview,parseLegacyCrossSiteOverview,parseLegacyRecordedCoverage} from '@/lib/projects/legacyRecordedCostCoverage';
 import type {LegacyCostSaved} from '@/lib/projects/legacyVoucherCostReview';
 import Link from 'next/link';
 
@@ -47,11 +47,16 @@ function Summary({projectId,onReview}:{projectId:string;userId:string;onReview:(
     if(simple&&!review.found&&!crossSiteAtomicOverviewEnabled()){setState({status:'needs-review',snapshot:simple});return;}
     if(review.found&&review.freshness!=='matches'){setState({status:'stale'});return;}
     if(review.found&&!review.inventory.cases.some(c=>!c.sourceInSnapshot)){setState({status:'ready',review});return;}
-    // Cross-site totals must use one database snapshot, never separate browser
-    // requests. Legacy-inclusive evidence needs its own combined path.
-    if(legacyEnabled||!crossSiteAtomicOverviewEnabled()){setState({status:review.found?'incoming':'empty'});return;}
+    // Every source and, when enabled, legacy coverage must come from one
+    // database snapshot; never combine separate browser requests.
+    if(!crossSiteAtomicOverviewEnabled()){setState({status:review.found?'incoming':'empty'});return;}
     try{
-     const response=await client.rpc('project_cost_cross_site_overview',{p_project:projectId});if(response.error)throw response.error;
+     const response=await client.rpc(legacyEnabled?'project_cost_legacy_cross_site_overview':'project_cost_cross_site_overview',{p_project:projectId});if(response.error)throw response.error;
+     if(legacyEnabled){const current=parseLegacyCrossSiteOverview(response.data,projectId);if(!active)return;
+      setCoverage(current.legacy);setLegacySignals({siteAttributions:current.legacy.siteAttributions,changedAttributions:current.legacy.changedAttributions});
+      if(current.legacy.siteAttributions>0){const matching=matchingLegacyOverview(current.legacy);setState(matching?{status:'legacy',review:matching}:{status:'legacy-unavailable'});return;}
+      setState(current.cross?{status:'cross',review:current.cross}:{status:current.legacy.review.found?'incoming':'empty'});return;
+     }
      const current=parseAtomicCrossSiteOverview(response.data,projectId);if(!active)return;
      setCoverage(current.coverage);
      setState(current.cross?{status:'cross',review:current.cross}:simple?{status:'needs-review',snapshot:simple}:{status:current.coverage.review.found?'incoming':'empty'});

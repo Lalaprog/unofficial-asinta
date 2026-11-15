@@ -1,6 +1,7 @@
 import {sameAttributionEvidence} from '@/lib/payroll/historicalAttribution';
 import {parseRecordedCostCoverage} from './recordedCostCoverage';
 import {hasUnsupportedLegacyIncoming,legacyCostMatchesBase,parseLegacyCostSaved,type LegacyCostSaved} from './legacyVoucherCostReview';
+import {parseAtomicCrossSiteOverview} from './crossSiteReviewLedger';
 
 /** All readers in this response share the same statement snapshot. */
 export function parseLegacyRecordedCoverage(raw:unknown,projectId:string){
@@ -11,6 +12,21 @@ export function parseLegacyRecordedCoverage(raw:unknown,projectId:string){
  if(review.found&&review.freshness==='matches'&&review.inventory.legacy.length!==siteAttributions)throw Error('Legacy site evidence differs');
  return {...base,siteAttributions,changedAttributions,legacyReview:review};
 }
+/** The legacy-coverage and ordinary cross-site results must share one RPC. */
+export function parseLegacyCrossSiteOverview(raw:unknown,projectId:string){
+ if(!raw||typeof raw!=='object'||Array.isArray(raw))throw Error('Invalid combined overview');const v=raw as Record<string,unknown>;
+ if(Object.keys(v).sort().join(',')!=='legacy,ordinary,project_id'||v.project_id!==projectId||!v.legacy||typeof v.legacy!=='object'||Array.isArray(v.legacy)||!v.ordinary||typeof v.ordinary!=='object'||Array.isArray(v.ordinary))throw Error('Invalid combined overview scope');
+ const legacyRaw=v.legacy as Record<string,unknown>,ordinaryRaw=v.ordinary as Record<string,unknown>,ordinaryCoverage=ordinaryRaw.coverage;
+ if(!ordinaryCoverage||typeof ordinaryCoverage!=='object'||Array.isArray(ordinaryCoverage))throw Error('Missing ordinary coverage');
+ const coverageRaw=ordinaryCoverage as Record<string,unknown>,legacy=parseLegacyRecordedCoverage(legacyRaw,projectId);
+ if(legacyRaw.captured_at!==coverageRaw.captured_at||!sameAttributionEvidence(legacyRaw.review,coverageRaw.review))throw Error('Coverage snapshots differ');
+ // An existing older split needs the dedicated legacy-inclusive review. Never
+ // substitute an ordinary cross-site result that omits that older split.
+ if(legacy.siteAttributions>0)return {legacy,cross:null};
+ const atomic=parseAtomicCrossSiteOverview(ordinaryRaw,projectId);
+ return {legacy,cross:atomic.cross};
+}
+
 /** A legacy review replaces the ordinary one only if decisions and sources
  * match; do not add two whole reviews or show an out-of-date selection. */
 export function matchingLegacyOverview(coverage:ReturnType<typeof parseLegacyRecordedCoverage>):LegacyCostSaved|null{
