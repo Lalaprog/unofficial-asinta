@@ -1,5 +1,7 @@
 # Coordinated release: current hold and path forward
 
+**Latest:** development website deployment `dpl_9g6wJcHYrp83KQtTZY4RsZUx8P6o` from branch commit `e569255936aaa4600a814b02f9db576a913971d0` is promoted and its build-time public URL matched the installed development project. The one-time deployment pin was removed; GitHub main is still older and this branch is unmerged. See [the cutover record](DEVELOPMENT_WEBSITE_CUTOVER.md). Earlier statements below that the old #102 deployment is current are historical. Actual signed-in workflows, backup/restore and external expiry monitoring remain unverified or deferred; this is not client go-live.
+
 This is a **development release procedure**, not evidence that payroll, Bale or equipment is client-ready. Update the observations below before acting; they describe one point in time and are not a live monitor. A complete tested recovery plan may be finished after development, but is required before real client data or handover.
 
 ## Development cutover update — 2026-11-14 (supersedes older observations below)
