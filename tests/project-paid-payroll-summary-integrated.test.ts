@@ -3,7 +3,7 @@
 import React from 'react';
 import {PGlite} from '@electric-sql/pglite';
 import {readFileSync} from 'node:fs';
-import {cleanup,fireEvent,render,screen} from '@testing-library/react';
+import {cleanup,render,screen} from '@testing-library/react';
 import {afterEach,describe,expect,it,vi} from 'vitest';
 const mock=vi.hoisted(()=>({rpc:vi.fn()}));vi.mock('@/lib/supabase/client',()=>({createClient:()=>({rpc:mock.rpc})}));
 import {ProjectPaidPayrollSummary} from '@/components/projects/ProjectPaidPayrollSummary';
@@ -17,8 +17,8 @@ describe('project paid payroll overview to synthetic SQL',()=>{
    const before=(await db.query('SELECT jsonb_agg(to_jsonb(p) ORDER BY p.id) v FROM public.payroll p')).rows[0];
    await db.exec(`SET ROLE authenticated;SET test.uid='${founder}';SET test.assurance='yes'`);
    mock.rpc.mockReset();mock.rpc.mockImplementation(async(name:string,args:{p_project:string})=>{try{if(name!=='project_cost_reconciliation_preview')throw Error('Unexpected RPC');return {data:(await db.query<{v:unknown}>('SELECT public.project_cost_reconciliation_preview($1) v',[args.p_project])).rows[0].v,error:null};}catch(error){return {data:null,error};}});
-   const view=render(React.createElement(ProjectPaidPayrollSummary,{projectId:site,userId:founder,onReview:()=>{}}));fireEvent.click(screen.getByRole('button',{name:'Load paid payroll summary'}));await screen.findByText(/Recorded site payroll gross: ₱600.00/);expect(screen.getByText(/1 paid allocation/)).toBeTruthy();
-   view.rerender(React.createElement(ProjectPaidPayrollSummary,{projectId:other,userId:founder,onReview:()=>{}}));fireEvent.click(screen.getByRole('button',{name:'Load paid payroll summary'}));await screen.findByText(/Recorded site payroll gross: ₱150.00/);
+   const view=render(React.createElement(ProjectPaidPayrollSummary,{projectId:site,userId:founder,onReview:()=>{}}));await screen.findByText(/Recorded site payroll gross: ₱600.00/);expect(screen.getByText(/1 paid allocation/)).toBeTruthy();
+   view.rerender(React.createElement(ProjectPaidPayrollSummary,{projectId:other,userId:founder,onReview:()=>{}}));await screen.findByText(/Recorded site payroll gross: ₱150.00/);
    await db.exec('RESET ROLE');expect((await db.query('SELECT jsonb_agg(to_jsonb(p) ORDER BY p.id) v FROM public.payroll p')).rows[0]).toEqual(before);expect(mock.rpc.mock.calls.map(([name])=>name)).toEqual(['project_cost_reconciliation_preview','project_cost_reconciliation_preview']);
   }finally{cleanup();await db.close();}
  },30000);
