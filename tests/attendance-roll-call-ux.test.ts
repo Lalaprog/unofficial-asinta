@@ -209,25 +209,19 @@ describe('roll call usability and safety', () => {
     expect(status('Amy', 'Leave').getAttribute('aria-pressed')).toBe('true');
   });
 
-  it('keeps a moved worker edit as a draft and asks the Supervisor to seek Founder review', async () => {
-    mock.snapshots.set('site-1:2026-11-03', {
-      workerIds: ['amy','cara','dan','eva'],
-      records: [
-        {id:'b',worker_id:'ben',project_id:'site-1',date:'2026-11-03',status:'half_day',notes:'',recorded_by:'founder'},
-        {id:'c',worker_id:'cara',project_id:'site-1',date:'2026-11-03',status:'absent',notes:'',recorded_by:'founder'},
-      ],
-    });
-    render(React.createElement(AttendancePage));
+  it('keeps a draft when an edited worker moves out of the current team', () => {
+    const records = [{id:'b',worker_id:'ben',project_id:'site-1',date:'2026-11-03',status:'half_day',notes:'',recorded_by:'founder'}];
+    mock.snapshots.set('site-1:2026-11-03', { workerIds:['amy','ben','cara','dan','eva'], records });
+    const view = render(React.createElement(AttendancePage));
     fireEvent.click(status('Ben', 'Leave'));
-    fireEvent.click(status('Amy', 'Present'));
-    fireEvent.click(status('Eva', 'Present'));
-    fireEvent.click(screen.getByRole('button', {name:'Save Changes'}));
-    await act(async () => {});
+    mock.snapshots.set('site-1:2026-11-03', { workerIds:['amy','cara','dan','eva'], records });
+    view.rerender(React.createElement(AttendancePage));
+    expect(screen.queryByRole('group', {name:'Attendance status for Ben'})).toBeNull();
+    expect(screen.getByRole('button', {name:'Review hidden draft selections'})).toBeTruthy();
+    expect(localStorage.getItem('asinta-attendance-draft:v1:sup:site-1:2026-11-03')).toContain('leave');
     expect(mock.record).not.toHaveBeenCalled();
-    expect(mock.toast).toHaveBeenCalledWith('error', expect.stringMatching(/no longer assigned.*draft is kept.*Founder/));
-    expect(status('Ben', 'Leave').getAttribute('aria-pressed')).toBe('true');
     cleanup();render(React.createElement(AttendancePage));
-    expect(status('Ben', 'Leave').getAttribute('aria-pressed')).toBe('true');
+    expect(screen.getByRole('button', {name:'Review hidden draft selections'})).toBeTruthy();
   });
 
   it('allows other Supervisor changes when moved-worker history is left unchanged', async () => {

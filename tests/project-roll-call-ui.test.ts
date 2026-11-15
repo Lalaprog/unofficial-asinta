@@ -48,13 +48,13 @@ describe('project-specific Roll Call', () => {
     expect((screen.getByRole('button',{name:'Submit Roll Call'}) as HTMLButtonElement).disabled).toBe(true);
     expect(state.record).not.toHaveBeenCalled(); expect(state.create).not.toHaveBeenCalled();
   });
-  it('includes assigned crew and saved active crew, with unavailable history shown read-only', () => {
+  it('shows assigned crew for editing and moved or unavailable saved workers read-only', () => {
     state.snapshot={workerIds:['amy'],records:[saved('ben','r1','Ben'),saved('archive','r2',null)]};
     render(React.createElement(AttendancePage));
     expect(screen.getByRole('group',{name:'Attendance status for Amy'})).toBeTruthy();
-    expect(screen.getByRole('group',{name:'Attendance status for Ben'})).toBeTruthy();
-    expect(within(screen.getByRole('group',{name:'Attendance status for Ben'})).getByRole('button',{name:'Half Day'}).getAttribute('aria-pressed')).toBe('true');
-    const archive=screen.getByRole('region',{name:'Saved attendance for unavailable workers'});
+    expect(screen.queryByRole('group',{name:'Attendance status for Ben'})).toBeNull();
+    const archive=screen.getByRole('region',{name:'Other saved attendance'});
+    expect(within(archive).getByText('Ben').closest('li')?.textContent).toContain('Half Day');
     expect(within(archive).getByText(/Worker \(details unavailable\)/)).toBeTruthy();
     expect(within(archive).queryByRole('button')).toBeNull();
     expect(screen.getByText('Auto-logged when you submit crew roll call.')).toBeTruthy();
@@ -64,10 +64,23 @@ describe('project-specific Roll Call', () => {
     state.snapshot={workerIds:[],records:[saved('ben','r1','Ben'),saved('archive','r2',null)]};
     render(React.createElement(AttendancePage));
     expect(screen.getByText(/No workers are assigned/)).toBeTruthy();
-    expect(screen.getByRole('group',{name:'Attendance status for Ben'})).toBeTruthy();
-    expect(screen.getByRole('region',{name:'Saved attendance for unavailable workers'})).toBeTruthy();
+    expect(screen.queryByRole('group',{name:'Attendance status for Ben'})).toBeNull();
+    expect(within(screen.getByRole('region',{name:'Other saved attendance'})).getByText('Ben').closest('li')?.textContent).toContain('Half Day');
     expect(screen.queryByRole('group',{name:'Attendance status for Amy'})).toBeNull();
     expect(screen.queryByText('Auto-logged when you submit crew roll call.')).toBeNull();
+  });
+  it('preserves Founder editing of an active worker with a saved historical record', () => {
+    state.supervisor=false;state.snapshot={workerIds:['amy'],records:[saved('ben','r1','Ben')]};
+    render(React.createElement(AttendancePage));
+    expect(within(screen.getByRole('group',{name:'Attendance status for Ben'})).getByRole('button',{name:'Half Day'}).getAttribute('aria-pressed')).toBe('true');
+  });
+  it('allows assigned crew submission without changing a moved worker’s saved record', async () => {
+    vi.stubEnv('NEXT_PUBLIC_WEEKLY_WORKER_CUTOVER_PREVIEW','true');
+    state.snapshot={workerIds:['amy'],records:[saved('ben','r1','Ben')]};
+    render(React.createElement(AttendancePage));
+    fireEvent.click(within(screen.getByRole('group',{name:'Attendance status for Amy'})).getByRole('button',{name:'Present'}));
+    fireEvent.click(screen.getByRole('button',{name:'Save Changes'}));await act(async()=>{});
+    expect(state.record).toHaveBeenCalledOnce();expect((state.record.mock.calls[0][0] as unknown as Array<{worker_id:string}>).map(r=>r.worker_id)).toEqual(['amy']);
   });
   it('shows the actual saved Supervisor status instead of claiming Present', () => {
     state.snapshot={workerIds:['amy'],records:[saved('sup','r2','Supervisor')]};

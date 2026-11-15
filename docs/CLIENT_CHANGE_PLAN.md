@@ -1,4 +1,4 @@
-> **Current status:** This document includes historical design notes that can be outdated. For the development installations, remaining work and release blockers, use [CLIENT_TASK_STATUS.md](CLIENT_TASK_STATUS.md). The draft PR is not a release approval.
+> **Current status:** This document includes historical design notes that can be outdated. For the development installations, remaining work and release blockers, use [CLIENT_TASK_STATUS.md](CLIENT_TASK_STATUS.md). PR #104 is open and is not a release approval. In particular, period helpers and several migrations described below have since been integrated or installed in development, while automatic complete project cost, strict Supervisor column-level isolation, and concurrency/release validation remain unresolved.
 
 
 # Client change plan and deferred items

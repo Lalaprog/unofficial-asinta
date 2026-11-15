@@ -384,21 +384,22 @@ function AttendancePageInner() {
     return map;
   }, [attendance, selectedDate, selectedProjectId, projects]);
 
-  // Active assigned crew plus active workers with saved attendance for this
-  // site/date. An assigned Supervisor is included when there is a team to
-  // submit; an empty team alone must not create self-attendance.
+  // Supervisors may edit only the selected site's current team. Older saved
+  // site records for workers who moved away remain visible separately, read-only.
+  // The Founder can still review/edit historical active workers here.
   const siteRosterWorkers = useMemo(() => {
     const assigned = new Set(rollCallSnapshot.workerIds);
     const recorded = new Set(existingSiteDateRecords.map((record) => record.worker_id));
     const supervisors = new Set(projectSupervisors.filter((ps) => ps.project_id === selectedProjectId).map((ps) => ps.supervisor_id));
     const hasTeam = rollCallSnapshot.workerIds.length > 0;
     return workers.filter((worker) => worker.active && (
-      assigned.has(worker.id) || recorded.has(worker.id) || (hasTeam && supervisors.has(worker.id))
+      assigned.has(worker.id) || (!isSupervisor && recorded.has(worker.id)) || (hasTeam && supervisors.has(worker.id))
     ));
-  }, [workers, rollCallSnapshot, existingSiteDateRecords, projectSupervisors, selectedProjectId]);
-  const unavailableSavedRecords = useMemo(() => existingSiteDateRecords.filter(
-    (record) => !workers.some((worker) => worker.id === record.worker_id && worker.active)
-  ), [existingSiteDateRecords, workers]);
+  }, [workers, rollCallSnapshot, existingSiteDateRecords, projectSupervisors, selectedProjectId, isSupervisor]);
+  const unavailableSavedRecords = useMemo(() => {
+    const visible = new Set(siteRosterWorkers.map(worker => worker.id));
+    return existingSiteDateRecords.filter(record => !visible.has(record.worker_id));
+  }, [existingSiteDateRecords, siteRosterWorkers]);
   const hiddenDraftIds = useMemo(() => {
     const visible = new Set(siteRosterWorkers.filter((worker) => !generalSupervisorCutover || !isLockedRollCallWorker(worker)).map((worker) => worker.id));
     return dirtyDraftWorkerIds.filter((id) => !visible.has(id));
@@ -1325,10 +1326,10 @@ function AttendancePageInner() {
               <Button type="button" variant="secondary" size="sm" onClick={() => setDiscardHiddenDraftOpen(true)}>Review hidden draft selections</Button>
             </div>}
             {rollCallSnapshot.workerIds.length === 0 && <div role="status" className="rounded-xl border border-surface-border bg-white p-4 text-sm text-ink-secondary">No workers are assigned to this project yet. Saved attendance for this date remains visible below. <Link href={`/projects/${encodeURIComponent(selectedProjectId)}`} className="font-semibold text-brand underline">Manage project workers</Link></div>}
-            {unavailableSavedRecords.length > 0 && <section aria-label="Saved attendance for unavailable workers" className="rounded-xl border border-surface-border bg-white p-4 text-sm">
-              <h2 className="font-semibold text-navy">Saved attendance for unavailable workers</h2>
-              <p className="mt-1 text-xs text-ink-secondary">These saved records are shown read-only. Worker details may be unavailable to your account. Use Attendance History for more information.</p>
-              <ul className="mt-2 space-y-2">{unavailableSavedRecords.map((record) => <li key={record.id} className="text-xs text-ink-secondary"><strong>{record.worker_name || 'Worker (details unavailable)'}</strong> · {formatStatusLabel(record.status)}{record.notes ? ` · ${record.notes}` : ''}</li>)}</ul>
+            {unavailableSavedRecords.length > 0 && <section aria-label="Other saved attendance" className="rounded-xl border border-surface-border bg-white p-4 text-sm">
+              <h2 className="font-semibold text-navy">Other saved attendance</h2>
+              <p className="mt-1 text-xs text-ink-secondary">These saved records are shown read-only because the worker is not in your current roster or their details are unavailable. Use Attendance History for more information.</p>
+              <ul className="mt-2 space-y-2">{unavailableSavedRecords.map((record) => <li key={record.id} className="text-xs text-ink-secondary"><strong>{record.worker_name || workers.find(worker => worker.id === record.worker_id && worker.active)?.name || 'Worker (details unavailable)'}</strong> · {formatStatusLabel(record.status)}{record.notes ? ` · ${record.notes}` : ''}</li>)}</ul>
             </section>}
             {/* Compact progress summary: the roster remains the focus, counts stay scannable. */}
             <section
