@@ -18,8 +18,8 @@ suite('legacy attribution concurrent PostgreSQL rehearsal',()=>{
   await admin.query(`DO $$BEGIN IF NOT EXISTS(SELECT 1 FROM pg_roles WHERE rolname='anon') THEN CREATE ROLE anon; END IF; IF NOT EXISTS(SELECT 1 FROM pg_roles WHERE rolname='authenticated') THEN CREATE ROLE authenticated; END IF; IF NOT EXISTS(SELECT 1 FROM pg_roles WHERE rolname='service_role') THEN CREATE ROLE service_role; END IF; END$$;`);
   await admin.query(baseFixture.replace('CREATE ROLE anon; CREATE ROLE authenticated; CREATE ROLE service_role; ',''));
   await admin.query(`CREATE TABLE public.weekly_worker_draft_sources(payroll_id uuid);CREATE TABLE public.weekly_worker_paid_allocations(payroll_id uuid,project_id uuid,gross numeric);CREATE TABLE public.historical_external_worker_payroll(worker_id uuid,period_start date,period_end date);CREATE TABLE public.supervisor_period_payroll(supervisor_id uuid,supervisor_name text,period_start date,period_end date);
-   INSERT INTO public.workers VALUES('${id(10)}','Wait worker','Mason','none',600,'daily',true),('${id(20)}','Case worker','Mason','none',600,'daily',true),('${id(40)}','Resolve first worker','Mason','none',600,'daily',true),('${id(50)}','Split first worker','Mason','none',600,'daily',true);
-   INSERT INTO public.payroll VALUES('${id(11)}','${id(10)}','2026-10-25','2026-10-31','paid',1,8,600,0,0,600),('${id(21)}','${id(20)}','2026-10-25','2026-10-31','paid',1,8,600,0,0,600),('${id(41)}','${id(40)}','2026-10-25','2026-10-31','paid',1,8,600,0,0,600),('${id(51)}','${id(50)}','2026-10-25','2026-10-31','paid',1,8,600,0,0,600);`);
+   INSERT INTO public.workers VALUES('${id(10)}','Wait worker','Mason','none',600,'daily',true),('${id(20)}','Case worker','Mason','none',600,'daily',true),('${id(40)}','Resolve first worker','Mason','none',600,'daily',true),('${id(50)}','Split first worker','Mason','none',600,'daily',true),('${id(60)}','Writer first worker','Mason','none',600,'daily',true),('${id(70)}','Review first worker','Mason','none',600,'daily',true);
+   INSERT INTO public.payroll VALUES('${id(11)}','${id(10)}','2026-10-25','2026-10-31','paid',1,8,600,0,0,600),('${id(21)}','${id(20)}','2026-10-25','2026-10-31','paid',1,8,600,0,0,600),('${id(41)}','${id(40)}','2026-10-25','2026-10-31','paid',1,8,600,0,0,600),('${id(51)}','${id(50)}','2026-10-25','2026-10-31','paid',1,8,600,0,0,600),('${id(61)}','${id(60)}','2026-10-25','2026-10-31','paid',1,8,600,0,0,600),('${id(71)}','${id(70)}','2026-10-25','2026-10-31','paid',1,8,600,0,0,600);`);
   await admin.query(`BEGIN;${sql('paid_payroll_adjustments')} COMMIT;BEGIN;${sql('legacy_paid_voucher_attribution')} COMMIT;`);
   await a.query("SET application_name='legacy-a'");await b.query("SET application_name='legacy-b'");for(const c of [a,b])await c.query(`SET ROLE authenticated;SET test.uid='${founder}';SET test.assurance='yes'`);
  },30000);
@@ -37,4 +37,21 @@ suite('legacy attribution concurrent PostgreSQL rehearsal',()=>{
   await a.query('BEGIN');try{expect(await record(a,id(53),id(51),pendingSnapshot)).toMatchObject({replayed:false});const waiting=b.query("SELECT public.resolve_paid_payroll_adjustment($1,'no_transfer',NULL,'Reviewed without transfer')",[id(52)]);await waitForLock(b);await a.query('COMMIT');await waiting;}finally{await a.query('ROLLBACK');}
   expect(await status(a,id(51))).toMatchObject({source_changed:false,case_count:1,cases:[{id:id(52),status:'no_transfer'}],recorded_cases:[{id:id(52),status:'pending'}]});expect(await record(a,id(53),id(51),pendingSnapshot)).toMatchObject({replayed:true});expect((await admin.query('SELECT status,gross_pay::text gross,net_pay::text net FROM public.payroll WHERE id=$1',[id(51)])).rows[0]).toEqual({status:'paid',gross:'600',net:'600'});
  },15000);
+ it('serializes the real attribution and review writers in both directions',async()=>{
+  // Review inventory/preview are stand-ins; both writer functions are the
+  // real held SQL candidates, including their table and row locks.
+  await admin.query(`CREATE TABLE public.paid_period_assertion_cases(id uuid);CREATE TABLE public.confirmed_rental_expenses(id uuid);CREATE TABLE public.payroll_payment_dates(id uuid);CREATE TABLE public.historical_worker_attributions(id uuid);CREATE TABLE public.historical_worker_attribution_sites(id uuid);CREATE TABLE public.project_cost_correction_attributions(id uuid);CREATE TABLE public.project_cost_correction_sites(id uuid);
+   CREATE FUNCTION public.project_cost_legacy_voucher_inventory(p uuid) RETURNS jsonb LANGUAGE sql STABLE SECURITY DEFINER SET search_path='' AS $$SELECT jsonb_build_object('project_id',p,'attributions',(SELECT count(*) FROM public.legacy_paid_voucher_attributions))$$;
+   CREATE FUNCTION public.project_cost_legacy_voucher_preview(p uuid,s jsonb,c jsonb,l jsonb,ack boolean) RETURNS jsonb LANGUAGE sql STABLE SECURITY DEFINER SET search_path='' AS $$SELECT jsonb_build_object('incomplete',true,'attributions',s->'attributions')$$;`);
+  await admin.query(`BEGIN;${sql('project_cost_legacy_review_ledger')} COMMIT;`);
+  const inventory=async(c:Client)=>(await c.query<{v:unknown}>('SELECT public.project_cost_legacy_voucher_inventory($1) v',[site])).rows[0].v;
+  const save=async(c:Client,request:string,s:unknown)=>c.query('SELECT public.record_project_cost_legacy_review($1,$2,0,$3::jsonb,$4::jsonb,$5::jsonb,$6,true)',[request,site,JSON.stringify(s),'{}','{}','Synthetic review']);
+  const first=await status(a,id(61)),old=await inventory(b);await a.query('BEGIN');
+  try{await record(a,id(62),id(61),first);const waiting=save(b,id(63),old).then(()=>null,e=>e);await waitForLock(b);await a.query('COMMIT');expect(await waiting).toMatchObject({code:'40001'});}finally{await a.query('ROLLBACK');}
+  expect((await admin.query('SELECT count(*)::int n FROM public.project_cost_legacy_reviews')).rows[0].n).toBe(0);
+  const second=await status(b,id(71)),fresh=await inventory(a);await a.query('BEGIN');
+  try{await save(a,id(64),fresh);const waiting=record(b,id(72),id(71),second);await waitForLock(b);await a.query('COMMIT');expect(await waiting).toMatchObject({replayed:false});}finally{await a.query('ROLLBACK');}
+  expect((await a.query<{v:{freshness:string}}>('SELECT public.project_cost_legacy_review($1,NULL) v',[site])).rows[0].v.freshness).toBe('changed');
+  expect((await admin.query('SELECT count(*)::int n FROM public.project_cost_legacy_reviews')).rows[0].n).toBe(1);
+ },20000);
 });
