@@ -24,7 +24,7 @@ async function setup(){const db=new PGlite();try{
  for(const n of ['project_paid_payroll_evidence','confirmed_rental_expense_link','paid_payroll_adjustments','project_cost_reconciliation_preview','project_cost_historical_review','project_cost_correction_attribution','project_cost_correction_inventory','project_cost_corrected_preview','project_cost_corrected_review_ledger','project_cost_correction_original_context','project_cost_cross_site_preview','project_cost_cross_site_review_context','project_cost_cross_site_corrected_preview','project_cost_cross_site_review_ledger'])await db.exec(`BEGIN;${sql(n)} COMMIT;`);
  await db.exec(`BEGIN;SET LOCAL app.cross_site_source_lock_reviewed='yes';${sql('project_cost_cross_site_source_review_serialization')} COMMIT;`);
  await db.exec(`BEGIN;SET LOCAL app.cross_site_attribution_lock_reviewed='yes';${sql('project_cost_cross_site_attribution_serialization')} COMMIT;`);
- await db.exec(`BEGIN;SET LOCAL app.cross_site_all_attribution_lock_reviewed='synthetic-only';${sql('project_cost_cross_site_all_attribution_serialization')} COMMIT;`);
+  await db.exec(`BEGIN;SET LOCAL app.cost_evidence_lock_candidate='synthetic-only';${sql('project_cost_evidence_lock_rehearsal')} COMMIT;`);
  await db.exec(`BEGIN;SET LOCAL app.cross_site_multicase_candidate='synthetic-only';${sql('project_cost_multi_case_upgrade')} COMMIT;`);
  await db.exec(`SET ROLE authenticated;SET test.uid='${founder}';SET test.assurance='yes'`);return db;
  }catch(e){await db.close();throw e;}}

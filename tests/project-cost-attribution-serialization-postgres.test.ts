@@ -76,4 +76,27 @@ suite('cross-site known-attribution serialization, PostgreSQL 17',()=>{
   }finally{await a.query('ROLLBACK');}
   expect((await b.query<{v:{freshness:string}}>('SELECT public.project_cost_cross_site_review($1,4) v',[siteTwo])).rows[0].v.freshness).toBe('changed');
  },30000);
+ it('holds ordinary and cross-site captures against expense and payroll writes',async()=>{
+  // This test uses a minimal inventory stub to isolate lock behavior. The real
+  // inventory and full historical/voucher chains are exercised separately.
+  for(const name of ['confirmed_rental_expenses','weekly_worker_draft_sources','weekly_worker_paid_allocations','payroll_payment_dates','historical_worker_attributions','historical_worker_attribution_sites'])await admin.query(`CREATE TABLE public.${name}(id uuid)`);
+  const old=file('project_cost_cross_site_attribution_serialization'),start=old.indexOf('CREATE OR REPLACE FUNCTION public.record_project_cost_cross_site_review('),end=old.indexOf('END $$;',start);if(start<0||end<0)throw Error('Missing known-voucher writer');await admin.query(old.slice(start,end+7));
+  await admin.query(`CREATE OR REPLACE FUNCTION public.project_cost_correction_inventory(p uuid) RETURNS jsonb LANGUAGE sql STABLE SECURITY DEFINER AS $$SELECT jsonb_build_object('project_id',p,'historical_review',jsonb_build_object('base',jsonb_build_object('captured_at','2026-01-01T00:00:00Z')),'corrections','[]'::jsonb,'expense',(SELECT amount FROM public.expenses WHERE id='${worker}'),'payroll',(SELECT gross_pay FROM public.payroll WHERE id='${worker}'))$$;`);
+  const candidate=file('project_cost_evidence_lock_rehearsal');await expect(admin.query(`BEGIN;${candidate} COMMIT;`)).rejects.toThrow(/held for synthetic/);await admin.query('ROLLBACK');
+  await admin.query(`BEGIN;SET LOCAL app.cost_evidence_lock_candidate='synthetic-only';${candidate} COMMIT;`);
+  const ordinary=(req:string,revision:number,s:unknown)=>a.query('SELECT public.record_project_cost_corrected_review($1,$2,$3,$4::jsonb,$5::jsonb,$6,true) v',[req,site,revision,JSON.stringify(s),JSON.stringify(choices),'Review']);
+  let current=await snapshot(a,site);await a.query('BEGIN');try{
+   await ordinary(id(50),0,current);
+   const held=(await admin.query("SELECT count(*)::int n FROM pg_locks l JOIN pg_stat_activity s ON s.pid=l.pid JOIN pg_class c ON c.oid=l.relation WHERE s.application_name='attribution-lock-a' AND l.mode='ShareLock' AND l.granted AND c.relname=ANY($1::text[])",[['users','workers','projects','supervisor_period_payroll','historical_external_worker_payroll','paid_period_assertion_cases','paid_payroll_adjustment_cases','expenses','confirmed_rental_expenses','payroll','weekly_worker_draft_sources','weekly_worker_paid_allocations','payroll_payment_dates','historical_worker_attributions','historical_worker_attribution_sites','project_cost_correction_attributions','project_cost_correction_sites']])).rows[0].n;expect(held).toBe(17);
+   await b.query('RESET ROLE');const pending=b.query('UPDATE public.expenses SET amount=amount+1 WHERE id=$1',[worker]);await waitForLock(b);await a.query('COMMIT');await pending;
+   await b.query('SET ROLE authenticated');
+  }finally{await a.query('ROLLBACK');}
+  await expect(ordinary(id(51),1,current)).rejects.toMatchObject({code:'40001'});
+  current=await snapshot(a,site);await a.query('BEGIN');try{
+   await cross(a,id(52),3,site,current);
+   await b.query('RESET ROLE');const pending=b.query('UPDATE public.payroll SET gross_pay=gross_pay+1 WHERE id=$1',[worker]);await waitForLock(b);await a.query('COMMIT');await pending;await b.query('SET ROLE authenticated');
+  }finally{await a.query('ROLLBACK');}
+  const result=(await a.query<{v:{freshness:string}}>('SELECT public.project_cost_cross_site_review($1,4) v',[site])).rows[0].v;expect(result.freshness).toBe('changed');
+ },30000);
+
 });
