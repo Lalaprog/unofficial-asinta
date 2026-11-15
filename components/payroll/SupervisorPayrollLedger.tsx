@@ -41,7 +41,7 @@ function Contents({actor,today}:{actor:string;today:string}){
   try{const [a,b]=await Promise.all([createClient().rpc('supervisor_period_prepare',{p_supervisor:id,p_start:start}),createClient().rpc(revisionMode?'supervisor_period_payroll_review_v2':'supervisor_period_payroll_review',{p_supervisor:id,p_start:start})]);if(a.error||b.error)throw Error('Unavailable');const prepared=parseSupervisorPrepared(a.data,id,start),row=parseSupervisorLedgerRow(b.data,id,start,revisionMode);
    if(prepared.person.name!==chosen.name||prepared.input.as_of!==today||getManilaClock().dateIso!==today||(row&&row.as_of!==today))throw Error('Identity or date mismatch');
    if(alive.current&&token===seq.current&&active.current===scope){setLoaded({key:scope,prepared,row});setRate(row?.daily_rate??'');setReason('');}
-  }catch{if(alive.current&&token===seq.current&&active.current===scope)setError('Could not verify this Supervisor, period and ledger together. Reload and investigate.');}finally{busyRef.current=false;if(alive.current)setBusy(false);}}
+  }catch{if(alive.current&&token===seq.current&&active.current===scope)setError('Could not verify this Supervisor, period and ledger together. Reload and investigate, including whether the Supervisor has an active linked workforce profile with a matching name.');}finally{busyRef.current=false;if(alive.current)setBusy(false);}}
  function stage(kind:'create'|'approved'|'recorded_paid'|'refresh'|'return_to_draft'){
   if(!current||pending||storageError||busyRef.current)return;setError('');try{
    if(today!==getManilaClock().dateIso||current.prepared.input.as_of!==today)throw Error('date');let attempt:SupervisorLedgerAttempt;

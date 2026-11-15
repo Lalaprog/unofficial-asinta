@@ -64,6 +64,17 @@ describe('server-calculated weekly source-bound draft (not payable)',()=>{
    expect(source.attendance).toHaveLength(2);expect(source.allowances).toHaveLength(1);expect(source.advances).toHaveLength(1);
   }finally{await db.close();}
  },30000);
+ it('rejects linked and possible Supervisor identities from weekly worker payroll',async()=>{
+  const db=await fixture();try{
+   await db.exec('RESET ROLE');
+   await db.query("INSERT INTO public.workers(id,name,position,contact_number,pay_rate,pay_rate_type,active) VALUES($1,'Supervisor','Site Supervisor','none',600,'daily',true)",[supervisor]);
+   await db.exec('SET ROLE authenticated');
+   await expect(db.query('SELECT public.create_weekly_worker_draft($1,$2,$3)',[voucher,supervisor,start])).rejects.toThrow(/possible Supervisor identity requires review/);
+   await db.exec('RESET ROLE');await db.query("UPDATE public.workers SET name='Supervisor' WHERE id=$1",[worker]);await db.exec('SET ROLE authenticated');
+   await expect(generate(db)).rejects.toThrow(/possible Supervisor identity requires review/);
+   await db.exec('RESET ROLE');expect((await db.query<{n:number}>('SELECT count(*)::int n FROM public.payroll WHERE id=$1',[voucher])).rows[0].n).toBe(0);
+  }finally{await db.close();}
+ },30000);
  it('freezes the draft against old client edits, approval, payment and deletion',async()=>{
   const db=await fixture();try{await generate(db);
    await expect(db.query('UPDATE public.payroll SET gross_pay=1 WHERE id=$1',[voucher])).rejects.toThrow(/frozen/);

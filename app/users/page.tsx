@@ -605,10 +605,10 @@ export default function UsersPage() {
                   />
                   <div className="space-y-0.5">
                     <div className="font-bold text-navy">
-                      Link Supervisor to the legacy workforce roster
+                      Link Supervisor to a workforce profile
                     </div>
                     <div className="text-[11px] text-ink-secondary">
-                      Creates a linked workforce profile and rate for existing attendance and payroll screens. This does not enable the planned separate 1–15 / 16–month-end Supervisor payroll; that workflow is not yet live.
+                      When the separate Supervisor payroll ledger is enabled, it requires an active linked profile. Project assignments are separate. Linking does not record a payment; the ledger uses a separately reviewed daily rate.
                     </div>
                   </div>
                 </label>
@@ -782,10 +782,10 @@ export default function UsersPage() {
                       />
                       <div className="space-y-0.5">
                         <div className="font-bold text-navy">
-                          Link Supervisor to the legacy workforce roster
+                          Link Supervisor to a workforce profile
                         </div>
                         <div className="text-[11px] text-ink-secondary">
-                          Maintains a linked workforce profile and rate for existing screens. This does not enable the planned separate 1–15 / 16–month-end Supervisor payroll; that workflow is not yet live.
+                          When the separate Supervisor payroll ledger is enabled, it requires an active linked profile. Project assignments are separate. Unchecking deactivates the linked profile; the ledger uses a separately reviewed daily rate.
                         </div>
                       </div>
                     </label>

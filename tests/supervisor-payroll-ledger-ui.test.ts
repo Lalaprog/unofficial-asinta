@@ -72,6 +72,11 @@ describe('experimental Supervisor payroll ledger UI',()=>{
   cleanup();sessionStorage.clear();currentRow={...row,revision:'0'};await open();fireEvent.click(screen.getByRole('button',{name:'Review approval'}));confirm();await screen.findByText(/Action recorded/);expect(m.rpc).toHaveBeenCalledWith('supervisor_payroll_revision_action',{p_request:request,p_id:payroll,p_revision:'0',p_action:'approved',p_rate:null,p_expected:null,p_reason:null,p_paid_on:null,p_ack:true});
   cleanup();sessionStorage.clear();currentRow={...approved,status:'paid',paid_on:'2024-12-15',paid_by:actor,recorded_paid_at:'2026-10-03T00:00:00Z',revision:'3'};await open();expect(screen.queryByRole('button',{name:'Review return to draft'})).toBeNull();expect(screen.queryByRole('button',{name:'Review draft refresh'})).toBeNull();
  });
+ it('explains the active linked profile requirement when preparation cannot be verified',async()=>{
+  m.rpc.mockImplementation(async(name:string)=>name==='supervisor_period_prepare'?{data:{...prepared,linked_worker:null},error:null}:reply(name));
+  render(React.createElement(SupervisorPayrollLedger));fireEvent.click(screen.getByRole('button',{name:'Experimental Supervisor payroll ledger'}));fireEvent.click(screen.getByRole('button',{name:'Load Supervisors'}));await screen.findByLabelText('Supervisor for payroll ledger');fireEvent.change(screen.getByLabelText('Supervisor for payroll ledger'),{target:{value:supervisor}});fireEvent.change(screen.getByLabelText('Date in Supervisor payroll period'),{target:{value:'2024-12-04'}});fireEvent.click(screen.getByRole('button',{name:'Review Supervisor period and ledger'}));
+  expect((await screen.findByRole('alert')).textContent).toMatch(/active linked workforce profile with a matching name/);expect(screen.queryByRole('button',{name:'Review draft creation'})).toBeNull();
+ });
  it('fails closed when revision review is missing and does not retry old decision requests after upgrade',async()=>{
   vi.stubEnv('NEXT_PUBLIC_DEVELOPMENT_FINANCE_CUTOVER','true');vi.stubEnv('NEXT_PUBLIC_SUPERVISOR_PAYROLL_REVISION_PREVIEW','true');currentRow=row;
   m.rpc.mockImplementation(async(name:string)=>name==='supervisor_period_payroll_review_v2'?{data:currentRow,error:null}:reply(name));
