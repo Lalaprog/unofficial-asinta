@@ -49,7 +49,7 @@ suite('cross-site known-attribution serialization, PostgreSQL 17',()=>{
   // if its latest actual attribution names that destination.
   await admin.query(`CREATE OR REPLACE FUNCTION public.project_cost_correction_inventory(p uuid) RETURNS jsonb LANGUAGE sql STABLE SECURITY DEFINER AS $$
    SELECT jsonb_build_object('project_id',p,'historical_review',jsonb_build_object('base',jsonb_build_object('captured_at','2026-01-01T00:00:00Z')),'corrections',coalesce((
-    SELECT jsonb_agg(jsonb_build_object('kind',a.source_kind,'case_id',coalesce(a.voucher_case_id,a.external_case_id),'revision',a.revision) ORDER BY a.source_kind,coalesce(a.voucher_case_id,a.external_case_id))
+    SELECT jsonb_agg(jsonb_build_object('kind',a.source_kind,'case_id',coalesce(a.voucher_case_id,a.external_case_id),'revision',a.revision,'case_count',CASE WHEN a.source_kind='voucher' THEN (SELECT count(*) FROM public.paid_payroll_adjustment_cases c WHERE c.payroll_id='${worker}') ELSE (SELECT count(*) FROM public.paid_period_assertion_cases c WHERE c.external_worker_id='${id(10)}') END) ORDER BY a.source_kind,coalesce(a.voucher_case_id,a.external_case_id))
     FROM public.project_cost_correction_attributions a JOIN public.project_cost_correction_sites s ON s.request_id=a.request_id
     WHERE s.project_id=p AND a.revision=(SELECT max(z.revision) FROM public.project_cost_correction_attributions z WHERE z.source_kind=a.source_kind AND coalesce(z.voucher_case_id,z.external_case_id)=coalesce(a.voucher_case_id,a.external_case_id))),'[]'::jsonb))$$;`);
   const externalTo=(c:Client,req:string,rev:number,amount:string)=>c.query("SELECT public.record_project_cost_correction_attribution($1,'external_worker',$2,$3,$4::jsonb,$5::numeric,$6::jsonb,'Reviewed',true) v",[req,id(11),rev,JSON.stringify(externalEvidence),amount,JSON.stringify([{project_id:siteTwo,gross_change:amount}])]);
@@ -64,5 +64,16 @@ suite('cross-site known-attribution serialization, PostgreSQL 17',()=>{
   const withoutVoucher=await snapshot(b,siteTwo);await a.query('BEGIN');try{
    await voucherTo(a,id(25),3,'25.00');const pending=cross(b,id(26),2,siteTwo,withoutVoucher).then(()=>null,e=>e);await waitForLock(b);await a.query('COMMIT');expect(await pending).toMatchObject({code:'40001'});
   }finally{await a.query('ROLLBACK');}
+  // Case creation must not change sibling evidence while a review is saving.
+  const original=(await admin.query('SELECT app_private.paid_adjustment_voucher_snapshot(p) v FROM public.payroll p WHERE id=$1',[worker])).rows[0].v;
+  const beforeCase=await snapshot(a,siteTwo);await a.query('BEGIN');try{
+   await cross(a,id(27),2,siteTwo,beforeCase);const pending=b.query('SELECT public.open_paid_payroll_adjustment($1,$2,$3::jsonb,5,$4)',[id(28),worker,JSON.stringify(original),'Another case']);await waitForLock(b);await a.query('COMMIT');await pending;
+  }finally{await a.query('ROLLBACK');}
+  expect((await b.query<{v:{freshness:string}}>('SELECT public.project_cost_cross_site_review($1,3) v',[siteTwo])).rows[0].v.freshness).toBe('changed');
+  const externalSnapshot=(await a.query("SELECT public.paid_period_assertion_case_list('external_worker',$1) v",[id(10)])).rows[0].v.snapshot;
+  const beforeExternal=await snapshot(a,siteTwo);await a.query('BEGIN');try{
+   await cross(a,id(29),3,siteTwo,beforeExternal);const pending=b.query("SELECT public.open_paid_period_assertion_case($1,'external_worker',$2,$3::jsonb,8,'Another external case')",[id(30),id(10),JSON.stringify(externalSnapshot)]);await waitForLock(b);await a.query('COMMIT');await pending;
+  }finally{await a.query('ROLLBACK');}
+  expect((await b.query<{v:{freshness:string}}>('SELECT public.project_cost_cross_site_review($1,4) v',[siteTwo])).rows[0].v.freshness).toBe('changed');
  },30000);
 });

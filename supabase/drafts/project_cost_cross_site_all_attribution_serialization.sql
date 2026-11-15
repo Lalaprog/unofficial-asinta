@@ -1,7 +1,7 @@
 -- HELD SYNTHETIC CANDIDATE; NOT INSTALLED. Relation-level serialization of
--- correction-attribution writers, including previously omitted cases. This does
--- not lock expense, payroll, assertion/case, historical-source or privileged
--- writers. Lock waits/ordering and performance require PostgreSQL concurrency
+-- correction cases and attribution writers, including previously omitted cases.
+-- It does not lock expense, payroll, historical-source or privileged writers.
+-- Lock waits/ordering and performance require PostgreSQL concurrency
 -- tests and a target-specific writer audit before considering deployment.
 SET LOCAL lock_timeout='3s'; SET LOCAL statement_timeout='30s';
 DO $hold$ BEGIN IF current_setting('app.cross_site_all_attribution_lock_reviewed',true) IS DISTINCT FROM 'synthetic-only' THEN RAISE EXCEPTION 'All-attribution lock held for synthetic rehearsal'; END IF; END $hold$;
@@ -36,6 +36,7 @@ BEGIN
  IF current_setting('transaction_isolation')<>'read committed' THEN RAISE EXCEPTION 'Cross-site review requires read committed' USING ERRCODE='P1002'; END IF;
  IF p_request IS NULL OR p_project IS NULL OR p_expected_revision IS NULL OR p_expected_revision<0 OR p_expected_revision>=2147483647 OR jsonb_typeof(p_snapshot) IS DISTINCT FROM 'object' OR octet_length(p_snapshot::text)>2097152 OR jsonb_typeof(p_choices) IS DISTINCT FROM 'object' OR octet_length(p_choices::text)>500000 OR jsonb_typeof(p_cross_sites) IS DISTINCT FROM 'object' OR octet_length(p_cross_sites::text)>500000 OR p_note IS NULL OR length(btrim(p_note)) NOT BETWEEN 1 AND 500 OR btrim(p_note) ~ '[[:cntrl:]]' OR p_ack IS DISTINCT FROM true THEN RAISE EXCEPTION 'Invalid cross-site review' USING ERRCODE='22023'; END IF;
  v_note:=btrim(p_note);
+ PERFORM pg_catalog.set_config('lock_timeout','3s',true);
  PERFORM 1 FROM public.users WHERE id=v_actor AND role='founder' FOR SHARE;
  IF NOT FOUND OR NOT coalesce(public.is_founder(),false) OR NOT coalesce(public.session_assurance_satisfied(),false) THEN RAISE EXCEPTION 'Founder access with required assurance required' USING ERRCODE='42501'; END IF;
  PERFORM pg_catalog.pg_advisory_xact_lock(pg_catalog.hashtextextended('cross-site-cost-review-request:'||p_request::text,0));
@@ -62,6 +63,10 @@ BEGIN
  -- predicate locks; they serialize the whole attribution workload.
  IF pg_catalog.jsonb_typeof(p_snapshot->'corrections') IS DISTINCT FROM 'array' OR pg_catalog.jsonb_array_length(CASE WHEN pg_catalog.jsonb_typeof(p_snapshot->'corrections')='array' THEN p_snapshot->'corrections' ELSE '[]'::jsonb END)>500 THEN RAISE EXCEPTION 'Invalid correction case references' USING ERRCODE='22023'; END IF;
  IF EXISTS(SELECT 1 FROM pg_catalog.jsonb_array_elements(p_snapshot->'corrections') c WHERE pg_catalog.jsonb_typeof(c.value) IS DISTINCT FROM 'object' OR coalesce(c.value->>'kind','') NOT IN ('voucher','external_worker') OR coalesce(c.value->>'case_id','') !~ '^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$') THEN RAISE EXCEPTION 'Invalid correction case references' USING ERRCODE='22023'; END IF;
+ -- Case relations precede attribution relations: the external attribution
+ -- writer locks its case tables before inserting attribution rows. Never wait
+ -- for its case lock while holding an attribution lock it needs.
+ LOCK TABLE public.paid_payroll_adjustment_cases,public.paid_period_assertion_cases IN SHARE MODE;
  LOCK TABLE public.project_cost_correction_attributions,public.project_cost_correction_sites IN SHARE MODE;
  SELECT coalesce(max(revision),0) INTO v_latest FROM public.project_cost_cross_site_reviews WHERE project_id=p_project;
  IF v_latest<>p_expected_revision THEN RAISE EXCEPTION 'Cross-site review changed; reload and review' USING ERRCODE='40001'; END IF;
@@ -75,5 +80,5 @@ BEGIN
  RETURN jsonb_build_object('request_id',p_request,'project_id',p_project,'revision',v_latest+1,'replayed',false);
 END $$;
 DO $postflight$ DECLARE f oid:=to_regprocedure('public.record_project_cost_cross_site_review(uuid,uuid,integer,jsonb,jsonb,jsonb,text,boolean)'); BEGIN
- IF f IS NULL OR NOT EXISTS(SELECT 1 FROM pg_catalog.pg_proc p WHERE p.oid=f AND p.prokind='f' AND p.prosecdef AND p.provolatile='v' AND p.proconfig @> ARRAY['search_path=""'] AND pg_catalog.pg_get_userbyid(p.proowner)='postgres' AND pg_catalog.encode(pg_catalog.sha256(pg_catalog.convert_to(p.prosrc,'UTF8')),'hex')='a3068e5bbd3715bfc16b06a39c58dc54d53e9162c103d214d78128b1f97d9fd3') OR NOT pg_catalog.has_function_privilege('authenticated',f,'EXECUTE') OR pg_catalog.has_function_privilege('anon',f,'EXECUTE') OR pg_catalog.has_function_privilege('service_role',f,'EXECUTE') THEN RAISE EXCEPTION 'All-attribution lock postflight failed'; END IF;
+ IF f IS NULL OR NOT EXISTS(SELECT 1 FROM pg_catalog.pg_proc p WHERE p.oid=f AND p.prokind='f' AND p.prosecdef AND p.provolatile='v' AND p.proconfig @> ARRAY['search_path=""'] AND pg_catalog.pg_get_userbyid(p.proowner)='postgres' AND pg_catalog.encode(pg_catalog.sha256(pg_catalog.convert_to(p.prosrc,'UTF8')),'hex')='42aa17692f7467d7ee46c16490f946906eef5408fa684a3a29572e7dfaad393d') OR NOT pg_catalog.has_function_privilege('authenticated',f,'EXECUTE') OR pg_catalog.has_function_privilege('anon',f,'EXECUTE') OR pg_catalog.has_function_privilege('service_role',f,'EXECUTE') THEN RAISE EXCEPTION 'All-attribution lock postflight failed'; END IF;
 END $postflight$;
