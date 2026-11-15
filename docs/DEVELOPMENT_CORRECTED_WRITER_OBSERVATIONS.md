@@ -1,5 +1,8 @@
 # Development corrected-cost writer observations
 
+> **Current development cutover supersedes older historical notes below.** Migration `20261115033427_development_historical_cross_site_atomic_cutover` installed the coordinated historical case-binding, source-evidence capture locks and grouped cross-site review functions. The old historical attribution RPC is revoked for API roles; older tabs/builds cannot create new historical attributions. The matching branch preview is deployed from `5610b179bfa55e0830bdf3922ae154c9489aefd2`; the attempted website build was canceled pending the remaining safety review. The previously promoted website is now incompatible with the revoked historical-attribution writer, so that action fails until coordinated release. No business data or payments were created. The detailed installation record is [Historical and cross-site development cutover](HISTORICAL_CROSS_SITE_DEVELOPMENT_CUTOVER.md). Do not rerun the held source artifacts or the installed candidate. Authenticated populated testing, independent backup/restore and operational monitoring remain separate work; reviewed costs are not automatic proof of payment or completeness.
+
+
 These are point-in-time, read-only observations on the development project on 14 November 2026, **not permission to install** the held corrected-review artifact or a complete writer/security audit. Migration history differs from this repository; do not use `supabase db push` or the old generated bundles. The held artifact has a manual stop and the selected-writer check described in `supabase/preflight/development-corrected-writer-audit.sql` cannot freeze function definitions or detect every writer.
 
 ## Subsequent narrow hardening
