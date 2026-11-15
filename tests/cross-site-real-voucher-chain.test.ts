@@ -115,6 +115,7 @@ describe('complete voucher cross-site review chain, isolated synthetic database'
   const baseChoices={expenses:{},historical:{},corrections:{[key]:{decision:'exclude',reason:'Cross-site review'},[legacyKey]:{decision:'exclude',reason:'Included in older voucher'}}};
   await read(db,'SELECT public.record_project_cost_corrected_review($1,$2,0,$3::jsonb,$4::jsonb,$5,true) v',[id(64),destination,j(currentRaw),j(baseChoices),'Ordinary reviewed']);
   expect(await read(db,'SELECT public.project_cost_corrected_review($1,NULL) v',[destination])).toMatchObject({freshness:'changed',legacy_guarded:true});
+  expect(await read(db,'SELECT public.project_cost_recorded_coverage($1) v',[destination])).toMatchObject({review:{freshness:'changed',legacy_guarded:true}});
   const legacyRaw=await read(db,'SELECT public.project_cost_legacy_voucher_inventory($1) v',[destination]),legacyInv=parseLegacyCostInventory(legacyRaw,destination),legacyChoices={[id(61)]:{decision:'include',reason:null}};
   const legacyCalc=calculateLegacyCost(legacyInv,baseChoices,legacyChoices);expect(legacyCalc.totals.total).toBe(35000n);
   verifyLegacyCostTotals(await read(db,'SELECT public.project_cost_legacy_voucher_preview($1,$2::jsonb,$3::jsonb,$4::jsonb,true) v',[destination,j(legacyRaw),j(baseChoices),j(legacyChoices)]),destination,legacyCalc.totals);
