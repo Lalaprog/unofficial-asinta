@@ -17,7 +17,7 @@ vi.mock('@/lib/data/store',()=>({useDataStore:()=>({advanceRequests:[],projects,
 import {AdvanceRequestsPanel} from '@/components/advances/AdvanceRequestsPanel';
 const markerKey='bale-request-unconfirmed-v1:sup';
 beforeEach(()=>{sessionStorage.clear();mock.submit.mockReset();mock.idempotent=false;});
-afterEach(()=>{cleanup();vi.restoreAllMocks();sessionStorage.clear();});
+afterEach(()=>{cleanup();vi.restoreAllMocks();vi.unstubAllEnvs();sessionStorage.clear();});
 async function submit(){
  fireEvent.click(screen.getByRole('button',{name:'New Bale Request'}));
  const form=screen.getByRole('dialog',{name:'New Bale Request'});
@@ -27,6 +27,19 @@ async function submit(){
  await waitFor(()=>expect(mock.submit).toHaveBeenCalledTimes(1));
 }
 describe('weekly Bale submission uncertainty',()=>{
+ it('holds new and saved retry requests when the development target differs',async()=>{
+  mock.idempotent=true;
+  vi.stubEnv('NEXT_PUBLIC_DEVELOPMENT_FINANCE_CUTOVER','true');
+  vi.stubEnv('NEXT_PUBLIC_DEVELOPMENT_BALE_SUPABASE_REF','abcdefghijklmnopqrst');
+  vi.stubEnv('NEXT_PUBLIC_SUPABASE_URL','https://wrong.supabase.co');
+  sessionStorage.setItem(markerKey,JSON.stringify({version:1,request:'11111111-1111-4111-8111-111111111111',actor:'sup',worker:'w1',project:'a',amount:'125.50',period:'2026-11-08'}));
+  render(React.createElement(AdvanceRequestsPanel));
+  await screen.findByText(/Bale requests are held because the development backend/);
+  const retry=await screen.findByRole('button',{name:'Retry exact Bale request'});
+  expect((retry as HTMLButtonElement).disabled).toBe(true);
+  expect((screen.getByRole('button',{name:'New Bale Request'}) as HTMLButtonElement).disabled).toBe(true);
+  fireEvent.click(retry);expect(mock.submit).not.toHaveBeenCalled();expect(sessionStorage.getItem(markerKey)).toBeTruthy();
+ });
  it('retains an uncertainty warning across remount and requires deliberate review before another request',async()=>{
   mock.submit.mockResolvedValue(null);
   const view=render(React.createElement(AdvanceRequestsPanel));await submit();

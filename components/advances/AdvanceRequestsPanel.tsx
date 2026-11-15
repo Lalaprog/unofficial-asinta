@@ -6,6 +6,7 @@ import { useAuth } from '@/lib/auth/authContext';
 import { useDataStore } from '@/lib/data/store';
 import { useBaleProjectWorkers } from '@/lib/attendance/useBaleProjectWorkers';
 import { useBaleRequestSubmissionGuard } from '@/lib/attendance/useBaleRequestSubmissionGuard';
+import { baleSubmissionTargetBlocked } from '@/lib/attendance/baleSubmissionTarget';
 import { getManilaClock } from '@/lib/reminders/scheduler';
 import { workerPayrollPeriod } from '@/lib/payroll/periods';
 import { useWeeklyBaleStatuses } from '@/lib/attendance/useWeeklyBaleStatuses';
@@ -122,6 +123,7 @@ export function AdvanceRequestsPanel() {
   const team = useBaleProjectWorkers(user?.id, selectedProjectId, isSupervisor && requestModalOpen);
   const weeklyMode = weeklyBaleReleasePreviewEnabled();
   const idempotentSubmission = weeklyBaleIdempotentSubmissionPreviewEnabled();
+  const submissionTargetBlocked = baleSubmissionTargetBlocked(idempotentSubmission);
   const cutoverMode = weeklyWorkerCutoverMode();
   const submissionGuard = useBaleRequestSubmissionGuard(user?.id, weeklyMode && isSupervisor);
   const reviewGuard = useBaleReviewGuard(user?.id, weeklyMode && isFounder);
@@ -369,7 +371,7 @@ export function AdvanceRequestsPanel() {
   const handleSubmitRequest = async (event: React.FormEvent) => {
     event.preventDefault();
     const amount = Number(requestedAmount);
-    if ((cutoverMode && !weeklyMode) || (weeklyMode && submissionGuard.status !== 'ready') || submitLock.current || team.status !== 'ready' || !activeWorkers.some((worker) => worker.id === selectedWorkerId) || !selectedProjectId || !Number.isFinite(amount) || amount <= 0) return;
+    if (submissionTargetBlocked || (cutoverMode && !weeklyMode) || (weeklyMode && submissionGuard.status !== 'ready') || submitLock.current || team.status !== 'ready' || !activeWorkers.some((worker) => worker.id === selectedWorkerId) || !selectedProjectId || !Number.isFinite(amount) || amount <= 0) return;
     submitLock.current = true;
     const marker = weeklyMode ? submissionGuard.begin(idempotentSubmission ? {worker:selectedWorkerId,project:selectedProjectId,amount:(Math.round(amount*100)/100).toFixed(2),period:workerPayrollPeriod(getManilaClock().dateIso).start} : undefined) : null;
     if (weeklyMode && !marker) { submitLock.current = false; return; }
@@ -403,7 +405,7 @@ export function AdvanceRequestsPanel() {
   };
 
   const retryUncertainRequest = async () => {
-    if (!idempotentSubmission || !isSupervisor || submitLock.current) return;
+    if (!idempotentSubmission || submissionTargetBlocked || !isSupervisor || submitLock.current) return;
     submitLock.current = true;
     const saved = submissionGuard.retry();
     if (!saved) { submitLock.current = false; return; }
@@ -574,6 +576,7 @@ export function AdvanceRequestsPanel() {
   return (
     <div className="space-y-4">
       {cutoverMode && !weeklyMode && <p role="alert" className="rounded-xl bg-status-warning-bg p-3 text-xs text-ink-secondary">Weekly Bale controls are not enabled. Requests and decisions are held until the configuration is reviewed.</p>}
+      {weeklyMode && isSupervisor && submissionTargetBlocked && <p role="alert" className="rounded-xl bg-status-warning-bg p-3 text-xs text-ink-secondary">Bale requests are held because the development backend does not match the configured project. Contact the administrator; do not retry on another tab.</p>}
       {weeklyMode && isFounder && reviewGuard.status === 'pending' && <section role="alert" className="space-y-2 rounded-xl bg-status-warning-bg p-3 text-xs text-ink-secondary">
         <p>A Bale review may have been recorded. Check each affected request and its history before another decision. An empty list does not prove failure; the earlier action may still be processing.</p>
         {reviewGuard.marker && <p className="break-all">{reviewGuard.marker.decision === 'approve' ? 'Approval' : 'Rejection'} · request IDs: {reviewGuard.marker.ids.join(', ')}</p>}
@@ -587,7 +590,7 @@ export function AdvanceRequestsPanel() {
         <p>This warning is only in this browser tab. Closing it or clearing storage may erase the warning; another tab or device can still send a request.</p>
         {idempotentSubmission && submissionGuard.pendingAttempt && <div className="space-y-2">
           <p>Exact retry: worker {submissionGuard.pendingAttempt.worker} · site {submissionGuard.pendingAttempt.project} · ₱{submissionGuard.pendingAttempt.amount} · week starting {submissionGuard.pendingAttempt.period}. This may confirm a previous save or send it if it was not saved; check the request list first.</p>
-          <Button type="button" size="sm" variant="secondary" disabled={isSubmitting} onClick={()=>void retryUncertainRequest()}>Retry exact Bale request</Button>
+          <Button type="button" size="sm" variant="secondary" disabled={isSubmitting || submissionTargetBlocked} onClick={()=>void retryUncertainRequest()}>Retry exact Bale request</Button>
         </div>}
         <label className="flex items-start gap-2"><input type="checkbox" checked={reviewedUncertainSubmission} onChange={e=>setReviewedUncertainSubmission(e.target.checked)} />I investigated the earlier request and understand that clearing this warning does not cancel it.</label>
         <Button type="button" size="sm" variant="secondary" disabled={!reviewedUncertainSubmission || isSubmitting} onClick={()=>{if(submissionGuard.clearAfterReview())setReviewedUncertainSubmission(false);}}>Clear warning after review</Button>
@@ -632,7 +635,7 @@ export function AdvanceRequestsPanel() {
             size="sm"
             className="w-full shrink-0 sm:w-auto"
             onClick={openRequestModal}
-            disabled={accessibleProjects.length === 0 || (weeklyMode && submissionGuard.status !== 'ready')}
+            disabled={submissionTargetBlocked || accessibleProjects.length === 0 || (weeklyMode && submissionGuard.status !== 'ready')}
           >
             New Bale Request
           </Button>
@@ -1124,7 +1127,7 @@ export function AdvanceRequestsPanel() {
             <Button type="button" variant="secondary" onClick={() => setRequestModalOpen(false)} disabled={isSubmitting}>
               Cancel
             </Button>
-            <Button type="submit" variant="primary" isLoading={isSubmitting} disabled={(cutoverMode && !weeklyMode) || (weeklyMode && submissionGuard.status !== 'ready') || team.status !== 'ready' || !activeWorkers.some((worker) => worker.id === selectedWorkerId)}>
+            <Button type="submit" variant="primary" isLoading={isSubmitting} disabled={submissionTargetBlocked || (cutoverMode && !weeklyMode) || (weeklyMode && submissionGuard.status !== 'ready') || team.status !== 'ready' || !activeWorkers.some((worker) => worker.id === selectedWorkerId)}>
               {isSubmitting ? 'Sending request…' : 'Send to Founder'}
             </Button>
           </div>
