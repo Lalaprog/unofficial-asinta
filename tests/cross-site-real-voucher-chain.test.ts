@@ -23,7 +23,7 @@ const id=(n:number)=>`ab000000-0000-4000-8000-${String(n).padStart(12,'0')}`;
 const read=async(db:PGlite,query:string,args:unknown[])=> (await db.query<{v:unknown}>(query,args)).rows[0].v;
 const j=(v:unknown)=>JSON.stringify(v);
 afterEach(()=>{cleanup();sessionStorage.clear();vi.unstubAllEnvs();vi.restoreAllMocks();mock.rpc.mockReset();});
-async function setup(multiCase=true){
+async function setup(multiCase=true,bundled=false){
  const db=new PGlite();
  try{
   await db.exec(`${roles} ${fixture}`);
@@ -48,8 +48,18 @@ async function setup(multiCase=true){
   await expect(db.exec(`BEGIN;${candidate} COMMIT;`)).rejects.toThrow(/held for synthetic rehearsal/);await db.exec('ROLLBACK');
   await db.exec(`BEGIN;SET LOCAL app.cost_evidence_lock_candidate='synthetic-only';${sql('project_cost_evidence_lock_rehearsal')} COMMIT;`);
   if(multiCase)await db.exec(`BEGIN;SET LOCAL app.cross_site_multicase_candidate='synthetic-only';${sql('project_cost_multi_case_upgrade')} COMMIT;`);
-  for(const name of ['project_cost_recorded_coverage','project_cost_cross_site_overview','legacy_paid_voucher_attribution','project_cost_legacy_voucher_preview','project_cost_legacy_review_ledger','project_cost_legacy_correction_context','project_cost_legacy_corrected_source','project_cost_legacy_recorded_coverage','project_cost_legacy_cross_site_overview','project_recorded_cost_snapshot','project_cost_legacy_recorded_snapshot'])await db.exec(`BEGIN;${sql(name)} COMMIT;`);
-  await db.exec(`BEGIN;SET LOCAL app.legacy_correction_candidate='synthetic-only';${sql('project_cost_legacy_corrected_review_upgrade')} COMMIT;`);
+  if(bundled){
+   for(const name of ['project_cost_recorded_coverage','project_cost_cross_site_overview','project_recorded_cost_snapshot'])await db.exec(`BEGIN;${sql(name)} COMMIT;`);
+   const candidate=readFileSync('supabase/release/development-legacy-project-cost-candidate.sql','utf8');
+   const start=candidate.indexOf('-- The nested candidates remain held standalone;');if(start<0)throw Error('Bundle header missing');
+   // The exact bundled SQL runs atomically. The target-specific preflight is
+   // deliberately omitted only for this synthetic fixture, whose owner and
+   // installed context differ from the hosted development database.
+   await db.exec(`BEGIN;${candidate.slice(start)} COMMIT;`);
+  }else{
+   for(const name of ['project_cost_recorded_coverage','project_cost_cross_site_overview','legacy_paid_voucher_attribution','project_cost_legacy_voucher_preview','project_cost_legacy_review_ledger','project_cost_legacy_correction_context','project_cost_legacy_corrected_source','project_cost_legacy_recorded_coverage','project_cost_legacy_cross_site_overview','project_recorded_cost_snapshot','project_cost_legacy_recorded_snapshot'])await db.exec(`BEGIN;${sql(name)} COMMIT;`);
+   await db.exec(`BEGIN;SET LOCAL app.legacy_correction_candidate='synthetic-only';${sql('project_cost_legacy_corrected_review_upgrade')} COMMIT;`);
+  }
   await db.exec(`SET ROLE authenticated;SET test.uid='${founder}';SET test.assurance='yes'`);
   return db;
  }catch(e){await db.close();throw e;}
@@ -67,6 +77,18 @@ async function saveOrdinary(db:PGlite,project:string,request:string){
  return read(db,'SELECT public.project_cost_corrected_review($1,NULL) v',[project]);
 }
 describe('complete voucher cross-site review chain, isolated synthetic database',()=>{
+ it('runs the bundled development candidate together and protects an older saved review',async()=>{const db=await setup(true,true);try{
+  await saveOrdinary(db,destination,id(80));
+  await db.exec('RESET ROLE');await db.query("INSERT INTO public.payroll VALUES($1,$2,'2023-08-06','2023-08-12','paid',400,0,0,400,8)",[id(81),worker]);await db.exec('SET ROLE authenticated');
+  const s=await read(db,'SELECT public.legacy_paid_voucher_attribution($1) v',[id(81)]) as {voucher:unknown;worker:unknown;cases:unknown};
+  await read(db,'SELECT public.record_legacy_paid_voucher_attribution($1,$2,$3::jsonb,$4::jsonb,$5::jsonb,$6,true,$7::jsonb) v',[id(82),id(81),j(s.voucher),j(s.worker),j([{project_id:destination,gross:'400.00'}]),'Reviewed older voucher',j(s.cases)]);
+  expect(await read(db,'SELECT public.project_cost_corrected_review($1,NULL) v',[destination])).toMatchObject({freshness:'changed',legacy_guarded:true});
+  const raw=await read(db,'SELECT public.project_cost_legacy_voucher_inventory($1) v',[destination]),inv=parseLegacyCostInventory(raw,destination),choices={expenses:{},historical:{},corrections:{}},legacyChoices={[id(82)]:{decision:'include',reason:null}};
+  const total=calculateLegacyCost(inv,choices,legacyChoices);expect(total.totals.total).toBe(40000n);
+  await read(db,'SELECT public.record_project_cost_legacy_review($1,$2,0,$3::jsonb,$4::jsonb,$5::jsonb,$6,true) v',[id(83),destination,j(raw),j(choices),j(legacyChoices),'Reviewed bundled total']);
+  expect(await read(db,'SELECT public.project_cost_legacy_recorded_coverage($1) v',[destination])).toMatchObject({legacy_site_attributions:1,changed_legacy_attributions:0,legacy_review:{freshness:'matches'}});
+  await expect(read(db,'SELECT app_private.project_cost_corrected_review_before_legacy_guard($1,NULL) v',[destination])).rejects.toThrow(/permission denied/);
+ }finally{await db.close();}},60000);
  it('moves reviewed gross between three sites without modifying paid payroll or adding a second cost',async()=>{const db=await setup(false);try{
   await db.exec('RESET ROLE');const original=await read(db,'SELECT app_private.paid_adjustment_voucher_snapshot(p) v FROM public.payroll p WHERE id=$1',[payroll]);await db.exec('SET ROLE authenticated');
   await read(db,"SELECT public.open_paid_payroll_adjustment($1,$2,$3::jsonb,1,'Original site correction') v",[id(1),payroll,j(original)]);
