@@ -3,6 +3,7 @@ import React,{useEffect,useRef,useState} from 'react';
 import {Button} from '@/components/ui/Button';
 import {CrossSiteSourceEvidence} from './CrossSiteSourceEvidence';
 import {CrossSiteReviewLedger} from './CrossSiteReviewLedger';
+import {LegacyVoucherCostReview} from './LegacyVoucherCostReview';
 import {crossSiteSourceReviewPreviewEnabled} from '@/lib/finance/featureAvailability';
 import {calculateCrossSite,verifyCrossSiteTotals,type CrossSiteTotals} from '@/lib/projects/crossSiteCostReview';
 import {useAuth} from '@/lib/auth/authContext';
@@ -108,6 +109,7 @@ function Contents({projectId,userId,openFromOverview}:{projectId:string;userId:s
     <p>Saving temporarily stores this review and its sensitive payroll and cost evidence in this browser tab for an exact retry. Same-origin scripts can read it; browser storage can be lost. It is removed after verification or a deliberate clear.</p><label className="block">Corrected review note<input className="block min-h-11 w-full rounded-lg border p-2" maxLength={500} value={note} disabled={busy} onChange={e=>{setNote(e.target.value);setAck('');}}/></label><label className="flex items-start gap-2"><input type="checkbox" disabled={busy||!saved||!verified||!validReviewNote(note)} checked={ack===fingerprint} onChange={e=>setAck(e.target.checked?fingerprint:'')}/> I reviewed the evidence and decisions; this is incomplete, not a payment or posting.</label><Button type="submit" size="sm" disabled={busy||!saved||!verified||ack!==fingerprint||!validReviewNote(note)}>Save corrected review</Button>{!saved&&<p>Load corrected reviews before saving.</p>}
    </form>}
    <CrossSiteReviewLedger projectId={projectId} userId={userId} onVerified={()=>{setCrossPreview(null);setCrossAck('');}} prepared={inventory&&crossCalculated&&crossVerified&&crossAck===crossFingerprint&&!busy&&!pending&&!blocked?{raw:inventory.raw,choices:crossCalculated.choices,contexts:crossContexts,sourceReviews:crossSources}:null}/>
+   <LegacyVoucherCostReview projectId={projectId} userId={userId}/>
   </div>}
  </section>;
 }

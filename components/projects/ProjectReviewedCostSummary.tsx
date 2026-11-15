@@ -5,13 +5,15 @@ import {Button} from '@/components/ui/Button';
 import {createClient} from '@/lib/supabase/client';
 import {formatSignedCost,type CorrectedSaved} from '@/lib/projects/correctedCostReview';
 import {formatCostCents} from '@/lib/projects/projectCostReconciliation';
-import {crossSiteLedgerPreviewEnabled} from '@/lib/finance/featureAvailability';
+import {crossSiteLedgerPreviewEnabled,legacyVoucherAttributionPreviewEnabled} from '@/lib/finance/featureAvailability';
 import {CROSS_SITE_SOURCE_REVIEW_BYTES} from '@/lib/projects/crossSiteCostReview';
 import {parseCrossSiteSavedHeader,verifyCrossSiteSaved,verifyCrossSiteOverview,type CrossSiteSaved} from '@/lib/projects/crossSiteReviewLedger';
 import {parseRecordedCostCoverage} from '@/lib/projects/recordedCostCoverage';
+import {matchingLegacyOverview,parseLegacyRecordedCoverage} from '@/lib/projects/legacyRecordedCostCoverage';
+import type {LegacyCostSaved} from '@/lib/projects/legacyVoucherCostReview';
 import Link from 'next/link';
 
-type State = {status:'loading'|'empty'|'error'|'stale'|'incoming'} | {status:'ready';review:CorrectedSaved} | {status:'cross';review:CrossSiteSaved};
+type State = {status:'loading'|'empty'|'error'|'stale'|'incoming'|'legacy-unavailable'} | {status:'ready';review:CorrectedSaved} | {status:'cross';review:CrossSiteSaved} | {status:'legacy';review:LegacyCostSaved};
 
 /** Latest independently checked saved review, not an automatic accounting posting. */
 export function ProjectReviewedCostSummary(props:{projectId:string;userId:string;onReview:()=>void}) {
@@ -20,19 +22,26 @@ export function ProjectReviewedCostSummary(props:{projectId:string;userId:string
 function Summary({projectId,onReview}:{projectId:string;userId:string;onReview:()=>void}) {
  const [state,setState]=useState<State>({status:'loading'});
  const [coverage,setCoverage]=useState<ReturnType<typeof parseRecordedCostCoverage>|null>(null);
+ const [legacySignals,setLegacySignals]=useState<{siteAttributions:number;changedAttributions:number}|null>(null);
  const [refresh,setRefresh]=useState(0);
  useEffect(()=>{
   let active=true;
-  setState({status:'loading'});setCoverage(null);
+  setState({status:'loading'});setCoverage(null);setLegacySignals(null);
   void (async()=>{
    try {
     const client=createClient();
-    const {data,error}=await client.rpc('project_cost_recorded_coverage',{p_project:projectId});
+    const legacyEnabled=legacyVoucherAttributionPreviewEnabled();
+    const {data,error}=await client.rpc(legacyEnabled?'project_cost_legacy_recorded_coverage':'project_cost_recorded_coverage',{p_project:projectId});
     if(error)throw error;
-    const checked=parseRecordedCostCoverage(data,projectId),review=checked.review;
+    const legacyCoverage=legacyEnabled?parseLegacyRecordedCoverage(data,projectId):null;
+    const checked=legacyCoverage??parseRecordedCostCoverage(data,projectId),review=checked.review;
     if(review.found&&review.revision!==review.latestRevision)throw Error('Not the latest review');
     if(!active)return;
     setCoverage(checked);
+    if(legacyCoverage){
+     setLegacySignals({siteAttributions:legacyCoverage.siteAttributions,changedAttributions:legacyCoverage.changedAttributions});
+     if(legacyCoverage.siteAttributions>0){const matching=matchingLegacyOverview(legacyCoverage);setState(matching?{status:'legacy',review:matching}:{status:'legacy-unavailable'});return;}
+    }
     if(review.found&&review.freshness!=='matches'){setState({status:'stale'});return;}
     if(review.found&&!review.inventory.cases.some(c=>!c.sourceInSnapshot)){setState({status:'ready',review});return;}
     // Never add two full reviews. If both exist, only substitute a cross-site
@@ -56,6 +65,7 @@ function Summary({projectId,onReview}:{projectId:string;userId:string;onReview:(
  },[projectId,refresh]);
  const r=state.status==='ready'?state.review:null;
  const cross=state.status==='cross'?state.review:null;
+ const legacy=state.status==='legacy'?state.review:null;
  return <section aria-label="Reviewed project cost" className="space-y-2 rounded-xl border border-surface-border bg-white p-4 text-xs text-ink-secondary">
   <h3 className="text-sm font-semibold text-navy">Reviewed project cost</h3>
   <p>Combines paid worker payroll with the expenses, historical payroll and original-period corrections selected in the latest saved review. It is not added to the expense figures above.</p>
@@ -63,11 +73,14 @@ function Summary({projectId,onReview}:{projectId:string;userId:string;onReview:(
   {coverage&&<div className="rounded-lg bg-status-warning-bg p-3 space-y-1" aria-label="Recorded payroll coverage signals">
    <p className="font-semibold text-navy">Check missing payroll attribution</p>
    <p>Across all projects: {coverage.unallocatedPaid} positive paid voucher(s) without site allocations, {coverage.inconsistentAllocations} with allocation totals that differ from voucher gross, and {coverage.unattributedHistory} historical worker payment record(s) without a site split. {coverage.attendanceMatches} unallocated voucher(s) have attendance at this site during their periods.</p>
+   {legacySignals&&<p>{legacySignals.siteAttributions} older voucher split(s) name this site; {legacySignals.changedAttributions} recorded older voucher split(s) across all projects have changed or need investigation.</p>}
    <p>These are investigation signals, not proof that the amounts belong to this site. Missing attendance or outside records cannot be detected; even zero signals do not prove completeness. Captured {coverage.capturedAt}; results can change. <Link href="/payroll" className="underline">Open payroll evidence</Link>.</p>
   </div>}
   {state.status==='empty'&&<p>No saved cost review yet. Open the review to check expenses, payroll and corrections before combining them.</p>}
   {state.status==='stale'&&<p role="alert">The saved cost review is out of date or its sources could not be checked. Its total is hidden; reload the review before using it.</p>}
   {state.status==='incoming'&&<p role="alert">This review has an incoming correction from another project. Its total is hidden because a matching current cross-site review could not be verified. Open the cost review to investigate.</p>}
+  {state.status==='legacy-unavailable'&&<p role="alert">Older voucher attribution exists for this site, but a matching current older-voucher cost review could not be verified. The ordinary total is hidden; open the cost review and investigate changed sources or corrections.</p>}
+  {legacy&&<div aria-live="polite" className="space-y-1 rounded-lg bg-surface-inset p-3"><p className="font-semibold text-navy">Reviewed cost including older vouchers: {formatCostCents(legacy.totals.total)}</p><p>Ordinary review {formatCostCents(legacy.totals.base.total)} + included older voucher gross {formatCostCents(legacy.totals.included)}. Excluded older voucher gross {formatCostCents(legacy.totals.excluded)}.</p><p>Older-voucher review revision {legacy.revision}, recorded {legacy.recordedAt}. This replaces the ordinary review amount; do not add them. It is incomplete, can become stale and does not prove payment.</p></div>}
   {cross&&<div aria-live="polite" className="space-y-1 rounded-lg bg-surface-inset p-3">
    <p className="font-semibold text-navy">Reviewed cross-site cost: {formatCostCents(cross.totals.total)}</p>
    <p>Included expenses {formatCostCents(cross.totals.expenses)} + paid worker payroll {formatCostCents(cross.totals.paid)} + included historical payroll {formatCostCents(cross.totals.historical)} + corrections {formatSignedCost(cross.totals.correction)}, including incoming {formatCostCents(cross.totals.crossSiteGross)}.</p>
