@@ -36,7 +36,8 @@ describe('project Roll Call data flow',()=>{
   it('loads team and saved attendance, then rechecks before writing only new rows',async()=>{
     render(React.createElement(AttendancePage));
     const amy = await screen.findByRole('group',{name:'Attendance status for Amy'});
-    expect(screen.getByRole('group',{name:'Attendance status for Ben'})).toBeTruthy();
+    expect(screen.queryByRole('group',{name:'Attendance status for Ben'})).toBeNull();
+    expect(within(screen.getByRole('region',{name:'Other saved attendance'})).getByText('Ben').closest('li')?.textContent).toContain('Half Day');
     expect(mock.record).not.toHaveBeenCalled();
     fireEvent.click(within(amy).getByRole('button',{name:'Present'}));
     fireEvent.click(screen.getByRole('button',{name:'Save Changes'}));
