@@ -1,0 +1,30 @@
+// Runs only against an isolated empty local PostgreSQL database with synthetic data.
+import {readFileSync} from 'node:fs';
+import {Client} from 'pg';
+import {afterAll,beforeAll,describe,expect,it} from 'vitest';
+import {baseFixture} from './helpers/pr103-fixture';
+const url=process.env.LEGACY_VOUCHER_TEST_DATABASE_URL,suite=url?describe:describe.skip;
+const founder='00000000-0000-0000-0000-000000000001',site='00000000-0000-0000-0000-000000000004';
+const id=(n:number)=>`a1000000-0000-4000-8000-${String(n).padStart(12,'0')}`;
+const sql=(name:string)=>readFileSync(`supabase/drafts/${name}.sql`,'utf8');
+let admin:Client,a:Client,b:Client;
+async function status(c:Client,voucher:string){return (await c.query<{v:{voucher:unknown;worker:unknown}}>('SELECT public.legacy_paid_voucher_attribution($1) v',[voucher])).rows[0].v;}
+async function record(c:Client,request:string,voucher:string,s:{voucher:unknown;worker:unknown}){return (await c.query<{v:{replayed:boolean}}>('SELECT public.record_legacy_paid_voucher_attribution($1,$2,$3::jsonb,$4::jsonb,$5::jsonb,$6,true) v',[request,voucher,JSON.stringify(s.voucher),JSON.stringify(s.worker),JSON.stringify([{project_id:site,gross:'600.00'}]),'Synthetic original evidence'])).rows[0].v;}
+async function waitForLock(c:Client){const pid=(await admin.query<{pid:number}>('SELECT pid FROM pg_stat_activity WHERE application_name=$1',[c===a?'legacy-a':'legacy-b'])).rows[0]?.pid;if(!pid)throw Error('Connection not found');for(let i=0;i<100;i++){if((await admin.query<{waiting:boolean}>("SELECT wait_event_type='Lock' waiting FROM pg_stat_activity WHERE pid=$1",[pid])).rows[0]?.waiting)return;await new Promise(resolve=>setTimeout(resolve,20));}throw Error('Expected lock wait');}
+suite('legacy attribution concurrent PostgreSQL rehearsal',()=>{
+ beforeAll(async()=>{const u=new URL(url!);if(!['localhost','127.0.0.1','[::1]'].includes(u.hostname)||!u.pathname.slice(1).startsWith('asinta_test_')||u.search||u.hash)throw Error('Use an empty local asinta_test_* database');
+  admin=new Client({connectionString:url});a=new Client({connectionString:url});b=new Client({connectionString:url});await Promise.all([admin.connect(),a.connect(),b.connect()]);
+  const existing=(await admin.query("SELECT (SELECT count(*) FROM pg_class c JOIN pg_namespace n ON n.oid=c.relnamespace WHERE n.nspname='public' AND c.relkind IN ('r','p','v','m','S'))::int objects,(SELECT count(*) FROM pg_namespace WHERE nspname IN ('auth','app_private','storage'))::int schemas")).rows[0];if(existing.objects||existing.schemas)throw Error('Database must be empty');
+  await admin.query(`DO $$BEGIN IF NOT EXISTS(SELECT 1 FROM pg_roles WHERE rolname='anon') THEN CREATE ROLE anon; END IF; IF NOT EXISTS(SELECT 1 FROM pg_roles WHERE rolname='authenticated') THEN CREATE ROLE authenticated; END IF; IF NOT EXISTS(SELECT 1 FROM pg_roles WHERE rolname='service_role') THEN CREATE ROLE service_role; END IF; END$$;`);
+  await admin.query(baseFixture.replace('CREATE ROLE anon; CREATE ROLE authenticated; CREATE ROLE service_role; ',''));
+  await admin.query(`CREATE TABLE public.weekly_worker_draft_sources(payroll_id uuid);CREATE TABLE public.weekly_worker_paid_allocations(payroll_id uuid,project_id uuid,gross numeric);CREATE TABLE public.historical_external_worker_payroll(worker_id uuid,period_start date,period_end date);CREATE TABLE public.supervisor_period_payroll(supervisor_id uuid,supervisor_name text,period_start date,period_end date);
+   INSERT INTO public.workers VALUES('${id(10)}','Wait worker','Mason','none',600,'daily',true),('${id(20)}','Case worker','Mason','none',600,'daily',true);
+   INSERT INTO public.payroll VALUES('${id(11)}','${id(10)}','2026-10-25','2026-10-31','paid',1,8,600,0,0,600),('${id(21)}','${id(20)}','2026-10-25','2026-10-31','paid',1,8,600,0,0,600);`);
+  await admin.query(`BEGIN;${sql('paid_payroll_adjustments')} COMMIT;BEGIN;${sql('legacy_paid_voucher_attribution')} COMMIT;`);
+  await a.query("SET application_name='legacy-a'");await b.query("SET application_name='legacy-b'");for(const c of [a,b])await c.query(`SET ROLE authenticated;SET test.uid='${founder}';SET test.assurance='yes'`);
+ },30000);
+ afterAll(async()=>{await Promise.all([admin?.end(),a?.end(),b?.end()]);});
+ it('serializes identical concurrent requests without a second attribution',async()=>{const voucher='00000000-0000-0000-0000-000000000003',s=await status(a,voucher);await a.query('BEGIN');try{expect((await record(a,id(1),voucher,s)).replayed).toBe(false);const pending=record(b,id(1),voucher,s);await waitForLock(b);await a.query('COMMIT');expect((await pending).replayed).toBe(true);}finally{await a.query('ROLLBACK');}expect((await admin.query<{n:number}>('SELECT count(*)::int n FROM public.legacy_paid_voucher_attributions WHERE payroll_id=$1',[voucher])).rows[0].n).toBe(1);},15000);
+ it('rechecks changed worker evidence after waiting',async()=>{const s=await status(b,id(11));await admin.query('BEGIN');try{await admin.query('UPDATE public.workers SET name=$1 WHERE id=$2',['Changed worker',id(10)]);const pending=record(b,id(2),id(11),s).then(()=>null,e=>e);await waitForLock(b);await admin.query('COMMIT');expect(await pending).toMatchObject({code:'40001'});}finally{await admin.query('ROLLBACK');}expect((await admin.query<{n:number}>('SELECT count(*)::int n FROM public.legacy_paid_voucher_attributions WHERE payroll_id=$1',[id(11)])).rows[0].n).toBe(0);},15000);
+ it('notices an adjustment committed while waiting for the worker lock',async()=>{const s=await status(a,id(21));await a.query('BEGIN');try{await a.query("SELECT public.open_paid_payroll_adjustment($1,$2,$3::jsonb,25,'Synthetic correction')",[id(30),id(21),JSON.stringify(s.voucher)]);const pending=record(b,id(3),id(21),s).then(()=>null,e=>e);await waitForLock(b);await a.query('COMMIT');expect(await pending).toMatchObject({code:'22023'});}finally{await a.query('ROLLBACK');}expect((await admin.query<{n:number}>('SELECT count(*)::int n FROM public.legacy_paid_voucher_attributions WHERE payroll_id=$1',[id(21)])).rows[0].n).toBe(0);},15000);
+});

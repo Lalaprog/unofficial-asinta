@@ -11,7 +11,7 @@ export function costCents(v:unknown):bigint{if(typeof v!=='string'||!/^(?:0|[1-9
 export function formatCostCents(n:bigint):string{const whole=n/100n,dec=(n%100n).toString().padStart(2,'0');return `₱${whole.toString().replace(/\B(?=(\d{3})+(?!\d))/g,',')}.${dec}`;}
 export function parseCostSnapshot(raw:unknown,projectId:string):CostSnapshot{
  if(!uuid(projectId)||!raw||typeof raw!=='object'||Array.isArray(raw))throw Error('Invalid cost snapshot');const s=raw as Record<string,unknown>;
- if(s.project_id!==projectId||typeof s.captured_at!=='string'||!Number.isFinite(Date.parse(s.captured_at))||!Array.isArray(s.expenses)||s.expenses.length>200||!Array.isArray(s.paid_allocations)||s.paid_allocations.length>500||!Array.isArray(s.rentals)||!Array.isArray(s.adjustment_cases)||s.adjustment_cases.length>500)throw Error('Incomplete cost snapshot');
+ if(s.project_id!==projectId||typeof s.captured_at!=='string'||!Number.isFinite(Date.parse(s.captured_at))||!Array.isArray(s.expenses)||s.expenses.length>1000||!Array.isArray(s.paid_allocations)||s.paid_allocations.length>1000||!Array.isArray(s.rentals)||!Array.isArray(s.adjustment_cases)||s.adjustment_cases.length>500)throw Error('Incomplete cost snapshot');
  const rentals=parseConfirmedRentals({project_id:projectId,items:s.rentals},projectId);if(rentals.some(r=>!uuid(r.id)||!uuid(r.expenseId)))throw Error('Invalid rental identity');
  const byExpense=new Map(rentals.map(r=>[r.expenseId,r]));const ids=new Set<string>();let previous:{date:string;id:string}|undefined;
  const expenses=s.expenses.map((raw:unknown):CostExpense=>{

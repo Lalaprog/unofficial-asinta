@@ -3,7 +3,7 @@ const date=(x:unknown):x is string=>typeof x==='string'&&/^\d{4}-\d{2}-\d{2}$/.t
 /** Fail closed instead of rendering partial or cross-site rental results. */
 export function parseConfirmedRentals(raw:unknown,project:string):ConfirmedRental[] {
  if(!raw||typeof raw!=='object')throw new Error('Invalid rental list');const list=raw as {project_id?:unknown;items?:unknown};
- if(list.project_id!==project||!Array.isArray(list.items)||list.items.length>200)throw new Error('Invalid rental list');
+ if(list.project_id!==project||!Array.isArray(list.items)||list.items.length>1000)throw new Error('Invalid rental list');
  const ids=new Set<string>(),expenses=new Set<string>();let previous:{start:string;id:string}|undefined;
  return list.items.map((v:unknown)=>{
   if(!v||typeof v!=='object')throw new Error('Invalid rental');const r=v as Record<string,unknown>;

@@ -37,6 +37,18 @@ describe('corrected project review UI, gated experimental candidate',()=>{
   render(panel());fireEvent.click(screen.getByRole('button',{name:'Review costs including worker corrections'}));fireEvent.click(screen.getByRole('button',{name:'Load evidence and latest review'}));
   await screen.findByText(/exceeds a cost-review size limit/);expect(screen.getByText(/No total was calculated/)).toBeTruthy();expect(screen.queryByText(/Incomplete reviewed total:/)).toBeNull();expect(mock.rpc).toHaveBeenCalledTimes(1);
  });
+ it('pages larger expense reviews without losing decisions or treating unseen rows as reviewed',async()=>{
+  const copy=structuredClone(inventory),base=copy.historical_review.base.expenses[0];
+  const ids=Array.from({length:51},(_,i)=>`f0000000-0000-4000-8000-${String(51-i).padStart(12,'0')}`);
+  copy.historical_review.base.expenses=ids.map((id,i)=>({...base,id,description:`Purchase ${i}`}));
+  mock.rpc.mockImplementation(async(name:string)=>name==='project_cost_correction_inventory'?{data:copy,error:null}:{data:null,error:Error('unexpected')});
+  render(panel());fireEvent.click(screen.getByRole('button',{name:'Review costs including worker corrections'}));fireEvent.click(screen.getByRole('button',{name:'Load corrected evidence'}));
+  await screen.findByText(/Showing 1–50 of 51 expenses/);expect(screen.getByText(/51 awaiting a decision/)).toBeTruthy();
+  fireEvent.click(within(screen.getByRole('group',{name:`Corrected expense ${ids[0]}`})).getByLabelText('Include expense'));
+  fireEvent.click(screen.getByRole('button',{name:'Next expense page'}));expect(screen.getByText(/Showing 51–51 of 51 expenses/)).toBeTruthy();expect(screen.getByText(/50 awaiting a decision/)).toBeTruthy();
+  fireEvent.click(within(screen.getByRole('group',{name:`Corrected expense ${ids[50]}`})).getByLabelText('Include expense'));fireEvent.click(screen.getByRole('button',{name:'Previous expense page'}));
+  expect((within(screen.getByRole('group',{name:`Corrected expense ${ids[0]}`})).getByLabelText('Include expense') as HTMLInputElement).checked).toBe(true);expect(screen.getByText(/49 awaiting a decision/)).toBeTruthy();expect((screen.getByRole('button',{name:'Verify corrected preview'}) as HTMLButtonElement).disabled).toBe(true);
+ });
  it('bulk-includes only personally checked unflagged unchosen expenses',async()=>{
   const flagged='cccccccc-cccc-4ccc-8ccc-cccccccccccc',duplicate='dddddddd-dddd-4ddd-8ddd-dddddddddddd',third='eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee',labor='ffffffff-ffff-4fff-8fff-ffffffffffff',copy=structuredClone(inventory),base=copy.historical_review.base.expenses[0];
   copy.historical_review.base.expenses=[{...base,id:labor,description:'Helper',category:'labor'},{...base,id:third,description:'Duplicate'},{...base,id:duplicate,description:'Duplicate'},{...base,id:flagged,description:'Bale',ai_bale_detection:false},base];
