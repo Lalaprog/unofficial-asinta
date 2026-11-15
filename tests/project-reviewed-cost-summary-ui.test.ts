@@ -5,13 +5,19 @@ import {afterEach,beforeEach,describe,expect,it,vi} from 'vitest';
 const m=vi.hoisted(()=>({rpc:vi.fn()}));
 vi.mock('@/lib/supabase/client',()=>({createClient:()=>({rpc:m.rpc})}));
 import {ProjectReviewedCostSummary} from '@/components/projects/ProjectReviewedCostSummary';
-import {actor,request,result,saved,site} from './helpers/corrected-cost-ui-fixture';
+import {actor,inventory,request,result,saved,site} from './helpers/corrected-cost-ui-fixture';
 import {crossFixture,key} from './helpers/cross-site-cost-review-fixture';
 const other='aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa';
 const covered=(review:unknown,project=site,counts:Record<string,number>={})=>({project_id:project,captured_at:'2024-12-15T00:00:00Z',unallocated_paid:0,attendance_matches:0,inconsistent_allocations:0,unattributed_history:0,...counts,review});
 beforeEach(()=>m.rpc.mockReset());afterEach(()=>{cleanup();vi.unstubAllEnvs();});
 const panel=(projectId=site,userId=actor,onReview=vi.fn())=>React.createElement(ProjectReviewedCostSummary,{projectId,userId,onReview});
 describe('reviewed project cost overview',()=>{
+ it('shows a recorded amount only when the current snapshot has no known review issues',async()=>{
+  for(const flag of ['FINANCE_FOUNDATION_PREVIEW','PROJECT_COST_CORRECTION_PREVIEW','CORRECTED_PROJECT_COST_REVIEW_PREVIEW','SIMPLE_RECORDED_COST_PREVIEW'])vi.stubEnv(`NEXT_PUBLIC_${flag}`,'true');
+  const empty={project_id:site,found:false,latest_revision:0},coverage={...covered(empty),captured_at:inventory.historical_review.base.captured_at},snapshot={project_id:site,coverage,inventory:structuredClone(inventory)},risk=structuredClone(snapshot);risk.inventory.historical_review.base.expenses[0].description='Bale';
+  m.rpc.mockResolvedValueOnce({data:snapshot,error:null}).mockResolvedValueOnce({data:risk,error:null});render(panel());await screen.findByText('Recorded cost so far: ₱1,038.00');expect(screen.getByText(/not proof of payment or a complete accounting/)).toBeTruthy();expect(m.rpc).toHaveBeenCalledWith('project_recorded_cost_snapshot',{p_project:site});
+  fireEvent.click(screen.getByRole('button',{name:'Refresh reviewed cost'}));await screen.findByText(/Recorded cost needs review/);expect(screen.getByText(/Some expenses may duplicate/)).toBeTruthy();expect(screen.queryByText(/Recorded cost so far/)).toBeNull();
+ });
  it('shows verified expenses, payroll and signed corrections without double adding them',async()=>{
   m.rpc.mockResolvedValue({data:covered(saved(request)),error:null});const open=vi.fn();render(panel(site,actor,open));
   await screen.findByText('Reviewed cost: ₱1,038.00');expect(screen.getByText(/Included expenses ₱50.25.*paid worker payroll ₱600.00.*included historical payroll ₱400.25.*corrections −₱12.50/)).toBeTruthy();

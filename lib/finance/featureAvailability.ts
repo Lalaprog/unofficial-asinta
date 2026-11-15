@@ -203,6 +203,11 @@ export function crossSiteSourceReviewPreviewEnabled(): boolean {
   return correctedProjectCostReviewPreviewEnabled() && process.env.NEXT_PUBLIC_CROSS_SITE_SOURCE_REVIEW_PREVIEW === 'true';
 }
 
+/** Read-only recorded-cost estimate, separately gated until its matching RPC is installed and checked. */
+export function simpleRecordedCostPreviewEnabled(): boolean {
+  return correctedProjectCostReviewPreviewEnabled() && process.env.NEXT_PUBLIC_SIMPLE_RECORDED_COST_PREVIEW === 'true';
+}
+
 /** Independent opt-in for the unfinished cross-site ledger writer and history. */
 export function crossSiteLedgerPreviewEnabled(): boolean {
   return crossSiteSourceReviewPreviewEnabled() && process.env.NEXT_PUBLIC_CROSS_SITE_LEDGER_PREVIEW === 'true';

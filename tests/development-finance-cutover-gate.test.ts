@@ -27,7 +27,7 @@ describe('coordinated development build configuration',()=>{
  it('enables the complete coordinated surfaces but not unrelated categories or portraits',()=>{
   vi.stubEnv('NEXT_PUBLIC_DEVELOPMENT_FINANCE_CUTOVER','true');vi.stubEnv('NEXT_PUBLIC_DEVELOPMENT_CORRECTION_SUPABASE_REF','abcdefghijklmnopqrst');vi.stubEnv('NEXT_PUBLIC_SUPABASE_URL','https://abcdefghijklmnopqrst.supabase.co');
   for(const [name,fn] of Object.entries(finance)){
-   expect(fn(),name).toBe(!['independentPaidPayrollSummaryEnabled','weeklyBaleIdempotentSubmissionPreviewEnabled','supervisorPayrollRevisionPreviewEnabled','projectCostCorrectionPreviewEnabled','correctedProjectCostReviewPreviewEnabled','crossSiteIllustrationPreviewEnabled','crossSiteSourceReviewPreviewEnabled','crossSiteLedgerPreviewEnabled','historicalAttributionCaseBindingPreviewEnabled','legacyVoucherAttributionPreviewEnabled'].includes(name));
+   expect(fn(),name).toBe(!['independentPaidPayrollSummaryEnabled','weeklyBaleIdempotentSubmissionPreviewEnabled','supervisorPayrollRevisionPreviewEnabled','projectCostCorrectionPreviewEnabled','correctedProjectCostReviewPreviewEnabled','crossSiteIllustrationPreviewEnabled','crossSiteSourceReviewPreviewEnabled','crossSiteLedgerPreviewEnabled','historicalAttributionCaseBindingPreviewEnabled','legacyVoucherAttributionPreviewEnabled','simpleRecordedCostPreviewEnabled'].includes(name));
   }
   vi.stubEnv('NEXT_PUBLIC_LEGACY_VOUCHER_ATTRIBUTION_PREVIEW','true');
   expect(finance.legacyVoucherAttributionPreviewEnabled()).toBe(true);
@@ -46,6 +46,9 @@ describe('coordinated development build configuration',()=>{
   expect(finance.correctedProjectCostReviewPreviewEnabled()).toBe(false);
   vi.stubEnv('NEXT_PUBLIC_CORRECTED_PROJECT_COST_REVIEW_PREVIEW','true');
   expect(finance.correctedProjectCostReviewPreviewEnabled()).toBe(true);
+  expect(finance.simpleRecordedCostPreviewEnabled()).toBe(false);
+  vi.stubEnv('NEXT_PUBLIC_SIMPLE_RECORDED_COST_PREVIEW','true');expect(finance.simpleRecordedCostPreviewEnabled()).toBe(true);
+  vi.stubEnv('NEXT_PUBLIC_SIMPLE_RECORDED_COST_PREVIEW','false');expect(finance.simpleRecordedCostPreviewEnabled()).toBe(false);
   expect(finance.crossSiteLedgerPreviewEnabled()).toBe(false);
   vi.stubEnv('NEXT_PUBLIC_CROSS_SITE_LEDGER_PREVIEW','true');
   expect(finance.crossSiteLedgerPreviewEnabled()).toBe(false);
