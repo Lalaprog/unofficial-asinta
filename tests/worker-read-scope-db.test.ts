@@ -2,7 +2,7 @@ import {PGlite} from '@electric-sql/pglite';
 import {readFileSync} from 'node:fs';
 import {describe,expect,it} from 'vitest';
 
-const release=readFileSync('supabase/drafts/development_worker_read_scope.sql','utf8');
+const release=readFileSync('supabase/release/development-worker-read-scope.sql','utf8');
 const f='10000000-0000-4000-8000-000000000001',s='10000000-0000-4000-8000-000000000002',s2='10000000-0000-4000-8000-000000000003',site='20000000-0000-4000-8000-000000000001',other='20000000-0000-4000-8000-000000000002';
 const id=(n:number)=>`30000000-0000-4000-8000-${String(n).padStart(12,'0')}`;
 async function setup(){const db=new PGlite();await db.exec(`
