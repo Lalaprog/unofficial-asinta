@@ -19,6 +19,7 @@
  */
 
 import type { User, UserRole } from '@/types';
+import {loadAccountEditSnapshot,parseAccountEditSnapshot,sameAccountEditSnapshot} from './accountEditSnapshot';
 
 async function writeUserAuditEntry(
   adminClient: MinimalAdminSupabaseClient,
@@ -107,6 +108,7 @@ export interface CreateTeamAccountInput {
 
 export interface UpdateTeamAccountInput {
   userId?: unknown;
+  expectedSnapshot?: unknown;
   name?: unknown;
   role?: unknown;
   assignedProjectIds?: unknown;
@@ -543,6 +545,23 @@ export async function updateTeamAccount(params: {
       if (worker?.removed_at) return { status: 409, body: { ok: false, error: 'This workforce profile is removed. Restore it in Workforce before including this Supervisor in payroll; no account changes were made.' } };
     } catch {
       return { status: 503, body: { ok: false, error: 'Could not check the workforce profile. Refresh and try again; no account changes were made.' } };
+    }
+  }
+
+  // Newer editors send the original snapshot. Check again on the server,
+  // including worker fields that will be overwritten and the full site list.
+  // This blocks already-committed changes, not races after this read; the
+  // Auth, profile, assignments and worker writes remain separate operations.
+  // Older clients without a snapshot retain their existing behavior.
+  if (input.expectedSnapshot !== undefined) {
+    let expected;
+    try { expected = parseAccountEditSnapshot(input.expectedSnapshot, targetUserId); }
+    catch { return {status:400,body:{ok:false,error:'The account edit snapshot is invalid. Close and reopen the editor; no changes were made.'}}; }
+    let current;
+    try { current = await loadAccountEditSnapshot(adminClient, targetUserId); }
+    catch { return {status:503,body:{ok:false,error:'Could not recheck the account, workforce profile and assigned sites. No changes were made; try again.'}}; }
+    if (!sameAccountEditSnapshot(expected, current)) {
+      return {status:409,body:{ok:false,error:'This account, workforce profile or assigned sites changed while editing. No changes were made. Close and reopen the editor to review the latest details.'}};
     }
   }
 

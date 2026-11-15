@@ -238,6 +238,7 @@ export default function UsersPage() {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           userId: editingUser.id,
+          expectedSnapshot: baseline.snapshot,
           name: editName,
           role: editRole,
           assignedProjectIds: editRole === 'supervisor' ? editAssignedProjects : [],

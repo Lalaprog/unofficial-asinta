@@ -15,17 +15,17 @@ beforeEach(()=>{m.actor='founder';m.load.mockReset();m.toast.mockReset();m.refre
 afterEach(()=>{cleanup();vi.unstubAllGlobals();});
 describe('team account edit snapshot',()=>{
  it('uses the targeted read rather than an incomplete shared worker or assignment list',async()=>{
-  m.load.mockResolvedValue({user,assignedProjectIds:['a','b'],worker:{id:'sup',active:true,pay_rate:600,pay_rate_type:'daily',contact_number:'—',removed_at:null}});
+  m.load.mockResolvedValue({user,assignedProjectIds:['a','b'],worker:{id:'sup',name:'Supervisor worker',position:'Site Supervisor',active:true,pay_rate:600,pay_rate_type:'daily',contact_number:'—',removed_at:null}});
   const fetchMock=vi.fn().mockResolvedValue({ok:true,json:async()=>({ok:true,user})});vi.stubGlobal('fetch',fetchMock);
   render(React.createElement(UsersPage));fireEvent.click(screen.getByRole('button',{name:'Manage'}));const dialog=await screen.findByRole('dialog');
   expect((within(dialog).getByLabelText('Full Name') as HTMLInputElement).value).toBe('Current Name');
   expect((within(dialog).getByRole('checkbox',{name:/Link Supervisor to a workforce profile/}) as HTMLInputElement).checked).toBe(true);
   expect(within(dialog).getByRole('alert').textContent).toMatch(/Some assigned sites/);
   fireEvent.click(within(dialog).getByRole('button',{name:'Save Changes'}));await waitFor(()=>expect(fetchMock).toHaveBeenCalledTimes(1));
-  const body=JSON.parse(fetchMock.mock.calls[0][1].body);expect(body).toMatchObject({userId:'sup',name:'Current Name',includeInPayroll:true,payRate:600,assignedProjectIds:['a','b']});
+  const body=JSON.parse(fetchMock.mock.calls[0][1].body);expect(body).toMatchObject({userId:'sup',name:'Current Name',includeInPayroll:true,payRate:600,assignedProjectIds:['a','b'],expectedSnapshot:{user,assignedProjectIds:['a','b'],worker:{name:'Supervisor worker',position:'Site Supervisor'}}});
  });
  it('does not overwrite a changed account, worker or site list',async()=>{
-  const snapshot={user,assignedProjectIds:['a','b'],worker:{id:'sup',active:true,pay_rate:600,pay_rate_type:'daily',contact_number:'—',removed_at:null}};
+  const snapshot={user,assignedProjectIds:['a','b'],worker:{id:'sup',name:'Supervisor worker',position:'Site Supervisor',active:true,pay_rate:600,pay_rate_type:'daily',contact_number:'—',removed_at:null}};
   m.load.mockResolvedValueOnce(snapshot).mockResolvedValueOnce({...snapshot,assignedProjectIds:['a','c']});
   const fetchMock=vi.fn();vi.stubGlobal('fetch',fetchMock);
   render(React.createElement(UsersPage));fireEvent.click(screen.getByRole('button',{name:'Manage'}));const dialog=await screen.findByRole('dialog');

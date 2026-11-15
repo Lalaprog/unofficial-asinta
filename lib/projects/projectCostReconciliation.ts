@@ -41,6 +41,19 @@ export function parseCostSnapshot(raw:unknown,projectId:string):CostSnapshot{
  });
  return {projectId,capturedAt:s.captured_at,expenses,paid,adjustments};
 }
+/** Narrow, non-authoritative hint: same normalized description, date and amount.
+ * Never classify or exclude entries automatically; distinct purchases can match. */
+export function potentialDuplicateExpenses(expenses:CostExpense[]):Map<string,string[]> {
+ const groups=new Map<string,string[]>();
+ for(const expense of expenses){
+  const description=expense.description.normalize('NFKC').trim().replace(/\s+/gu,' ').toLowerCase();
+  const key=JSON.stringify([description,expense.date,expense.amount]);
+  const ids=groups.get(key)??[];ids.push(expense.id);groups.set(key,ids);
+ }
+ const result=new Map<string,string[]>();
+ for(const ids of Array.from(groups.values()))if(ids.length>1)for(const id of ids)result.set(id,ids.filter(other=>other!==id));
+ return result;
+}
 export type CostChoice='include'|'exclude';
 /** Pure scratch calculation; caller must review every row before displaying it. */
 export function estimateProjectCost(snapshot:CostSnapshot,choices:Record<string,CostChoice>):{expenses:bigint;excluded:bigint;payroll:bigint;total:bigint}{

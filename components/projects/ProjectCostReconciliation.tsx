@@ -3,7 +3,8 @@ import React,{useEffect,useRef,useState} from 'react';
 import {Button} from '@/components/ui/Button';
 import {WorkspaceJumpLinks} from '@/components/ui/WorkspaceJumpLinks';
 import {createClient} from '@/lib/supabase/client';
-import {costCents,estimateProjectCost,formatCostCents,parseCostSnapshot,type CostChoice,type CostSnapshot} from '@/lib/projects/projectCostReconciliation';
+import {costCents,estimateProjectCost,formatCostCents,parseCostSnapshot,potentialDuplicateExpenses,type CostChoice,type CostSnapshot} from '@/lib/projects/projectCostReconciliation';
+import {PotentialDuplicateExpense} from './PotentialDuplicateExpense';
 import {historicalWorkerAttributionPreviewEnabled,historicalCostReviewPreviewEnabled,projectCostReviewLedgerPreviewEnabled,projectCostCorrectionPreviewEnabled,correctedProjectCostReviewPreviewEnabled} from '@/lib/finance/featureAvailability';
 import {CorrectedProjectCostReview} from './CorrectedProjectCostReview';
 import {ProjectCostReviewLedger} from './ProjectCostReviewLedger';
@@ -26,6 +27,7 @@ export function ProjectCostReconciliation({projectId,userId,reviewTarget=null}:{
  }
  const reviewed=!!snapshot&&snapshot.expenses.every(e=>choices[e.id]==='include'||choices[e.id]==='exclude');
  const estimate=snapshot&&reviewed&&ack?estimateProjectCost(snapshot,choices):null;
+ const duplicates=potentialDuplicateExpenses(snapshot?.expenses??[]);
  return <section className="rounded-xl border border-surface-border bg-white p-4 space-y-3 text-xs text-ink-secondary">
   <h4 ref={scratchTarget} tabIndex={-1} className="text-sm font-bold text-navy">Experimental project-cost review</h4>
   <p>This temporary scratchpad compares recorded expenses, paid worker allocations and confirmed rental links from one database snapshot. It saves nothing and does not prove payment or a final project cost.</p>
@@ -46,7 +48,7 @@ export function ProjectCostReconciliation({projectId,userId,reviewTarget=null}:{
    {snapshot.paid.length?<ul className="max-h-64 overflow-auto divide-y divide-surface-border">{snapshot.paid.map(p=><li key={p.payrollId} className="py-2"><p className="font-semibold text-navy break-words">{p.workerName} · {p.start} to {p.end} · {formatCostCents(costCents(p.gross))}</p><p>Paid date recorded {p.paymentDate} · Voucher {p.payrollId}</p><p>Whole worker-week voucher: gross {formatCostCents(costCents(p.voucherGross))}, Bale {formatCostCents(costCents(p.voucherBale))}, other deductions {formatCostCents(costCents(p.voucherOther))}, net {formatCostCents(costCents(p.voucherNet))}. Bale is a worker-wide comparison, not a site allocation or additional cost.</p></li>)}</ul>:<p>No matching paid allocations returned. This does not prove there are no payroll costs.</p>}
    <ProjectAdjustmentSignals snapshot={snapshot} />
    <h5 className="font-semibold text-navy">Review every recorded expense ({snapshot.expenses.length})</h5>
-   {snapshot.expenses.length?<div className="max-h-[32rem] overflow-auto divide-y divide-surface-border">{snapshot.expenses.map(e=><fieldset key={e.id} className="space-y-2 py-3"><legend className="sr-only">Expense {e.id}</legend><p className="font-semibold text-navy break-words">{e.description} · {formatCostCents(costCents(e.amount))}</p><p>{e.category} · {e.date} · {e.baleHint?'AI flagged possible Bale; verify':'No AI Bale flag; still verify'}</p><p className="break-all">Expense {e.id}</p>{e.rental&&<p>Confirmed rental: {e.rental.item} · {e.rental.supplier} · {e.rental.start} to {e.rental.end}. This is the same expense, not an extra amount.</p>}
+   {snapshot.expenses.length?<div className="max-h-[32rem] overflow-auto divide-y divide-surface-border">{snapshot.expenses.map(e=><fieldset key={e.id} className="space-y-2 py-3"><legend className="sr-only">Expense {e.id}</legend><p className="font-semibold text-navy break-words">{e.description} · {formatCostCents(costCents(e.amount))}</p><p>{e.category} · {e.date} · {e.baleHint?'AI flagged possible Bale; verify':'No AI Bale flag; still verify'}</p><p className="break-all">Expense {e.id}</p><PotentialDuplicateExpense ids={duplicates.get(e.id)}/>{e.rental&&<p>Confirmed rental: {e.rental.item} · {e.rental.supplier} · {e.rental.start} to {e.rental.end}. This is the same expense, not an extra amount.</p>}
     <div className="flex flex-wrap gap-3"><label className="flex items-center gap-1"><input type="radio" name={`cost-${e.id}`} checked={choices[e.id]==='include'} onChange={()=>{setChoices(c=>({...c,[e.id]:'include'}));setAck(false);}}/> Include expense</label><label className="flex items-center gap-1"><input type="radio" name={`cost-${e.id}`} checked={choices[e.id]==='exclude'} onChange={()=>{setChoices(c=>({...c,[e.id]:'exclude'}));setAck(false);}}/> Exclude from this preview</label></div>
     {projectCostReviewLedgerPreviewEnabled()&&choices[e.id]==='exclude'&&<label className="block">Reason for excluding {e.description}<input type="text" className="mt-1 block min-h-11 w-full rounded-lg border border-surface-border p-2" maxLength={300} value={reasons[e.id]??''} onChange={event=>setReasons(r=>({...r,[e.id]:event.target.value}))} /></label>}
    </fieldset>)}</div>:<p>No recorded expenses returned. This does not prove all expenses were recorded.</p>}

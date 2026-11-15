@@ -13,6 +13,9 @@ function makeMockAdminClient(options?: {
   existingEmail?: boolean;
   removedWorker?: boolean;
   workerReadError?: boolean;
+  snapshotWorker?: {id:string;name:string;position:string;active:boolean;pay_rate:number;pay_rate_type:'daily'|'hourly';contact_number:string|null;removed_at:string|null} | null;
+  snapshotProjects?: readonly string[];
+  snapshotError?: boolean;
   targetUser?: { id: string; name: string; email: string; role: 'founder' | 'supervisor'; created_at: string } | null;
   foundersCount?: number;
   profileInsertError?: { message: string } | null;
@@ -66,13 +69,14 @@ function makeMockAdminClient(options?: {
       if (table === 'project_supervisors') {
         return {
           insert: supervisorInsertSpy,
+          select: () => ({eq: () => ({limit: async () => ({data:(options?.snapshotProjects??[]).map(project_id=>({project_id})),count:(options?.snapshotProjects??[]).length,error:options?.snapshotError?{message:'unavailable'}:null})})}),
           delete: () => ({ eq: async () => ({ error: null }) }),
         };
       }
       if (table === 'workers') {
         return {
           upsert: workerUpsertSpy,
-          select: () => ({ eq: () => ({ maybeSingle: async () => ({data: options?.removedWorker ? {id:'sup-1',removed_at:'2026-11-07'} : null,error:options?.workerReadError ? {message:'read failed'} : null}) }) }),
+          select: (columns:string) => ({ eq: () => ({ maybeSingle: async () => ({data: columns.includes('name') ? (options?.snapshotWorker??null) : options?.removedWorker ? {id:'sup-1',removed_at:'2026-11-07'} : null,error:options?.workerReadError ? {message:'read failed'} : null}) }) }),
           update: () => ({ eq: workerDeactivateSpy }),
         };
       }
@@ -354,6 +358,29 @@ describe('updateTeamAccount & deleteTeamAccount safety guards', () => {
 });
 
 describe('team administration partial outcomes', () => {
+  it('rejects stale, invalid or unreadable expected snapshots before any account write', async () => {
+    const user={id:'sup-1',name:'Engr. Marco Reyes',email:'marco@asinta.ph',role:'supervisor',created_at:'2026-10-11T00:00:00Z'};
+    const worker={id:'sup-1',name:'Workforce name',position:'Site Supervisor',active:true,pay_rate:600,pay_rate_type:'daily' as const,contact_number:'—',removed_at:null};
+    const expected={user,worker,assignedProjectIds:['proj-1']};
+    for (const [options,snapshot,status] of [
+      [{snapshotWorker:{...worker,name:'Changed elsewhere'},snapshotProjects:['proj-1']},expected,409],
+      [{snapshotWorker:{...worker,position:'Changed elsewhere'},snapshotProjects:['proj-1']},expected,409],
+      [{snapshotWorker:worker,snapshotProjects:['proj-2']},expected,409],
+      [{snapshotWorker:worker,snapshotProjects:['proj-1'],snapshotError:true},expected,503],
+      [{snapshotWorker:worker,snapshotProjects:['proj-1']},{...expected,assignedProjectIds:['proj-1','proj-1']},400],
+    ] as const) {
+      const {client,rpcSpy,updateUserByIdSpy,workerUpsertSpy}=makeMockAdminClient(options);
+      const result=await updateTeamAccount({callerId:'founder-1',input:{userId:'sup-1',expectedSnapshot:snapshot},adminClient:client});
+      expect(result.status).toBe(status);expect(rpcSpy).not.toHaveBeenCalled();expect(updateUserByIdSpy).not.toHaveBeenCalled();expect(workerUpsertSpy).not.toHaveBeenCalled();
+    }
+  });
+  it('allows an unchanged expected snapshot through to the existing guarded update', async () => {
+    const user={id:'sup-1',name:'Engr. Marco Reyes',email:'marco@asinta.ph',role:'supervisor',created_at:'2026-10-11T00:00:00Z'};
+    const worker={id:'sup-1',name:'Workforce name',position:'Site Supervisor',active:true,pay_rate:600,pay_rate_type:'daily' as const,contact_number:'—',removed_at:null};
+    const {client,rpcSpy}=makeMockAdminClient({snapshotWorker:worker,snapshotProjects:['proj-1']});
+    const result=await updateTeamAccount({callerId:'founder-1',input:{userId:'sup-1',name:'Updated',expectedSnapshot:{user,worker,assignedProjectIds:['proj-1']}},adminClient:client});
+    expect(result.body.ok).toBe(true);expect(rpcSpy).toHaveBeenCalledWith('update_team_profile_guarded',expect.objectContaining({p_target:'sup-1',p_name:'Updated'}));
+  });
   it('does not implicitly restore a removed worker during an account edit', async () => {
     const {client,rpcSpy,updateUserByIdSpy,workerUpsertSpy}=makeMockAdminClient({removedWorker:true});
     const result=await updateTeamAccount({callerId:'founder-1',input:{userId:'sup-1',includeInPayroll:true},adminClient:client});

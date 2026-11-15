@@ -5,7 +5,7 @@ import {afterEach,beforeEach,describe,expect,it,vi} from 'vitest';
 const mock=vi.hoisted(()=>({rpc:vi.fn()}));vi.mock('@/lib/supabase/client',()=>({createClient:()=>({rpc:mock.rpc})}));
 import {ProjectCostReconciliation} from '@/components/projects/ProjectCostReconciliation';
 import {projectCostReconciliationPreviewEnabled} from '@/lib/finance/featureAvailability';
-import {costCents,estimateProjectCost,parseCostSnapshot} from '@/lib/projects/projectCostReconciliation';
+import {costCents,estimateProjectCost,parseCostSnapshot,potentialDuplicateExpenses} from '@/lib/projects/projectCostReconciliation';
 import {baleExpense,founder,materialExpense,other,payroll,rentalExpense,rentalId,site,worker} from './helpers/project-cost-reconciliation-fixture';
 const expenses=[{id:materialExpense,project_id:site,description:'Sand',category:'materials',amount:'50.00',expense_date:'2024-11-04',ai_bale_detection:false},{id:baleExpense,project_id:site,description:'Bale given',category:'other',amount:'100.00',expense_date:'2024-11-03',ai_bale_detection:true},{id:rentalExpense,project_id:site,description:'Excavator hire',category:'equipment',amount:'1000.00',expense_date:'2024-11-02',ai_bale_detection:false}];
 const rentals=[{id:rentalId,expense_id:rentalExpense,project_id:site,expense_amount:'1000.00',expense_date:'2024-11-02',expense_description:'Excavator hire',item_name:'Excavator',supplier:'Supplier',quantity:1,rental_start:'2024-11-01',rental_end:'2024-11-02',confirmed_at:'2024-11-02T00:00:00Z'}];
@@ -32,6 +32,17 @@ describe('temporary project-cost review',()=>{
  it('requires every manual choice and acknowledgement before a temporary result, without adding rentals twice',async()=>{await load();expect(screen.getByText(/not an extra amount/)).toBeTruthy();expect(screen.getByText(/AI flagged possible Bale/)).toBeTruthy();expect(screen.getByText(/Whole worker-week voucher: gross/).textContent).toMatch(/Bale ₱100.00/);expect(screen.queryByText(/Temporary, incomplete estimate/)).toBeNull();
   choose(materialExpense,'Include expense');choose(baleExpense,'Exclude from this preview');expect((screen.getByRole('checkbox') as HTMLInputElement).disabled).toBe(true);choose(rentalExpense,'Include expense');fireEvent.click(screen.getByRole('checkbox'));expect(screen.getByText('Temporary, incomplete estimate: ₱1,650.00')).toBeTruthy();expect(screen.getByText(/Expenses excluded from this preview: ₱100.00/)).toBeTruthy();expect(mock.rpc).toHaveBeenCalledTimes(1);
   fireEvent.click(screen.getByRole('button',{name:'Reload review snapshot'}));await screen.findByText(/Snapshot captured/);expect(screen.queryByText(/Temporary, incomplete estimate/)).toBeNull();expect((screen.getByRole('checkbox') as HTMLInputElement).disabled).toBe(true);
+ });
+ it('flags only matching expense evidence without deciding what to include',async()=>{
+  const duplicate='10000000-0000-0000-0000-000000000009';
+  mock.rpc.mockResolvedValue({data:{...response,expenses:[{...expenses[0],id:duplicate,description:'  SAND  '},...expenses]},error:null});
+  render(panel());fireEvent.click(screen.getByRole('button',{name:'Load review snapshot'}));await screen.findByText(/Snapshot captured/);
+  expect(screen.getAllByText(/Possible duplicate:/)).toHaveLength(2);
+  expect(within(screen.getByRole('group',{name:`Expense ${materialExpense}`})).getByText(new RegExp(duplicate))).toBeTruthy();
+  expect(screen.queryByText(/Temporary, incomplete estimate/)).toBeNull();
+  const matched=parseCostSnapshot({...response,expenses:[{...expenses[0],id:duplicate,description:'  SAND  '},...expenses]},site);
+  const hints=potentialDuplicateExpenses(matched.expenses);expect(hints.get(materialExpense)).toEqual([duplicate]);expect(hints.has(baleExpense)).toBe(false);
+  expect(potentialDuplicateExpenses(matched.expenses.map(e=>e.id===duplicate?{...e,date:'2024-11-01'}:e)).size).toBe(0);
  });
  it('shows original-voucher correction signals without adding or assigning them to the site',async()=>{
   const correction={case_id:'20000000-0000-0000-0000-000000000010',payroll_id:payroll,worker_id:worker,difference:'-20.25',reason:'Overpayment review',status:'settled_external',created_by:founder,created_at:'2024-11-10T01:00:00Z',resolved_by:founder,resolved_at:'2024-11-11T01:00:00Z',settled_on:'2024-11-11',resolution_note:'Recorded separately'};

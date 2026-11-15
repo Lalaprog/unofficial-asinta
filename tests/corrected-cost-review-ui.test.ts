@@ -27,6 +27,15 @@ async function prepare(){render(panel());fireEvent.click(screen.getByRole('butto
 beforeEach(()=>{sessionStorage.clear();mock.rpc.mockReset();mock.user=actor;mock.founder=true;mock.assurance='ready';vi.spyOn(crypto,'randomUUID').mockReturnValue(request);standardRpc();});
 afterEach(()=>{cleanup();sessionStorage.clear();vi.restoreAllMocks();vi.unstubAllEnvs();});
 describe('corrected project review UI, gated experimental candidate',()=>{
+ it('warns about matching expenses without making an inclusion decision',async()=>{
+  const duplicate='cccccccc-cccc-4ccc-8ccc-cccccccccccc',copy=structuredClone(inventory);
+  copy.historical_review.base.expenses.unshift({...copy.historical_review.base.expenses[0],id:duplicate,description:' SAND '});
+  mock.rpc.mockImplementation(async(name:string)=>name==='project_cost_correction_inventory'?{data:copy,error:null}:{data:null,error:Error('unexpected')});
+  render(panel());fireEvent.click(screen.getByRole('button',{name:'Review costs including worker corrections'}));fireEvent.click(screen.getByRole('button',{name:'Load corrected evidence'}));await screen.findByText(/Snapshot captured/);
+  expect(screen.getAllByText(/Possible duplicate:/)).toHaveLength(2);
+  expect(within(screen.getByRole('group',{name:`Corrected expense ${expense}`})).getByText(new RegExp(duplicate))).toBeTruthy();
+  expect(screen.queryByText(/Incomplete reviewed total:/)).toBeNull();
+ });
  it('opens and focuses the review from the overview without loading or saving anything',()=>{
   render(React.createElement(CorrectedProjectCostReview,{projectId:site,userId:actor,openFromOverview:true}));
   const button=screen.getByRole('button',{name:'Review costs including worker corrections'});
