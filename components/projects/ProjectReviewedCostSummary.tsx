@@ -43,7 +43,8 @@ function Summary({projectId,onReview}:{projectId:string;userId:string;onReview:(
      setLegacySignals({siteAttributions:legacyCoverage.siteAttributions,changedAttributions:legacyCoverage.changedAttributions});
      if(legacyCoverage.siteAttributions>0){const matching=matchingLegacyOverview(legacyCoverage);setState(matching?{status:'legacy',review:matching}:{status:'legacy-unavailable'});return;}
     }
-    if(simple&&!review.found){setState(simple.totals?{status:'recorded',snapshot:simple}:{status:'needs-review',snapshot:simple});return;}
+    if(simple&&!review.found&&simple.totals){setState({status:'recorded',snapshot:simple});return;}
+    if(simple&&!review.found&&!crossSiteAtomicOverviewEnabled()){setState({status:'needs-review',snapshot:simple});return;}
     if(review.found&&review.freshness!=='matches'){setState({status:'stale'});return;}
     if(review.found&&!review.inventory.cases.some(c=>!c.sourceInSnapshot)){setState({status:'ready',review});return;}
     // Cross-site totals must use one database snapshot, never separate browser
@@ -53,8 +54,8 @@ function Summary({projectId,onReview}:{projectId:string;userId:string;onReview:(
      const response=await client.rpc('project_cost_cross_site_overview',{p_project:projectId});if(response.error)throw response.error;
      const current=parseAtomicCrossSiteOverview(response.data,projectId);if(!active)return;
      setCoverage(current.coverage);
-     setState(current.cross?{status:'cross',review:current.cross}:{status:current.coverage.review.found?'incoming':'empty'});
-    }catch{if(active)setState({status:review.found?'incoming':'error'});}
+     setState(current.cross?{status:'cross',review:current.cross}:simple?{status:'needs-review',snapshot:simple}:{status:current.coverage.review.found?'incoming':'empty'});
+    }catch{if(active)setState(simple&&!review.found?{status:'needs-review',snapshot:simple}:{status:review.found?'incoming':'error'});}
    } catch {if(active)setState({status:'error'});}
   })();
   return ()=>{active=false;};

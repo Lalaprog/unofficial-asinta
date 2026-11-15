@@ -33,7 +33,14 @@ function Contents({actor,voucher}:{actor:string;voucher:PaidReviewVoucher}){
    const {data,error}=await createClient().rpc('record_legacy_paid_voucher_attribution',legacyArguments(a));if(error)throw error;
    if(!data||data.request_id!==a.request||data.payroll_id!==voucher.id||typeof data.replayed!=='boolean')throw Error('Unverified write response');
    complete(a,await verify(a));
-  }catch{if(alive.current){setMessage(stored?'The outcome is unconfirmed. It may already be recorded or still in flight; check or retry the exact request.':'Could not verify retry storage; no new request was sent. Investigate before continuing.');if(!stored)setStorageError(true);}}
+  }catch(error){
+   // A first attempt explicitly rejected by the database with 40001 rolled
+   // back; clear only this tab's unchanged retry marker so it can be reloaded.
+   // For retries or uncertain network failures, preserve the marker.
+   if(stored&&!retry&&error&&typeof error==='object'&&'code' in error&&error.code==='40001'){
+    try{if(sessionStorage.getItem(storageKey)!==observed.current)throw Error('Retry changed');sessionStorage.removeItem(storageKey);observed.current=null;if(alive.current){setPending(null);setStatus(null);setProjects(null);setAck(false);setMessage('The voucher, worker or correction cases changed. Nothing was recorded; load the review again.');}return;}catch{ /* preserve the uncertain marker */ }
+   }
+   if(alive.current){setMessage(stored?'The outcome is unconfirmed. It may already be recorded or still in flight; check or retry the exact request.':'Could not verify retry storage; no new request was sent. Investigate before continuing.');if(!stored)setStorageError(true);}}
   finally{lock.current=false;if(alive.current)setBusy(false);}}
  async function check(){if(lock.current||!pending)return;lock.current=true;setBusy(true);setMessage('');try{complete(pending,await verify(pending));}catch{if(alive.current)setMessage('The exact attribution could not be verified. A missing result does not prove the request failed.');}finally{lock.current=false;if(alive.current)setBusy(false);}}
  function prepare(){try{if(!status||status.found||!status.eligible||!projects||!ack)return;const a=parseLegacyAttempt({version:2,request:crypto.randomUUID(),actor,voucher:status.voucher,worker:status.worker,cases:status.cases,split:lines,note:note.trim()},actor,voucher);if(a.split.some(line=>!projects.some(p=>p.id.toLowerCase()===line.project_id)))throw Error('Unknown project');void send(a,false);}catch{setMessage('Select unique projects and positive amounts adding exactly to gross, and enter an evidence note.');}}
