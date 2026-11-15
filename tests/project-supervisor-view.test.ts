@@ -84,8 +84,14 @@ describe('project roles and workforce logs', () => {
     expect(mocks.rpc.mock.calls.filter(([name])=>name==='project_cost_correction_inventory')).toHaveLength(0);
     fireEvent.click(screen.getByRole('button',{name:'Overview & Summary'}));
     fireEvent.click(screen.getByRole('button',{name:'Review expense and payroll evidence'}));
-    expect(document.activeElement?.textContent).toBe('Experimental project-cost review');
-    expect(screen.getByRole('button',{name:'Review costs including worker corrections'}).getAttribute('aria-expanded')).toBe('false');
+    const payrollReview=screen.getByRole('button',{name:'Review costs including worker corrections'});
+    expect(document.activeElement).toBe(payrollReview);expect(payrollReview.getAttribute('aria-expanded')).toBe('true');
+    expect(screen.getByRole('button',{name:'Other cost investigation tools'}).getAttribute('aria-expanded')).toBe('false');
+  });
+  it('keeps the payroll shortcut working when the corrected review is disabled', () => {
+    vi.stubEnv('NEXT_PUBLIC_FINANCE_FOUNDATION_PREVIEW','true');vi.stubEnv('NEXT_PUBLIC_PROJECT_COST_RECONCILIATION_PREVIEW','true');vi.stubEnv('NEXT_PUBLIC_CORRECTED_PROJECT_COST_REVIEW_PREVIEW','false');
+    mocks.founder=true;render(React.createElement(ProjectDetailPage));fireEvent.click(screen.getByRole('button',{name:'Review expense and payroll evidence'}));
+    expect(document.activeElement?.textContent).toBe('Experimental project-cost review');expect(screen.getByRole('button',{name:'Load review snapshot'})).toBeTruthy();
   });
   it('keeps Founder client information and financial tools', () => {
     mocks.founder = true;

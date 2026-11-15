@@ -299,7 +299,7 @@ export default function ProjectDetailPage() {
             {isFounder && expenseTotals.status === 'error' && <div role="alert" className="text-xs text-status-danger">Expense totals could not be loaded. <Button type="button" variant="secondary" size="sm" onClick={expenseTotals.refresh}>Retry expense totals</Button></div>}
             {isFounder && <p className="text-xs text-ink-secondary">Expense totals cover recorded expense entries only. Paid worker payroll is not included here; where enabled, it can be reviewed separately. A rental is counted only through its recorded expense. <Button type="button" variant="secondary" size="sm" onClick={expenseTotals.refresh}>Refresh expense totals</Button></p>}
             {isFounder && assurance === 'ready' && user?.id && correctedProjectCostReviewPreviewEnabled() && <ProjectReviewedCostSummary projectId={id} userId={user.id} onReview={()=>openCostReview('corrected')} />}
-            {isFounder && assurance === 'ready' && user?.id && projectCostReconciliationPreviewEnabled() && <ProjectPaidPayrollSummary projectId={id} userId={user.id} onReview={()=>openCostReview('scratch')} />}
+            {isFounder && assurance === 'ready' && user?.id && projectCostReconciliationPreviewEnabled() && <ProjectPaidPayrollSummary projectId={id} userId={user.id} onReview={()=>openCostReview(correctedProjectCostReviewPreviewEnabled()?'corrected':'scratch')} />}
 
             {/* Project Site Details */}
             <div className={`grid grid-cols-1 gap-6 ${isFounder ? 'lg:grid-cols-2' : ''}`}>
