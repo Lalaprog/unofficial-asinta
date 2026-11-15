@@ -6,7 +6,7 @@ import {createClient} from '@/lib/supabase/client';
 import {formatSignedCost,parseCorrectedSaved,type CorrectedSaved} from '@/lib/projects/correctedCostReview';
 import {formatCostCents} from '@/lib/projects/projectCostReconciliation';
 
-type State = {status:'loading'|'empty'|'error'|'stale'} | {status:'ready';review:CorrectedSaved};
+type State = {status:'loading'|'empty'|'error'|'stale'|'incoming'} | {status:'ready';review:CorrectedSaved};
 
 /** Latest independently checked saved review, not an automatic accounting posting. */
 export function ProjectReviewedCostSummary(props:{projectId:string;userId:string;onReview:()=>void}) {
@@ -27,6 +27,10 @@ function Summary({projectId,onReview}:{projectId:string;userId:string;onReview:(
     if(!active)return;
     if(!review.found)setState({status:'empty'});
     else if(review.freshness!=='matches')setState({status:'stale'});
+    // This reader cannot include an incoming correction without the separate
+    // cross-site protocol. Even an explicit exclusion would make its amount
+    // unsuitable as the overview cost for this destination.
+    else if(review.inventory.cases.some(c=>!c.sourceInSnapshot))setState({status:'incoming'});
     else setState({status:'ready',review});
    } catch {if(active)setState({status:'error'});}
   })();
@@ -39,6 +43,7 @@ function Summary({projectId,onReview}:{projectId:string;userId:string;onReview:(
   {state.status==='loading'&&<p role="status">Checking the latest cost review…</p>}
   {state.status==='empty'&&<p>No saved cost review yet. Open the review to check expenses, payroll and corrections before combining them.</p>}
   {state.status==='stale'&&<p role="alert">The saved cost review is out of date or its sources could not be checked. Its total is hidden; reload the review before using it.</p>}
+  {state.status==='incoming'&&<p role="alert">This review has an incoming correction from another project. Its total is hidden because this overview cannot verify or include that cross-site effect. Open the cost review to investigate.</p>}
   {state.status==='error'&&<p role="alert">The cost review could not be verified. No total is assumed; retry or open the review.</p>}
   {r&&<div aria-live="polite" className="space-y-1 rounded-lg bg-surface-inset p-3">
    <p className="font-semibold text-navy">Reviewed cost: {formatCostCents(r.totals.total)}</p>
