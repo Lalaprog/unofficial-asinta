@@ -99,6 +99,11 @@ export function historicalWorkerAttributionEntryPreviewEnabled(): boolean {
   return historicalExternalWorkerPreviewEnabled() && (process.env.NEXT_PUBLIC_HISTORICAL_WORKER_ATTRIBUTION_ENTRY_PREVIEW === 'true' || developmentFinanceCutoverEnabled());
 }
 
+/** Legacy voucher evidence requires its own coordinated cutover; never enabled by the development switch alone. */
+export function legacyVoucherAttributionPreviewEnabled(): boolean {
+  return financeFoundationEnabled() && process.env.NEXT_PUBLIC_LEGACY_VOUCHER_ATTRIBUTION_PREVIEW === 'true';
+}
+
 /** Synthetic candidate only: requires its separate uninstalled backend. Never enabled by cutover alone. */
 export function historicalAttributionCaseBindingPreviewEnabled(): boolean {
   return historicalWorkerAttributionEntryPreviewEnabled() && process.env.NEXT_PUBLIC_HISTORICAL_CASE_BINDING_PREVIEW === 'true';

@@ -13,9 +13,10 @@ async function setup(){const db=new PGlite();await db.exec(baseFixture);await db
  CREATE TABLE public.paid_payroll_adjustment_cases(id uuid primary key,payroll_id uuid,status text);
  CREATE FUNCTION app_private.paid_adjustment_voucher_snapshot(p public.payroll) RETURNS jsonb LANGUAGE sql STABLE AS $$SELECT jsonb_build_object('id',p.id,'worker_id',p.worker_id,'period_start',p.period_start,'period_end',p.period_end,'status',p.status,'gross_pay',p.gross_pay::text,'bale_deduction',p.bale_deduction::text,'other_deductions',p.other_deductions::text,'net_pay',p.net_pay::text)$$;
  BEGIN;${sql('legacy_paid_voucher_attribution')} COMMIT;
+ CREATE TABLE public.paid_period_assertion_cases(id uuid);CREATE TABLE public.confirmed_rental_expenses(id uuid);CREATE TABLE public.payroll_payment_dates(id uuid);CREATE TABLE public.historical_worker_attributions(id uuid);CREATE TABLE public.historical_worker_attribution_sites(id uuid);CREATE TABLE public.project_cost_correction_attributions(id uuid);CREATE TABLE public.project_cost_correction_sites(id uuid);
  CREATE TABLE public.test_base_inventory(value jsonb NOT NULL);
  CREATE FUNCTION public.project_cost_correction_inventory(p uuid) RETURNS jsonb LANGUAGE sql STABLE SECURITY DEFINER SET search_path='' AS $$SELECT value FROM public.test_base_inventory WHERE value->>'project_id'=p::text$$;
- BEGIN;${sql('project_cost_corrected_preview')} COMMIT;BEGIN;${sql('project_cost_legacy_voucher_preview')} COMMIT;
+ BEGIN;${sql('project_cost_corrected_preview')} COMMIT;BEGIN;${sql('project_cost_legacy_voucher_preview')} COMMIT;BEGIN;${sql('project_cost_legacy_review_ledger')} COMMIT;
  SET ROLE authenticated;SET test.uid='${founder}';SET test.assurance='yes'`);
  const old=(await db.query<{v:{voucher:unknown;worker:unknown}}>('SELECT public.legacy_paid_voucher_attribution($1) v',[voucher])).rows[0].v;
  await db.query('SELECT public.record_legacy_paid_voucher_attribution($1,$2,$3::jsonb,$4::jsonb,$5::jsonb,$6,true)',[request,voucher,JSON.stringify(old.voucher),JSON.stringify(old.worker),JSON.stringify([{project_id:site,gross:'400.00'},{project_id:other,gross:'200.00'}]),'Original reviewed']);
@@ -36,6 +37,21 @@ describe('held legacy voucher cost preview',()=>{
   const s=await inventory(db);await db.exec(`RESET ROLE; UPDATE public.test_base_inventory SET value=jsonb_set(value,'{historical_review,base,expenses,0,amount}','"101.00"'::jsonb);SET ROLE authenticated`);await expect(preview(db,s,{[request]:{decision:'include',reason:null}})).rejects.toThrow(/evidence changed/);
   await db.exec(`RESET ROLE; UPDATE public.test_base_inventory SET value=jsonb_set(value,'{historical_review,base,paid_allocations,0,payroll_id}',to_jsonb('${voucher}'::text));SET ROLE authenticated`);await expect(inventory(db)).rejects.toThrow(/overlaps a paid allocation/);
   await db.exec(`RESET ROLE; UPDATE public.test_base_inventory SET value=jsonb_set(value,'{historical_review,base,paid_allocations,0,payroll_id}',to_jsonb('${weekly}'::text));INSERT INTO public.paid_payroll_adjustment_cases VALUES('${caseId}','${voucher}','pending');SET ROLE authenticated`);await expect(inventory(db)).rejects.toThrow(/has a correction/);
+ }finally{await db.close();}},30000);
+ it('saves an immutable legacy-inclusive review and detects stale sources',async()=>{const db=await setup();try{
+  const s=await inventory(db),legacyChoices={[request]:{decision:'include',reason:null}},review='f2000000-0000-4000-8000-000000000010';
+  const args=[review,site,0,JSON.stringify(s),JSON.stringify(choices),JSON.stringify(legacyChoices),'Synthetic review'];
+  const write=()=>db.query<{v:{revision:number;replayed:boolean}}>('SELECT public.record_project_cost_legacy_review($1,$2,$3,$4::jsonb,$5::jsonb,$6::jsonb,$7,true) v',args);
+  expect((await write()).rows[0].v).toMatchObject({revision:1,replayed:false});expect((await write()).rows[0].v).toMatchObject({revision:1,replayed:true});
+  const read=()=>db.query<{v:{freshness:string;result:{incomplete_total:string}}}>('SELECT public.project_cost_legacy_review($1,NULL) v',[site]);
+  expect((await read()).rows[0].v).toMatchObject({freshness:'matches',result:{incomplete_total:'550.00'}});
+  await expect(db.query('UPDATE public.project_cost_legacy_reviews SET note=$1',['changed'])).rejects.toThrow(/permission denied/);
+  await db.exec('RESET ROLE');await expect(db.query('UPDATE public.project_cost_legacy_reviews SET note=$1',['changed'])).rejects.toThrow(/immutable/);await db.exec('SET ROLE authenticated');
+  await db.exec(`SET test.uid='${supervisor}'`);await expect(read()).rejects.toMatchObject({code:'42501'});await expect(write()).rejects.toMatchObject({code:'42501'});await db.exec(`SET test.uid='${founder}';SET test.assurance='no'`);await expect(read()).rejects.toMatchObject({code:'42501'});await db.exec(`SET test.assurance='yes'`);
+  await db.exec(`RESET ROLE; UPDATE public.test_base_inventory SET value=jsonb_set(value,'{historical_review,base,expenses,0,amount}','"101.00"'::jsonb);SET ROLE authenticated`);
+  expect((await read()).rows[0].v.freshness).toBe('changed');expect((await write()).rows[0].v.replayed).toBe(true);
+  await expect(db.query('SELECT public.record_project_cost_legacy_review($1,$2,1,$3::jsonb,$4::jsonb,$5::jsonb,$6,true)', ['f2000000-0000-4000-8000-000000000011',site,JSON.stringify(s),JSON.stringify(choices),JSON.stringify(legacyChoices),'Next review'])).rejects.toMatchObject({code:'40001'});
+  await db.exec(`RESET ROLE; INSERT INTO public.paid_payroll_adjustment_cases VALUES('${caseId}','${voucher}','pending');SET ROLE authenticated`);expect((await read()).rows[0].v.freshness).toBe('unavailable');
  }finally{await db.close();}},30000);
  it('denies unauthorised or low-assurance reads and previews',async()=>{const db=await setup();try{const s=await inventory(db);await db.exec(`SET test.uid='${supervisor}'`);await expect(inventory(db)).rejects.toThrow(/Founder/);await expect(preview(db,s,{})).rejects.toThrow(/Founder/);await db.exec(`SET test.uid='${founder}';SET test.assurance='no'`);await expect(inventory(db)).rejects.toThrow(/Founder/);await db.exec('RESET ROLE; SET ROLE anon');await expect(inventory(db)).rejects.toThrow(/permission denied/);}finally{await db.close();}},30000);
 });

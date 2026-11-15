@@ -46,6 +46,16 @@ describe('held larger bounded project review',()=>{
   await expect(base(db)).rejects.toMatchObject({code:'54000'});
   await db.exec('RESET ROLE');expect((await db.query<{amount:string}>('SELECT amount::text amount FROM public.expenses WHERE id=$1',[rentalExpense])).rows[0].amount).toBe('1000.00');
  }finally{await db.close();}},120000);
+ it('returns 1000 confirmed rentals and fails closed on rental 1001',async()=>{const db=await setup();try{
+  await db.exec(`RESET ROLE;
+   INSERT INTO public.expenses(id,project_id,description,category,amount,expense_date)
+   SELECT md5(('rental-boundary-expense'||g)::text)::uuid,'${site}','Rental boundary '||g,'equipment',1,'2024-11-04' FROM generate_series(1,1000) g;
+   INSERT INTO public.confirmed_rental_expenses(id,expense_id,project_id,expense_amount,expense_date,expense_description,item_name,supplier,quantity,rental_start,rental_end,confirmed_by)
+   SELECT md5(('rental-boundary'||g)::text)::uuid,md5(('rental-boundary-expense'||g)::text)::uuid,'${site}',1,'2024-11-04','Rental boundary '||g,'Tool','Supplier',1,'2024-11-01','2024-11-02','${founder}' FROM generate_series(1,999) g;SET ROLE authenticated`);
+  const atLimit=await db.query<{v:{items:unknown[]}}>('SELECT public.project_confirmed_rentals($1) v',[site]);expect(atLimit.rows[0].v.items).toHaveLength(1000);
+  await db.exec(`RESET ROLE; INSERT INTO public.confirmed_rental_expenses(id,expense_id,project_id,expense_amount,expense_date,expense_description,item_name,supplier,quantity,rental_start,rental_end,confirmed_by) VALUES(md5('rental-boundary1000')::uuid,md5('rental-boundary-expense1000')::uuid,'${site}',1,'2024-11-04','Rental boundary 1000','Tool','Supplier',1,'2024-11-01','2024-11-02','${founder}');SET ROLE authenticated`);
+  await expect(db.query('SELECT public.project_confirmed_rentals($1)',[site])).rejects.toMatchObject({code:'54000'});
+ }finally{await db.close();}},60000);
  it('refuses a changed function body before any upgrade',async()=>{const db=new PGlite();try{await db.exec(`${roles} ${fixture}`);for(const path of candidatePaths)await db.exec(readFileSync(path,'utf8'));await db.exec(`CREATE OR REPLACE FUNCTION public.project_confirmed_rentals(p_project uuid) RETURNS jsonb LANGUAGE sql STABLE SECURITY DEFINER SET search_path='' AS $$SELECT '{}'::jsonb$$`);
   await expect(db.exec(`BEGIN;${sql('project_cost_larger_review')} COMMIT`)).rejects.toThrow(/dependency changed/);await db.exec('ROLLBACK');
  }finally{await db.close();}},30000);

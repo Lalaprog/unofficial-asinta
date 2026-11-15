@@ -8,10 +8,11 @@ import {useAuth} from '@/lib/auth/authContext';
 import {createClient} from '@/lib/supabase/client';
 import {getManilaClock} from '@/lib/reminders/scheduler';
 import {parsePaidReview,paidReviewSignals,validReviewRange,type PaidReview} from '@/lib/payroll/paidReview';
-import {historicalFinanceEvidencePreviewEnabled,paidAdjustmentsPreviewEnabled,paidAttendanceReviewPreviewEnabled} from '@/lib/finance/featureAvailability';
+import {historicalFinanceEvidencePreviewEnabled,legacyVoucherAttributionPreviewEnabled,paidAdjustmentsPreviewEnabled,paidAttendanceReviewPreviewEnabled} from '@/lib/finance/featureAvailability';
 import {PaidAttendanceReview} from './PaidAttendanceReview';
 import {PaidAdjustmentPanel} from './PaidAdjustmentPanel';
 import {HistoricalFinanceEvidence} from './HistoricalFinanceEvidence';
+import {LegacyVoucherAttribution} from './LegacyVoucherAttribution';
 
 type State={key:string;loading:boolean;error:string;data:PaidReview|null};
 const empty=(key:string):State=>({key,loading:false,error:'',data:null});
@@ -61,6 +62,7 @@ function Contents(){
     {paidAttendanceReviewPreviewEnabled()&&<PaidAttendanceReview voucher={v}/>}
     {historicalFinanceEvidencePreviewEnabled()&&<HistoricalFinanceEvidence voucher={v}/>}
     {paidAdjustmentsPreviewEnabled()&&<PaidAdjustmentPanel voucher={v}/>}
+    {user?.id&&legacyVoucherAttributionPreviewEnabled()&&<LegacyVoucherAttribution actor={user.id} voucher={v}/>}
    </article>;})}
   </div>)}
  </div>;
