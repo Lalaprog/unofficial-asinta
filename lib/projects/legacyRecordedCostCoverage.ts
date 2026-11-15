@@ -3,10 +3,11 @@ import {parseRecordedCostCoverage} from './recordedCostCoverage';
 import {hasUnsupportedLegacyIncoming,legacyCostMatchesBase,parseLegacyCostSaved,type LegacyCostSaved} from './legacyVoucherCostReview';
 import {parseAtomicCrossSiteOverview} from './crossSiteReviewLedger';
 import {parseSimpleRecordedCost} from './simpleRecordedCost';
+import {legacyAwareBaseReview} from './legacyGuardedReview';
 
 /** All readers in this response share the same statement snapshot. */
 export function parseLegacyRecordedCoverage(raw:unknown,projectId:string){
- if(!raw||typeof raw!=='object'||Array.isArray(raw))throw Error('Invalid legacy coverage');const v=raw as Record<string,unknown>,base=parseRecordedCostCoverage(raw,projectId);
+ if(!raw||typeof raw!=='object'||Array.isArray(raw))throw Error('Invalid legacy coverage');const v=raw as Record<string,unknown>,base=parseRecordedCostCoverage({...v,review:legacyAwareBaseReview(v.review)},projectId);
  const count=(x:unknown):number=>{if(typeof x!=='number'||!Number.isSafeInteger(x)||x<0)throw Error('Invalid legacy coverage count');return x;};
  const siteAttributions=count(v.legacy_site_attributions),changedAttributions=count(v.changed_legacy_attributions),review=parseLegacyCostSaved(v.legacy_review,projectId);
  if(review.found&&review.revision!==review.latestRevision)throw Error('Not latest legacy review');
@@ -20,12 +21,12 @@ export function parseLegacyRecordedSnapshot(raw:unknown,projectId:string){
  if(Object.keys(v).sort().join(',')!=='legacy,ordinary,project_id'||v.project_id!==projectId||!v.legacy||typeof v.legacy!=='object'||Array.isArray(v.legacy)||!v.ordinary||typeof v.ordinary!=='object'||Array.isArray(v.ordinary))throw Error('Invalid legacy snapshot scope');
  const legacyRaw=v.legacy as Record<string,unknown>,ordinary=v.ordinary as Record<string,unknown>;
  if(!ordinary.coverage||typeof ordinary.coverage!=='object'||Array.isArray(ordinary.coverage))throw Error('Missing ordinary coverage');
- const coverageRaw=ordinary.coverage as Record<string,unknown>,legacy=parseLegacyRecordedCoverage(legacyRaw,projectId),base=parseRecordedCostCoverage(coverageRaw,projectId);
+ const coverageRaw=ordinary.coverage as Record<string,unknown>,legacy=parseLegacyRecordedCoverage(legacyRaw,projectId),base=parseRecordedCostCoverage({...coverageRaw,review:legacyAwareBaseReview(coverageRaw.review)},projectId);
  if(legacy.capturedAt!==base.capturedAt||legacy.inconsistentAllocations!==base.inconsistentAllocations||legacy.unattributedHistory!==base.unattributedHistory||!sameAttributionEvidence(legacyRaw.review,coverageRaw.review))throw Error('Coverage snapshots differ');
  if(legacy.siteAttributions>0)return {legacy,simple:null};
  // Valid older splits elsewhere should not look like unallocated vouchers.
  // The legacy coverage and ordinary inventory were captured together.
- const simple=parseSimpleRecordedCost({...ordinary,coverage:legacyRaw},projectId);
+ const simple=parseSimpleRecordedCost({...ordinary,coverage:{...legacyRaw,review:legacyAwareBaseReview(legacyRaw.review)}},projectId);
  if(legacy.changedAttributions>0)return {legacy,simple:{...simple,totals:null,issues:[...simple.issues,'An older voucher split or its corrections changed and needs investigation.']}};
  return {legacy,simple};
 }
@@ -38,6 +39,14 @@ export function parseLegacyCrossSiteOverview(raw:unknown,projectId:string){
  if(!ordinaryCoverage||typeof ordinaryCoverage!=='object'||Array.isArray(ordinaryCoverage))throw Error('Missing ordinary coverage');
  const coverageRaw=ordinaryCoverage as Record<string,unknown>,legacy=parseLegacyRecordedCoverage(legacyRaw,projectId);
  if(legacyRaw.captured_at!==coverageRaw.captured_at||!sameAttributionEvidence(legacyRaw.review,coverageRaw.review))throw Error('Coverage snapshots differ');
+ // Recover only the ordinary components inside the legacy-aware atomic
+ // response. They are never a replacement for matching legacy coverage.
+ if(!ordinaryRaw.sources||typeof ordinaryRaw.sources!=='object'||Array.isArray(ordinaryRaw.sources))throw Error('Invalid source evidence');
+ const sources=Object.fromEntries(Object.entries(ordinaryRaw.sources as Record<string,unknown>).map(([key,group])=>{
+  if(!group||typeof group!=='object'||Array.isArray(group))throw Error('Invalid source group');
+  return [key,Object.fromEntries(Object.entries(group as Record<string,unknown>).map(([site,review])=>[site,legacyAwareBaseReview(review)]))];
+ }));
+ const ordinary={...ordinaryRaw,coverage:{...coverageRaw,review:legacyAwareBaseReview(coverageRaw.review)},cross:legacyAwareBaseReview(ordinaryRaw.cross),sources};
  if(legacy.changedAttributions>0)return {legacy,cross:null,mixed:null};
  if(legacy.siteAttributions>0){
   const saved=matchingLegacyBase(legacy);
@@ -49,13 +58,13 @@ export function parseLegacyCrossSiteOverview(raw:unknown,projectId:string){
   for(const c of saved.inventory.base.cases){if(c.sourceInSnapshot)continue;
    if(saved.inventory.legacy.some(v=>v.payrollId===c.sourceId&&c.kind==='voucher'&&v.corrected?.cases.some(x=>x.id===c.id&&sameAttributionEvidence(x.review,c.review))))excluded.add(c.key);
   }
-  const atomic=parseAtomicCrossSiteOverview(ordinaryRaw,projectId,excluded);
+  const atomic=parseAtomicCrossSiteOverview(ordinary,projectId,excluded);
   if(!atomic.cross)return {legacy,cross:null,mixed:null};
   const total=atomic.cross.totals.total+saved.totals.included;
   if(total>=10000000000000000n)throw Error('Combined total exceeds limit');
   return {legacy,cross:null,mixed:{cross:atomic.cross,legacy:saved,total}};
  }
- const atomic=parseAtomicCrossSiteOverview(ordinaryRaw,projectId);
+ const atomic=parseAtomicCrossSiteOverview(ordinary,projectId);
  return {legacy,cross:atomic.cross,mixed:null};
 }
 

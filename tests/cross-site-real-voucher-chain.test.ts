@@ -48,7 +48,7 @@ async function setup(multiCase=true){
   await expect(db.exec(`BEGIN;${candidate} COMMIT;`)).rejects.toThrow(/held for synthetic rehearsal/);await db.exec('ROLLBACK');
   await db.exec(`BEGIN;SET LOCAL app.cost_evidence_lock_candidate='synthetic-only';${sql('project_cost_evidence_lock_rehearsal')} COMMIT;`);
   if(multiCase)await db.exec(`BEGIN;SET LOCAL app.cross_site_multicase_candidate='synthetic-only';${sql('project_cost_multi_case_upgrade')} COMMIT;`);
-  for(const name of ['project_cost_recorded_coverage','project_cost_cross_site_overview','legacy_paid_voucher_attribution','project_cost_legacy_voucher_preview','project_cost_legacy_review_ledger','project_cost_legacy_correction_context','project_cost_legacy_corrected_source','project_cost_legacy_recorded_coverage','project_cost_legacy_cross_site_overview'])await db.exec(`BEGIN;${sql(name)} COMMIT;`);
+  for(const name of ['project_cost_recorded_coverage','project_cost_cross_site_overview','legacy_paid_voucher_attribution','project_cost_legacy_voucher_preview','project_cost_legacy_review_ledger','project_cost_legacy_correction_context','project_cost_legacy_corrected_source','project_cost_legacy_recorded_coverage','project_cost_legacy_cross_site_overview','project_recorded_cost_snapshot','project_cost_legacy_recorded_snapshot'])await db.exec(`BEGIN;${sql(name)} COMMIT;`);
   await db.exec(`BEGIN;SET LOCAL app.legacy_correction_candidate='synthetic-only';${sql('project_cost_legacy_corrected_review_upgrade')} COMMIT;`);
   await db.exec(`SET ROLE authenticated;SET test.uid='${founder}';SET test.assurance='yes'`);
   return db;
@@ -85,11 +85,18 @@ describe('complete voucher cross-site review chain, isolated synthetic database'
   const cross=verifyCrossSiteSaved(header,sources);verifyCrossSiteOverview(null,cross);expect(cross.totals.total).toBe(10000n);expect(cross.freshness).toBe('matches');
   const overview=await read(db,'SELECT public.project_cost_cross_site_overview($1) v',[destination]);expect(parseAtomicCrossSiteOverview(overview,destination).cross?.totals.total).toBe(10000n);
   const withLegacy=await read(db,'SELECT public.project_cost_legacy_cross_site_overview($1) v',[destination]);expect(parseLegacyCrossSiteOverview(withLegacy,destination)).toMatchObject({legacy:{siteAttributions:0},cross:{totals:{total:10000n}}});
+  await db.exec('RESET ROLE');await expect(db.exec(`BEGIN;${sql('project_cost_legacy_old_client_guard')} COMMIT;`)).rejects.toThrow(/synthetic rehearsal/);await db.exec('ROLLBACK');
+  await db.exec(`BEGIN;SET LOCAL app.legacy_old_client_guard_candidate='synthetic-only';${sql('project_cost_legacy_old_client_guard')} COMMIT;SET ROLE authenticated`);
+  await expect(read(db,'SELECT app_private.project_cost_legacy_site_guard($1) v',[destination])).rejects.toThrow(/permission denied/);
+  expect(await read(db,'SELECT public.project_cost_cross_site_review($1,NULL) v',[destination])).toMatchObject({freshness:'matches'});
   // An older split appearing after the previous read must prevent substituting
   // a cross-site amount that doesn't include that newly attributed voucher.
   await db.exec('RESET ROLE');await db.query("INSERT INTO public.payroll VALUES($1,$2,'2023-11-05','2023-11-11','paid',400,0,0,400,8)",[id(60),worker]);await db.exec('SET ROLE authenticated');
   const older=await read(db,'SELECT public.legacy_paid_voucher_attribution($1) v',[id(60)]) as {voucher:unknown;worker:unknown;cases:unknown};
   await read(db,'SELECT public.record_legacy_paid_voucher_attribution($1,$2,$3::jsonb,$4::jsonb,$5::jsonb,$6,true,$7::jsonb) v',[id(61),id(60),j(older.voucher),j(older.worker),j([{project_id:destination,gross:'400.00'}]),'Original older voucher checked',j(older.cases)]);
+  const oldCross=await read(db,'SELECT public.project_cost_cross_site_review($1,NULL) v',[destination]);expect(oldCross).toMatchObject({freshness:'changed',legacy_guarded:true});
+  const oldHeader=parseCrossSiteSavedHeader(oldCross,destination);if(!oldHeader.found)throw Error('Missing old review');expect(()=>verifyCrossSiteOverview(null,verifyCrossSiteSaved(oldHeader,sources))).toThrow(/current/);
+  expect(await read(db,'SELECT public.project_cost_corrected_review($1,NULL) v',[site])).toMatchObject({freshness:'matches'});
   const combined=await read(db,'SELECT public.project_cost_legacy_cross_site_overview($1) v',[destination]);expect(parseLegacyCrossSiteOverview(combined,destination)).toMatchObject({legacy:{siteAttributions:1},cross:null,mixed:null});
   // A separate older correction affects this same project. It must be included
   // through the older voucher, not a second time as an incoming correction.
@@ -98,13 +105,20 @@ describe('complete voucher cross-site review chain, isolated synthetic database'
   await read(db,"SELECT public.resolve_paid_payroll_adjustment($1,'no_transfer',NULL,'Reallocation only') v",[id(62)]);
   const legacyCase=await read(db,"SELECT public.project_cost_correction_attribution('voucher',$1,NULL) v",[id(62)]) as {case:unknown};
   await read(db,"SELECT public.record_project_cost_correction_attribution($1,'voucher',$2,0,$3::jsonb,0,$4::jsonb,'Older original correction',true) v",[id(63),id(62),j(legacyCase.case),j([{project_id:destination,gross_change:'-50.00'},{project_id:id(65),gross_change:'50.00'}])]);
+  await db.exec('RESET ROLE');expect(await read(db,'SELECT app_private.project_cost_legacy_site_guard($1) v',[id(65)])).toBe(true);expect(await read(db,'SELECT app_private.project_cost_legacy_site_guard($1) v',[other])).toBe(false);
+  await db.query("INSERT INTO public.payroll VALUES($1,$2,'2023-10-22','2023-10-28','paid',200,0,0,200,8)",[id(67),worker]);await db.exec('SET ROLE authenticated');
+  const sourceOlder=await read(db,'SELECT public.legacy_paid_voucher_attribution($1) v',[id(67)]) as {voucher:unknown;worker:unknown;cases:unknown};
+  await read(db,'SELECT public.record_legacy_paid_voucher_attribution($1,$2,$3::jsonb,$4::jsonb,$5::jsonb,$6,true,$7::jsonb) v',[id(68),id(67),j(sourceOlder.voucher),j(sourceOlder.worker),j([{project_id:site,gross:'200.00'}]),'Additional older voucher checked',j(sourceOlder.cases)]);
+  expect(await read(db,'SELECT public.project_cost_corrected_review($1,NULL) v',[site])).toMatchObject({freshness:'changed',legacy_guarded:true});
+  expect(await read(db,"SELECT public.project_cost_cross_site_review_context($1,'voucher',$2) v",[destination,id(1)])).toEqual(context);
   const currentRaw=await inventory(db,destination),legacyKey=`voucher:${id(62)}`;
   const baseChoices={expenses:{},historical:{},corrections:{[key]:{decision:'exclude',reason:'Cross-site review'},[legacyKey]:{decision:'exclude',reason:'Included in older voucher'}}};
   await read(db,'SELECT public.record_project_cost_corrected_review($1,$2,0,$3::jsonb,$4::jsonb,$5,true) v',[id(64),destination,j(currentRaw),j(baseChoices),'Ordinary reviewed']);
+  expect(await read(db,'SELECT public.project_cost_corrected_review($1,NULL) v',[destination])).toMatchObject({freshness:'changed',legacy_guarded:true});
   const legacyRaw=await read(db,'SELECT public.project_cost_legacy_voucher_inventory($1) v',[destination]),legacyInv=parseLegacyCostInventory(legacyRaw,destination),legacyChoices={[id(61)]:{decision:'include',reason:null}};
   const legacyCalc=calculateLegacyCost(legacyInv,baseChoices,legacyChoices);expect(legacyCalc.totals.total).toBe(35000n);
   verifyLegacyCostTotals(await read(db,'SELECT public.project_cost_legacy_voucher_preview($1,$2::jsonb,$3::jsonb,$4::jsonb,true) v',[destination,j(legacyRaw),j(baseChoices),j(legacyChoices)]),destination,legacyCalc.totals);
-  for(const flag of ['FINANCE_FOUNDATION_PREVIEW','PROJECT_COST_CORRECTION_PREVIEW','CORRECTED_PROJECT_COST_REVIEW_PREVIEW','CROSS_SITE_SOURCE_REVIEW_PREVIEW','CROSS_SITE_LEDGER_PREVIEW','CROSS_SITE_ATOMIC_OVERVIEW','LEGACY_VOUCHER_ATTRIBUTION_PREVIEW'])vi.stubEnv(`NEXT_PUBLIC_${flag}`,'true');
+  for(const flag of ['FINANCE_FOUNDATION_PREVIEW','PROJECT_COST_CORRECTION_PREVIEW','CORRECTED_PROJECT_COST_REVIEW_PREVIEW','CROSS_SITE_SOURCE_REVIEW_PREVIEW','CROSS_SITE_LEDGER_PREVIEW','CROSS_SITE_ATOMIC_OVERVIEW','LEGACY_VOUCHER_ATTRIBUTION_PREVIEW','SIMPLE_RECORDED_COST_PREVIEW'])vi.stubEnv(`NEXT_PUBLIC_${flag}`,'true');
   vi.spyOn(crypto,'randomUUID').mockReturnValue(id(66));
   mock.rpc.mockImplementation(async(name:string,args:Record<string,unknown>)=>{try{
    let result:unknown;
@@ -114,6 +128,7 @@ describe('complete voucher cross-site review chain, isolated synthetic database'
    else if(name==='project_cost_legacy_voucher_preview')result=await read(db,'SELECT public.project_cost_legacy_voucher_preview($1,$2::jsonb,$3::jsonb,$4::jsonb,true) v',[args.p_project,j(args.p_snapshot),j(args.p_choices),j(args.p_legacy_choices)]);
    else if(name==='record_project_cost_legacy_review')result=await read(db,'SELECT public.record_project_cost_legacy_review($1,$2,$3,$4::jsonb,$5::jsonb,$6::jsonb,$7,true) v',[args.p_request,args.p_project,args.p_expected_revision,j(args.p_snapshot),j(args.p_choices),j(args.p_legacy_choices),args.p_note]);
    else if(name==='project_cost_legacy_recorded_coverage')result=await read(db,'SELECT public.project_cost_legacy_recorded_coverage($1) v',[args.p_project]);
+   else if(name==='project_cost_legacy_recorded_snapshot')result=await read(db,'SELECT public.project_cost_legacy_recorded_snapshot($1) v',[args.p_project]);
    else if(name==='project_cost_legacy_cross_site_overview')result=await read(db,'SELECT public.project_cost_legacy_cross_site_overview($1) v',[args.p_project]);
    else throw Error('Unexpected RPC '+name);return {data:result,error:null};
   }catch(error){return {data:null,error};}});

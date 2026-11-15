@@ -125,4 +125,20 @@ suite('complete historical cross-site chain and selected races, PostgreSQL 17',(
   } finally { await a.query('ROLLBACK'); }
  },15000);
 
+ it('withholds the old-client review after a real older-voucher attribution',async()=>{
+  const project=id(50),person=id(51),voucher=id(52),request=id(53);
+  await admin.query("INSERT INTO public.projects VALUES($1,'Legacy test site')",[project]);await admin.query("INSERT INTO public.workers VALUES($1,'Legacy test worker','Mason','none',600,'daily',true)",[person]);await admin.query("INSERT INTO public.payroll VALUES($1,$2,'2023-11-05','2023-11-11','paid',1,8,600,0,0,600)",[voucher,person]);
+  await admin.query(`BEGIN;${sql('legacy_paid_voucher_attribution')} COMMIT;`);
+  const raw=await inventory(a,project),choices={expenses:{},historical:{},corrections:{}};
+  await read(a,'SELECT public.record_project_cost_corrected_review($1,$2,0,$3::jsonb,$4::jsonb,$5,true) v',[id(54),project,j(raw),j(choices),'Ordinary reviewed']);
+  await admin.query(`BEGIN;SET LOCAL app.legacy_old_client_guard_candidate='synthetic-only';${sql('project_cost_legacy_old_client_guard')} COMMIT;`);
+  expect(await read(a,'SELECT public.project_cost_corrected_review($1,NULL) v',[project])).toMatchObject({freshness:'matches'});
+  await expect(read(a,'SELECT app_private.project_cost_corrected_review_before_legacy_guard($1,NULL) v',[project])).rejects.toMatchObject({code:'42501'});
+  const source=await read(a,'SELECT public.legacy_paid_voucher_attribution($1) v',[voucher]) as {voucher:unknown;worker:unknown;cases:unknown};
+  await read(a,'SELECT public.record_legacy_paid_voucher_attribution($1,$2,$3::jsonb,$4::jsonb,$5::jsonb,$6,true,$7::jsonb) v',[request,voucher,j(source.voucher),j(source.worker),j([{project_id:project,gross:'600.00'}]),'Original payroll checked',j(source.cases)]);
+  expect(await read(a,'SELECT public.project_cost_corrected_review($1,NULL) v',[project])).toMatchObject({freshness:'changed',legacy_guarded:true});
+  await admin.query("INSERT INTO public.expenses(id,project_id,description,category,amount,expense_date) VALUES($1,$2,'Later expense','materials',1,'2024-01-01')",[id(55),project]);
+  const stale=await read(a,'SELECT public.project_cost_corrected_review($1,NULL) v',[project]) as {freshness:string;legacy_guarded?:boolean};expect(['changed','unavailable']).toContain(stale.freshness);expect(stale.legacy_guarded).toBeUndefined();
+  await b.query("SET test.assurance='no'");await expect(read(b,'SELECT public.project_cost_corrected_review($1,NULL) v',[project])).rejects.toMatchObject({code:'42501'});await b.query("SET test.assurance='yes'");
+ },20000);
 });

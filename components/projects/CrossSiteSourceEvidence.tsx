@@ -3,7 +3,8 @@ import React,{useEffect,useRef,useState} from 'react';
 import {Button} from '@/components/ui/Button';
 import {useAuth} from '@/lib/auth/authContext';
 import {createClient} from '@/lib/supabase/client';
-import {crossSiteSourceReviewPreviewEnabled} from '@/lib/finance/featureAvailability';
+import {crossSiteSourceReviewPreviewEnabled,legacyVoucherAttributionPreviewEnabled} from '@/lib/finance/featureAvailability';
+import {legacyAwareBaseReview} from '@/lib/projects/legacyGuardedReview';
 import {formatSignedCost,parseCorrectedSaved,type CorrectedCase} from '@/lib/projects/correctedCostReview';
 import {CROSS_SITE_SOURCE_REVIEW_BYTES,parseCrossSiteContext,verifyCrossSiteSources,type CrossSiteContext} from '@/lib/projects/crossSiteCostReview';
 import {costCents,formatCostCents} from '@/lib/projects/projectCostReconciliation';
@@ -23,7 +24,7 @@ function Contents({projectId,item,onChange}:{projectId:string;item:CorrectedCase
  async function load(){if(lock.current)return;lock.current=true;const token=++seq.current;setBusy(true);setError('');setContext(null);setNotes({});onChange?.(item.key,null);
   try{const client=createClient();const {data,error}=await client.rpc('project_cost_cross_site_review_context',{p_destination:projectId,p_kind:item.kind,p_case:item.id});if(error)throw error;if(!alive.current||seq.current!==token)return;const parsed=parseCrossSiteContext(data,projectId,item);const reviews:Record<string,unknown>={};let bytes=0;
    // Limit simultaneous requests; every site must be validated, never truncate.
-   for(let i=0;i<parsed.sources.length;i+=5){const batch=parsed.sources.slice(i,i+5);const rows=await Promise.all(batch.map(s=>client.rpc('project_cost_corrected_review',{p_project:s.projectId,p_revision:null})));if(!alive.current||seq.current!==token)return;for(let j=0;j<batch.length;j++){if(rows[j].error)throw rows[j].error;bytes+=new TextEncoder().encode(JSON.stringify(rows[j].data)).length;if(bytes>CROSS_SITE_SOURCE_REVIEW_BYTES)throw Error('Source reviews exceed the display limit');reviews[batch[j].projectId]=rows[j].data;}}
+   for(let i=0;i<parsed.sources.length;i+=5){const batch=parsed.sources.slice(i,i+5);const rows=await Promise.all(batch.map(s=>client.rpc('project_cost_corrected_review',{p_project:s.projectId,p_revision:null})));if(!alive.current||seq.current!==token)return;for(let j=0;j<batch.length;j++){if(rows[j].error)throw rows[j].error;bytes+=new TextEncoder().encode(JSON.stringify(rows[j].data)).length;if(bytes>CROSS_SITE_SOURCE_REVIEW_BYTES)throw Error('Source reviews exceed the display limit');reviews[batch[j].projectId]=legacyVoucherAttributionPreviewEnabled()?legacyAwareBaseReview(rows[j].data):rows[j].data;}}
    verifyCrossSiteSources(parsed,item,reviews);const labels:Record<string,{review:string;correction:string}>={};for(const source of parsed.sources){const saved=parseCorrectedSaved(reviews[source.projectId],source.projectId);if(!saved.found)throw Error('Original review unavailable');labels[source.projectId]={review:saved.note,correction:saved.choices.corrections[item.key].reason??''};}if(alive.current&&seq.current===token){setNotes(labels);setContext(parsed);onChange?.(item.key,{context:parsed.raw,reviews});}
   }catch{if(alive.current&&seq.current===token)setError('Could not verify every current original-site review. Reload and investigate missing, changed, excluded or overlapping evidence.');}
   finally{lock.current=false;if(alive.current&&seq.current===token)setBusy(false);}}

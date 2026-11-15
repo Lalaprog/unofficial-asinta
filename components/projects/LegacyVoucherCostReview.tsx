@@ -4,6 +4,7 @@ import {Button} from '@/components/ui/Button';
 import {createClient} from '@/lib/supabase/client';
 import {legacyVoucherAttributionPreviewEnabled} from '@/lib/finance/featureAvailability';
 import {parseCorrectedSaved,type CorrectedSaved} from '@/lib/projects/correctedCostReview';
+import {legacyAwareBaseReview} from '@/lib/projects/legacyGuardedReview';
 import {formatCostCents} from '@/lib/projects/projectCostReconciliation';
 import {validReviewNote,verifyReviewWrite,type ReviewDecision} from '@/lib/projects/projectCostReview';
 import {calculateLegacyCost,hasUnsupportedLegacyIncoming,legacyCostMatchesAttempt,legacyCostMatchesBase,parseLegacyCostAttempt,parseLegacyCostInventory,parseLegacyCostSaved,verifyLegacyCostTotals,type LegacyCostAttempt,type LegacyCostInventory,type LegacyCostSaved,type LegacyCostTotals} from '@/lib/projects/legacyVoucherCostReview';
@@ -26,7 +27,7 @@ function Contents({projectId,userId}:{projectId:string;userId:string}){
  async function read(rev:number|null){const {data,error}=await createClient().rpc('project_cost_legacy_review',{p_project:projectId,p_revision:rev});if(error)throw error;return parseLegacyCostSaved(data,projectId);}
  async function load(){if(lock.current||pending||blocked)return;lock.current=true;setBusy(true);setError('');setMessage('');setInv(null);setBase(null);setRevision(null);setSaved(null);setDecisions({});setPreview(null);setAck('');
   try{const c=createClient();const [i,b,s]=await Promise.all([c.rpc('project_cost_legacy_voucher_inventory',{p_project:projectId}),c.rpc('project_cost_corrected_review',{p_project:projectId,p_revision:null}),read(null)]);if(i.error||b.error)throw i.error||b.error;
-   const inventory=parseLegacyCostInventory(i.data,projectId),ordinary=parseCorrectedSaved(b.data,projectId);
+   const inventory=parseLegacyCostInventory(i.data,projectId),ordinary=parseCorrectedSaved(legacyAwareBaseReview(b.data),projectId);
    if(!ordinary.found||ordinary.freshness!=='matches'||ordinary.revision!==ordinary.latestRevision||!legacyCostMatchesBase(inventory,ordinary.inventory.raw))throw Error('Current compatible base review required');
    if(s.found&&s.revision!==s.latestRevision)throw Error('Latest legacy review required');
    if(alive.current){setInv(inventory);setBase(ordinary);setRevision(s.latestRevision);setSaved(s.found?s:null);}

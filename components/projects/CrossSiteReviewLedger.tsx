@@ -3,7 +3,8 @@ import React,{useEffect,useRef,useState} from 'react';
 import {Button} from '@/components/ui/Button';
 import {useAuth} from '@/lib/auth/authContext';
 import {createClient} from '@/lib/supabase/client';
-import {crossSiteLedgerPreviewEnabled} from '@/lib/finance/featureAvailability';
+import {crossSiteLedgerPreviewEnabled,legacyVoucherAttributionPreviewEnabled} from '@/lib/finance/featureAvailability';
+import {legacyAwareBaseReview} from '@/lib/projects/legacyGuardedReview';
 import {formatCostCents} from '@/lib/projects/projectCostReconciliation';
 import {parseReviewMarker,validReviewNote,verifyReviewWrite} from '@/lib/projects/projectCostReview';
 import {CROSS_SITE_SOURCE_REVIEW_BYTES} from '@/lib/projects/crossSiteCostReview';
@@ -29,11 +30,11 @@ function Contents({projectId,userId,prepared,onVerified}:{projectId:string;userI
  useEffect(()=>{alive.current=true;try{const raw=sessionStorage.getItem(storageKey);if(raw)setPending(parseStoredCrossSiteAttempt(raw,projectId,userId));}catch{setBlocked('The saved retry evidence cannot be read. New cross-site reviews are blocked in this browser session; investigate before proceeding.');}setReady(true);return()=>{alive.current=false;};},[storageKey,projectId,userId]);
  async function read(revision:number|null):Promise<Saved>{
   const client=createClient();const {data,error}=await client.rpc('project_cost_cross_site_review',{p_project:projectId,p_revision:revision});if(error)throw error;
-  const h=parseCrossSiteSavedHeader(data,projectId);if(!h.found){if(revision!==null)throw Error('Missing requested revision');return h;}if((revision!==null&&h.revision!==revision)||(revision===null&&h.revision!==h.latestRevision))throw Error('Wrong revision');
+  const h=parseCrossSiteSavedHeader(legacyVoucherAttributionPreviewEnabled()?legacyAwareBaseReview(data):data,projectId);if(!h.found){if(revision!==null)throw Error('Missing requested revision');return h;}if((revision!==null&&h.revision!==revision)||(revision===null&&h.revision!==h.latestRevision))throw Error('Wrong revision');
   const tasks=Object.entries(h.refs).flatMap(([caseKey,refs])=>refs.map(ref=>({caseKey,...ref})));if(tasks.length>100)throw Error('Too many source revisions');
   const sourceReviews:Record<string,Record<string,unknown>>={};let bytes=0;
   for(let i=0;i<tasks.length;i+=5){if(!alive.current)throw Error('View closed');const batch=tasks.slice(i,i+5);const rows=await Promise.all(batch.map(r=>client.rpc('project_cost_corrected_review',{p_project:r.projectId,p_revision:r.revision})));
-   for(let j=0;j<batch.length;j++){if(rows[j].error)throw rows[j].error;bytes+=new TextEncoder().encode(JSON.stringify(rows[j].data)).length;if(bytes>CROSS_SITE_SOURCE_REVIEW_BYTES)throw Error('Source reviews too large');(sourceReviews[batch[j].caseKey]??={})[batch[j].projectId]=rows[j].data;}}
+   for(let j=0;j<batch.length;j++){if(rows[j].error)throw rows[j].error;bytes+=new TextEncoder().encode(JSON.stringify(rows[j].data)).length;if(bytes>CROSS_SITE_SOURCE_REVIEW_BYTES)throw Error('Source reviews too large');(sourceReviews[batch[j].caseKey]??={})[batch[j].projectId]=legacyVoucherAttributionPreviewEnabled()?legacyAwareBaseReview(rows[j].data):rows[j].data;}}
   return verifyCrossSiteSaved(h,sourceReviews);
  }
  async function load(revision:number|null){if(lock.current||pending||blocked)return;lock.current=true;setBusy(true);setError('');setMessage('');setAck('');setSaved(null);try{const v=await read(revision);if(alive.current)setSaved(v);}catch{if(alive.current)setError('Could not independently verify the requested cross-site revision and its original reviews. Do not assume history is empty.');}finally{lock.current=false;if(alive.current)setBusy(false);}}
@@ -50,7 +51,7 @@ function Contents({projectId,userId,prepared,onVerified}:{projectId:string;userI
  function clear(){if(!pending||busy||!clearConfirm)return;try{const raw=sessionStorage.getItem(storageKey);if(!raw||JSON.stringify(parseStoredCrossSiteAttempt(raw,projectId,userId))!==JSON.stringify(pending))throw Error('Retry evidence changed');sessionStorage.removeItem(storageKey);setPending(null);setSaved(null);setAck('');setClearConfirm(false);setMessage('Retry evidence cleared, not the review. A prior request may still complete; investigate before starting another.');}catch{setError('Could not clear retry evidence; new reviews remain blocked.');}}
  return <section className="rounded-lg border border-surface-border p-3 space-y-2" aria-label="Cross-site review ledger">
   <button type="button" className="min-h-11 font-semibold text-navy underline" aria-expanded={open} disabled={busy} onClick={()=>{if(open){setSaved(null);setNote('');setAck('');setError('');setMessage('');}setOpen(v=>!v);}}>Cross-site review history and save</button>
-  {open&&<div className="space-y-3"><p>Separate cross-site ledger. Reviews are incomplete, may already be stale, and do not post costs, move money, or change payroll. Source reads are point-in-time, not locks.</p>
+  {open&&<div className="space-y-3"><p>Separate cross-site ledger. Reviews are incomplete, may already be stale, and do not post costs, move money, or change payroll. Source reads are point-in-time, not locks. {legacyVoucherAttributionPreviewEnabled()&&'Older voucher splits are not included in this amount; check the project overview for a verified combined amount.'}</p>
    {error&&<p role="alert">{error}</p>}{blocked&&<p role="alert">{blocked}</p>}{message&&<p role="status">{message}</p>}{busy&&<p role="status">Checking cross-site review evidence…</p>}
    {pending&&<div className="space-y-2 rounded-lg border border-status-warning p-3"><p>Unconfirmed request {pending.marker.requestId} for revision {pending.marker.expectedRevision+1}. Do not start another until investigated.</p><Button type="button" size="sm" disabled={busy} onClick={()=>void checkPending()}>Check cross-site request</Button>{' '}<Button type="button" size="sm" disabled={busy} onClick={retry}>Retry exact cross-site request</Button><label className="flex gap-2"><input type="checkbox" checked={clearConfirm} disabled={busy} onChange={e=>setClearConfirm(e.target.checked)}/> I investigated and understand clearing does not cancel the request.</label><Button type="button" size="sm" variant="secondary" disabled={busy||!clearConfirm} onClick={clear}>Clear cross-site retry evidence</Button></div>}
    <Button type="button" size="sm" variant="secondary" disabled={busy||!!pending||!!blocked||!ready} onClick={()=>void load(null)}>Load latest cross-site review</Button>
