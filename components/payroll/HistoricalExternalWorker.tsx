@@ -1,5 +1,6 @@
 'use client';
 import React,{useEffect,useRef,useState} from 'react';
+import {ChevronDown} from 'lucide-react';
 import {Button} from '@/components/ui/Button';
 import {Input} from '@/components/ui/Input';
 import {Select} from '@/components/ui/Select';
@@ -17,7 +18,7 @@ import {externalArguments,externalRowMatchesAttempt,parseExternalAttempt,parseEx
 export function HistoricalExternalWorker(){
  const {user,isFounder,assurance}=useAuth();const [open,setOpen]=useState(false);
  if(!user?.id||!isFounder||assurance!=='ready')return null;
- return <section className="rounded-2xl border border-surface-border bg-white p-4 text-xs sm:p-5"><button type="button" aria-expanded={open} onClick={()=>setOpen(v=>!v)} className="min-h-11 font-semibold text-navy">Experimental historical worker payroll evidence</button>{open&&<Contents key={`${user.id}:${assurance}`} userId={user.id}/>}</section>;
+ return <section className="overflow-hidden rounded-2xl border border-surface-border bg-white text-xs"><button type="button" aria-label="Experimental historical worker payroll evidence" aria-expanded={open} onClick={()=>setOpen(v=>!v)} className="flex min-h-11 w-full items-center justify-between gap-3 p-4 text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-brand sm:p-5"><span><span className="block text-sm font-semibold text-navy">Experimental historical worker payroll evidence</span><span className="mt-1 block text-xs text-ink-secondary">Record evidence of past external payroll separately</span></span><ChevronDown aria-hidden="true" className={`h-4 w-4 shrink-0 ${open?'rotate-180':''}`}/></button>{open&&<div className="px-4 pb-4 sm:px-5 sm:pb-5"><Contents key={`${user.id}:${assurance}`} userId={user.id}/></div>}</section>;
 }
 function Contents({userId}:{userId:string}){
  const storageKey=JSON.stringify(['historical-external-worker-v1',userId]);const alive=useRef(false),seq=useRef(0),busyRef=useRef(false),active=useRef(''),observed=useRef<{raw:string|null}|null>(null),stopSnapshot=useRef<{raw:string|null}|null>(null);

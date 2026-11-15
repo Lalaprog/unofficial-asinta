@@ -14,6 +14,7 @@ import {
 import { Button } from '@/components/ui/Button';
 import { FilterSummary } from '@/components/ui/FilterSummary';
 import { WorkspaceHeader } from '@/components/ui/WorkspaceHeader';
+import { WorkspaceJumpLinks } from '@/components/ui/WorkspaceJumpLinks';
 import { EmptyState } from '@/components/ui/EmptyState';
 import { WorkspaceFilters } from '@/components/ui/WorkspaceFilters';
 import { useToast } from '@/components/ui/Toast';
@@ -29,7 +30,7 @@ import { AttendanceMatrix } from '@/components/payroll/AttendanceMatrix';
 import { PayrollFoundationPanels } from '@/components/payroll/PayrollFoundationPanels';
 import { getManilaClock } from '@/lib/reminders/scheduler';
 import { workerPayrollPeriod } from '@/lib/payroll/periods';
-import { weeklyWorkerCutoverMode, weeklyWorkerReturnPreviewEnabled } from '@/lib/finance/featureAvailability';
+import { financeFoundationEnabled, weeklyWorkerCutoverMode, weeklyWorkerReturnPreviewEnabled } from '@/lib/finance/featureAvailability';
 
 export default function PayrollPage() {
   const { showToast } = useToast();
@@ -199,9 +200,15 @@ export default function PayrollPage() {
           {cutoverMode ? (weeklyWorkerReturnPreviewEnabled() ? 'Experimental weekly cutover mode: legacy payroll actions are hidden. Use the weekly voucher controls below, and reconcile existing vouchers before recording any external payment. This is not proof that the database or scheduler is ready.' : 'Experimental weekly cutover mode: legacy payroll actions are hidden, but the complete weekly voucher controls are not enabled. Do not record payroll until the configuration is reviewed.') : 'The current payroll generator uses the existing legacy rules. The requested weekly payroll and Bale rules are not yet implemented. Verify amounts against your records before approving or recording a payment.'}
         </div>
 
+        <WorkspaceJumpLinks label="Payroll page sections" links={[
+          ...(financeFoundationEnabled() ? [{href: '#payroll-workspaces', label: 'Payroll workspaces'}] : []),
+          {href: '#payroll-attendance', label: 'Attendance matrix'},
+          {href: '#payroll-vouchers', label: 'Find vouchers'},
+        ]} />
+
         <PayrollFoundationPanels />
 
-        <AttendanceMatrix start={periodStart} end={periodEnd} site={generateProjectId} setStart={setPeriodStart} setEnd={setPeriodEnd} setSite={setGenerateProjectId} projects={projects} />
+        <div id="payroll-attendance" tabIndex={-1} className="scroll-mt-24 focus-visible:outline focus-visible:outline-2 focus-visible:outline-brand"><AttendanceMatrix start={periodStart} end={periodEnd} site={generateProjectId} setStart={setPeriodStart} setEnd={setPeriodEnd} setSite={setGenerateProjectId} projects={projects} /></div>
 
         {/* Top Summary Cards */}
         <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 auto-rows-fr">
@@ -225,6 +232,7 @@ export default function PayrollPage() {
 
         <p className="text-xs leading-relaxed text-ink-secondary">Summary reflects the current filters and includes vouchers of all shown statuses. Deductions on draft or approved vouchers are not necessarily collected.</p>
 
+        <div id="payroll-vouchers" tabIndex={-1} className="scroll-mt-24 focus-visible:outline focus-visible:outline-2 focus-visible:outline-brand">
         <WorkspaceFilters title="Find a payroll voucher" summary={<FilterSummary count={filteredPayroll.length} itemName="payroll" active={Boolean(searchQuery) || projectFilter !== 'all' || statusFilter !== 'all'} onClear={() => { setSearchQuery(''); setProjectFilter('all'); setStatusFilter('all'); }} />}>
           <div className="flex flex-col sm:flex-row flex-wrap sm:items-end gap-3">
             <div className="w-full sm:w-80">
@@ -267,6 +275,7 @@ export default function PayrollPage() {
             </div>
           </div>
         </WorkspaceFilters>
+        </div>
 
         {/* Payroll Table */}
         <div data-page-guide="list" className="bg-white rounded-xl border border-surface-border overflow-hidden">

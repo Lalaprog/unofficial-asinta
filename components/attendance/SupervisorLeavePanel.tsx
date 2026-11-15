@@ -12,7 +12,7 @@ import {SUPERVISOR_LEAVE_CHANGED} from '@/lib/attendance/usePendingSupervisorLea
 
 export function SupervisorLeavePanel(){
  const [open,setOpen]=useState(false);
- return <section className="overflow-hidden rounded-2xl border border-surface-border bg-white"><button type="button" aria-expanded={open} onClick={()=>setOpen(v=>!v)} className="flex min-h-11 w-full items-center justify-between gap-3 p-4 text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-brand sm:p-5"><span><span className="block text-sm font-semibold text-navy">Supervisor leave requests</span><span className="mt-1 block text-xs text-ink-secondary">Request or review unpaid leave · payroll integration pending</span></span><ChevronDown aria-hidden="true" className={`h-4 w-4 shrink-0 ${open?'rotate-180':''}`}/></button>{open&&<Contents/>}</section>;
+ return <section className="overflow-hidden rounded-2xl border border-surface-border bg-white"><button type="button" aria-expanded={open} onClick={()=>setOpen(v=>!v)} className="flex min-h-11 w-full items-center justify-between gap-3 p-4 text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-brand sm:p-5"><span><span className="block text-sm font-semibold text-navy">Supervisor leave requests</span><span className="mt-1 block text-xs text-ink-secondary">Request or review unpaid leave · Founder decision required</span></span><ChevronDown aria-hidden="true" className={`h-4 w-4 shrink-0 ${open?'rotate-180':''}`}/></button>{open&&<Contents/>}</section>;
 }
 function Contents(){
  const {user,isFounder,isSupervisor,assurance}=useAuth();const key=JSON.stringify([user?.id,isFounder,isSupervisor,assurance]);

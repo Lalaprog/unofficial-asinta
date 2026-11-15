@@ -35,7 +35,7 @@ describe('unfinished finance foundation UI release gate', () => {
   it('mounts the panels only for an explicit true build value', () => {
     vi.stubEnv('NEXT_PUBLIC_FINANCE_FOUNDATION_PREVIEW','true');
     render(React.createElement(React.Fragment, null, React.createElement(PayrollFoundationPanels), React.createElement(SupervisorFoundationPanels)));
-    expect(mock.mounts.mock.calls.map(([name]) => name)).toEqual(['allowance','weekly','review','day','leave']);
+    expect(mock.mounts.mock.calls.map(([name]) => name)).toEqual(['weekly','allowance','review','day','leave']);
   });
   it('exposes both weekly write surfaces only when the full coordinated set is enabled', () => {
     const keys=['NEXT_PUBLIC_FINANCE_FOUNDATION_PREVIEW','NEXT_PUBLIC_WEEKLY_WORKER_CUTOVER_PREVIEW','NEXT_PUBLIC_WEEKLY_BALE_RELEASE_PREVIEW','NEXT_PUBLIC_WEEKLY_WORKER_ACTIONS_PREVIEW'];

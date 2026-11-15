@@ -1,5 +1,6 @@
 'use client';
 import React,{useEffect,useRef,useState} from 'react';
+import {ChevronDown} from 'lucide-react';
 import {Button} from '@/components/ui/Button';
 import {Input} from '@/components/ui/Input';
 import {Select} from '@/components/ui/Select';
@@ -21,7 +22,7 @@ import {parseCompanyEvidence,parseSupervisorLedgerAttempt,parseSupervisorLedgerR
 export function SupervisorPayrollLedger(){
  const {user,isFounder,assurance}=useAuth(),today=useManilaToday();const [open,setOpen]=useState(false);
  if(!user?.id||!isFounder||assurance!=='ready')return null;
- return <section className="rounded-2xl border border-surface-border bg-white p-4 text-xs sm:p-5"><button type="button" aria-expanded={open} className="min-h-11 font-semibold text-navy" onClick={()=>setOpen(v=>!v)}>Experimental Supervisor payroll ledger</button>{open&&<Contents key={`${user.id}:${today}`} actor={user.id} today={today}/>}</section>;
+ return <section className="overflow-hidden rounded-2xl border border-surface-border bg-white text-xs"><button type="button" aria-label="Experimental Supervisor payroll ledger" aria-expanded={open} className="flex min-h-11 w-full items-center justify-between gap-3 p-4 text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-brand sm:p-5" onClick={()=>setOpen(v=>!v)}><span><span className="block text-sm font-semibold text-navy">Experimental Supervisor payroll ledger</span><span className="mt-1 block text-xs text-ink-secondary">Review and record company-wide Supervisor payroll</span></span><ChevronDown aria-hidden="true" className={`h-4 w-4 shrink-0 ${open?'rotate-180':''}`}/></button>{open&&<div className="px-4 pb-4 sm:px-5 sm:pb-5"><Contents key={`${user.id}:${today}`} actor={user.id} today={today}/></div>}</section>;
 }
 function Contents({actor,today}:{actor:string;today:string}){
  const storageKey=JSON.stringify(['supervisor-payroll-ledger-v1',actor]);const alive=useRef(false),seq=useRef(0),busyRef=useRef(false),active=useRef(''),observedRetry=useRef<string|null|undefined>(undefined);

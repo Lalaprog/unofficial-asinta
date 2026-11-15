@@ -1,6 +1,7 @@
 'use client';
 import React,{useEffect,useRef,useState} from 'react';
 import {Button} from '@/components/ui/Button';
+import {WorkspaceJumpLinks} from '@/components/ui/WorkspaceJumpLinks';
 import {createClient} from '@/lib/supabase/client';
 import {costCents,estimateProjectCost,formatCostCents,parseCostSnapshot,type CostChoice,type CostSnapshot} from '@/lib/projects/projectCostReconciliation';
 import {historicalWorkerAttributionPreviewEnabled,historicalCostReviewPreviewEnabled,projectCostReviewLedgerPreviewEnabled,projectCostCorrectionPreviewEnabled,correctedProjectCostReviewPreviewEnabled} from '@/lib/finance/featureAvailability';
@@ -28,7 +29,15 @@ export function ProjectCostReconciliation({projectId,userId,reviewTarget=null}:{
  return <section className="rounded-xl border border-surface-border bg-white p-4 space-y-3 text-xs text-ink-secondary">
   <h4 ref={scratchTarget} tabIndex={-1} className="text-sm font-bold text-navy">Experimental project-cost review</h4>
   <p>This temporary scratchpad compares recorded expenses, paid worker allocations and confirmed rental links from one database snapshot. It saves nothing and does not prove payment or a final project cost.</p>
-  <p className="rounded-lg bg-status-warning-bg p-3">Review each expense for Bale, payroll or rental duplicates before choosing. A confirmed rental is already represented by its linked expense—never add it again. The AI Bale hint is not proof. Legacy or externally paid payroll, correction amounts, missing allocations and unrecorded expenses may be absent from the estimate. Matching voucher adjustment cases are shown separately, without allocating them. Check original records and other projects independently.</p>
+  <WorkspaceJumpLinks label="Cost review tools" links={[
+   {href:'#cost-scratch',label:'Scratch estimate'},
+   ...(historicalCostReviewPreviewEnabled() ? [{href:'#cost-historical-review',label:'Historical review'}] : []),
+   ...(historicalWorkerAttributionPreviewEnabled() ? [{href:'#cost-historical-evidence',label:'Historical evidence'}] : []),
+   ...(projectCostCorrectionPreviewEnabled() ? [{href:'#cost-correction-evidence',label:'Correction evidence'}] : []),
+   ...(correctedProjectCostReviewPreviewEnabled() ? [{href:'#cost-corrected-review',label:'Corrected review'}] : []),
+   ...(projectCostReviewLedgerPreviewEnabled() && !historicalCostReviewPreviewEnabled() ? [{href:'#cost-review-ledger',label:'Review history'}] : []),
+  ]} />
+  <p id="cost-scratch" tabIndex={-1} className="scroll-mt-24 rounded-lg bg-status-warning-bg p-3">Review each expense for Bale, payroll or rental duplicates before choosing. A confirmed rental is already represented by its linked expense—never add it again. The AI Bale hint is not proof. Legacy or externally paid payroll, correction amounts, missing allocations and unrecorded expenses may be absent from the estimate. Matching voucher adjustment cases are shown separately, without allocating them. Check original records and other projects independently.</p>
   <Button type="button" size="sm" variant="secondary" disabled={loading} onClick={load}>{snapshot?'Reload review snapshot':'Load review snapshot'}</Button>
   {loading&&<p role="status">Loading complete review snapshot…</p>}{error&&<p role="alert">{error}</p>}
   {snapshot&&<>
@@ -44,10 +53,10 @@ export function ProjectCostReconciliation({projectId,userId,reviewTarget=null}:{
    <label className="flex items-start gap-2"><input type="checkbox" checked={ack} disabled={!reviewed} onChange={e=>setAck(e.target.checked)}/> I reviewed every expense and paid allocation for possible duplicates and understand this is an incomplete, unsaved estimate.</label>
    {estimate&&<div aria-live="polite" className="rounded-lg border border-surface-border p-3 space-y-1"><p className="font-semibold text-navy">Temporary, incomplete estimate: {formatCostCents(estimate.total)}</p><p>Included recorded expenses {formatCostCents(estimate.expenses)} + paid worker gross allocations {formatCostCents(estimate.payroll)}.</p><p>Expenses excluded from this preview: {formatCostCents(estimate.excluded)}. Rentals are not added separately.</p><p>Not saved, posted, automatically reconciled, or a profit figure. Refresh and independently verify before use.</p></div>}
   </>}
-  {historicalCostReviewPreviewEnabled()&&<HistoricalCostReview key={`${scope}:combined`} projectId={projectId} userId={userId}/>}
-  {historicalWorkerAttributionPreviewEnabled()&&<HistoricalWorkerAttributions key={`${scope}:attributions`} projectId={projectId} userId={userId} />}
-  {projectCostCorrectionPreviewEnabled()&&<ProjectCorrectionEvidence key={`${scope}:corrections`} projectId={projectId} userId={userId} />}
-  {correctedProjectCostReviewPreviewEnabled()&&<CorrectedProjectCostReview key={`${scope}:corrected-review`} projectId={projectId} userId={userId} openFromOverview={reviewTarget==='corrected'} />}
-  {projectCostReviewLedgerPreviewEnabled()&&!historicalCostReviewPreviewEnabled()&&<ProjectCostReviewLedger key={`${scope}:ledger`} projectId={projectId} userId={userId} snapshot={snapshot} raw={snapshot?snapshotEvidence:null} choices={choices} reasons={reasons} />}
+  {historicalCostReviewPreviewEnabled()&&<div id="cost-historical-review" tabIndex={-1} className="scroll-mt-24"><HistoricalCostReview key={`${scope}:combined`} projectId={projectId} userId={userId}/></div>}
+  {historicalWorkerAttributionPreviewEnabled()&&<div id="cost-historical-evidence" tabIndex={-1} className="scroll-mt-24"><HistoricalWorkerAttributions key={`${scope}:attributions`} projectId={projectId} userId={userId} /></div>}
+  {projectCostCorrectionPreviewEnabled()&&<div id="cost-correction-evidence" tabIndex={-1} className="scroll-mt-24"><ProjectCorrectionEvidence key={`${scope}:corrections`} projectId={projectId} userId={userId} /></div>}
+  {correctedProjectCostReviewPreviewEnabled()&&<div id="cost-corrected-review" tabIndex={-1} className="scroll-mt-24"><CorrectedProjectCostReview key={`${scope}:corrected-review`} projectId={projectId} userId={userId} openFromOverview={reviewTarget==='corrected'} /></div>}
+  {projectCostReviewLedgerPreviewEnabled()&&!historicalCostReviewPreviewEnabled()&&<div id="cost-review-ledger" tabIndex={-1} className="scroll-mt-24"><ProjectCostReviewLedger key={`${scope}:ledger`} projectId={projectId} userId={userId} snapshot={snapshot} raw={snapshot?snapshotEvidence:null} choices={choices} reasons={reasons} /></div>}
  </section>;
 }

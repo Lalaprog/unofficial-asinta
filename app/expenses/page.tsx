@@ -32,6 +32,7 @@ import {
 import { Button } from '@/components/ui/Button';
 import { FilterSummary } from '@/components/ui/FilterSummary';
 import { WorkspaceHeader } from '@/components/ui/WorkspaceHeader';
+import { WorkspaceJumpLinks } from '@/components/ui/WorkspaceJumpLinks';
 import { WorkspaceFilters } from '@/components/ui/WorkspaceFilters';
 import { Badge } from '@/components/ui/Badge';
 import { Input, Textarea } from '@/components/ui/Input';
@@ -944,14 +945,19 @@ export default function ExpensesPage() {
         {savedDraft && <div className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-brand/20 bg-surface-inset p-4"><div><p className="text-sm font-bold text-navy">Saved expense draft</p><p className="text-xs text-ink-secondary">{expenses.some(expense => expense.id === savedDraft.draft_id) ? 'This draft matches a recorded expense. Check the ledger before discarding it.' : 'Review before recording. Saving a draft does not add an expense.'}</p></div><div className="flex flex-wrap gap-2"><Button type="button" size="sm" variant="secondary" isLoading={isOpeningDraft} onClick={() => void resumeDraft()}>Continue draft</Button><Button type="button" size="sm" variant="ghost" onClick={() => setShowDiscardDraft(true)}>Discard draft</Button></div></div>}
         {hasUnfinishedEntry && (!savedDraft || activeDraftId !== savedDraft.draft_id) && <div className="rounded-xl border border-brand/20 bg-surface-inset p-4 text-sm text-ink-secondary">You have an unfinished entry on this page. <button type="button" onClick={() => setIsAddModalOpen(true)} className="font-semibold text-navy underline">Continue entry</button>. It is not saved until you choose Save draft or confirm the expense.</div>}
 
-        {isFounder && assurance === 'ready' && user && <ReceiptInbox key={user.id} userId={user.id} canUse={draftLoadState === 'ready' && isLoaded && !hasUnfinishedEntry && !savedDraft && !isAddModalOpen && !isDrafting && !isSubmitting} canScan={draftLoadState === 'ready' && isLoaded && !hasUnfinishedEntry && !savedDraft && !isAddModalOpen && !isDrafting && !isSubmitting && receiptRetrySeconds === 0} onView={path => void openReceiptPreview(path)} onUse={item => startInboxExpense(item, false)} onScan={item => startInboxExpense(item, true)} />}
+        <WorkspaceJumpLinks label="Expense page sections" links={[
+          ...(isFounder && assurance === 'ready' && user ? [{href: '#expense-receipts', label: 'Saved receipts'}] : []),
+          {href: '#expense-draft', label: 'Draft an expense'},
+          {href: '#expense-list', label: 'Find expenses'},
+        ]} />
+        {isFounder && assurance === 'ready' && user && <div id="expense-receipts" tabIndex={-1} className="scroll-mt-24 focus-visible:outline focus-visible:outline-2 focus-visible:outline-brand"><ReceiptInbox key={user.id} userId={user.id} canUse={draftLoadState === 'ready' && isLoaded && !hasUnfinishedEntry && !savedDraft && !isAddModalOpen && !isDrafting && !isSubmitting} canScan={draftLoadState === 'ready' && isLoaded && !hasUnfinishedEntry && !savedDraft && !isAddModalOpen && !isDrafting && !isSubmitting && receiptRetrySeconds === 0} onView={path => void openReceiptPreview(path)} onUse={item => startInboxExpense(item, false)} onScan={item => startInboxExpense(item, true)} /></div>}
 
         {/* ------------------------------------------------------------------
             Draft from text or a receipt photo.
             The model extracts; the Founder confirms in the modal below. Nothing
             written here reaches the ledger.
            ------------------------------------------------------------------ */}
-        <div data-page-guide="draft" className="rounded-xl border border-surface-border bg-white p-4 sm:p-5 space-y-3">
+        <div id="expense-draft" tabIndex={-1} data-page-guide="draft" className="scroll-mt-24 rounded-xl border border-surface-border bg-white p-4 sm:p-5 space-y-3 focus-visible:outline focus-visible:outline-2 focus-visible:outline-brand">
           <div className="flex flex-wrap items-center justify-between gap-2">
             <div className="flex items-center gap-2">
               <Sparkles className="h-4 w-4 text-navy" />
@@ -1081,6 +1087,7 @@ export default function ExpensesPage() {
           </div>
         )}
 
+        <div id="expense-list" tabIndex={-1} className="scroll-mt-24 focus-visible:outline focus-visible:outline-2 focus-visible:outline-brand">
         <WorkspaceFilters
           title="Find an expense"
           summary={<FilterSummary count={filteredExpenses.length} itemName="expense" active={Boolean(searchQuery) || categoryFilter !== 'all' || projectFilter !== 'all'} onClear={() => { setSearchQuery(''); setCategoryFilter('all'); setProjectFilter('all'); }} />}
@@ -1123,6 +1130,7 @@ export default function ExpensesPage() {
             </Select>
           </div>
         </WorkspaceFilters>
+        </div>
 
         {/* Expenses List */}
         <div data-page-guide="list" className="bg-white rounded-xl border border-surface-border overflow-hidden">
