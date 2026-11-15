@@ -232,6 +232,11 @@ export const AppShell: React.FC<AppShellProps> = ({ children, requireFounder = f
       <Suspense fallback={null}>
         <MobileNav />
       </Suspense>
+      {process.env.NEXT_PUBLIC_DEVELOPMENT_SITE === 'true' && (
+        <div role="status" className="w-full bg-status-warning-bg px-4 py-2 text-center text-xs font-semibold text-status-warning">
+          Development system — use test data only. Finance workflows still require signed-in testing and a verified backup before real use.
+        </div>
+      )}
 
       {loadError && (
         <div className="w-full px-4 sm:px-6 lg:px-8 pt-4">
