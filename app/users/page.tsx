@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useRef, useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import { AppShell } from '@/components/layout/AppShell';
 import { useDataStore } from '@/lib/data/store';
 import { useAuth } from '@/lib/auth/authContext';
@@ -30,12 +30,18 @@ import { generateTemporaryPassword, validatePasswordStrength } from '@/lib/users
 import { WorkspaceHeader } from '@/components/ui/WorkspaceHeader';
 import { WorkspaceFilters } from '@/components/ui/WorkspaceFilters';
 import { SupervisorPortrait } from '@/components/users/SupervisorPortrait';
+import { createClient } from '@/lib/supabase/client';
+import { loadAccountEditSnapshot } from '@/lib/users/accountEditSnapshot';
 
 export default function UsersPage() {
   const { user: currentUser } = useAuth();
   const { users, workers, projects, projectSupervisors, refresh } = useDataStore();
   const { showToast } = useToast();
   const mutationLock = useRef(false);
+  const currentActor = useRef(currentUser?.id);
+  currentActor.current = currentUser?.id;
+  const mounted = useRef(true);
+  useEffect(() => { mounted.current = true; return () => { mounted.current = false; }; }, []);
   const [actionWarnings, setActionWarnings] = useState<string[]>([]);
 
   const [searchQuery, setSearchQuery] = useState('');
@@ -76,6 +82,9 @@ export default function UsersPage() {
   const [editContactNumber, setEditContactNumber] = useState('');
   const [editResetPassword, setEditResetPassword] = useState('');
   const [isUpdating, setIsUpdating] = useState(false);
+  const [loadingAccountId, setLoadingAccountId] = useState<string | null>(null);
+  const loadingAccountRef = useRef(false);
+  const [editWorkerRemoved, setEditWorkerRemoved] = useState(false);
   const [confirmingDeleteInModal, setConfirmingDeleteInModal] = useState(false);
   const [isDeleting, setIsDeleting] = useState(false);
 
@@ -166,26 +175,31 @@ export default function UsersPage() {
     }
   };
 
-  const openEditModal = (u: User) => {
-    const currentAssigned = projectSupervisors
-      .filter((ps) => ps.supervisor_id === u.id)
-      .map((ps) => ps.project_id);
-    const linkedWorker = workers.find((w) => w.id === u.id);
-
-    setEditingUser(u);
-    setEditName(u.name);
-    setEditRole(u.role);
-    setEditAssignedProjects(currentAssigned);
-    setEditIncludeInPayroll(Boolean(linkedWorker?.active));
-    setEditPayRate(String(linkedWorker?.pay_rate ?? 1200));
-    setEditPayRateType(linkedWorker?.pay_rate_type === 'hourly' ? 'hourly' : 'daily');
-    setEditContactNumber(
-      linkedWorker?.contact_number && linkedWorker.contact_number !== '—'
-        ? linkedWorker.contact_number
-        : ''
-    );
-    setEditResetPassword('');
-    setConfirmingDeleteInModal(false);
+  const openEditModal = async (u: User) => {
+    if (loadingAccountRef.current || !currentActor.current) return;
+    const actor = currentActor.current;
+    loadingAccountRef.current = true;
+    setLoadingAccountId(u.id);
+    try {
+      const {user, assignedProjectIds, worker} = await loadAccountEditSnapshot(createClient(), u.id);
+      if (!mounted.current || currentActor.current !== actor) return;
+      setEditName(user.name);
+      setEditRole(user.role);
+      setEditAssignedProjects(assignedProjectIds);
+      setEditIncludeInPayroll(Boolean(worker?.active));
+      setEditPayRate(String(worker?.pay_rate ?? 1200));
+      setEditPayRateType(worker?.pay_rate_type === 'hourly' ? 'hourly' : 'daily');
+      setEditContactNumber(worker?.contact_number && worker.contact_number !== '—' ? worker.contact_number : '');
+      setEditWorkerRemoved(Boolean(worker?.removed_at));
+      setEditResetPassword('');
+      setConfirmingDeleteInModal(false);
+      setEditingUser(user);
+    } catch {
+      if (mounted.current && currentActor.current === actor) showToast('error', 'Could not verify the account, workforce link and assigned sites. No changes were made; retry before editing.');
+    } finally {
+      loadingAccountRef.current = false;
+      if (mounted.current) setLoadingAccountId(null);
+    }
   };
 
   const handleEditSubmit = async (e: React.FormEvent) => {
@@ -496,10 +510,11 @@ export default function UsersPage() {
                     type="button"
                     variant="secondary"
                     size="sm"
-                    onClick={() => openEditModal(u)}
+                    onClick={() => void openEditModal(u)}
+                    disabled={loadingAccountId !== null}
                     leftIcon={<Settings2 className="w-3.5 h-3.5" />}
                   >
-                    Manage
+                    {loadingAccountId === u.id ? 'Checking…' : 'Manage'}
                   </Button>
                 </div>
               </div>
@@ -747,6 +762,7 @@ export default function UsersPage() {
                     <label className="block text-xs font-semibold text-ink-secondary">
                       Assigned Project Sites ({editAssignedProjects.length} selected)
                     </label>
+                    {editAssignedProjects.some(projectId => !projects.some(project => project.id === projectId)) && <p role="alert" className="text-status-warning">Some assigned sites are not in the loaded project list. They remain selected; refresh the page to review them before changing assignments.</p>}
                     <div className="max-h-36 overflow-y-auto p-3 rounded-2xl bg-surface-inset border border-surface-border space-y-2">
                       {projects.map((proj) => {
                         const checked = editAssignedProjects.includes(proj.id);
@@ -776,7 +792,7 @@ export default function UsersPage() {
                       <input
                         type="checkbox"
                         checked={editIncludeInPayroll}
-                        disabled={Boolean(editingUser && workers.find((worker) => worker.id === editingUser.id)?.removed_at)}
+                        disabled={editWorkerRemoved}
                         onChange={(e) => setEditIncludeInPayroll(e.target.checked)}
                         className="mt-0.5 rounded border-surface-border text-navy focus:ring-navy"
                       />
@@ -790,7 +806,7 @@ export default function UsersPage() {
                       </div>
                     </label>
 
-                    {editingUser && workers.find((worker) => worker.id === editingUser.id)?.removed_at && (
+                    {editWorkerRemoved && (
                       <p className="text-[11px] text-status-warning">This workforce profile was removed. Restore it in Workforce before including this Supervisor in payroll. The login and project access remain separate.</p>
                     )}
                     {editIncludeInPayroll && (
