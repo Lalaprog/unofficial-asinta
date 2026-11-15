@@ -35,7 +35,8 @@ import { useExpenseTotals } from '@/lib/projects/useExpenseTotals';
 import { ownedEquipmentPreviewEnabled } from '@/lib/tools/ownedEquipment';
 import { ProjectSiteEquipment } from '@/components/projects/ProjectSiteEquipment';
 import { ProjectPaidPayrollSummary } from '@/components/projects/ProjectPaidPayrollSummary';
-import { projectCostReconciliationPreviewEnabled } from '@/lib/finance/featureAvailability';
+import { ProjectReviewedCostSummary } from '@/components/projects/ProjectReviewedCostSummary';
+import { correctedProjectCostReviewPreviewEnabled, projectCostReconciliationPreviewEnabled } from '@/lib/finance/featureAvailability';
 
 export default function ProjectDetailPage() {
   const params = useParams();
@@ -292,6 +293,7 @@ export default function ProjectDetailPage() {
 
             {isFounder && expenseTotals.status === 'error' && <div role="alert" className="text-xs text-status-danger">Expense totals could not be loaded. <Button type="button" variant="secondary" size="sm" onClick={expenseTotals.refresh}>Retry expense totals</Button></div>}
             {isFounder && <p className="text-xs text-ink-secondary">Expense totals cover recorded expense entries only; payroll and rentals are not yet integrated automatically. <Button type="button" variant="secondary" size="sm" onClick={expenseTotals.refresh}>Refresh expense totals</Button></p>}
+            {isFounder && assurance === 'ready' && user?.id && correctedProjectCostReviewPreviewEnabled() && <ProjectReviewedCostSummary projectId={id} userId={user.id} onReview={()=>setActiveTab('expenses')} />}
             {isFounder && assurance === 'ready' && user?.id && projectCostReconciliationPreviewEnabled() && <ProjectPaidPayrollSummary projectId={id} userId={user.id} onReview={()=>setActiveTab('expenses')} />}
 
             {/* Project Site Details */}

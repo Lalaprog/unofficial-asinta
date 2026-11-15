@@ -67,6 +67,13 @@ describe('project roles and workforce logs', () => {
     mocks.assurance='ready';view.rerender(React.createElement(ProjectDetailPage));expect(screen.getByRole('region',{name:'Paid worker payroll for this site'})).toBeTruthy();expect(mocks.rpc.mock.calls.filter(([name])=>name==='project_cost_reconciliation_preview')).toHaveLength(0);
     vi.stubEnv('NEXT_PUBLIC_PROJECT_COST_RECONCILIATION_PREVIEW','false');view.rerender(React.createElement(ProjectDetailPage));expect(screen.queryByRole('region',{name:'Paid worker payroll for this site'})).toBeNull();
   });
+  it('shows the reviewed cost only for an assured Founder with the correction review gate', () => {
+    vi.stubEnv('NEXT_PUBLIC_FINANCE_FOUNDATION_PREVIEW','true');vi.stubEnv('NEXT_PUBLIC_PROJECT_COST_CORRECTION_PREVIEW','true');vi.stubEnv('NEXT_PUBLIC_CORRECTED_PROJECT_COST_REVIEW_PREVIEW','true');
+    const view=render(React.createElement(ProjectDetailPage));expect(screen.queryByRole('region',{name:'Reviewed project cost'})).toBeNull();
+    mocks.founder=true;mocks.assurance='checking';view.rerender(React.createElement(ProjectDetailPage));expect(screen.queryByRole('region',{name:'Reviewed project cost'})).toBeNull();
+    mocks.assurance='ready';view.rerender(React.createElement(ProjectDetailPage));expect(screen.getByRole('region',{name:'Reviewed project cost'})).toBeTruthy();
+    vi.stubEnv('NEXT_PUBLIC_CORRECTED_PROJECT_COST_REVIEW_PREVIEW','false');view.rerender(React.createElement(ProjectDetailPage));expect(screen.queryByRole('region',{name:'Reviewed project cost'})).toBeNull();
+  });
   it('keeps Founder client information and financial tools', () => {
     mocks.founder = true;
     render(React.createElement(ProjectDetailPage));
