@@ -31,7 +31,7 @@ import { WorkspaceHeader } from '@/components/ui/WorkspaceHeader';
 import { WorkspaceFilters } from '@/components/ui/WorkspaceFilters';
 import { SupervisorPortrait } from '@/components/users/SupervisorPortrait';
 import { createClient } from '@/lib/supabase/client';
-import { loadAccountEditSnapshot } from '@/lib/users/accountEditSnapshot';
+import { loadAccountEditSnapshot, sameAccountEditSnapshot, type AccountEditSnapshot } from '@/lib/users/accountEditSnapshot';
 
 export default function UsersPage() {
   const { user: currentUser } = useAuth();
@@ -84,6 +84,7 @@ export default function UsersPage() {
   const [isUpdating, setIsUpdating] = useState(false);
   const [loadingAccountId, setLoadingAccountId] = useState<string | null>(null);
   const loadingAccountRef = useRef(false);
+  const editBaseline = useRef<{actor:string;snapshot:AccountEditSnapshot}|null>(null);
   const [editWorkerRemoved, setEditWorkerRemoved] = useState(false);
   const [confirmingDeleteInModal, setConfirmingDeleteInModal] = useState(false);
   const [isDeleting, setIsDeleting] = useState(false);
@@ -181,8 +182,10 @@ export default function UsersPage() {
     loadingAccountRef.current = true;
     setLoadingAccountId(u.id);
     try {
-      const {user, assignedProjectIds, worker} = await loadAccountEditSnapshot(createClient(), u.id);
+      const snapshot = await loadAccountEditSnapshot(createClient(), u.id);
       if (!mounted.current || currentActor.current !== actor) return;
+      const {user, assignedProjectIds, worker} = snapshot;
+      editBaseline.current = {actor,snapshot};
       setEditName(user.name);
       setEditRole(user.role);
       setEditAssignedProjects(assignedProjectIds);
@@ -210,9 +213,26 @@ export default function UsersPage() {
       const check = validatePasswordStrength(editResetPassword.trim());
       if (!check.valid) { showToast('error', check.error || 'Temporary password is too weak.'); return; }
     }
+    const baseline = editBaseline.current;
+    if (!baseline || baseline.actor !== currentActor.current || baseline.snapshot.user.id !== editingUser.id) {
+      showToast('error', 'The account or signed-in user changed. Close and reopen the editor before saving.');
+      return;
+    }
     mutationLock.current = true;
     setIsUpdating(true);
     try {
+      let latest: AccountEditSnapshot;
+      try {
+        latest = await loadAccountEditSnapshot(createClient(), editingUser.id);
+      } catch {
+        if (mounted.current && currentActor.current === baseline.actor) showToast('error', 'Could not recheck this account. No changes were sent; try again.');
+        return;
+      }
+      if (!mounted.current || currentActor.current !== baseline.actor) return;
+      if (!sameAccountEditSnapshot(baseline.snapshot, latest)) {
+        showToast('error', 'This account, workforce profile or assigned sites changed while editing. No changes were sent. Close and reopen the editor to review the latest details.');
+        return;
+      }
       const response = await fetch('/api/users', {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },

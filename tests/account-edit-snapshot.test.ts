@@ -1,6 +1,6 @@
 import {describe,expect,it,vi} from 'vitest';
 import type {SupabaseClient} from '@supabase/supabase-js';
-import {loadAccountEditSnapshot} from '@/lib/users/accountEditSnapshot';
+import {loadAccountEditSnapshot,sameAccountEditSnapshot} from '@/lib/users/accountEditSnapshot';
 
 const user={id:'sup',name:'Updated Supervisor',email:'test@example.invalid',role:'supervisor',created_at:'2026-01-01T00:00:00Z'};
 const worker={id:'sup',active:true,pay_rate:'600.00',pay_rate_type:'daily',contact_number:'—',removed_at:null};
@@ -15,6 +15,21 @@ describe('targeted team-account edit snapshot',()=>{
  it('loads the current profile, linked worker and all counted assignments',async()=>{
   const {client,from}=clientFor();const result=await loadAccountEditSnapshot(client,'sup');
   expect(result).toEqual({user,worker,assignedProjectIds:['a','b']});expect(from.mock.calls.map(call=>call[0])).toEqual(['users','workers','project_supervisors']);
+ });
+ it('detects changes in every editable source while ignoring site ordering and equivalent numeric rates',async()=>{
+  const baseline=await loadAccountEditSnapshot(clientFor().client,'sup');
+  expect(sameAccountEditSnapshot(baseline,{...baseline,assignedProjectIds:['b','a'],worker:{...baseline.worker!,pay_rate:600}})).toBe(true);
+  for(const other of [
+   {...baseline,user:{...baseline.user,name:'Different'}},
+   {...baseline,user:{...baseline.user,role:'founder' as const}},
+   {...baseline,worker:null},
+   {...baseline,worker:{...baseline.worker!,active:false}},
+   {...baseline,worker:{...baseline.worker!,pay_rate:601}},
+   {...baseline,worker:{...baseline.worker!,pay_rate_type:'hourly' as const}},
+   {...baseline,worker:{...baseline.worker!,contact_number:'new'}},
+   {...baseline,worker:{...baseline.worker!,removed_at:'2026-11-01'}},
+   {...baseline,assignedProjectIds:['a','c']},
+  ]) expect(sameAccountEditSnapshot(baseline,other)).toBe(false);
  });
  it('allows a genuinely missing linked profile',async()=>{
   const {client}=clientFor({worker:null,rows:[],count:0});expect((await loadAccountEditSnapshot(client,'sup')).worker).toBeNull();

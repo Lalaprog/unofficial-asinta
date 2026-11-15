@@ -1,5 +1,15 @@
 import type {SupabaseClient} from '@supabase/supabase-js';
 
+export type AccountEditSnapshot = Awaited<ReturnType<typeof loadAccountEditSnapshot>>;
+
+/** Compare fields the account editor can overwrite. This detects already
+ * committed changes, but independent reads and the later write are not atomic. */
+export function sameAccountEditSnapshot(a:AccountEditSnapshot,b:AccountEditSnapshot):boolean {
+ const profile=(s:AccountEditSnapshot)=>[s.user.id,s.user.name,s.user.email,s.user.role,s.user.created_at];
+ const worker=(s:AccountEditSnapshot)=>s.worker===null?null:[s.worker.id,s.worker.active,Number(s.worker.pay_rate),s.worker.pay_rate_type,s.worker.contact_number,s.worker.removed_at];
+ return JSON.stringify([profile(a),worker(a),[...a.assignedProjectIds].sort()])===JSON.stringify([profile(b),worker(b),[...b.assignedProjectIds].sort()]);
+}
+
 /** Read the specific account's current linkage, not a possibly truncated shared list.
  * The two reads are not transactional and do not lock later concurrent changes. */
 export async function loadAccountEditSnapshot(client:SupabaseClient,userId:string) {
