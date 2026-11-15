@@ -35,6 +35,14 @@ describe('historical attribution case-binding held candidate',()=>{
    await db.exec('ROLLBACK');expect((await db.query<{v:string|null}>("SELECT to_regclass('public.historical_attribution_case_bindings')::text v")).rows[0].v).toBeNull();
   }finally{await db.close();}
  },30000);
+ it('rejects a drifted historical source lookup before creating evidence objects',async()=>{
+  const db=new PGlite();try{
+   await db.exec(baseFixture);for(const n of ['supervisor_table_foundation','supervisor_rpc_rollout','supervisor_payroll_preview','historical_external_worker_payroll','supervisor_payroll_ledger','paid_period_assertion_adjustments','historical_worker_project_attribution'])await db.exec(`BEGIN;${sql(n)} COMMIT;`);
+   await db.exec("CREATE OR REPLACE FUNCTION public.historical_external_worker_lookup(p_request uuid) RETURNS jsonb LANGUAGE sql STABLE SECURITY DEFINER SET search_path='' AS $$SELECT '{}'::jsonb$$");
+   await expect(db.exec(`BEGIN;SET LOCAL app.historical_case_binding_candidate='synthetic-only';${sql('historical_attribution_case_binding')} COMMIT;`)).rejects.toThrow(/dependency changed/);
+   await db.exec('ROLLBACK');expect((await db.query<{v:string|null}>("SELECT to_regclass('public.historical_attribution_case_bindings')::text v")).rows[0].v).toBeNull();
+  }finally{await db.close();}
+ },30000);
  it('rolls back candidate installation if inherited grants expose the evidence table',async()=>{
   const db=new PGlite();try{
    await db.exec(baseFixture);

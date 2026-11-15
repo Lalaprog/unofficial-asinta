@@ -1,6 +1,6 @@
 -- HELD: ISOLATED SYNTHETIC REHEARSAL ONLY. NOT AN INSTALLER.
 -- This must be executed as ONE transaction; all steps roll back together.
--- Source pins: supabase/drafts/historical_attribution_case_binding.sql=3d6b9dadca381737489c7a8a5e488cdc55e71565120a4d8697c939d596914a37 supabase/drafts/historical_attribution_write_barrier.sql=44907d0e8b415027ec0caf711f00db1fb09c4e4d898b0eee92ff74cdf46e0c52
+-- Source pins: supabase/drafts/historical_attribution_case_binding.sql=7ff4dd7165efeb165a9b491d648a55d116b46eefef1fa0a81baec32b368f7a81 supabase/drafts/historical_attribution_write_barrier.sql=44907d0e8b415027ec0caf711f00db1fb09c4e4d898b0eee92ff74cdf46e0c52
 -- Existing unbound rows halt the exercise; nothing is silently upgraded.
 -- Owners, privileged/dynamic writers, deployment, recovery, real Auth and
 -- full dependency/lock compatibility remain unverified. Do not run on shared DBs.
@@ -40,13 +40,19 @@ DO $hold$ BEGIN
  -- Selected dependencies must be the exact bodies whose ordering and replay
  -- behavior this candidate exercises. This is not an exhaustive writer audit.
  IF EXISTS (SELECT 1 FROM (VALUES
-  ('public.record_historical_worker_attribution(uuid,uuid,jsonb,jsonb,text,boolean)','77d94425c8d1529a1ac25a6b4ba8fa0000586b3a2db88559b993064ed14b7403','v'),
-  ('public.historical_worker_attribution(uuid)','2bb4d81bf395add1e1df773a560575e95b0fd15eaa727c202f4e4c281e03779d','s'),
-  ('public.paid_period_assertion_case_list(text,uuid)','ca15174233d43ffac3f4ca821a1f1d3279a2a58026186bad54492c8e9c060583','s'),
-  ('public.open_paid_period_assertion_case(uuid,text,uuid,jsonb,numeric,text)','4b1ff44d02fa17a5ea8fc359288b84e4851f32e1924aa06145cc8089aeb49ce8','v'),
-  ('public.resolve_paid_period_assertion_case(uuid,text,date,text,boolean)','b16ee3003b157c2952613c85e7c7559389e4f3c8c686afcbdee15df92785742e','v')
- ) AS expected(signature,sha,volatility) LEFT JOIN pg_catalog.pg_proc p ON p.oid=to_regprocedure(expected.signature)
- WHERE p.oid IS NULL OR NOT p.prosecdef OR p.provolatile::text<>expected.volatility OR pg_catalog.pg_get_userbyid(p.proowner)<>'postgres' OR NOT coalesce(p.proconfig @> ARRAY['search_path=""'],false) OR pg_catalog.encode(pg_catalog.sha256(pg_catalog.convert_to(p.prosrc,'UTF8')),'hex')<>expected.sha) THEN RAISE EXCEPTION 'Historical case-binding dependency changed'; END IF;
+  ('public.record_historical_worker_attribution(uuid,uuid,jsonb,jsonb,text,boolean)','77d94425c8d1529a1ac25a6b4ba8fa0000586b3a2db88559b993064ed14b7403','v',true),
+  ('public.historical_worker_attribution(uuid)','2bb4d81bf395add1e1df773a560575e95b0fd15eaa727c202f4e4c281e03779d','s',true),
+  ('public.paid_period_assertion_case_list(text,uuid)','ca15174233d43ffac3f4ca821a1f1d3279a2a58026186bad54492c8e9c060583','s',true),
+  ('public.open_paid_period_assertion_case(uuid,text,uuid,jsonb,numeric,text)','4b1ff44d02fa17a5ea8fc359288b84e4851f32e1924aa06145cc8089aeb49ce8','v',true),
+  ('public.resolve_paid_period_assertion_case(uuid,text,date,text,boolean)','b16ee3003b157c2952613c85e7c7559389e4f3c8c686afcbdee15df92785742e','v',true),
+  ('public.historical_external_worker_lookup(uuid)','970d57146aab869178c6ba88905f5472620d8dcac6ca0bcfde349b654cebb4fa','s',true),
+  ('public.paid_period_assertion_snapshot(text,uuid)','4f6526d6abb2137c9da2669b2af40d452b05efee6badab62a353950b236ff0b7','s',true),
+  ('public.historical_worker_attribution_projects()','7fda05e64229056e34d5021790c4fe4fb396d9b5ca98857c3b6f98fb64d81075','s',true),
+  ('public.guard_historical_worker_attribution_immutable()','01e420ed7d6ed5bbb018ecc2ed1347d70866cf63b99e41d138ce52186d5beac0','v',false),
+  ('public.guard_historical_external_worker_immutable()','36dc33307bb6c2544761815ea33360d89dc73345b07761eff93106a8a0a04f2d','v',false),
+  ('public.guard_paid_period_assertion_case_immutable()','d42ee9c37ab859e2b5b8ea99dccf00d189de2a0ff34e361ae0c6dc24ddf6b2f7','v',false)
+ ) AS expected(signature,sha,volatility,definer) LEFT JOIN pg_catalog.pg_proc p ON p.oid=to_regprocedure(expected.signature)
+ WHERE p.oid IS NULL OR p.prosecdef IS DISTINCT FROM expected.definer OR p.provolatile::text<>expected.volatility OR pg_catalog.pg_get_userbyid(p.proowner)<>'postgres' OR NOT coalesce(p.proconfig @> ARRAY['search_path=""'],false) OR pg_catalog.encode(pg_catalog.sha256(pg_catalog.convert_to(p.prosrc,'UTF8')),'hex')<>expected.sha) THEN RAISE EXCEPTION 'Historical case-binding dependency changed'; END IF;
 END $hold$;
 
 CREATE TABLE public.historical_attribution_case_bindings (

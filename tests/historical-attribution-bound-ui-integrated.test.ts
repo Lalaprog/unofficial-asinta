@@ -13,6 +13,22 @@ const founder='00000000-0000-0000-0000-000000000001',worker='00000000-0000-0000-
 const id=(n:number)=>`81000000-0000-4000-8000-${String(n).padStart(12,'0')}`;
 afterEach(()=>{cleanup();sessionStorage.clear();vi.restoreAllMocks();});
 describe('held case-bound attribution UI → synthetic SQL',()=>{
+ it('inspects an old-mode committed attribution without upgrading or clearing the saved retry',async()=>{
+  const db=new PGlite();try{
+   await db.exec(baseFixture);for(const name of ['supervisor_table_foundation','supervisor_rpc_rollout','supervisor_payroll_preview','historical_external_worker_payroll','supervisor_payroll_ledger','paid_period_assertion_adjustments','historical_worker_project_attribution'])await db.exec(`BEGIN;${readFileSync(`supabase/drafts/${name}.sql`,'utf8')} COMMIT;`);
+   await db.exec(`SET ROLE authenticated;SET test.uid='${founder}';SET test.assurance='yes'`);
+   const w=(await db.query<{v:{worker:unknown}}>("SELECT public.historical_external_worker_review($1,'2024-11-03') v",[worker])).rows[0].v.worker;
+   await db.query("SELECT public.record_historical_external_worker_payroll($1,$2,'2024-11-03','2024-11-09',600,100,0,500,'Old ledger',$3,true)",[id(1),worker,JSON.stringify(w)]);
+   const source=(await db.query<{v:ExternalRow}>('SELECT public.historical_external_worker_lookup($1) v',[id(1)])).rows[0].v;
+   const split=[{project_id:site,gross:'600.00'}],attempt={id:id(3),actor:founder,source,split,note:'Reviewed ledger'};
+   await db.query("SELECT public.record_historical_worker_attribution($1,$2,$3::jsonb,$4::jsonb,$5,true)",[id(3),id(1),JSON.stringify(source),JSON.stringify(split),attempt.note]);
+   await db.exec(`RESET ROLE;BEGIN;SET LOCAL app.historical_case_binding_candidate='synthetic-only';${readFileSync('supabase/drafts/historical_attribution_case_binding.sql','utf8')} COMMIT;SET ROLE authenticated`);
+   const key=JSON.stringify(['historical-worker-attribution-v1',founder,source.request_id]),saved=JSON.stringify(attempt);sessionStorage.setItem(key,saved);
+   mock.rpc.mockReset().mockImplementation(async(name:string,args:Record<string,unknown>={})=>{if(name!=='historical_worker_attribution')throw Error('Unexpected RPC');return {data:(await db.query<{v:unknown}>('SELECT public.historical_worker_attribution($1) v',[args.p_source])).rows[0].v,error:null};});
+   render(React.createElement(HistoricalWorkerAttribution,{actor:founder,source,caseBinding:true}));fireEvent.click(screen.getByRole('button',{name:'Project attribution for this external week'}));fireEvent.click(screen.getByRole('button',{name:'Check other-mode attribution without changing retry'}));await screen.findByText(/saved legacy attribution matches/);
+   expect(sessionStorage.getItem(key)).toBe(saved);await db.exec('RESET ROLE');expect((await db.query<{n:number}>('SELECT count(*)::int n FROM public.historical_attribution_case_bindings')).rows[0].n).toBe(0);expect((await db.query<{n:number}>('SELECT count(*)::int n FROM public.historical_worker_attributions')).rows[0].n).toBe(1);
+  }finally{cleanup();await db.close();}
+ },30000);
  it('rejects a newly resolved case at pre-submit recheck, then retries one saved split after a lost response',async()=>{
   const db=new PGlite();try{
    await db.exec(baseFixture);for(const name of ['supervisor_table_foundation','supervisor_rpc_rollout','supervisor_payroll_preview','historical_external_worker_payroll','supervisor_payroll_ledger','paid_period_assertion_adjustments','historical_worker_project_attribution'])await db.exec(`BEGIN;${readFileSync(`supabase/drafts/${name}.sql`,'utf8')} COMMIT;`);

@@ -5,7 +5,7 @@ import {createHash} from 'node:crypto';
 const check=process.argv.length===3&&process.argv[2]==='--check';
 if(process.argv.length!==2&&!check)throw Error('Only --check is accepted');
 const sources=[
- ['supabase/drafts/historical_attribution_case_binding.sql','3d6b9dadca381737489c7a8a5e488cdc55e71565120a4d8697c939d596914a37'],
+ ['supabase/drafts/historical_attribution_case_binding.sql','7ff4dd7165efeb165a9b491d648a55d116b46eefef1fa0a81baec32b368f7a81'],
  ['supabase/drafts/historical_attribution_write_barrier.sql','44907d0e8b415027ec0caf711f00db1fb09c4e4d898b0eee92ff74cdf46e0c52'],
 ];
 const content=sources.map(([path,sha])=>{

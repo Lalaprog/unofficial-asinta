@@ -52,6 +52,20 @@ describe('held case-bound attribution interface',()=>{
   sessionStorage.setItem(key,JSON.stringify(attempt));render(React.createElement(HistoricalWorkerAttribution,{actor,source,caseBinding:true}));fireEvent.click(screen.getByRole('button',{name:'Project attribution for this external week'}));
   expect(screen.getByText(/cannot be silently upgraded/)).toBeTruthy();expect(screen.queryByRole('button',{name:'Load attribution review'})).toBeNull();expect(screen.queryByRole('button',{name:'Retry exact attribution'})).toBeNull();expect(m.rpc).not.toHaveBeenCalled();expect(sessionStorage.getItem(key)).toBe(JSON.stringify(attempt));
  });
+ it('can investigate a legacy retry without resending, converting or clearing it',async()=>{
+  const saved=JSON.stringify(attempt);sessionStorage.setItem(key,saved);render(React.createElement(HistoricalWorkerAttribution,{actor,source,caseBinding:true}));fireEvent.click(screen.getByRole('button',{name:'Project attribution for this external week'}));
+  expect(screen.getByText(new RegExp(`Other-mode legacy request ${request}`))).toBeTruthy();fireEvent.click(screen.getByRole('button',{name:'Check other-mode attribution without changing retry'}));await screen.findByText(/does not prove failure/);expect(sessionStorage.getItem(key)).toBe(saved);
+  state=found;fireEvent.click(screen.getByRole('button',{name:'Check other-mode attribution without changing retry'}));await screen.findByText(/saved legacy attribution matches/);expect(screen.getByText(/cases were not verified or bound/)).toBeTruthy();expect(sessionStorage.getItem(key)).toBe(saved);
+  expect(m.rpc.mock.calls.every(([name])=>name==='historical_worker_attribution')).toBe(true);
+ });
+ it('checks a bound retry read-only after switching to legacy mode and reports changed cases',async()=>{
+  const saved=JSON.stringify({version:2,attribution:attempt,reviewed_cases:inventory});sessionStorage.setItem(key,saved);state=found;binding={found:true,request_id:request,source_id:source.request_id,actor_id:actor,recorded_at:source.recorded_at,reviewed_cases:inventory,cases_changed:true,source_changed:false};
+  render(React.createElement(HistoricalWorkerAttribution,{actor,source}));fireEvent.click(screen.getByRole('button',{name:'Project attribution for this external week'}));fireEvent.click(screen.getByRole('button',{name:'Check other-mode attribution without changing retry'}));await screen.findByText(/cases have since changed/);expect(sessionStorage.getItem(key)).toBe(saved);expect(m.rpc.mock.calls.map(([name])=>name)).toEqual(['historical_worker_attribution','historical_attribution_case_binding']);
+ });
+ it('does not report a match or clear the retry when other-mode storage changes during the check',async()=>{
+  const saved=JSON.stringify(attempt);sessionStorage.setItem(key,saved);let resolve!:(v:unknown)=>void;m.rpc.mockImplementation(()=>new Promise(r=>{resolve=r;}));
+  render(React.createElement(HistoricalWorkerAttribution,{actor,source,caseBinding:true}));fireEvent.click(screen.getByRole('button',{name:'Project attribution for this external week'}));fireEvent.click(screen.getByRole('button',{name:'Check other-mode attribution without changing retry'}));sessionStorage.setItem(key,'changed');resolve({data:found,error:null});await screen.findByText(/other-mode retry or it changed/);expect(sessionStorage.getItem(key)).toBe('changed');
+ });
  it('blocks a bound retry if the interface is switched back to legacy mode',()=>{
   const saved=JSON.stringify({version:2,attribution:attempt,reviewed_cases:inventory});sessionStorage.setItem(key,saved);render(React.createElement(HistoricalWorkerAttribution,{actor,source}));fireEvent.click(screen.getByRole('button',{name:'Project attribution for this external week'}));
   expect(screen.getByText(/cannot be silently upgraded/)).toBeTruthy();expect(screen.queryByRole('button',{name:'Load attribution review'})).toBeNull();expect(m.rpc).not.toHaveBeenCalled();expect(sessionStorage.getItem(key)).toBe(saved);
