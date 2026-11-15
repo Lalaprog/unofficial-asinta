@@ -141,4 +141,32 @@ suite('complete historical cross-site chain and selected races, PostgreSQL 17',(
   const stale=await read(a,'SELECT public.project_cost_corrected_review($1,NULL) v',[project]) as {freshness:string;legacy_guarded?:boolean};expect(['changed','unavailable']).toContain(stale.freshness);expect(stale.legacy_guarded).toBeUndefined();
   await b.query("SET test.assurance='no'");await expect(read(b,'SELECT public.project_cost_corrected_review($1,NULL) v',[project])).rejects.toMatchObject({code:'42501'});await b.query("SET test.assurance='yes'");
  },20000);
+
+ it('serializes real older-pay attribution and real cost review evidence in both directions',async()=>{
+  const project=id(80),person=id(81),first=id(82),second=id(83),firstRequest=id(84),secondRequest=id(85);
+  for(const n of ['project_cost_legacy_voucher_preview','project_cost_legacy_review_ledger','project_cost_legacy_correction_context','project_cost_legacy_corrected_source'])await admin.query(`BEGIN;${sql(n)} COMMIT;`);
+  await admin.query(`BEGIN;SET LOCAL app.legacy_correction_candidate='synthetic-only';${sql('project_cost_legacy_corrected_review_upgrade')} COMMIT;`);
+  await admin.query("INSERT INTO public.projects VALUES($1,'Legacy race site')",[project]);
+  await admin.query("INSERT INTO public.workers VALUES($1,'Race worker','Mason','none',600,'daily',true)",[person]);
+  await admin.query("INSERT INTO public.payroll VALUES($1,$2,'2023-10-01','2023-10-07','paid',1,8,600,0,0,600),($3,$2,'2023-10-08','2023-10-14','paid',1,8,600,0,0,600)",[first,person,second]);
+  const source=async(c:Client,v:string)=>await read(c,'SELECT public.legacy_paid_voucher_attribution($1) v',[v]) as {voucher:unknown;worker:unknown;cases:unknown};
+  const split=async(c:Client,request:string,v:string,s:{voucher:unknown;worker:unknown;cases:unknown})=>read(c,'SELECT public.record_legacy_paid_voucher_attribution($1,$2,$3::jsonb,$4::jsonb,$5::jsonb,$6,true,$7::jsonb) v',[request,v,j(s.voucher),j(s.worker),j([{project_id:project,gross:'600.00'}]),'Reviewed original',j(s.cases)]);
+  const snapshot=async(c:Client)=>read(c,'SELECT public.project_cost_legacy_voucher_inventory($1) v',[project]);
+  const save=async(c:Client,request:string,raw:unknown,legacyChoices:unknown)=>read(c,'SELECT public.record_project_cost_legacy_review($1,$2,0,$3::jsonb,$4::jsonb,$5::jsonb,$6,true) v',[request,project,j(raw),j({expenses:{},historical:{},corrections:{}}),j(legacyChoices),'Reviewed cost']);
+  const old=await snapshot(b),firstSource=await source(a,first);
+  await a.query('BEGIN');try{
+   await split(a,firstRequest,first,firstSource);
+   const waiting=save(b,id(86),old,{}).then(()=>null,e=>e as {code?:string});await waitForLock();await a.query('COMMIT');
+   expect(await waiting).toMatchObject({code:'40001'});
+  }finally{await a.query('ROLLBACK');}
+  expect((await admin.query('SELECT count(*)::int n FROM public.project_cost_legacy_reviews WHERE project_id=$1',[project])).rows[0].n).toBe(0);
+  const fresh=await snapshot(a),secondSource=await source(b,second);
+  await a.query('BEGIN');try{
+   await save(a,id(87),fresh,{[firstRequest]:{decision:'include',reason:null}});
+   const waiting=split(b,secondRequest,second,secondSource);await waitForLock();await a.query('COMMIT');await waiting;
+  }finally{await a.query('ROLLBACK');}
+  const review=await read(a,'SELECT public.project_cost_legacy_review($1,NULL) v',[project]) as {freshness:string};expect(['changed','unavailable']).toContain(review.freshness);
+  expect((await admin.query('SELECT count(*)::int n FROM public.project_cost_legacy_reviews WHERE project_id=$1',[project])).rows[0].n).toBe(1);
+  expect((await admin.query('SELECT count(*)::int n FROM public.legacy_paid_voucher_attributions WHERE payroll_id IN ($1,$2)',[first,second])).rows[0].n).toBe(2);
+ },30000);
 });

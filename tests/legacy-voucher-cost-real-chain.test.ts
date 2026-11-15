@@ -9,6 +9,7 @@ vi.mock('@/lib/supabase/client',()=>({createClient:()=>({rpc:mock.rpc})}));
 import {LegacyVoucherCostReview} from '@/components/projects/LegacyVoucherCostReview';
 import {LegacyCorrectionContext} from '@/components/payroll/LegacyCorrectionContext';
 import {parseLegacyRecordedSnapshot} from '@/lib/projects/legacyRecordedCostCoverage';
+import {parseSimpleRecordedCost} from '@/lib/projects/simpleRecordedCost';
 import {parseAdjustmentList} from '@/lib/payroll/paidAdjustments';
 import {parseCorrectionReview} from '@/lib/payroll/projectCostCorrection';
 import {ProjectReviewedCostSummary} from '@/components/projects/ProjectReviewedCostSummary';
@@ -43,8 +44,15 @@ describe('held legacy voucher through real local corrected-cost chain',()=>{
   const third=id(99);await db.exec('RESET ROLE');await db.query('INSERT INTO public.projects VALUES($1,$2)',[third,'Unaffected site']);await db.exec('SET ROLE authenticated');
   const combined=()=>read(db,'SELECT public.project_cost_legacy_recorded_snapshot($1) v',[third]);
   expect(parseLegacyRecordedSnapshot(await combined(),third).simple?.totals).toBeNull(); // unallocated voucher
+  const oldSnapshot=()=>read(db,'SELECT public.project_recorded_cost_snapshot($1) v',[third]);
+  expect(parseSimpleRecordedCost(await oldSnapshot(),third)).toMatchObject({coverage:{unallocatedPaid:1,review:{found:false}},totals:null});
   const source=await read(db,'SELECT public.legacy_paid_voucher_attribution($1) v',[legacy]) as {voucher:unknown;worker:unknown;cases:unknown};
   await read(db,'SELECT public.record_legacy_paid_voucher_attribution($1,$2,$3::jsonb,$4::jsonb,$5::jsonb,$6,true,$7::jsonb) v',[attrib,legacy,j(source.voucher),j(source.worker),j([{project_id:site,gross:'250.00'},{project_id:other,gross:'150.00'}]),'Old ledger checked',j(source.cases)]);
+  // The legacy writer stores a separate split, not an ordinary paid allocation.
+  // Even without any saved review, an older automatic reader keeps withholding
+  // its amount until it can account for this voucher.
+  expect(parseSimpleRecordedCost(await oldSnapshot(),third)).toMatchObject({coverage:{unallocatedPaid:1,review:{found:false}},totals:null});
+  expect(parseSimpleRecordedCost(await read(db,'SELECT public.project_recorded_cost_snapshot($1) v',[site]),site)).toMatchObject({coverage:{unallocatedPaid:1,review:{found:false}},totals:null});
   expect(parseLegacyRecordedSnapshot(await combined(),third)).toMatchObject({legacy:{siteAttributions:0,unallocatedPaid:0},simple:{totals:{total:0n}}});
   expect(parseLegacyRecordedSnapshot(await read(db,'SELECT public.project_cost_legacy_recorded_snapshot($1) v',[site]),site)).toMatchObject({legacy:{siteAttributions:1},simple:null});
   await db.exec(`RESET ROLE;UPDATE public.workers SET name='Changed worker' WHERE id='${worker}';SET ROLE authenticated`);const changed=parseLegacyRecordedSnapshot(await combined(),third);expect(changed.legacy.changedAttributions).toBe(1);expect(changed.simple?.totals).toBeNull();
