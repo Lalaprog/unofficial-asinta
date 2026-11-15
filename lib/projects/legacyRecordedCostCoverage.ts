@@ -40,7 +40,7 @@ export function parseLegacyCrossSiteOverview(raw:unknown,projectId:string){
  if(legacyRaw.captured_at!==coverageRaw.captured_at||!sameAttributionEvidence(legacyRaw.review,coverageRaw.review))throw Error('Coverage snapshots differ');
  // An existing older split needs the dedicated legacy-inclusive review. Never
  // substitute an ordinary cross-site result that omits that older split.
- if(legacy.siteAttributions>0)return {legacy,cross:null};
+ if(legacy.siteAttributions>0||legacy.changedAttributions>0)return {legacy,cross:null};
  const atomic=parseAtomicCrossSiteOverview(ordinaryRaw,projectId);
  return {legacy,cross:atomic.cross};
 }
