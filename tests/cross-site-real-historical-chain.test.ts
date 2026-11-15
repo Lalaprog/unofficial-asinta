@@ -20,12 +20,14 @@ async function setup(){const db=new PGlite();try{
  CREATE TABLE public.payroll_payment_dates(payroll_id uuid primary key,payment_date date,recorded_by uuid);
  CREATE TABLE public.weekly_worker_paid_allocations(payroll_id uuid,project_id uuid,hours numeric(8,2),wage numeric(10,2),allowance numeric(10,2),gross numeric(10,2),primary key(payroll_id,project_id));`);
  for(const n of ['supervisor_table_foundation','supervisor_rpc_rollout','supervisor_payroll_preview','historical_external_worker_payroll','supervisor_payroll_ledger','paid_period_assertion_adjustments','historical_worker_project_attribution'])await db.exec(`BEGIN;${sql(n)} COMMIT;`);
- await db.exec(`BEGIN;SET LOCAL app.historical_case_atomic_rehearsal='synthetic-only';${sql('historical_attribution_atomic_rehearsal')} COMMIT;`);
  for(const n of ['project_paid_payroll_evidence','confirmed_rental_expense_link','paid_payroll_adjustments','project_cost_reconciliation_preview','project_cost_historical_review','project_cost_correction_attribution','project_cost_correction_inventory','project_cost_corrected_preview','project_cost_corrected_review_ledger','project_cost_correction_original_context','project_cost_cross_site_preview','project_cost_cross_site_review_context','project_cost_cross_site_corrected_preview','project_cost_cross_site_review_ledger'])await db.exec(`BEGIN;${sql(n)} COMMIT;`);
  await db.exec(`BEGIN;SET LOCAL app.cross_site_source_lock_reviewed='yes';${sql('project_cost_cross_site_source_review_serialization')} COMMIT;`);
  await db.exec(`BEGIN;SET LOCAL app.cross_site_attribution_lock_reviewed='yes';${sql('project_cost_cross_site_attribution_serialization')} COMMIT;`);
-  await db.exec(`BEGIN;SET LOCAL app.cost_evidence_lock_candidate='synthetic-only';${sql('project_cost_evidence_lock_rehearsal')} COMMIT;`);
- await db.exec(`BEGIN;SET LOCAL app.cross_site_multicase_candidate='synthetic-only';${sql('project_cost_multi_case_upgrade')} COMMIT;`);
+ const candidate=readFileSync('supabase/release/development-historical-cross-site-candidate.sql','utf8');
+ await expect(db.exec(`BEGIN;${candidate} COMMIT;`)).rejects.toThrow(/held pending reviewed target/);await db.exec('ROLLBACK');
+ await db.exec("BEGIN;CREATE OR REPLACE FUNCTION public.project_cost_historical_review(p_project uuid) RETURNS jsonb LANGUAGE sql STABLE SECURITY DEFINER SET search_path='' AS $$SELECT '{}'::jsonb$$;SET LOCAL app.asinta_development_historical_cross_site_cutover='reviewed-target';");
+ await expect(db.exec(candidate)).rejects.toThrow(/dependency changed/);await db.exec('ROLLBACK');
+ await db.exec(`BEGIN;SET LOCAL app.asinta_development_historical_cross_site_cutover='reviewed-target';${candidate} COMMIT;`);
  await db.exec(`SET ROLE authenticated;SET test.uid='${founder}';SET test.assurance='yes'`);return db;
  }catch(e){await db.close();throw e;}}
 const inventory=(db:PGlite,p:string)=>read(db,'SELECT public.project_cost_correction_inventory($1) v',[p]);
