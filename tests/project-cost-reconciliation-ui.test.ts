@@ -33,6 +33,10 @@ describe('temporary project-cost review',()=>{
   choose(materialExpense,'Include expense');choose(baleExpense,'Exclude from this preview');expect((screen.getByRole('checkbox') as HTMLInputElement).disabled).toBe(true);choose(rentalExpense,'Include expense');fireEvent.click(screen.getByRole('checkbox'));expect(screen.getByText('Temporary, incomplete estimate: ₱1,650.00')).toBeTruthy();expect(screen.getByText(/Expenses excluded from this preview: ₱100.00/)).toBeTruthy();expect(mock.rpc).toHaveBeenCalledTimes(1);
   fireEvent.click(screen.getByRole('button',{name:'Reload review snapshot'}));await screen.findByText(/Snapshot captured/);expect(screen.queryByText(/Temporary, incomplete estimate/)).toBeNull();expect((screen.getByRole('checkbox') as HTMLInputElement).disabled).toBe(true);
  });
+ it('explains size limits instead of showing an incomplete scratch total',async()=>{
+  mock.rpc.mockResolvedValue({data:null,error:{code:'54000',message:'internal details'}});render(panel());fireEvent.click(screen.getByRole('button',{name:'Load review snapshot'}));
+  await screen.findByText(/exceeds a cost-review size limit/);expect(screen.queryByText(/Temporary, incomplete estimate/)).toBeNull();expect(mock.rpc).toHaveBeenCalledTimes(1);
+ });
  it('flags only matching expense evidence without deciding what to include',async()=>{
   const duplicate='10000000-0000-0000-0000-000000000009';
   mock.rpc.mockResolvedValue({data:{...response,expenses:[{...expenses[0],id:duplicate,description:'  SAND  '},...expenses]},error:null});

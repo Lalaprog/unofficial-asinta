@@ -32,6 +32,11 @@ describe('corrected project review UI, gated experimental candidate',()=>{
   await screen.findByText(/No corrected review was returned/);expect(screen.getByText(/Snapshot captured/)).toBeTruthy();expect(mock.rpc.mock.calls.map(([name])=>name)).toEqual(['project_cost_correction_inventory','project_cost_corrected_review']);
   cleanup();mock.rpc.mockReset().mockResolvedValue({data:null,error:Error('offline')});render(panel());fireEvent.click(screen.getByRole('button',{name:'Review costs including worker corrections'}));fireEvent.click(screen.getByRole('button',{name:'Load evidence and latest review'}));await screen.findByText(/Could not verify correction inventory/);expect(mock.rpc).toHaveBeenCalledTimes(1);
  });
+ it('explains a size-limit failure without showing or saving a partial total',async()=>{
+  mock.rpc.mockResolvedValue({data:null,error:{code:'54000',message:'internal details'}});
+  render(panel());fireEvent.click(screen.getByRole('button',{name:'Review costs including worker corrections'}));fireEvent.click(screen.getByRole('button',{name:'Load evidence and latest review'}));
+  await screen.findByText(/exceeds a cost-review size limit/);expect(screen.getByText(/No total was calculated/)).toBeTruthy();expect(screen.queryByText(/Incomplete reviewed total:/)).toBeNull();expect(mock.rpc).toHaveBeenCalledTimes(1);
+ });
  it('bulk-includes only personally checked unflagged unchosen expenses',async()=>{
   const flagged='cccccccc-cccc-4ccc-8ccc-cccccccccccc',duplicate='dddddddd-dddd-4ddd-8ddd-dddddddddddd',third='eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee',labor='ffffffff-ffff-4fff-8fff-ffffffffffff',copy=structuredClone(inventory),base=copy.historical_review.base.expenses[0];
   copy.historical_review.base.expenses=[{...base,id:labor,description:'Helper',category:'labor'},{...base,id:third,description:'Duplicate'},{...base,id:duplicate,description:'Duplicate'},{...base,id:flagged,description:'Bale',ai_bale_detection:false},base];

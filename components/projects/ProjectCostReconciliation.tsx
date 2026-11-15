@@ -23,7 +23,7 @@ export function ProjectCostReconciliation({projectId,userId,reviewTarget=null}:{
  useEffect(()=>{const sequence=seq;sequence.current++;alive.current=true;busy.current=false;setLoading(false);setSnapshot(null);setSnapshotEvidence(null);setChoices({});setReasons({});setAck(false);setError('');return()=>{alive.current=false;sequence.current++;busy.current=false;};},[projectId,userId]);
  async function load(){if(busy.current)return;busy.current=true;setLoading(true);setSnapshot(null);setSnapshotEvidence(null);setChoices({});setReasons({});setAck(false);setError('');const token=++seq.current;
   try{const {data,error:rpcError}=await createClient().rpc('project_cost_reconciliation_preview',{p_project:projectId});if(rpcError)throw rpcError;const parsed=parseCostSnapshot(data,projectId);if(alive.current&&active.current===scope&&token===seq.current){setSnapshotScope(scope);setSnapshot(parsed);setSnapshotEvidence(data);}}
-  catch{if(alive.current&&active.current===scope&&token===seq.current)setError('Could not verify a complete reconciliation snapshot. No total is available; refresh or investigate.');}
+  catch(e){if(alive.current&&active.current===scope&&token===seq.current)setError(e&&typeof e==='object'&&'code' in e&&e.code==='54000'?'This project exceeds a cost-review size limit. No total was calculated; larger-project review is not yet available. Do not delete records to fit the limit.':'Could not verify a complete reconciliation snapshot. No total is available; refresh or investigate.');}
   finally{if(active.current===scope&&token===seq.current){busy.current=false;if(alive.current)setLoading(false);}}
  }
  const reviewed=!!snapshot&&snapshot.expenses.every(e=>choices[e.id]==='include'||choices[e.id]==='exclude');
