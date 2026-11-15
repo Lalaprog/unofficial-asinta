@@ -96,6 +96,23 @@ describe('project privacy in the shared store',()=>{
     expect(sessionStorage.getItem('bale-ledger-cache:user')).toBeNull();
     expect(sessionStorage.getItem('bale-ledger-cache:v2:other-user:founder')).toBeNull();
   });
+  it('deletes a Supervisor snapshot and waits for fresh authorization on the next visit',async()=>{
+    mock.role='supervisor';
+    const key='bale-ledger-cache:v4:user:supervisor';
+    const fields=['projects','invoices','expenses','workers','clients','advances','advanceRequests','userNotifications','attendance','payroll','tools','smsLogs','projectSupervisors','users'];
+    const snapshot=Object.fromEntries(fields.map(field=>[field,field==='projects'?[project]:[]]));
+    sessionStorage.setItem(key,JSON.stringify({...snapshot,baleRequestCoverage:{openOmitted:0,historyOmitted:0}}));
+    let resolve!:(value:{data:any[];error:null})=>void;
+    mock.nextLoad=new Promise(r=>{resolve=r});
+    render(React.createElement(DataStoreProvider,null,React.createElement(Probe)));
+    await waitFor(()=>expect(mock.calls.some(c=>c.table==='visible_projects')).toBe(true));
+    expect(store.isLoaded).toBe(false);expect(store.projects).toEqual([]);
+    expect(sessionStorage.getItem(key)).toBeNull();
+    await act(async()=>resolve({data:[],error:null}));
+    await waitFor(()=>expect(store.isLoaded).toBe(true));
+    expect(store.projects).toEqual([]);expect(sessionStorage.getItem(key)).toBeNull();
+    await act(async()=>{await store.refresh()});expect(sessionStorage.getItem(key)).toBeNull();
+  });
   it('ignores a late Founder load after the same account becomes a Supervisor',async()=>{
     let resolve!: (value:{data:any[];error:null})=>void;
     mock.nextLoad=new Promise(r=>{resolve=r});

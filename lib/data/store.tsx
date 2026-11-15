@@ -365,7 +365,9 @@ export const DataStoreProvider: React.FC<{ children: React.ReactNode }> = ({ chi
           ? `The last sync omitted ${omittedInvoices} invoice(s) and ${omittedExpenses} expense(s) beyond the shared-list limit. Totals and lists may be incomplete; investigate separately.`
           : null);
 
-        if (user?.id && typeof window !== 'undefined') {
+        // Project membership can be revoked while a tab is closed. Never save
+        // a Supervisor's scoped ledger for later hydration without an RLS read.
+        if (user?.id && user.role === 'founder' && typeof window !== 'undefined') {
           try {
             window.sessionStorage.setItem(
               `bale-ledger-cache:v4:${user.id}:${user.role}`,
@@ -426,8 +428,8 @@ export const DataStoreProvider: React.FC<{ children: React.ReactNode }> = ({ chi
     setLoadError(null);
   }, []);
 
-  // Load when a user is authenticated (with instant sessionStorage cache
-  // hydration + live Supabase Realtime & background sync); clear when signed out.
+  // Founder snapshots can hydrate with a stale warning. Supervisors must load
+  // from RLS afresh because their project access can change between visits.
   useEffect(() => {
     if (authLoading && sessionKey) return;
     if (loadedSessionRef.current !== sessionKey) {
@@ -436,7 +438,7 @@ export const DataStoreProvider: React.FC<{ children: React.ReactNode }> = ({ chi
     }
     // A shared tab must not leave a previous user's cached ledger available
     // after sign-out or when another account/role signs in.
-    const currentCacheKey = user ? `bale-ledger-cache:v4:${user.id}:${user.role}` : null;
+    const currentCacheKey = user?.role === 'founder' ? `bale-ledger-cache:v4:${user.id}:${user.role}` : null;
     if (typeof window !== 'undefined') {
       try {
         const staleKeys = Array.from({ length: window.sessionStorage.length }, (_, i) => window.sessionStorage.key(i))
