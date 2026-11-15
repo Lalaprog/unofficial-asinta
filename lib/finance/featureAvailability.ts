@@ -83,6 +83,11 @@ export function projectCostReconciliationPreviewEnabled(): boolean {
   return financeFoundationEnabled() && (process.env.NEXT_PUBLIC_PROJECT_COST_RECONCILIATION_PREVIEW === 'true' || developmentFinanceCutoverEnabled());
 }
 
+/** Only enable after the matching read-only RPC is installed and checked. */
+export function independentPaidPayrollSummaryEnabled(): boolean {
+  return projectCostReconciliationPreviewEnabled() && process.env.NEXT_PUBLIC_INDEPENDENT_PAID_PAYROLL_SUMMARY === 'true';
+}
+
 /** Separate read-only external worker attribution evidence, not included in cost totals. */
 export function historicalWorkerAttributionPreviewEnabled(): boolean {
   return projectCostReconciliationPreviewEnabled() && (process.env.NEXT_PUBLIC_HISTORICAL_WORKER_ATTRIBUTION_PREVIEW === 'true' || developmentFinanceCutoverEnabled());

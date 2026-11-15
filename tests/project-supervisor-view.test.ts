@@ -61,10 +61,10 @@ describe('project roles and workforce logs', () => {
     expect(screen.getByText('Scoped equipment snapshot')).toBeTruthy();expect(screen.queryByText('Site Drill')).toBeNull();expect(screen.queryByText('Other Drill')).toBeNull();
   });
   it('limits the paid payroll overview to an assured Founder and the existing reconciliation gate', () => {
-    vi.stubEnv('NEXT_PUBLIC_FINANCE_FOUNDATION_PREVIEW','true');vi.stubEnv('NEXT_PUBLIC_PROJECT_COST_RECONCILIATION_PREVIEW','true');
-    const view=render(React.createElement(ProjectDetailPage));expect(screen.queryByRole('region',{name:'Paid worker payroll for this site'})).toBeNull();expect(mocks.rpc.mock.calls.filter(([name])=>name==='project_cost_reconciliation_preview')).toHaveLength(0);
-    mocks.founder=true;mocks.assurance='checking';view.rerender(React.createElement(ProjectDetailPage));expect(screen.queryByRole('region',{name:'Paid worker payroll for this site'})).toBeNull();expect(mocks.rpc.mock.calls.filter(([name])=>name==='project_cost_reconciliation_preview')).toHaveLength(0);
-    mocks.assurance='ready';view.rerender(React.createElement(ProjectDetailPage));expect(screen.getByRole('region',{name:'Paid worker payroll for this site'})).toBeTruthy();expect(mocks.rpc.mock.calls.filter(([name])=>name==='project_cost_reconciliation_preview')).toHaveLength(1);
+    vi.stubEnv('NEXT_PUBLIC_FINANCE_FOUNDATION_PREVIEW','true');vi.stubEnv('NEXT_PUBLIC_PROJECT_COST_RECONCILIATION_PREVIEW','true');vi.stubEnv('NEXT_PUBLIC_INDEPENDENT_PAID_PAYROLL_SUMMARY','true');
+    const view=render(React.createElement(ProjectDetailPage));expect(screen.queryByRole('region',{name:'Paid worker payroll for this site'})).toBeNull();expect(mocks.rpc.mock.calls.filter(([name])=>name==='project_paid_payroll_summary')).toHaveLength(0);
+    mocks.founder=true;mocks.assurance='checking';view.rerender(React.createElement(ProjectDetailPage));expect(screen.queryByRole('region',{name:'Paid worker payroll for this site'})).toBeNull();expect(mocks.rpc.mock.calls.filter(([name])=>name==='project_paid_payroll_summary')).toHaveLength(0);
+    mocks.assurance='ready';view.rerender(React.createElement(ProjectDetailPage));expect(screen.getByRole('region',{name:'Paid worker payroll for this site'})).toBeTruthy();expect(mocks.rpc.mock.calls.filter(([name])=>name==='project_paid_payroll_summary')).toHaveLength(1);
     vi.stubEnv('NEXT_PUBLIC_PROJECT_COST_RECONCILIATION_PREVIEW','false');view.rerender(React.createElement(ProjectDetailPage));expect(screen.queryByRole('region',{name:'Paid worker payroll for this site'})).toBeNull();
   });
   it('shows the reviewed cost only for an assured Founder with the correction review gate', () => {

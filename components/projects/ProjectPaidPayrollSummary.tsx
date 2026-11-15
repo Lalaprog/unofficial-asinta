@@ -4,6 +4,8 @@ import React,{useEffect,useState} from 'react';
 import {Button} from '@/components/ui/Button';
 import {createClient} from '@/lib/supabase/client';
 import {costCents,formatCostCents,parseCostSnapshot} from '@/lib/projects/projectCostReconciliation';
+import {parsePaidPayrollSummary} from '@/lib/projects/paidPayrollSummary';
+import {independentPaidPayrollSummaryEnabled} from '@/lib/finance/featureAvailability';
 
 type Summary={capturedAt:string;count:number;gross:bigint;cases:number};
 
@@ -19,8 +21,9 @@ function SummaryContent({projectId,onReview}:{projectId:string;userId:string;onR
   setLoading(true);setValue(null);setError(false);
   void (async()=>{
    try{
-    const result=await createClient().rpc('project_cost_reconciliation_preview',{p_project:projectId});if(result.error)throw result.error;
-    const snapshot=parseCostSnapshot(result.data,projectId);
+    const independent=independentPaidPayrollSummaryEnabled();
+    const result=await createClient().rpc(independent?'project_paid_payroll_summary':'project_cost_reconciliation_preview',{p_project:projectId});if(result.error)throw result.error;
+    const snapshot=independent?parsePaidPayrollSummary(result.data,projectId):parseCostSnapshot(result.data,projectId);
     const gross=snapshot.paid.reduce((total,p)=>total+costCents(p.gross),0n);
     if(active)setValue({capturedAt:snapshot.capturedAt,count:snapshot.paid.length,gross,cases:snapshot.adjustments.length});
    }catch{if(active)setError(true);}
@@ -32,8 +35,8 @@ function SummaryContent({projectId,onReview}:{projectId:string;userId:string;onR
   <h3 className="text-sm font-semibold text-navy">Recorded paid worker payroll for this site</h3>
   <p>Review the gross wages and approved allowances attributed to this site after a weekly voucher is approved and its external payment is recorded. This is a separate, incomplete cost component, not proof of payment or a total project cost.</p>
   <div className="flex flex-wrap gap-2"><Button type="button" size="sm" variant="secondary" disabled={loading} onClick={()=>setRefresh(v=>v+1)}>Refresh paid payroll summary</Button><Button type="button" size="sm" variant="secondary" onClick={onReview}>Review expense and payroll evidence</Button></div>
-  {loading&&<p role="status">Checking the bounded project snapshot…</p>}
-  {error&&<p role="alert">The project snapshot could not be verified or exceeded its limits. No payroll subtotal is assumed; retry or investigate the evidence.</p>}
+  {loading&&<p role="status">Checking the bounded paid payroll snapshot…</p>}
+  {error&&<p role="alert">The paid payroll snapshot could not be verified or exceeded its limits. No payroll subtotal is assumed; retry or investigate the evidence.</p>}
   {value&&<div aria-live="polite" className="space-y-1 rounded-lg bg-surface-inset p-3">
    <p className="font-semibold text-navy">Recorded site payroll gross: {formatCostCents(value.gross)} · {value.count} paid allocation(s)</p>
    <p>Snapshot captured {value.capturedAt}; it can change immediately. No matching allocation does not prove there was no payroll cost.</p>

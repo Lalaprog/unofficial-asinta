@@ -1,5 +1,9 @@
 # Client task status — working progress, not release approval
 
+## Independent paid-payroll overview candidate
+
+The branch adds `project_paid_payroll_summary(uuid)`, a separately gated read-only candidate for the Founder overview. It checks the same paid allocation, voucher, deduction and correction-case evidence in one statement snapshot but does not depend on unrelated expense/rental records or their 200-expense limit. The client independently validates the bounded returned rows and exact-cent subtotal. It still caps paid allocations/cases at 500, is not a combined or complete project cost, excludes later correction amounts and historical/unallocated pay, and cannot prove payment. The candidate checks the installed dependency's body and access properties before installation; synthetic multi-page, role, over-limit-expense and corruption tests passed. `NEXT_PUBLIC_INDEPENDENT_PAID_PAYROLL_SUMMARY` defaults off and the existing reader remains in use until the new RPC is installed and this explicit flag is enabled. This candidate is not yet installed or deployed; do not blindly replay it.
+
 ## Project-cost review navigation follow-up
 
 The branch now sends the Founder overview's review buttons directly to the relevant expense reconciliation section and focuses it; the corrected review opens without automatically loading evidence or making a decision. Corrected expense rows now show their category, exact ID, AI-hint caveat and any confirmed rental details to help distinguish similar records. Separate cost-panel React keys avoid duplicate sibling identities. This is an accessibility and review-workflow improvement, not an automatic or complete ledger; expense/payroll duplicates and missing or cross-site historical/correction evidence still require reconciliation. It has not been deployed to the development website.
