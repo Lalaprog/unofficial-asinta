@@ -38,9 +38,11 @@ export async function POST(request: NextRequest) {
     );
   }
 
-  let body: Record<string, unknown> = {};
+  let body: Record<string, unknown>;
   try {
-    body = (await request.json()) as Record<string, unknown>;
+    const parsed: unknown = await request.json();
+    if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) throw Error('Invalid body');
+    body = parsed as Record<string, unknown>;
   } catch {
     return NextResponse.json(
       { ok: false, error: 'Invalid JSON request body.' },
@@ -125,9 +127,11 @@ export async function PATCH(request: NextRequest) {
     );
   }
 
-  let body: Record<string, unknown> = {};
+  let body: Record<string, unknown>;
   try {
-    body = (await request.json()) as Record<string, unknown>;
+    const parsed: unknown = await request.json();
+    if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) throw Error('Invalid body');
+    body = parsed as Record<string, unknown>;
   } catch {
     return NextResponse.json(
       { ok: false, error: 'Invalid JSON request body.' },

@@ -290,14 +290,14 @@ export default function ProjectsPage() {
                       ) : (
                         <div className="space-y-1.5">
                           <div className="flex flex-wrap justify-between gap-1 text-xs text-ink-secondary">
-                            <span>Recorded costs: {Math.round(budget.percent)}% of estimate</span>
+                            <span>Logged expenses: {Math.round(budget.percent)}% of estimate</span>
                             <span className={budget.over ? 'font-semibold text-status-danger' : ''}>
-                              {budget.over ? `${formatPHP(budget.over)} over estimate` : `${formatPHP(budget.remaining ?? 0)} remaining`}
+                              {budget.over ? `${formatPHP(budget.over)} above estimate from expenses` : `${formatPHP(budget.remaining ?? 0)} estimate less expenses`}
                             </span>
                           </div>
                           <div
                             role="progressbar"
-                            aria-label={`Recorded costs for ${proj.name} as a percentage of its estimate`}
+                            aria-label={`Logged expenses for ${proj.name} as a percentage of its estimate`}
                             aria-valuemin={0}
                             aria-valuemax={100}
                             aria-valuenow={Math.round(budget.barPercent)}
@@ -306,6 +306,7 @@ export default function ProjectsPage() {
                           >
                             <div className={`h-full ${budget.over ? 'bg-status-danger' : 'bg-brand'}`} style={{ width: `${budget.barPercent}%` }} />
                           </div>
+                          <p className="text-[11px] text-ink-secondary">Expenses only; payroll and other costs are not included.</p>
                         </div>
                       )}
                     </div>

@@ -19,6 +19,7 @@
  */
 
 import type { User, UserRole } from '@/types';
+import {loadAccountEditSnapshot,parseAccountEditSnapshot,sameAccountEditSnapshot,type AccountEditSnapshot} from './accountEditSnapshot';
 
 async function writeUserAuditEntry(
   adminClient: MinimalAdminSupabaseClient,
@@ -57,6 +58,19 @@ async function writeUserAuditEntry(
 // Convert both API errors and transport exceptions into reviewable warnings.
 async function mutationFailed(operation: () => PromiseLike<{ error: unknown }>): Promise<boolean> {
   try { return Boolean((await operation()).error); } catch { return true; }
+}
+
+/** Match every reviewed worker field in the same UPDATE as the write. */
+async function updateReviewedWorker(client: MinimalAdminSupabaseClient, old: NonNullable<AccountEditSnapshot['worker']>, changes: Record<string,unknown>): Promise<boolean> {
+  try {
+    let query=client.from('workers').update(changes).eq('id',old.id)
+      .eq('name',old.name).eq('position',old.position).eq('active',old.active)
+      .eq('pay_rate',old.pay_rate).eq('pay_rate_type',old.pay_rate_type);
+    query=old.contact_number===null?query.is('contact_number',null):query.eq('contact_number',old.contact_number);
+    query=old.removed_at===null?query.is('removed_at',null):query.eq('removed_at',old.removed_at);
+    const result=await query.select('id').maybeSingle();
+    return !result.error && result.data?.id===old.id;
+  } catch { return false; }
 }
 
 export interface MinimalAdminSupabaseClient {
@@ -107,6 +121,7 @@ export interface CreateTeamAccountInput {
 
 export interface UpdateTeamAccountInput {
   userId?: unknown;
+  expectedSnapshot?: unknown;
   name?: unknown;
   role?: unknown;
   assignedProjectIds?: unknown;
@@ -200,15 +215,42 @@ export function parseTeamPayRate(value: unknown): number | null {
     Math.abs(rate * 100 - Math.round(rate * 100)) < 1e-5 ? rate : null;
 }
 
+function validOptionalProjectIds(input: unknown): boolean {
+  // Postgres expects UUIDs. Catch malformed lists before the separate profile
+  // and Auth writes, rather than silently removing items or failing afterward.
+  const uuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+  return input === undefined || (Array.isArray(input) && input.length <= 1000 &&
+    input.every(item => typeof item === 'string' && uuid.test(item.trim())));
+}
+
 function normalizeProjectIds(input: unknown): string[] {
   if (!Array.isArray(input)) return [];
   const seen = new Set<string>();
   for (const item of input) {
     if (typeof item === 'string' && item.trim()) {
-      seen.add(item.trim());
+      seen.add(item.trim().toLowerCase());
     }
   }
   return [...seen];
+}
+
+/** Avoid known partial account changes when a selected site no longer exists.
+ * This is only a precheck; a site can still change before the later write. */
+async function checkSelectedProjects(client: MinimalAdminSupabaseClient, ids: string[]): Promise<'ok'|'missing'|'unavailable'> {
+  try {
+    for (let start = 0; start < ids.length; start += 100) {
+      const selected = ids.slice(start, start + 100);
+      const {data, count, error} = await client.from('projects').select('id', {count:'exact'}).in('id', selected).limit(selected.length);
+      if (error || !Array.isArray(data) || !Number.isSafeInteger(count) || count < 0 || count !== data.length) return 'unavailable';
+      const found = new Set<string>();
+      for (const row of data) {
+        if (!row || typeof row.id !== 'string' || !selected.includes(row.id.toLowerCase()) || found.has(row.id.toLowerCase())) return 'unavailable';
+        found.add(row.id.toLowerCase());
+      }
+      if (found.size !== selected.length) return 'missing';
+    }
+    return 'ok';
+  } catch { return 'unavailable'; }
 }
 
 /**
@@ -239,6 +281,14 @@ export async function createTeamAccount(params: {
 > {
   const { callerId, callerEmail, input, adminClient, sendWelcomeMail } = params;
 
+  if (!validOptionalProjectIds(input.assignedProjectIds)) {
+    return { status: 400, body: { ok: false, error: 'Invalid assigned sites. Review the complete site selection; no account was created.' } };
+  }
+  if ((input.sendWelcomeEmail !== undefined && typeof input.sendWelcomeEmail !== 'boolean') ||
+      (input.includeInPayroll !== undefined && typeof input.includeInPayroll !== 'boolean')) {
+    return { status: 400, body: { ok: false, error: 'Invalid email or payroll selection; no account was created.' } };
+  }
+
   const name = typeof input.name === 'string' ? input.name.trim() : '';
   const email = typeof input.email === 'string' ? input.email.trim().toLowerCase() : '';
   const role = input.role === 'founder' || input.role === 'supervisor' ? input.role : null;
@@ -247,7 +297,8 @@ export async function createTeamAccount(params: {
       ? input.temporaryPassword.trim()
       : generateTemporaryPassword();
   const assignedProjectIds = role === 'supervisor' ? normalizeProjectIds(input.assignedProjectIds) : [];
-  const shouldSendEmail = input.sendWelcomeEmail !== false;
+  // Sending credentials requires an affirmative choice, not an omitted field.
+  const shouldSendEmail = input.sendWelcomeEmail === true;
   const warnings: string[] = [];
   const includeInPayroll = role === 'supervisor' && input.includeInPayroll !== false;
   const requestedRate = parseTeamPayRate(input.payRate);
@@ -284,13 +335,21 @@ export async function createTeamAccount(params: {
     };
   }
 
-  // 1. Check if email already exists in `public.users`.
-  const { data: existingProfile } = await adminClient
-    .from('users')
-    .select('id, email')
-    .eq('email', email)
-    .maybeSingle();
+  const siteCheck = await checkSelectedProjects(adminClient, assignedProjectIds);
+  if (siteCheck !== 'ok') return { status: siteCheck === 'missing' ? 409 : 503, body: { ok: false,
+    error: siteCheck === 'missing' ? 'A selected project is no longer available. Refresh the site selection; no account was created.' : 'Could not verify the selected projects. No account was created; retry.' } };
 
+  // 1. A failed duplicate check is not proof that the email is available.
+  let duplicateCheck: {data: unknown; error: unknown};
+  try {
+    duplicateCheck = await adminClient.from('users').select('id, email').eq('email', email).maybeSingle();
+  } catch {
+    return { status: 503, body: { ok: false, error: 'Could not check whether this email already has an account. No account was created; retry.' } };
+  }
+  const {data: existingProfile, error: duplicateError} = duplicateCheck;
+  if (duplicateError || existingProfile === undefined || (existingProfile !== null && (typeof existingProfile !== 'object' || Array.isArray(existingProfile)))) {
+    return { status: 503, body: { ok: false, error: 'Could not check whether this email already has an account. No account was created; retry.' } };
+  }
   if (existingProfile) {
     return {
       status: 409,
@@ -302,54 +361,39 @@ export async function createTeamAccount(params: {
   //    Free tier's 2–4/hr built-in email cap blocking onboarding) and
   //    `must_change_password: true` so the user is forced to set their own
   //    password on first login.
-  const { data: createdAuth, error: authCreateError } = await adminClient.auth.admin.createUser({
-    email,
-    password: rawTempPassword,
-    email_confirm: true,
-    user_metadata: {
-      name,
-      role,
-      must_change_password: true,
-      provisioned_by: callerEmail || callerId,
-    },
-  });
-
+  let authCreation: Awaited<ReturnType<MinimalAdminSupabaseClient['auth']['admin']['createUser']>>;
+  try {
+    authCreation = await adminClient.auth.admin.createUser({
+      email,
+      password: rawTempPassword,
+      email_confirm: true,
+      user_metadata: { name, role, must_change_password: true, provisioned_by: callerEmail || callerId },
+    });
+  } catch {
+    return { status: 503, body: { ok: false, error: 'Account creation was not confirmed. Check Supabase Auth and Team Accounts before retrying; an account may already exist.' } };
+  }
+  const {data: createdAuth, error: authCreateError} = authCreation;
   if (authCreateError || !createdAuth?.user?.id) {
-    return {
-      status: 400,
-      body: {
-        ok: false,
-        error: authCreateError?.message || 'Could not create the account in Supabase Auth.',
-      },
-    };
+    return { status: 503, body: { ok: false, error: 'Account creation was not confirmed. Check Supabase Auth and Team Accounts before retrying; an account may already exist.' } };
   }
 
   const newUserId = createdAuth.user.id;
 
   // 3. Insert profile row into `public.users`.
-  const { data: insertedUser, error: profileInsertError } = await adminClient
-    .from('users')
-    .insert({
-      id: newUserId,
-      name,
-      email,
-      role,
-    })
-    .select('id, name, email, role, created_at')
-    .single();
-
-  if (profileInsertError || !insertedUser) {
-    // Roll back the orphaned auth.users row.
-    const rollback = await adminClient.auth.admin.deleteUser(newUserId).catch(() => ({ data: null, error: { message: 'request failed' } }));
-    return {
-      status: 500,
-      body: {
-        ok: false,
-        error: rollback.error
-          ? 'The profile could not be created and Auth cleanup was not confirmed. Check Supabase Auth before retrying.'
-          : 'Profile creation was not confirmed and the new Auth account was removed. Check for a remaining profile before retrying.',
-      },
-    };
+  let profileResult: {data: User | null; error: unknown};
+  try {
+    profileResult = await adminClient.from('users').insert({id: newUserId, name, email, role})
+      .select('id, name, email, role, created_at').single();
+  } catch {
+    profileResult = {data: null, error: true};
+  }
+  const {data: insertedUser, error: profileInsertError} = profileResult;
+  if (profileInsertError || !insertedUser || insertedUser.id !== newUserId ||
+      insertedUser.name !== name || insertedUser.email !== email || insertedUser.role !== role ||
+      typeof insertedUser.created_at !== 'string' || Number.isNaN(Date.parse(insertedUser.created_at))) {
+    // A lost response can mean the profile was committed. Deleting Auth here
+    // could leave a live profile/history without its login; require inspection.
+    return { status: 500, body: { ok: false, error: `The account profile was not confirmed for account ID ${newUserId}. The new Auth account was not automatically removed. Check Supabase Auth and Team Accounts before retrying.` } };
   }
 
   // 4. Assign supervisor projects if applicable.
@@ -464,6 +508,21 @@ export async function updateTeamAccount(params: {
   if (!targetUserId) {
     return { status: 400, body: { ok: false, error: 'Target userId is required.' } };
   }
+  if (!validOptionalProjectIds(input.assignedProjectIds)) {
+    return { status: 400, body: { ok: false, error: 'Invalid assigned sites. Review the complete site selection; no changes were made.' } };
+  }
+  if (input.role !== undefined && input.role !== 'founder' && input.role !== 'supervisor') {
+    return { status: 400, body: { ok: false, error: 'Role must be either founder or supervisor; no changes were made.' } };
+  }
+  if (input.includeInPayroll !== undefined && typeof input.includeInPayroll !== 'boolean') {
+    return { status: 400, body: { ok: false, error: 'Invalid payroll selection; no changes were made.' } };
+  }
+  // Older partial callers sometimes omit payroll fields. Do not treat omission
+  // as permission to create/reactivate a worker or overwrite their rate.
+  if (input.includeInPayroll === undefined &&
+      (input.payRate !== undefined || input.payRateType !== undefined || input.contactNumber !== undefined)) {
+    return { status: 400, body: { ok: false, error: 'Choose whether to include the Supervisor in payroll before changing roster details; no changes were made.' } };
+  }
 
   const { data: beforeUser, error: fetchError } = await adminClient
     .from('users')
@@ -528,14 +587,20 @@ export async function updateTeamAccount(params: {
 
   const warnings: string[] = [];
   const requestedRate = parseTeamPayRate(input.payRate);
-  if (nextRole === 'supervisor' && input.includeInPayroll !== false && requestedRate === null) {
-    return { status: 400, body: { ok: false, error: 'Enter a valid payroll rate from 0 to 99,999,999.99 with at most two decimal places.' } };
+  if (nextRole === 'supervisor' && input.includeInPayroll === true &&
+      (input.payRate === undefined || requestedRate === null ||
+       (input.payRateType !== 'daily' && input.payRateType !== 'hourly') ||
+       typeof input.contactNumber !== 'string')) {
+    return { status: 400, body: { ok: false, error: 'Provide the payroll rate, rate type and contact field. Enter a rate from 0 to 99,999,999.99 with at most two decimal places; no changes were made.' } };
+  }
+  if (nextRole === 'supervisor' && input.includeInPayroll === undefined && nextName !== beforeUser.name) {
+    warnings.push('The linked payroll roster was not changed. Check the workforce name if it should match the updated account.');
   }
 
   // Do not let an account edit implicitly restore a removed workforce profile.
   // Check before changing the account; the database constraint also protects
   // against a concurrent removal after this read.
-  if (nextRole === 'supervisor' && input.includeInPayroll !== false) {
+  if (nextRole === 'supervisor' && input.includeInPayroll === true) {
     try {
       const { data: worker, error: workerError } = await adminClient.from('workers')
         .select('id, removed_at').eq('id', targetUserId).maybeSingle();
@@ -545,6 +610,29 @@ export async function updateTeamAccount(params: {
       return { status: 503, body: { ok: false, error: 'Could not check the workforce profile. Refresh and try again; no account changes were made.' } };
     }
   }
+
+  // Newer editors send the original snapshot. Check again on the server,
+  // including worker fields that will be overwritten and the full site list.
+  // This blocks already-committed changes, not races after this read; the
+  // Auth, profile, assignments and worker writes remain separate operations.
+  // Older clients without a snapshot retain their existing behavior.
+  let expectedSnapshot: AccountEditSnapshot | undefined;
+  if (input.expectedSnapshot !== undefined) {
+    try { expectedSnapshot = parseAccountEditSnapshot(input.expectedSnapshot, targetUserId); }
+    catch { return {status:400,body:{ok:false,error:'The account edit snapshot is invalid. Close and reopen the editor; no changes were made.'}}; }
+    let current;
+    try { current = await loadAccountEditSnapshot(adminClient, targetUserId); }
+    catch { return {status:503,body:{ok:false,error:'Could not recheck the account, workforce profile and assigned sites. No changes were made; try again.'}}; }
+    if (!sameAccountEditSnapshot(expectedSnapshot, current)) {
+      return {status:409,body:{ok:false,error:'This account, workforce profile or assigned sites changed while editing. No changes were made. Close and reopen the editor to review the latest details.'}};
+    }
+  }
+
+  const requestedSites = nextRole === 'supervisor' && Array.isArray(input.assignedProjectIds)
+    ? normalizeProjectIds(input.assignedProjectIds) : [];
+  const siteCheck = await checkSelectedProjects(adminClient, requestedSites);
+  if (siteCheck !== 'ok') return { status: siteCheck === 'missing' ? 409 : 503, body: { ok: false,
+    error: siteCheck === 'missing' ? 'A selected project is no longer available. Refresh the site selection; no changes were made.' : 'Could not verify the selected projects. No changes were made; retry.' } };
 
   // The database re-checks actor and last-Founder invariants under a
   // transaction lock. Missing migration or an unconfirmed result fails closed.
@@ -570,7 +658,8 @@ export async function updateTeamAccount(params: {
       ...(resetPasswordValue ? { must_change_password: true } : {}),
     },
   }).catch(() => ({ data: { user: null }, error: { message: 'request failed' } }));
-  const authUpdateConfirmed = !authUpdate.error && Boolean(authUpdate.data?.user);
+  // A response for another identity cannot confirm this account's Auth change.
+  const authUpdateConfirmed = !authUpdate.error && authUpdate.data?.user?.id === targetUserId;
   if (!authUpdateConfirmed) warnings.push(resetPasswordValue
     ? 'Auth update and password reset were not confirmed. Do not share the proposed password; check Supabase Auth before retrying.'
     : 'Auth metadata update was not confirmed. Check Supabase Auth and the profile before retrying.');
@@ -579,7 +668,7 @@ export async function updateTeamAccount(params: {
   // lost response is unconfirmed; never attempt a separate delete/insert.
   let assignedProjectIds: string[] | undefined;
   if (Array.isArray(input.assignedProjectIds) || nextRole === 'founder') {
-    const requested = nextRole === 'supervisor' ? normalizeProjectIds(input.assignedProjectIds) : [];
+    const requested = nextRole === 'supervisor' ? requestedSites : [];
     if (nextRole === 'supervisor') {
       try {
         const result = await adminClient.rpc('replace_supervisor_projects_guarded', {
@@ -602,34 +691,50 @@ export async function updateTeamAccount(params: {
     }
   }
 
-  // Sync 1:1 linked `public.workers` profile for Supervisor attendance & payroll.
-  if (nextRole === 'supervisor' && input.includeInPayroll !== false) {
-    const payRate = requestedRate ?? 1200;
+  // Only an explicit payroll selection may write the linked worker profile.
+  // Account-only callers must not silently replace rates or reactivate workers.
+  if (nextRole === 'supervisor' && input.includeInPayroll === true) {
+    const payRate = requestedRate!;
     const payRateType = input.payRateType === 'hourly' ? 'hourly' : 'daily';
     const contactNumber =
       typeof input.contactNumber === 'string' && input.contactNumber.trim()
         ? input.contactNumber.trim()
         : '—';
 
-    const workerFailed = await mutationFailed(() => adminClient.from('workers').upsert(
-      {
-        id: targetUserId,
-        name: nextName,
-        contact_number: contactNumber,
-        position: 'Site Supervisor',
-        pay_rate: payRate,
-        pay_rate_type: payRateType,
-        active: true,
-      },
-      { onConflict: 'id' }
-    ));
-    if (workerFailed) warnings.push('Payroll roster update was not confirmed. The profile may have been removed; check Workforce and restore it before including this Supervisor in payroll. Check the account changes before retrying.');
+    const workerRow = {id: targetUserId, name: nextName, contact_number: contactNumber,
+      position: 'Site Supervisor', pay_rate: payRate, pay_rate_type: payRateType, active: true};
+    let workerFailed: boolean;
+    if (!expectedSnapshot) {
+      // Compatibility for old callers; they do not have a reviewed baseline.
+      workerFailed = await mutationFailed(() => adminClient.from('workers').upsert(workerRow, {onConflict:'id'}));
+    } else {
+      // Match the reviewed worker row in the write itself. A concurrent change
+      // after the earlier recheck must not be overwritten. If it was absent,
+      // INSERT (not upsert) prevents replacing a newly created profile.
+      const old=expectedSnapshot.worker;
+      if (old) workerFailed=!(await updateReviewedWorker(adminClient, old, workerRow));
+      else {
+        try {
+          const result=await adminClient.from('workers').insert(workerRow).select('id').maybeSingle();
+          workerFailed=Boolean(result.error) || result.data?.id!==targetUserId;
+        } catch { workerFailed=true; }
+      }
+    }
+    if (workerFailed) warnings.push('Payroll roster update was not confirmed or the profile changed. Check Workforce and the account changes before retrying; restore a removed profile only through Workforce.');
   } else if (nextRole === 'founder' || input.includeInPayroll === false) {
-    const workerFailed = await mutationFailed(() => adminClient
-      .from('workers')
-      .update({ active: false })
-      .eq('id', targetUserId));
-    if (workerFailed) warnings.push('Payroll roster deactivation was not confirmed. Check the worker record before running payroll.');
+    let workerFailed: boolean;
+    if (!expectedSnapshot) {
+      workerFailed = await mutationFailed(() => adminClient.from('workers').update({ active: false }).eq('id', targetUserId));
+    } else if (expectedSnapshot.worker) {
+      workerFailed = !(await updateReviewedWorker(adminClient, expectedSnapshot.worker, { active: false }));
+    } else {
+      // No reviewed profile to deactivate. Do not affect one created since the review.
+      workerFailed = false;
+      if (nextRole === 'supervisor' || expectedSnapshot.user.role === 'supervisor') {
+        warnings.push('No payroll profile was present in the reviewed account. Check Workforce before running payroll if another profile may have been created.');
+      }
+    }
+    if (workerFailed) warnings.push('Payroll roster deactivation was not confirmed or the profile changed. Check Workforce and the account changes before running payroll or retrying.');
   }
 
   const auditRes = await writeUserAuditEntry(adminClient, {

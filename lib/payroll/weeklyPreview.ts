@@ -1,4 +1,5 @@
 import { workerPayrollPeriod } from './periods';
+import { estimateProjectGross } from './projectCostEstimate';
 
 type Worker={id:string;name:string;position:string;active:boolean;pay_rate:string;pay_rate_type:'daily'|'hourly';linked_supervisor:boolean;possible_supervisor:boolean};
 type TimeDetail={regular_hours:string;overtime_hours:string;stale:boolean};
@@ -42,7 +43,8 @@ export function parseWeeklyInput(raw:unknown,start:string):WeeklyInput {
  for(const a of v.older_advances){if(!a||!['active','partially_deducted'].includes(a.status)||typeof a.amount!=='string'||typeof a.deducted!=='string')throw new Error('Invalid older Bale in weekly preview');cents(a.amount);cents(a.deducted);unique(a.id,advanceIds,a.worker_id);}
  return v;
 }
-export type WeeklyRow={worker:Worker;days:{date:string;entries:Entry[];unmarked:'past'|'today'|'upcoming'|null}[];vouchers:Voucher[];wage:string|null;gross:string|null;allowance:string;pendingAllowances:number;bale:string;olderBalance:string;net:string|null;regularHours:string;otHours:string;review:boolean;reviewReasons:string[];pastUnmarked:boolean;excess:boolean};
+export type WeeklyProjectEstimate={projectId:string;wage:string;allowance:string;gross:string};
+export type WeeklyRow={projectEstimates:WeeklyProjectEstimate[]|null;worker:Worker;days:{date:string;entries:Entry[];unmarked:'past'|'today'|'upcoming'|null}[];vouchers:Voucher[];wage:string|null;gross:string|null;allowance:string;pendingAllowances:number;bale:string;olderBalance:string;net:string|null;regularHours:string;otHours:string;review:boolean;reviewReasons:string[];pastUnmarked:boolean;excess:boolean};
 export function buildWeeklyPreview(input:WeeklyInput,today:string):{rows:WeeklyRow[];linkedSupervisors:number} {
  const dates=weekDates(input.start);workerPayrollPeriod(today);
  const group=<T extends {worker_id:string}>(items:T[])=>{const m=new Map<string,T[]>();for(const x of items){const list=m.get(x.worker_id);if(list)list.push(x);else m.set(x.worker_id,[x]);}return m;};
@@ -52,9 +54,13 @@ export function buildWeeklyPreview(input:WeeklyInput,today:string):{rows:WeeklyR
   const days=dates.map(date=>{const entries=att.filter(a=>a.date===date);return {date,entries,unmarked:entries.length?null:date<today?'past' as const:date===today?'today' as const:'upcoming' as const};});
   const reasons:string[]=[];
   if(worker.possible_supervisor)reasons.push('Possible Supervisor identity');
+  if(att.some(a=>a.date>today)||allow.some(a=>a.status!=='rejected'&&a.date>today)||bales.some(a=>a.status!=='cancelled'&&a.date>today))reasons.push('Future-dated attendance, allowance or Bale requires review');
   if(pays.length>1 || pays.some(p=>p.period_start!==input.start||p.period_end!==input.end))reasons.push('Multiple or overlapping vouchers');
   if(days.some(d=>d.entries.length>1 || d.entries.some(a=>a.time_detail?.stale || ((a.status==='present'||a.status==='half_day') ? (a.time_detail ? cents(a.time_detail.regular_hours)+cents(a.time_detail.overtime_hours)===0n : (cents(a.hours_worked)>800n || cents(a.hours_worked)===0n)) : (cents(a.hours_worked)!==0n || Boolean(a.time_detail))))))reasons.push('Attendance conflicts, unusual hours or stale time details');
   if(allow.some(a=>a.status!=='rejected'&&a.stale))reasons.push('Allowance attendance changed');
+  // A non-stale flag alone does not prove that the preview also contains the
+  // corresponding worked day/site. Never use such an allowance in a net.
+  if(allow.some(a=>a.status==='approved'&&!a.stale&&!att.some(entry=>entry.project_id===a.project_id&&entry.date===a.date&&(entry.status==='present'||entry.status==='half_day'))))reasons.push('Approved allowance has no matching worked attendance');
   const repeated=(keys:string[])=>new Set(keys).size!==keys.length;
   if(repeated(allow.filter(a=>a.status!=='rejected').map(a=>JSON.stringify([a.date,a.project_id,cents(a.amount).toString(),a.description.trim().toLowerCase()]))))reasons.push('Possible duplicate allowance entries');
   const pendingAllowances=allow.filter(a=>a.status==='pending').length;
@@ -68,11 +74,18 @@ export function buildWeeklyPreview(input:WeeklyInput,today:string):{rows:WeeklyR
   const worked=att.filter(a=>a.status==='present'||a.status==='half_day');
   const regular=worked.reduce((sum,a)=>sum+cents(a.time_detail?.regular_hours ?? a.hours_worked),0n),overtime=worked.reduce((sum,a)=>sum+cents(a.time_detail?.overtime_hours ?? '0'),0n);
   const finalized=pays.some(p=>p.status==='paid'||p.status==='approved');
-  const wage=!reasons.length&&!finalized&&worked.length?roundDivide(cents(worker.pay_rate)*(regular+overtime),worker.pay_rate_type==='daily'?800n:100n):null;
+  // Recorded absence/leave can yield zero earnings; a completely unmarked
+  // week is still unknown, not proof of zero attendance or a zero payout.
+  const wage=!reasons.length&&!finalized&&att.length?roundDivide(cents(worker.pay_rate)*(regular+overtime),worker.pay_rate_type==='daily'?800n:100n):null;
   const excess=wage!==null && bale>wage+includedAllow;
   if(excess)reasons.push('Recorded Bale exceeds estimated earnings');
   const net=wage!==null&&!excess?centsText(wage+includedAllow-bale):null;
-  return {worker,days,vouchers:pays,wage:wage===null?null:centsText(wage),gross:wage===null?null:centsText(wage+includedAllow),allowance:centsText(includedAllow),pendingAllowances,bale:centsText(bale),olderBalance:centsText(olderBalance),net,regularHours:centsText(regular),otHours:centsText(overtime),review:reasons.length>0,reviewReasons:reasons,pastUnmarked:days.some(d=>d.unmarked==='past'),excess};
+  const projectEstimates = net===null || wage===null ? null : estimateProjectGross({
+   wageCents:wage,
+   worked:worked.map(a=>({projectId:a.project_id,date:a.date,hundredthsOfHour:cents(a.time_detail?.regular_hours ?? a.hours_worked)+cents(a.time_detail?.overtime_hours ?? '0')})),
+   allowances:allow.filter(a=>a.status==='approved'&&!a.stale).map(a=>({projectId:a.project_id,date:a.date,amountCents:cents(a.amount)})),
+  })?.map(p=>({projectId:p.projectId,wage:centsText(p.wageCents),allowance:centsText(p.allowanceCents),gross:centsText(p.grossCents)})) ?? null;
+  return {projectEstimates,worker,days,vouchers:pays,wage:wage===null?null:centsText(wage),gross:wage===null?null:centsText(wage+includedAllow),allowance:centsText(includedAllow),pendingAllowances,bale:centsText(bale),olderBalance:centsText(olderBalance),net,regularHours:centsText(regular),otHours:centsText(overtime),review:reasons.length>0,reviewReasons:reasons,pastUnmarked:days.some(d=>d.unmarked==='past'),excess};
  });
  return {rows,linkedSupervisors:input.workers.filter(w=>w.linked_supervisor).length};
 }
@@ -81,4 +94,21 @@ export function buildWeeklyPreview(input:WeeklyInput,today:string):{rows:WeeklyR
 export function summarizeWeekly(rows:WeeklyRow[]):{count:number;excluded:number;gross:string;net:string}{
  const included=rows.filter(row=>row.net!==null&&row.gross!==null);
  return {count:included.length,excluded:rows.length-included.length,gross:centsText(included.reduce((sum,row)=>sum+cents(row.gross!),0n)),net:centsText(included.reduce((sum,row)=>sum+cents(row.net!),0n))};
+}
+
+/** Hours are hundredths; display equivalent eight-hour days rounded to 0.01. */
+export function regularDayEquivalent(hours: string): string {
+ return centsText(roundDivide(cents(hours), 8n));
+}
+
+/** Only rows with an illustrative net are counted; excluded rows are not zero. */
+export function summarizeWeeklyColumns(rows: WeeklyRow[]): {
+ count:number; excluded:number; regularHours:string; otHours:string; wage:string;
+ allowance:string; bale:string; gross:string; net:string;
+} {
+ const included=rows.filter(row=>row.net!==null&&row.gross!==null&&row.wage!==null);
+ const sum=(get:(row:WeeklyRow)=>string)=>centsText(included.reduce((total,row)=>total+cents(get(row)),0n));
+ return {count:included.length,excluded:rows.length-included.length,
+  regularHours:sum(row=>row.regularHours),otHours:sum(row=>row.otHours),wage:sum(row=>row.wage!),
+  allowance:sum(row=>row.allowance),bale:sum(row=>row.bale),gross:sum(row=>row.gross!),net:sum(row=>row.net!)};
 }

@@ -1,137 +1,21 @@
-name: Apply database migrations
+name: Apply database migrations (disabled)
 
-# MANUAL ONLY. There is deliberately no `push` trigger: nothing in this
-# repository may migrate a production database as a side effect of a commit.
-#
-# WHY THIS EXISTS
-# ---------------
-# The agent sandbox that prepared the 2026-10-06 hardening work cannot reach
-# `*.supabase.co` (its egress allowlist covers only npm and GitHub), so the
-# migrations could not be applied from there. This workflow is the alternative
-# to pasting SQL into the Supabase dashboard: GitHub Actions runners have normal
-# network access.
-#
-# It applies `supabase/apply/*.sql` — the GENERATED bundles — and not
-# `supabase db push`. That is deliberate: `db push` runs every migration in
-# `supabase/migrations/`, including `20260913000002_bale_seed.sql`, which creates
-# real auth accounts with the published password `asinta2026`. The bundles never
-# contain the seed (docs/SECURITY.md §9).
-#
-# SETUP (once)
-#   Repository → Settings → Secrets and variables → Actions → New secret
-#     SUPABASE_DB_URL = postgresql://postgres.<ref>:<db-password>@aws-0-<region>.pooler.supabase.com:5432/postgres
-#   Take the pooled connection string from Supabase → Project Settings →
-#   Database → Connection string → URI, replacing the password.
-#
-# Then: Actions → "Apply database migrations" → Run workflow (dry run first).
-#
-# This secret is a database password. It is never echoed, and GitHub masks it in
-# logs. Rotate it in the dashboard if it is ever exposed.
-
+# The generated bundles do not reflect current migration history. The hosted
+# development database also contains separately applied and combined migrations
+# with different version numbers. Neither bundle nor `supabase db push` is a
+# safe replacement for a reviewed, target-specific rollout and recovery plan.
+# This manual workflow intentionally cannot access secrets or connect to a DB.
 on:
   workflow_dispatch:
-    inputs:
-      bundle:
-        description: 'Which bundle to apply'
-        required: true
-        type: choice
-        default: upgrade-hardening
-        options:
-          - upgrade-hardening
-          - fresh-install
-      confirm_project_ref:
-        description: 'Type the project ref (mchkdkjntnbwrgmyobpd) to confirm which database you are migrating'
-        required: true
-        type: string
-      dry_run:
-        description: 'Dry run — run the pre-flight check and apply nothing'
-        required: false
-        type: boolean
-        default: true
 
-concurrency:
-  group: apply-migrations
-  cancel-in-progress: false
+permissions: {}
 
 jobs:
-  migrate:
-    name: Apply ${{ inputs.bundle }}
+  blocked:
     runs-on: ubuntu-latest
-    env:
-      EXPECTED_REF: mchkdkjntnbwrgmyobpd
-      BUNDLE: supabase/apply/${{ inputs.bundle }}.sql
     steps:
-      - name: Confirm the target project
+      - name: Refuse stale migration bundles
         run: |
-          if [ "${{ inputs.confirm_project_ref }}" != "$EXPECTED_REF" ]; then
-            echo "::error::Confirmation '${{ inputs.confirm_project_ref }}' does not match this workflow's project ($EXPECTED_REF). Nothing was changed."
-            exit 1
-          fi
-
-      - uses: actions/checkout@v4
-
-      - name: Check the database URL secret is present, and that it points at this project
-        env:
-          SUPABASE_DB_URL: ${{ secrets.SUPABASE_DB_URL }}
-        run: |
-          if [ -z "$SUPABASE_DB_URL" ]; then
-            echo "::error::SUPABASE_DB_URL is not set. See the comment at the top of this workflow."
-            exit 1
-          fi
-          # The ref appears as the username suffix (postgres.<ref>) or the host
-          # (db.<ref>.supabase.co). Refuse to run against a different project.
-          case "$SUPABASE_DB_URL" in
-            *"$EXPECTED_REF"*) echo "URL matches $EXPECTED_REF." ;;
-            *) echo "::error::SUPABASE_DB_URL does not contain $EXPECTED_REF — refusing to migrate an unknown database."; exit 1 ;;
-          esac
-
-      - name: Install PostgreSQL client
-        run: sudo apt-get update -qq && sudo apt-get install -y -qq postgresql-client
-
-      - name: Verify the bundle is seed-free before running it
-        run: |
-          if grep -q 'asinta2026' "$BUNDLE"; then
-            echo "::error::$BUNDLE contains the demo seed password. Refusing to apply it to a live project."
-            exit 1
-          fi
-          head -20 "$BUNDLE"
-
-      - name: Pre-flight — what is already applied?
-        env:
-          SUPABASE_DB_URL: ${{ secrets.SUPABASE_DB_URL }}
-        run: |
-          psql "$SUPABASE_DB_URL" -v ON_ERROR_STOP=1 -c "
-            select
-              to_regclass('public.expenses') is not null      as base_schema_applied,
-              to_regclass('public.audit_log') is not null       as hardening_applied,
-              to_regclass('public.vendor_memory') is not null   as ai_draft_applied,
-              to_regclass('public.advance_requests') is not null as bale_requests_applied,
-              (select public from storage.buckets where id = 'receipts') as receipts_bucket_public,
-              case
-                when to_regclass('public.expenses') is null
-                  then 'apply fresh-install'
-                when to_regclass('public.audit_log') is null
-                  or to_regclass('public.vendor_memory') is null
-                  or to_regclass('public.advance_requests') is null
-                  then 'apply upgrade-hardening'
-                else 'already migrated — run verify-live.sql'
-              end as next_step;"
-
-      - name: Apply ${{ inputs.bundle }}
-        if: ${{ !inputs.dry_run }}
-        env:
-          SUPABASE_DB_URL: ${{ secrets.SUPABASE_DB_URL }}
-        run: |
-          # The bundle is wrapped in begin;/commit;, so a failure anywhere rolls
-          # the whole thing back. ON_ERROR_STOP makes psql exit non-zero so the
-          # job fails loudly instead of reporting success on a partial transcript.
-          psql "$SUPABASE_DB_URL" -v ON_ERROR_STOP=1 -f "$BUNDLE"
-
-      - name: What to do next
-        run: |
-          if [ "${{ inputs.dry_run }}" = "true" ]; then
-            echo "DRY RUN — nothing was changed. Re-run with dry_run unchecked to apply."
-          else
-            echo "Applied. Now run supabase/apply/verify-live.sql in the SQL editor"
-            echo "and confirm every row reports PASS — docs/MIGRATION_RUNBOOK.md §5."
-          fi
+          echo '::error::Migration automation is disabled: the SQL bundles and target migration history must be reconciled and independently rehearsed first.'
+          echo 'See docs/PR103_SCHEMA_REHEARSAL.md and docs/CLIENT_CHANGE_PLAN.md. Do not use supabase db push as a workaround.'
+          exit 1

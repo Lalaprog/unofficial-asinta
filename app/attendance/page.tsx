@@ -52,8 +52,14 @@ import { RollCallWalkthrough } from '@/components/dashboard/RollCallWalkthrough'
 import type { HistoryRecord, HistorySheet } from '@/lib/attendance/history';
 import { HistorySheetRecords } from '@/components/attendance/HistorySheetRecords';
 import { AttendanceHistoryCalendar } from '@/components/attendance/AttendanceHistoryCalendar';
-import { SupervisorLeavePanel } from '@/components/attendance/SupervisorLeavePanel';
-import { SupervisorDayPanel } from '@/components/attendance/SupervisorDayPanel';
+import { SupervisorFoundationPanels } from '@/components/attendance/SupervisorFoundationPanels';
+import { WorkerCategoryFoundation } from '@/components/workforce/WorkerCategoryFoundation';
+import { WorkerCategorySelect } from '@/components/workforce/WorkerCategorySelect';
+import { CATEGORY_CHANGED, useActiveCategories } from '@/lib/workforce/useActiveCategories';
+import { categoryWorkforceEnabled } from '@/lib/workforce/categoryCatalog';
+import { AssignmentHistory } from '@/components/workforce/AssignmentHistory';
+import { assignmentHistoryPreviewEnabled } from '@/lib/workforce/assignmentHistory';
+import { weeklyWorkerCutoverMode } from '@/lib/finance/featureAvailability';
 
 const EMPTY_ROLL_CALL: ProjectRollCallSnapshot = { workerIds: [], records: [] };
 
@@ -107,6 +113,23 @@ function getCraftGroup(position: string): CraftGroupKey {
   return 'general';
 }
 
+// Integrated categories are distinct groups, including archived categories still on workers.
+// Prefix prevents a category literally named "all" from colliding with the reset filter.
+function workerCraftGroup(position: string): string {
+  return categoryWorkforceEnabled() ? `category:${position.trim() || 'Unspecified'}` : getCraftGroup(position);
+}
+function craftGroupLabel(key: string): string {
+  return key.startsWith('category:') ? key.slice('category:'.length) : CRAFT_GROUP_META[key as CraftGroupKey].label;
+}
+function craftGroupOrder(a: string, b: string): number {
+  if (categoryWorkforceEnabled()) return craftGroupLabel(a).localeCompare(craftGroupLabel(b));
+  return CRAFT_GROUP_META[a as CraftGroupKey].order - CRAFT_GROUP_META[b as CraftGroupKey].order;
+}
+function craftOptions(positions: string[]) {
+  if (!categoryWorkforceEnabled()) return CRAFT_FILTER_OPTIONS;
+  return [{ label: 'All Craft Groups', value: 'all' }, ...Array.from(new Set(positions.map(workerCraftGroup))).sort(craftGroupOrder).map(value => ({label: craftGroupLabel(value), value}))];
+}
+
 function statusToHours(status: AttendanceStatus): number {
   if (status === 'present') return 8;
   if (status === 'half_day') return 4;
@@ -125,6 +148,7 @@ function AttendancePageInner() {
   const searchParams = useSearchParams();
   const { showToast } = useToast();
   const pendingApprovals = usePendingApprovals(isFounder, user?.id);
+  const categories = useActiveCategories(user?.id, assurance);
   const {
     users,
     workers,
@@ -141,6 +165,8 @@ function AttendancePageInner() {
     updateAttendanceRecord,
     getProjectsForSupervisor,
   } = useDataStore();
+
+  useEffect(() => { if (!categories.enabled) return; const changed = () => { void refresh(); }; window.addEventListener(CATEGORY_CHANGED, changed); return () => window.removeEventListener(CATEGORY_CHANGED, changed); }, [categories.enabled, refresh]);
 
   // Accessible projects for user
   const accessibleProjects =
@@ -286,6 +312,14 @@ function AttendancePageInner() {
     [isSupervisor, user, users]
   );
 
+  // During the coordinated cutover, linked Supervisors use one company-wide
+  // daily record. Existing site rows stay visible as history, not new pay input.
+  const generalSupervisorCutover = weeklyWorkerCutoverMode();
+  const isLockedRollCallWorker = useCallback((w: Worker): boolean =>
+    isSelfSupervisorWorker(w) || (generalSupervisorCutover && (
+      Boolean(findSupervisorAccountForWorker(w)) || projectSupervisors.some((ps) => ps.supervisor_id === w.id)
+    )), [isSelfSupervisorWorker, generalSupervisorCutover, findSupervisorAccountForWorker, projectSupervisors]);
+
   // Pause this UI's submission when an active workforce profile has the same
   // name as a supervisor but a different ID. This is a review signal, not
   // proof of identity, and does not merge or change any historical records.
@@ -350,25 +384,26 @@ function AttendancePageInner() {
     return map;
   }, [attendance, selectedDate, selectedProjectId, projects]);
 
-  // Active assigned crew plus active workers with saved attendance for this
-  // site/date. An assigned Supervisor is included when there is a team to
-  // submit; an empty team alone must not create self-attendance.
+  // Supervisors may edit only the selected site's current team. Older saved
+  // site records for workers who moved away remain visible separately, read-only.
+  // The Founder can still review/edit historical active workers here.
   const siteRosterWorkers = useMemo(() => {
     const assigned = new Set(rollCallSnapshot.workerIds);
     const recorded = new Set(existingSiteDateRecords.map((record) => record.worker_id));
     const supervisors = new Set(projectSupervisors.filter((ps) => ps.project_id === selectedProjectId).map((ps) => ps.supervisor_id));
     const hasTeam = rollCallSnapshot.workerIds.length > 0;
     return workers.filter((worker) => worker.active && (
-      assigned.has(worker.id) || recorded.has(worker.id) || (hasTeam && supervisors.has(worker.id))
+      assigned.has(worker.id) || (!isSupervisor && recorded.has(worker.id)) || (hasTeam && supervisors.has(worker.id))
     ));
-  }, [workers, rollCallSnapshot, existingSiteDateRecords, projectSupervisors, selectedProjectId]);
-  const unavailableSavedRecords = useMemo(() => existingSiteDateRecords.filter(
-    (record) => !workers.some((worker) => worker.id === record.worker_id && worker.active)
-  ), [existingSiteDateRecords, workers]);
+  }, [workers, rollCallSnapshot, existingSiteDateRecords, projectSupervisors, selectedProjectId, isSupervisor]);
+  const unavailableSavedRecords = useMemo(() => {
+    const visible = new Set(siteRosterWorkers.map(worker => worker.id));
+    return existingSiteDateRecords.filter(record => !visible.has(record.worker_id));
+  }, [existingSiteDateRecords, siteRosterWorkers]);
   const hiddenDraftIds = useMemo(() => {
-    const visible = new Set(siteRosterWorkers.map((worker) => worker.id));
+    const visible = new Set(siteRosterWorkers.filter((worker) => !generalSupervisorCutover || !isLockedRollCallWorker(worker)).map((worker) => worker.id));
     return dirtyDraftWorkerIds.filter((id) => !visible.has(id));
-  }, [dirtyDraftWorkerIds, siteRosterWorkers]);
+  }, [dirtyDraftWorkerIds, siteRosterWorkers, generalSupervisorCutover, isLockedRollCallWorker]);
 
   const getBaselineDraftEntry = useCallback(
     (workerId: string): AttendanceDraftEntry => {
@@ -514,7 +549,7 @@ function AttendancePageInner() {
 
   const handleStatusChange = (worker: Worker, status: AttendanceStatus) => {
     // Supervisor cannot manually toggle their own row (auto-logged on crew submit)
-    if (isSubmitting || isSelfSupervisorWorker(worker)) {
+    if (isSubmitting || isLockedRollCallWorker(worker)) {
       return;
     }
 
@@ -558,7 +593,7 @@ function AttendancePageInner() {
     if (isSubmitting) return;
     const changes: AttendanceDraftMap = {};
     targetWorkers.forEach((worker) => {
-      if (isSelfSupervisorWorker(worker)) return;
+      if (isLockedRollCallWorker(worker)) return;
       const current = draftAttendance[worker.id] || getBaselineDraftEntry(worker.id);
       if (current.status) return;
       if (otherSiteActiveAttendanceByWorker.has(worker.id)) return;
@@ -571,8 +606,8 @@ function AttendancePageInner() {
   // - For a Supervisor: all `siteRosterWorkers` EXCEPT their own locked row (`!isSelfSupervisorWorker(w)`)
   // - For a Founder: all `siteRosterWorkers`
   const markableWorkers = useMemo(
-    () => siteRosterWorkers.filter((w) => !isSelfSupervisorWorker(w)),
-    [siteRosterWorkers, isSelfSupervisorWorker]
+    () => siteRosterWorkers.filter((w) => !isLockedRollCallWorker(w)),
+    [siteRosterWorkers, isLockedRollCallWorker]
   );
 
   const checkedCount = markableWorkers.filter(
@@ -669,7 +704,7 @@ function AttendancePageInner() {
     //      auto-log the Supervisor as `present` (Pending Founder Review).
     //    - On subsequent updates (e.g. changing a worker to Half Day in the afternoon),
     //      preserve their existing row without duplicating or resetting Founder approval.
-    if (isSupervisor) {
+    if (isSupervisor && !generalSupervisorCutover) {
       const selfWorker = siteRosterWorkers.find((w) => isSelfSupervisorWorker(w));
       if (selfWorker) {
         const existingSelfOnSite = existingSiteDateRecords.find(
@@ -690,6 +725,19 @@ function AttendancePageInner() {
             is_founder_override: false,
           });
         }
+      }
+    }
+
+    // Historical rows remain visible, but a moved worker's old site record
+    // must not be submitted by a Supervisor as if still assigned here. This is
+    // a UX check only; the database guard is separately required for security.
+    if (isSupervisor) {
+      const assigned = new Set(rollCallSnapshot.workerIds);
+      if (batch.some((row) => row.worker_id !== user.id && !assigned.has(row.worker_id))) {
+        submitLock.current = false;
+        setIsSubmitting(false);
+        showToast('error', 'An edited worker is no longer assigned to this site. Your draft is kept; ask the Founder to review the saved history.');
+        return;
       }
     }
 
@@ -719,7 +767,7 @@ function AttendancePageInner() {
           setDraftStorageStatus('error');
         }
       }
-      showToast('success', 'Attendance saved. Supervisor self-attendance may still require Founder review before payroll.');
+      showToast('success', generalSupervisorCutover ? 'Crew attendance saved. Supervisor attendance is recorded separately.' : 'Attendance saved. Supervisor self-attendance may still require Founder review before payroll.');
       if (isFounder) void pendingApprovals.refresh();
       void rollCall.reload();
       setHistoryRevision((n) => n + 1);
@@ -733,6 +781,7 @@ function AttendancePageInner() {
     rec: Attendance,
     decision: 'present' | 'half_day' | 'absent'
   ) => {
+    if (generalSupervisorCutover && (users.some(u => u.id === rec.worker_id && u.role === 'supervisor') || projectSupervisors.some(ps => ps.supervisor_id === rec.worker_id))) { showToast('error', 'Legacy site-based Supervisor attendance is read-only; use general daily attendance.'); return; }
     if (reviewInFlightRef.current) return;
     reviewInFlightRef.current = true;
     setIsReviewingSupervisor(true);
@@ -788,11 +837,11 @@ function AttendancePageInner() {
 
   const handleAddWorkerSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!workerName.trim() || isAddingWorker) return;
+    if (!workerName.trim() || isAddingWorker || (categories.enabled && !categories.items?.some(c=>c.label===workerPosition))) return;
     setIsAddingWorker(true);
     const created = await createWorker({
       name: workerName.trim(),
-      position: workerPosition.trim() || 'Mason',
+      position: categories.enabled ? workerPosition : workerPosition.trim() || 'Mason',
       pay_rate: parseFloat(workerRate) || 0,
       pay_rate_type: 'daily',
       contact_number: workerPhone.trim() || '—',
@@ -821,7 +870,7 @@ function AttendancePageInner() {
 
   const handleEditWorkerSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!editingWorker || isSavingWorker) return;
+    if (!editingWorker || isSavingWorker || (categories.enabled && editWorkerPosition!==editingWorker.position && !categories.items?.some(c=>c.label===editWorkerPosition))) return;
     setIsSavingWorker(true);
     const updated = await updateWorker(editingWorker.id, {
       name: editWorkerName.trim(),
@@ -838,9 +887,12 @@ function AttendancePageInner() {
   };
 
   const collectUnmarkedWorkerIds = () => siteRosterWorkers
-    .filter((worker) => !isSelfSupervisorWorker(worker))
+    .filter((worker) => !isLockedRollCallWorker(worker))
     .filter((worker) => !(draftAttendance[worker.id] || getBaselineDraftEntry(worker.id)).status)
     .map((worker) => worker.id);
+
+  const rosterCraftOptions = useMemo(() => craftOptions(siteRosterWorkers.map(w => w.position)), [siteRosterWorkers]);
+  useEffect(() => { if (!rosterCraftOptions.some(option => option.value === craftFilter)) setCraftFilter('all'); }, [rosterCraftOptions, craftFilter]);
 
   // Filtered workers on the Daily Roster (Supervisors placed at the top)
   const filteredWorkers = useMemo(() => {
@@ -848,7 +900,7 @@ function AttendancePageInner() {
     return siteRosterWorkers
       .filter((w) => {
         if (unmarkedIds && !unmarkedIds.has(w.id)) return false;
-        if (craftFilter !== 'all' && getCraftGroup(w.position) !== craftFilter) {
+        if (craftFilter !== 'all' && workerCraftGroup(w.position) !== craftFilter) {
           return false;
         }
         if (!searchWorker.trim()) return true;
@@ -867,15 +919,15 @@ function AttendancePageInner() {
 
   // Group filteredWorkers by CraftGroupKey for compact collapsible display
   const groupedRosterWorkers = useMemo(() => {
-    const map = new Map<CraftGroupKey, Worker[]>();
+    const map = new Map<string, Worker[]>();
     filteredWorkers.forEach((w) => {
-      const key = getCraftGroup(w.position);
+      const key = workerCraftGroup(w.position);
       const list = map.get(key) || [];
       list.push(w);
       map.set(key, list);
     });
     return Array.from(map.entries()).sort(
-      (a, b) => CRAFT_GROUP_META[a[0]].order - CRAFT_GROUP_META[b[0]].order
+      (a, b) => craftGroupOrder(a[0], b[0])
     );
   }, [filteredWorkers]);
 
@@ -922,6 +974,9 @@ function AttendancePageInner() {
     return workers.filter((worker) => assigned.has(worker.id) && worker.id !== user?.id);
   }, [workers, isSupervisor, workforceTeam.status, workforceTeam.ids, user?.id]);
 
+  const workforceCraftOptions = useMemo(() => craftOptions(workforceScopedWorkers.map(w => w.position)), [workforceScopedWorkers]);
+  useEffect(() => { if (!workforceCraftOptions.some(option => option.value === workforceCraftFilter)) setWorkforceCraftFilter('all'); }, [workforceCraftOptions, workforceCraftFilter]);
+
   const missingWorkforceProfiles = isSupervisor && workforceTeam.status === 'ready'
     ? workforceTeam.ids.filter((id) => id !== user?.id && !workers.some((worker) => worker.id === id)).length
     : 0;
@@ -932,7 +987,7 @@ function AttendancePageInner() {
       if (workforceStatusFilter === 'removed' ? !w.removed_at : Boolean(w.removed_at)) return false;
       if (workforceStatusFilter === 'active' && !w.active) return false;
       if (workforceStatusFilter === 'inactive' && w.active) return false;
-      if (workforceCraftFilter !== 'all' && getCraftGroup(w.position) !== workforceCraftFilter) {
+      if (workforceCraftFilter !== 'all' && workerCraftGroup(w.position) !== workforceCraftFilter) {
         return false;
       }
       if (!workforceSearch.trim()) return true;
@@ -940,15 +995,15 @@ function AttendancePageInner() {
       return w.name.toLowerCase().includes(q) || w.position.toLowerCase().includes(q);
     });
 
-    const map = new Map<CraftGroupKey, Worker[]>();
+    const map = new Map<string, Worker[]>();
     filtered.forEach((w) => {
-      const key = getCraftGroup(w.position);
+      const key = workerCraftGroup(w.position);
       const list = map.get(key) || [];
       list.push(w);
       map.set(key, list);
     });
     return Array.from(map.entries()).sort(
-      (a, b) => CRAFT_GROUP_META[a[0]].order - CRAFT_GROUP_META[b[0]].order
+      (a, b) => craftGroupOrder(a[0], b[0])
     );
   }, [workforceScopedWorkers, workforceCraftFilter, workforceSearch, workforceStatusFilter]);
 
@@ -1032,7 +1087,7 @@ function AttendancePageInner() {
                 ? 'Submitted daily attendance logs & approval status'
                 : activeTab === 'workforce'
                   ? isSupervisor ? 'Workers assigned to the selected project' : `${workers.filter((w) => w.active).length} active craftsmen & supervisors`
-                  : 'Mark crew on site'}
+                  : isSupervisor ? 'Choose the site, then mark each worker and submit' : 'Choose the site and date, mark the crew, then submit'}
             </p>
           </div>
 
@@ -1074,107 +1129,6 @@ function AttendancePageInner() {
             </div>
           )}
         </div>
-
-        {activeTab === 'terminal' && assurance === 'ready' && !authLoading && (isFounder || isSupervisor) && <><SupervisorDayPanel /><SupervisorLeavePanel /></>}
-
-        {/* Founder Review Banner: Supervisor Attendance Submitted with Crew Report */}
-        {isFounder && (pendingApprovals.loading || pendingApprovals.error || (pendingApprovals.total ?? 0) > 0) && (
-          <div className="p-3.5 rounded-xl bg-status-warning-bg/60 border border-status-warning/25 space-y-3 text-xs">
-            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
-              <div className="flex items-start sm:items-center gap-2.5">
-                <ShieldAlert className="w-5 h-5 text-status-warning shrink-0 mt-0.5 sm:mt-0" />
-                <div>
-                  <div className="font-bold text-navy text-sm">
-                    Supervisor approvals {pendingApprovals.total !== null ? `(${pendingApprovals.total} pending)` : ''}
-                  </div>
-                  <div className="text-ink-secondary">
-                    Review these supervisor logs before payroll. This queue reflects the last check; refresh for changes made elsewhere.
-                  </div>
-                </div>
-              </div>
-            </div>
-
-            {pendingApprovals.loading && <p role="status" className="text-ink-secondary">Loading pending approvals…</p>}
-            {pendingApprovals.error && <p role="alert" className="text-status-danger">Could not load the approval queue. Retry before assuming there are no pending approvals.</p>}
-            {pendingApprovals.items.length > 0 && <div className="divide-y divide-surface-border/60 bg-white rounded-xl border border-surface-border overflow-hidden">
-              {pendingApprovals.items.map((rec) => {
-                return (
-                  <div
-                    key={rec.id}
-                    className="p-3 flex flex-col sm:flex-row sm:items-center justify-between gap-2"
-                  >
-                    <div className="space-y-0.5">
-                      <div className="flex items-center gap-2 flex-wrap">
-                        <span className="font-bold text-navy">{rec.worker_name || 'Supervisor'}</span>
-                        <Badge variant="warning" size="sm">
-                          Site Supervisor
-                        </Badge>
-                        <span className="text-ink-secondary">
-                          · Attendance at <strong className="text-navy">{rec.project_name || 'Project Site'}</strong> on <strong>{rec.date}</strong>
-                        </span>
-                      </div>
-                      {rec.notes && (
-                        <div className="whitespace-pre-wrap break-words text-[11px] text-ink-muted">{rec.notes}</div>
-                      )}
-                    </div>
-
-                    <div className="flex items-center flex-wrap gap-1.5 shrink-0">
-                      <Button
-                        type="button"
-                        variant="primary"
-                        size="sm"
-                        className="min-h-11 sm:min-h-9"
-                        disabled={isReviewingSupervisor || pendingApprovals.loading || Boolean(pendingApprovals.error)}
-                        onClick={() => handleFounderSupervisorReview(rec, 'present')}
-                        leftIcon={<ShieldCheck className="w-3.5 h-3.5" />}
-                      >
-                        Approve Full Day
-                      </Button>
-                      <Button
-                        type="button"
-                        variant="secondary"
-                        size="sm"
-                        className="min-h-11 sm:min-h-9"
-                        disabled={isReviewingSupervisor || pendingApprovals.loading || Boolean(pendingApprovals.error)}
-                        onClick={() => handleFounderSupervisorReview(rec, 'half_day')}
-                      >
-                        Half Day
-                      </Button>
-                      <Button
-                        type="button"
-                        variant="danger"
-                        size="sm"
-                        className="min-h-11 sm:min-h-9"
-                        disabled={isReviewingSupervisor || pendingApprovals.loading || Boolean(pendingApprovals.error)}
-                        onClick={() => handleFounderSupervisorReview(rec, 'absent')}
-                        leftIcon={<XCircle className="w-3.5 h-3.5" />}
-                      >
-                        Mark Absent
-                      </Button>
-                    </div>
-                  </div>
-                );
-              })}
-            </div>}
-            <div className="flex flex-wrap gap-2">
-              {pendingApprovals.hasMore && (
-                <Button type="button" variant="secondary" size="sm" disabled={pendingApprovals.loading} onClick={pendingApprovals.loadMore}>
-                  Show more pending approvals
-                </Button>
-              )}
-              <Button type="button" variant="secondary" size="sm" disabled={pendingApprovals.loading} onClick={() => void pendingApprovals.refresh()}>
-                {pendingApprovals.error ? 'Retry approvals' : 'Refresh approvals'}
-              </Button>
-            </div>
-          </div>
-        )}
-
-        {isFounder && !pendingApprovals.loading && !pendingApprovals.error && pendingApprovals.total === 0 && (
-          <div className="flex flex-wrap items-center justify-between gap-2 rounded-xl border border-surface-border bg-white px-3.5 py-2 text-xs text-ink-secondary">
-            <span>No pending supervisor approvals at last check.</span>
-            <Button type="button" variant="ghost" size="sm" onClick={() => void pendingApprovals.refresh()}>Refresh approvals</Button>
-          </div>
-        )}
 
         {activeTab === 'terminal' && supervisorIdentityNeedsReview && (
           <div role="alert" className="rounded-xl border border-status-warning/30 bg-status-warning-bg p-4 text-sm text-navy">
@@ -1265,14 +1219,14 @@ function AttendancePageInner() {
             {unavailableAssignedIds.length > 0 && <div role="alert" className="rounded-xl border border-status-warning/30 bg-status-warning-bg p-4 text-sm text-navy">Some assigned workers are inactive or their details are unavailable. Check the project team before submitting.</div>}
             {unreadableDraft && <div role="alert" className="rounded-xl border border-status-warning/30 bg-status-warning-bg p-4 text-sm text-navy">Could not read the draft storage on this device. Nothing was submitted or deliberately deleted. Check browser storage before submitting.</div>}
             {hiddenDraftIds.length > 0 && <div role="alert" className="rounded-xl border border-status-warning/30 bg-status-warning-bg p-4 text-sm text-navy">
-              <p>A saved draft includes {hiddenDraftIds.length} worker(s) not in the current roster. The draft is preserved on this device. Add the worker back to the project, or discard only these hidden draft selections before submitting.</p>
+              <p>A saved draft includes {hiddenDraftIds.length} worker(s) unavailable for Roll Call or no longer in the current roster. The draft is preserved on this device. Review the project team or discard only these hidden draft selections before submitting.</p>
               <Button type="button" variant="secondary" size="sm" onClick={() => setDiscardHiddenDraftOpen(true)}>Review hidden draft selections</Button>
             </div>}
             {rollCallSnapshot.workerIds.length === 0 && <div role="status" className="rounded-xl border border-surface-border bg-white p-4 text-sm text-ink-secondary">No workers are assigned to this project yet. Saved attendance for this date remains visible below. <Link href={`/projects/${encodeURIComponent(selectedProjectId)}`} className="font-semibold text-brand underline">Manage project workers</Link></div>}
-            {unavailableSavedRecords.length > 0 && <section aria-label="Saved attendance for unavailable workers" className="rounded-xl border border-surface-border bg-white p-4 text-sm">
-              <h2 className="font-semibold text-navy">Saved attendance for unavailable workers</h2>
-              <p className="mt-1 text-xs text-ink-secondary">These saved records are shown read-only. Worker details may be unavailable to your account. Use Attendance History for more information.</p>
-              <ul className="mt-2 space-y-2">{unavailableSavedRecords.map((record) => <li key={record.id} className="text-xs text-ink-secondary"><strong>{record.worker_name || 'Worker (details unavailable)'}</strong> · {formatStatusLabel(record.status)}{record.notes ? ` · ${record.notes}` : ''}</li>)}</ul>
+            {unavailableSavedRecords.length > 0 && <section aria-label="Other saved attendance" className="rounded-xl border border-surface-border bg-white p-4 text-sm">
+              <h2 className="font-semibold text-navy">Other saved attendance</h2>
+              <p className="mt-1 text-xs text-ink-secondary">These saved records are shown read-only because the worker is not in your current roster or their details are unavailable. Use Attendance History for more information.</p>
+              <ul className="mt-2 space-y-2">{unavailableSavedRecords.map((record) => <li key={record.id} className="text-xs text-ink-secondary"><strong>{record.worker_name || workers.find(worker => worker.id === record.worker_id && worker.active)?.name || 'Worker (details unavailable)'}</strong> · {formatStatusLabel(record.status)}{record.notes ? ` · ${record.notes}` : ''}</li>)}</ul>
             </section>}
             {/* Compact progress summary: the roster remains the focus, counts stay scannable. */}
             <section
@@ -1361,7 +1315,7 @@ function AttendancePageInner() {
                     aria-label="Filter by craft group"
                     value={craftFilter}
                     onChange={(e) => setCraftFilter(e.target.value)}
-                    options={CRAFT_FILTER_OPTIONS}
+                    options={rosterCraftOptions}
                   />
                 </div>
               </div>
@@ -1398,11 +1352,11 @@ function AttendancePageInner() {
                   <button
                     type="button"
                     onClick={() => setCraftFilter('all')}
-                    aria-label={`Remove craft filter: ${CRAFT_FILTER_OPTIONS.find((option) => option.value === craftFilter)?.label || 'selected group'}`}
+                    aria-label={`Remove craft filter: ${rosterCraftOptions.find((option) => option.value === craftFilter)?.label || 'selected group'}`}
                     className="inline-flex min-h-11 min-w-0 max-w-full items-center gap-1.5 rounded-full bg-surface-inset px-3 py-1 text-xs font-medium text-navy transition-colors hover:bg-slate-200 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand focus-visible:ring-offset-2"
                   >
                     <span className="truncate">
-                      {CRAFT_FILTER_OPTIONS.find((option) => option.value === craftFilter)?.label || 'Selected craft'}
+                      {rosterCraftOptions.find((option) => option.value === craftFilter)?.label || 'Selected craft'}
                     </span>
                     <X className="h-3.5 w-3.5 shrink-0" aria-hidden="true" />
                   </button>
@@ -1423,7 +1377,7 @@ function AttendancePageInner() {
                   label="Craft group"
                   value={craftFilter}
                   onChange={(e) => setCraftFilter(e.target.value)}
-                  options={CRAFT_FILTER_OPTIONS}
+                  options={rosterCraftOptions}
                 />
                 <div className="flex flex-col-reverse gap-2 sm:flex-row sm:justify-end">
                   {craftFilter !== 'all' && (
@@ -1453,7 +1407,7 @@ function AttendancePageInner() {
               {groupedRosterWorkers.map(([groupKey, groupWorkers]) => {
                 const isCollapsed = Boolean(collapsedGroups[groupKey]);
                 const groupMarkableWorkers = groupWorkers.filter(
-                  (worker) => !isSelfSupervisorWorker(worker)
+                  (worker) => !isLockedRollCallWorker(worker)
                 );
                 const groupPresent = groupMarkableWorkers.filter(
                   (w) => draftAttendance[w.id]?.status === 'present'
@@ -1487,7 +1441,7 @@ function AttendancePageInner() {
                         type="button"
                         onClick={() => toggleGroupCollapse(groupKey)}
                         aria-expanded={!isCollapsed}
-                        aria-controls={`attendance-group-${groupKey}`}
+                        aria-controls={`attendance-group-${encodeURIComponent(groupKey)}`}
                         className="flex min-h-11 w-full min-w-0 items-center gap-2.5 rounded-md text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand"
                       >
                         {isCollapsed ? (
@@ -1496,7 +1450,7 @@ function AttendancePageInner() {
                           <ChevronDown className="h-4 w-4 shrink-0 text-ink-secondary" />
                         )}
                         <span className="min-w-0 flex-1 break-words text-sm font-semibold leading-snug text-navy">
-                          {CRAFT_GROUP_META[groupKey].label}
+                          {craftGroupLabel(groupKey)}
                         </span>
                         <span className="inline-flex h-8 min-w-8 shrink-0 items-center justify-center rounded-full border border-surface-border bg-surface px-2 text-xs font-semibold tabular-nums text-navy">
                           {groupWorkers.length}
@@ -1533,7 +1487,7 @@ function AttendancePageInner() {
                     </div>
 
                     <div
-                      id={`attendance-group-${groupKey}`}
+                      id={`attendance-group-${encodeURIComponent(groupKey)}`}
                       ref={(node) => { node?.toggleAttribute('inert', isCollapsed); }}
                       aria-hidden={isCollapsed || undefined}
                       className={`grid transition-[grid-template-rows] duration-200 ease-out motion-reduce:transition-none ${isCollapsed ? 'grid-rows-[0fr]' : 'grid-rows-[1fr]'}`}
@@ -1546,6 +1500,7 @@ function AttendancePageInner() {
                             notes: '',
                           };
                           const isSelfSup = isSelfSupervisorWorker(worker);
+                          const isGeneralSup = generalSupervisorCutover && isLockedRollCallWorker(worker);
                           const isAnySupRow =
                             Boolean(findSupervisorAccountForWorker(worker)) ||
                             worker.position.toLowerCase().includes('supervisor');
@@ -1585,17 +1540,17 @@ function AttendancePageInner() {
                                         Supervisor
                                       </Badge>
                                     )}
-                                    {isFounder && isPendingFounderApprovalOnRow && (
+                                    {isFounder && !isGeneralSup && isPendingFounderApprovalOnRow && (
                                       <Badge variant="warning" size="sm">
                                         Pending Founder Approval
                                       </Badge>
                                     )}
-                                    {isFounder && isAnySupRow && savedRec && isVerifiedByFounder && (
+                                    {isFounder && !isGeneralSup && isAnySupRow && savedRec && isVerifiedByFounder && (
                                       <Badge variant="success" size="sm">
                                         Founder Approved ✓
                                       </Badge>
                                     )}
-                                    {!isSelfSup && !currentDraft.status && (
+                                    {!isSelfSup && !isGeneralSup && !currentDraft.status && (
                                       <Badge variant="neutral" size="sm">
                                         Unmarked
                                       </Badge>
@@ -1618,11 +1573,13 @@ function AttendancePageInner() {
                                 </div>
 
                                 {/* A Supervisor's own status remains locked; all other rows get equal-width choices. */}
-                                {isSelfSup ? (
+                                {isSelfSup || isGeneralSup ? (
                                   <div className="flex w-full min-w-0 items-start gap-2 rounded-lg border border-surface-border bg-white px-3 py-2.5 text-[11px] font-semibold text-navy lg:w-[26rem] lg:shrink-0">
                                     <Lock className="mt-0.5 h-3.5 w-3.5 shrink-0 text-status-warning" />
                                     <span className="min-w-0 break-words leading-snug">
-                                      {otherSiteInfo ? (
+                                      {isGeneralSup ? (
+                                        savedRec ? `Historical site record: ${formatStatusLabel(savedRec.status)}. Supervisor attendance is recorded separately in General Daily Attendance.` : 'Supervisor attendance is recorded separately in General Daily Attendance.'
+                                      ) : otherSiteInfo ? (
                                         `Logged via ${otherSiteInfo.projectName} (${selectedDate})`
                                       ) : savedRec ? (
                                         isVerifiedByFounder ? (
@@ -1771,7 +1728,7 @@ function AttendancePageInner() {
               )}
             </div>
 
-            <ConfirmDialog isOpen={discardHiddenDraftOpen} title="Discard hidden draft selections?" message="Only selections for workers no longer in this roster will be removed from this device. Saved attendance and payroll are not changed." destructive confirmLabel="Discard hidden selections" onCancel={() => setDiscardHiddenDraftOpen(false)} onConfirm={() => { setDraftState((current) => ({ dirtyIds: current.dirtyIds.filter((id) => !hiddenDraftIds.includes(id)), entries: Object.fromEntries(Object.entries(current.entries).filter(([id]) => !hiddenDraftIds.includes(id))) })); setDiscardHiddenDraftOpen(false); }} />
+            <ConfirmDialog isOpen={discardHiddenDraftOpen} title="Discard hidden draft selections?" message="Only the unavailable or hidden selections listed by this warning will be removed from this device. Saved attendance and payroll are not changed." destructive confirmLabel="Discard hidden selections" onCancel={() => setDiscardHiddenDraftOpen(false)} onConfirm={() => { setDraftState((current) => ({ dirtyIds: current.dirtyIds.filter((id) => !hiddenDraftIds.includes(id)), entries: Object.fromEntries(Object.entries(current.entries).filter(([id]) => !hiddenDraftIds.includes(id))) })); setDiscardHiddenDraftOpen(false); }} />
 
             {/* In-Flow Bottom Submit & Sync Card (Moves naturally with collapsed/expanded groups — never overlaps) */}
             <div data-roll-call-guide="submit" className="mt-3 px-3 sm:px-4 py-3 rounded-xl bg-white border border-surface-border flex flex-col sm:flex-row sm:items-center justify-between gap-3">
@@ -1849,9 +1806,120 @@ function AttendancePageInner() {
           </form>
         )}
 
+        {activeTab === 'terminal' && <div className="space-y-4 pt-2">
+          <h2 className="px-1 text-sm font-semibold text-navy">Additional actions</h2>
+        {isFounder && (pendingApprovals.total ?? 0) > 0 && (
+          <p className="rounded-xl border border-status-warning/25 bg-status-warning-bg/60 px-3.5 py-2 text-xs text-navy">
+            <strong>{pendingApprovals.total} Supervisor {pendingApprovals.total === 1 ? 'log' : 'logs'}</strong> waiting for approval. <Link href="/attendance?tab=history" prefetch={false} className="font-semibold text-brand underline">Review in Attendance History</Link>
+          </p>
+        )}
+        {activeTab === 'terminal' && assurance === 'ready' && !authLoading && (isFounder || isSupervisor) && <SupervisorFoundationPanels />}
+
+
+        </div>}
+
         {/* TAB 2: ATTENDANCE HISTORY & FOUNDER OVERRIDE (GROUPED BY DAILY SITE SHEETS) */}
         {activeTab === 'history' && (
           <div className="space-y-4">
+        {/* Founder Review Banner: Supervisor Attendance Submitted with Crew Report */}
+        {isFounder && (pendingApprovals.loading || pendingApprovals.error || (pendingApprovals.total ?? 0) > 0) && (
+          <div className="p-3.5 rounded-xl bg-status-warning-bg/60 border border-status-warning/25 space-y-3 text-xs">
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+              <div className="flex items-start sm:items-center gap-2.5">
+                <ShieldAlert className="w-5 h-5 text-status-warning shrink-0 mt-0.5 sm:mt-0" />
+                <div>
+                  <div className="font-bold text-navy text-sm">
+                    Supervisor approvals {pendingApprovals.total !== null ? `(${pendingApprovals.total} pending)` : ''}
+                  </div>
+                  <div className="text-ink-secondary">
+                    Review these supervisor logs before payroll. This queue reflects the last check; refresh for changes made elsewhere.
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            {pendingApprovals.loading && <p role="status" className="text-ink-secondary">Loading pending approvals…</p>}
+            {pendingApprovals.error && <p role="alert" className="text-status-danger">Could not load the approval queue. Retry before assuming there are no pending approvals.</p>}
+            {pendingApprovals.items.length > 0 && <div className="divide-y divide-surface-border/60 bg-white rounded-xl border border-surface-border overflow-hidden">
+              {pendingApprovals.items.map((rec) => {
+                const legacyLocked = generalSupervisorCutover && (users.some(u => u.id === rec.worker_id && u.role === 'supervisor') || projectSupervisors.some(ps => ps.supervisor_id === rec.worker_id));
+                return (
+                  <div
+                    key={rec.id}
+                    className="p-3 flex flex-col sm:flex-row sm:items-center justify-between gap-2"
+                  >
+                    <div className="space-y-0.5">
+                      <div className="flex items-center gap-2 flex-wrap">
+                        <span className="font-bold text-navy">{rec.worker_name || 'Supervisor'}</span>
+                        <Badge variant="warning" size="sm">
+                          Site Supervisor
+                        </Badge>
+                        <span className="text-ink-secondary">
+                          · Attendance at <strong className="text-navy">{rec.project_name || 'Project Site'}</strong> on <strong>{rec.date}</strong>
+                        </span>
+                      </div>
+                      {legacyLocked && <p className="font-semibold text-status-warning">Historical site record is read-only; review general daily attendance and reconcile this history separately.</p>}
+                      {rec.notes && (
+                        <div className="whitespace-pre-wrap break-words text-[11px] text-ink-muted">{rec.notes}</div>
+                      )}
+                    </div>
+
+                    <div className="flex items-center flex-wrap gap-1.5 shrink-0">
+                      <Button
+                        type="button"
+                        variant="primary"
+                        size="sm"
+                        className="min-h-11 sm:min-h-9"
+                        disabled={legacyLocked || isReviewingSupervisor || pendingApprovals.loading || Boolean(pendingApprovals.error)}
+                        onClick={() => handleFounderSupervisorReview(rec, 'present')}
+                        leftIcon={<ShieldCheck className="w-3.5 h-3.5" />}
+                      >
+                        Approve Full Day
+                      </Button>
+                      <Button
+                        type="button"
+                        variant="secondary"
+                        size="sm"
+                        className="min-h-11 sm:min-h-9"
+                        disabled={legacyLocked || isReviewingSupervisor || pendingApprovals.loading || Boolean(pendingApprovals.error)}
+                        onClick={() => handleFounderSupervisorReview(rec, 'half_day')}
+                      >
+                        Half Day
+                      </Button>
+                      <Button
+                        type="button"
+                        variant="danger"
+                        size="sm"
+                        className="min-h-11 sm:min-h-9"
+                        disabled={legacyLocked || isReviewingSupervisor || pendingApprovals.loading || Boolean(pendingApprovals.error)}
+                        onClick={() => handleFounderSupervisorReview(rec, 'absent')}
+                        leftIcon={<XCircle className="w-3.5 h-3.5" />}
+                      >
+                        Mark Absent
+                      </Button>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>}
+            <div className="flex flex-wrap gap-2">
+              {pendingApprovals.hasMore && (
+                <Button type="button" variant="secondary" size="sm" disabled={pendingApprovals.loading} onClick={pendingApprovals.loadMore}>
+                  Show more pending approvals
+                </Button>
+              )}
+              <Button type="button" variant="secondary" size="sm" disabled={pendingApprovals.loading} onClick={() => void pendingApprovals.refresh()}>
+                {pendingApprovals.error ? 'Retry approvals' : 'Refresh approvals'}
+              </Button>
+            </div>
+          </div>
+        )}
+        {isFounder && !pendingApprovals.loading && !pendingApprovals.error && pendingApprovals.total === 0 && (
+          <div className="flex flex-wrap items-center justify-between gap-2 rounded-xl border border-surface-border bg-white px-3.5 py-2 text-xs text-ink-secondary">
+            <span>No pending supervisor approvals at last check.</span>
+            <Button type="button" variant="ghost" size="sm" onClick={() => void pendingApprovals.refresh()}>Refresh approvals</Button>
+          </div>
+        )}
             {/* Keep search visible on mobile; reveal secondary filters only on request. */}
             <div data-page-guide="filters" className="space-y-3 rounded-2xl border border-surface-border bg-white p-3.5 shadow-sm">
               <div className="flex items-center gap-2 lg:hidden">
@@ -2042,7 +2110,7 @@ function AttendancePageInner() {
             </Modal>
 
             <div className="grid gap-4 lg:grid-cols-[minmax(19rem,0.85fr)_minmax(0,1.15fr)] lg:items-start">
-              <AttendanceHistoryCalendar userId={user?.id} today={today} filters={historyFilters} settling={isHistorySearchSettling} revision={historyRevision} onSelectDate={setHistoryDateFilter} />
+              <div className="lg:sticky lg:top-24 lg:self-start"><AttendanceHistoryCalendar userId={user?.id} today={today} filters={historyFilters} settling={isHistorySearchSettling} revision={historyRevision} onSelectDate={setHistoryDateFilter} /></div>
               <div className="min-w-0 space-y-3">
                 <div className="space-y-1 text-xs text-ink-secondary">
                   <p aria-live="polite">{history.loading || isHistorySearchSettling ? 'Updating results…' : history.error ? 'History could not be loaded; retry to update results.' : `Showing ${history.items.length} date/site ${history.items.length === 1 ? 'sheet' : 'sheets'} from the server. Counts reflect the current filters.`}</p>
@@ -2084,6 +2152,7 @@ function AttendancePageInner() {
         {/* TAB 3: WORKFORCE DIRECTORY (COMPACT & GROUPED BY CRAFT) */}
         {activeTab === 'workforce' && (
           <div className="space-y-4">
+            <WorkerCategoryFoundation userId={user?.id} isFounder={isFounder} assurance={assurance} authLoading={authLoading} />
             {/* The header action reveals this single inline registration workflow. */}
             <section
               id="workforce-worker-form"
@@ -2112,6 +2181,7 @@ function AttendancePageInner() {
                     />
                   </div>
 
+                  {categories.enabled ? <WorkerCategorySelect categories={categories} label="Craft / Position" value={workerPosition} onChange={setWorkerPosition}/> : (
                   <Select
                     label="Craft / Position"
                     value={workerPosition}
@@ -2128,6 +2198,7 @@ function AttendancePageInner() {
                       { label: 'Skilled Laborer', value: 'Laborer' },
                     ]}
                   />
+                  )}
 
                   <Input
                     label="Daily Rate (₱)"
@@ -2153,6 +2224,7 @@ function AttendancePageInner() {
                     variant="primary"
                     size="md"
                     isLoading={isAddingWorker}
+                    disabled={categories.enabled && !categories.items?.some(c=>c.label===workerPosition)}
                     leftIcon={<UserPlus className="h-4 w-4" />}
                     className="w-full sm:w-auto"
                   >
@@ -2191,14 +2263,7 @@ function AttendancePageInner() {
                     aria-label="Filter workforce by craft group"
                     value={workforceCraftFilter}
                     onChange={(e) => setWorkforceCraftFilter(e.target.value)}
-                    options={[
-                      { label: 'All Craft Groups', value: 'all' },
-                      { label: 'Supervision & Foremen', value: 'supervision' },
-                      { label: 'Masonry & Concrete', value: 'masonry' },
-                      { label: 'Carpentry & Formworks', value: 'carpentry' },
-                      { label: 'Steel, Electrical & Plumbing', value: 'mep_steel' },
-                      { label: 'Finishing & General Labor', value: 'general' },
-                    ]}
+                    options={workforceCraftOptions}
                   />
                 </div>
                 <div className="w-full sm:w-36">
@@ -2251,7 +2316,7 @@ function AttendancePageInner() {
                 >
                   <div className="px-4 py-2.5 bg-surface-inset/70 border-b border-surface-border/60 flex items-center justify-between">
                     <span className="font-bold text-xs text-navy">
-                      {CRAFT_GROUP_META[groupKey].label}
+                      {craftGroupLabel(groupKey)}
                     </span>
                     <Badge variant="neutral" size="sm">
                       {groupWorkers.length} worker{groupWorkers.length === 1 ? '' : 's'}
@@ -2273,7 +2338,7 @@ function AttendancePageInner() {
                       return (
                         <div
                           key={w.id}
-                          className="px-4 py-2.5 flex items-center justify-between gap-3 text-xs hover:bg-slate-50 transition-colors"
+                          className="px-4 py-2.5 flex flex-wrap items-center justify-between gap-3 text-xs hover:bg-slate-50 transition-colors"
                         >
                           <div className="flex items-center flex-wrap gap-2 min-w-0">
                             {isFounder && !w.removed_at && <label className="inline-flex min-h-11 min-w-11 items-center justify-center"><input type="checkbox" aria-label={`Select ${w.name}, ${w.position}, ${w.active ? 'active' : 'inactive'} for removal`} checked={selectedWorkers.includes(w.id)} disabled={workerRemovalPending || !isLoaded || Boolean(loadError)} onChange={(e) => {
@@ -2319,6 +2384,7 @@ function AttendancePageInner() {
                               Manage
                             </Button>
                           ))}
+                          {isFounder && user?.id && assurance === 'ready' && !authLoading && assignmentHistoryPreviewEnabled() && <AssignmentHistory key={`${user.id}:${w.id}`} workerId={w.id} workerName={w.name} />}
                         </div>
                       );
                     })}
@@ -2356,12 +2422,13 @@ function AttendancePageInner() {
             />
 
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-              <Input
+              {categories.enabled && !users.some(u=>u.id===editingWorker.id&&u.role==='supervisor') ? <WorkerCategorySelect categories={categories} label="Craft / Position" value={editWorkerPosition} onChange={setEditWorkerPosition} allowUnchanged={editWorkerPosition===editingWorker.position}/> : <Input
                 label="Craft / Position"
                 value={editWorkerPosition}
                 onChange={(e) => setEditWorkerPosition(e.target.value)}
+                readOnly={categories.enabled}
                 required
-              />
+              />}
 
               <Input
                 label="Contact Number"
@@ -2412,7 +2479,7 @@ function AttendancePageInner() {
               <Button type="button" variant="secondary" onClick={() => setEditingWorker(null)}>
                 Cancel
               </Button>
-              <Button type="submit" variant="primary" isLoading={isSavingWorker}>
+              <Button type="submit" variant="primary" isLoading={isSavingWorker} disabled={categories.enabled && editWorkerPosition!==editingWorker.position && !categories.items?.some(c=>c.label===editWorkerPosition)}>
                 Save Worker
               </Button>
             </div>

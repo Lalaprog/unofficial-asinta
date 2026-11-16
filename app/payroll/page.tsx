@@ -26,12 +26,15 @@ import { PayslipBatch } from '@/components/payroll/PayslipBatch';
 import { formatPeso, formatPesoCompact } from '@/lib/email/format';
 import { formatRecordedWork } from '@/lib/payroll/display';
 import { AttendanceMatrix } from '@/components/payroll/AttendanceMatrix';
-import { WeeklyWorkerPreview } from '@/components/payroll/WeeklyWorkerPreview';
-import { WorkerAllowanceQueue } from '@/components/payroll/WorkerAllowanceQueue';
+import { AdvancedTools } from '@/components/ui/AdvancedTools';
+import { PayrollFoundationPanels } from '@/components/payroll/PayrollFoundationPanels';
 import { getManilaClock } from '@/lib/reminders/scheduler';
+import { workerPayrollPeriod } from '@/lib/payroll/periods';
+import { weeklyWorkerCutoverMode, weeklyWorkerReturnPreviewEnabled } from '@/lib/finance/featureAvailability';
 
 export default function PayrollPage() {
   const { showToast } = useToast();
+  const cutoverMode = weeklyWorkerCutoverMode();
   const [pendingPayAction, setPendingPayAction] = useState<{ pay: Payroll; status: 'approved' | 'paid' } | null>(null);
   const [isUpdatingStatus, setIsUpdatingStatus] = useState(false);
   const statusLock = React.useRef(false);
@@ -56,11 +59,12 @@ export default function PayrollPage() {
   const [isBatchPayslipOpen, setIsBatchPayslipOpen] = useState(false);
   const [selectedPayroll, setSelectedPayroll] = useState<Payroll | null>(null);
 
-  // Generate run state (defaults to the past 7 days through today)
+  // Default to the current Philippine Sunday–Saturday worker period. The
+  // Founder can still select historical dates; this does not alter the legacy calculation.
   const todayStr = getManilaClock().dateIso;
-  const weekAgoStr = new Date(Date.parse(`${todayStr}T00:00:00Z`) - 6 * 24 * 60 * 60 * 1000).toISOString().slice(0, 10);
-  const [periodStart, setPeriodStart] = useState(weekAgoStr);
-  const [periodEnd, setPeriodEnd] = useState(todayStr);
+  const initialWorkerWeek = workerPayrollPeriod(todayStr);
+  const [periodStart, setPeriodStart] = useState(initialWorkerWeek.start);
+  const [periodEnd, setPeriodEnd] = useState(initialWorkerWeek.end);
   const [generateProjectId, setGenerateProjectId] = useState<string>('all');
   const [isGenerating, setIsGenerating] = useState(false);
 
@@ -144,7 +148,7 @@ export default function PayrollPage() {
 
   const handleGenerateSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (generateLock.current) return;
+    if (cutoverMode || generateLock.current) return;
     generateLock.current = true;
     setIsGenerating(true);
     try {
@@ -161,7 +165,7 @@ export default function PayrollPage() {
   };
 
   const handleConfirmStatus = async () => {
-    if (!pendingPayAction || statusLock.current) return;
+    if (cutoverMode || !pendingPayAction || statusLock.current) return;
     statusLock.current = true;
     setIsUpdatingStatus(true);
     try {
@@ -188,18 +192,29 @@ export default function PayrollPage() {
         <WorkspaceHeader
           eyebrow="Workforce & pay"
           title="Payroll"
-          description="Review attendance-based vouchers, Bale deductions and worker payslips."
-          action={<div className="flex flex-wrap gap-2"><Button variant="secondary" size="md" onClick={() => setIsBatchPayslipOpen(true)} leftIcon={<Printer className="w-4 h-4" />}>Print worker payslips</Button><Button variant="primary" size="md" onClick={() => setIsGenerateModalOpen(true)} leftIcon={<Plus className="w-4 h-4" />}>New Payroll Run</Button></div>}
+          description="Load a week, check the amounts, then save a draft. Approval and payment are separate steps."
+          action={<div className="flex flex-wrap gap-2"><Button variant="secondary" size="md" onClick={() => setIsBatchPayslipOpen(true)} leftIcon={<Printer className="w-4 h-4" />}>Print worker payslips</Button>{!cutoverMode && <Button variant="primary" size="md" onClick={() => setIsGenerateModalOpen(true)} leftIcon={<Plus className="w-4 h-4" />}>New Payroll Run</Button>}</div>}
         />
 
-        <WorkerAllowanceQueue />
+        {cutoverMode && <div className="rounded-xl border border-status-warning/25 bg-status-warning-bg p-3 text-xs leading-relaxed text-ink-secondary" role="note">
+          {weeklyWorkerReturnPreviewEnabled() ? 'Weekly payroll mode: the old payroll actions are hidden. Use the weekly controls below and reconcile existing vouchers before recording any external payment.' : 'Weekly payroll mode is on, but the weekly controls are not fully enabled. Do not record payroll until the configuration is reviewed.'}
+        </div>}
 
-        <WeeklyWorkerPreview />
+        <PayrollFoundationPanels />
 
-        <AttendanceMatrix start={periodStart} end={periodEnd} site={generateProjectId} setStart={setPeriodStart} setEnd={setPeriodEnd} setSite={setGenerateProjectId} projects={projects} />
+        <AdvancedTools
+          title="Attendance matrix and period tools"
+          description="A read-only view of recorded attendance by worker and date. It never creates or changes payroll."
+        >
+          <div id="payroll-attendance"><AttendanceMatrix start={periodStart} end={periodEnd} site={generateProjectId} setStart={setPeriodStart} setEnd={setPeriodEnd} setSite={setGenerateProjectId} projects={projects} /></div>
+        </AdvancedTools>
 
-        {/* Top Summary Cards */}
-        <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 auto-rows-fr">
+        <div id="payroll-vouchers" className="scroll-mt-24 space-y-3">
+          <div>
+            <h2 className="text-base font-semibold text-navy">2. Saved payroll vouchers</h2>
+            <p className="mt-1 text-xs leading-relaxed text-ink-secondary">Every voucher already saved for the shown filters. Draft and approved vouchers are not necessarily paid.</p>
+          </div>
+          <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
           <div className="h-full p-4 sm:p-5 rounded-xl bg-white border border-surface-border flex flex-col justify-between">
             <div className="text-xs font-medium text-ink-secondary">Net pay on shown vouchers</div>
             <div className="text-2xl font-bold text-navy mt-1 tabular-nums break-words">{formatPHP(totalNetDisbursement)}</div>
@@ -217,8 +232,6 @@ export default function PayrollPage() {
             </div>
           </div>
         </div>
-
-        <p className="text-xs leading-relaxed text-ink-secondary">Summary reflects the current filters and includes vouchers of all shown statuses. Deductions on draft or approved vouchers are not necessarily collected.</p>
 
         <WorkspaceFilters title="Find a payroll voucher" summary={<FilterSummary count={filteredPayroll.length} itemName="payroll" active={Boolean(searchQuery) || projectFilter !== 'all' || statusFilter !== 'all'} onClear={() => { setSearchQuery(''); setProjectFilter('all'); setStatusFilter('all'); }} />}>
           <div className="flex flex-col sm:flex-row flex-wrap sm:items-end gap-3">
@@ -349,7 +362,7 @@ export default function PayrollPage() {
                       Print Payslip
                     </Button>
 
-                    {(pay.status === 'draft' || pay.status === 'reviewed') && (
+                    {!cutoverMode && (pay.status === 'draft' || pay.status === 'reviewed') && (
                       <Button
                         variant="soft"
                         size="sm"
@@ -360,7 +373,7 @@ export default function PayrollPage() {
                       </Button>
                     )}
 
-                    {pay.status === 'approved' && (
+                    {!cutoverMode && pay.status === 'approved' && (
                       <Button
                         variant="primary"
                         size="sm"
@@ -380,11 +393,12 @@ export default function PayrollPage() {
             )}
           </div>
         </div>
+        </div>
       </div>
 
       {/* GENERATE RUN MODAL */}
       <Modal
-        isOpen={isGenerateModalOpen}
+        isOpen={!cutoverMode && isGenerateModalOpen}
         onClose={() => setIsGenerateModalOpen(false)}
         dismissOnBackdrop={!isGenerating}
         dismissOnEscape={!isGenerating}
@@ -394,6 +408,7 @@ export default function PayrollPage() {
       >
         <form onSubmit={handleGenerateSubmit} className="space-y-4 text-xs">
           <p className="rounded-xl border border-status-warning/25 bg-status-warning-bg p-3 leading-relaxed text-ink-secondary">This is the legacy generator, not the requested weekly payroll workflow: it uses attendance statuses rather than separate regular/OT hours, rounds gross to whole pesos and suggests limited Bale from outstanding balances, including older periods. Allowance approvals and reliable project allocations are not included. Independently reconcile before generating or approving; the planning preview does not change this behavior.</p>
+          {periodEnd > todayStr && <p className="text-status-warning text-xs">This period is still in progress. Future and unmarked days are not absences; review missing attendance before payment.</p>}
           <SearchableSelect
             label="Project Site Scope"
             searchLabel="Search payroll run sites"
@@ -468,7 +483,7 @@ export default function PayrollPage() {
       </Modal>
 
       <Modal
-        isOpen={Boolean(pendingPayAction)}
+        isOpen={!cutoverMode && Boolean(pendingPayAction)}
         onClose={() => setPendingPayAction(null)}
         dismissOnBackdrop={!isUpdatingStatus}
         dismissOnEscape={!isUpdatingStatus}

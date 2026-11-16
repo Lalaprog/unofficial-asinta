@@ -34,6 +34,10 @@
 
 begin;
 
+-- SAFETY HOLD: this historical bundle is unverified and must not be applied.
+-- The exception aborts this transaction before any bundled migration executes.
+DO $$ BEGIN RAISE EXCEPTION 'Historical SQL bundle disabled: see supabase/apply/README.md'; END; $$;
+
 -- @@ source: 20261006000000_security_hardening.sql
 
 -- BALE — Security hardening (2026-10-06)

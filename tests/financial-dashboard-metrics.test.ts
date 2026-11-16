@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import type {
   Advance,
   AdvanceRequest,
@@ -156,6 +156,14 @@ const makeTool = (condition: Tool['condition'], quantity: number, project_id: st
 });
 
 describe('financial dashboard metrics', () => {
+  it('defaults to the Philippine business date even when UTC is still the prior day', () => {
+    vi.useFakeTimers();
+    try {
+      vi.setSystemTime(new Date('2026-10-15T16:01:00Z'));
+      const metrics=calculateFinancialDashboardMetrics({invoices:[],expenses:[],advances:[],payroll:[],projects:[],tools:[]});
+      expect(metrics.asOfDate).toBe('2026-10-16');
+    } finally { vi.useRealTimers(); }
+  });
   it('excludes draft and cancelled invoices and calculates overdue vs current balances from open amounts', () => {
     const metrics = calculateFinancialDashboardMetrics(
       {

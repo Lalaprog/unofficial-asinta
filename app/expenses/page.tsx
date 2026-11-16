@@ -43,10 +43,13 @@ import { AICategorizationResult } from '@/lib/ai/groq';
 import {
   RECEIPT_BUCKET,
   buildReceiptObjectPath,
+  canonicalReceiptMime,
+  canonicalReceiptUpload,
   createReceiptSignedUrl,
   validateReceiptFile,
 } from '@/lib/supabase/receipts';
 import { formatPeso, formatPesoCompact } from '@/lib/email/format';
+import { manilaDateISO } from '@/lib/dates/manila';
 import type { ExpenseDraft } from '@/lib/ai/draft';
 import {
   buildExpenseWarnings,
@@ -59,6 +62,7 @@ import { resolveReceiptForSubmission } from '@/lib/expenses/receiptSubmission';
 import { VISION_MAX_IMAGE_BYTES } from '@/lib/ai/models';
 import { useQuickAction } from '@/lib/mobile/quickActions';
 import { formatRetryWait, validRetryAfter } from '@/lib/ai/cooldown';
+import { weeklyWorkerCutoverMode } from '@/lib/finance/featureAvailability';
 
 /** Bound each saved-photo network stage so an unresponsive request cannot
  * trap the Founder in a disabled expense form. A late result is never applied. */
@@ -83,6 +87,8 @@ export default function ExpensesPage() {
     workers,
   } = useDataStore();
   const { showToast } = useToast();
+  const cutoverMode = weeklyWorkerCutoverMode();
+  const advanceSubmitLock = React.useRef(false);
   const supabase = React.useMemo(() => createClient(), []);
 
   const [searchQuery, setSearchQuery] = useState('');
@@ -104,6 +110,9 @@ export default function ExpensesPage() {
   const [selectedExpense, setSelectedExpense] = useState<Expense | null>(null);
   const [itemRows, setItemRows] = useState<ItemInput[]>([]);
 
+  // A fixed baseline protects draft detection across midnight; it is refreshed
+  // only when starting/resetting a truly empty entry, never while editing.
+  const initialExpenseDate = React.useRef(manilaDateISO());
   // Form State
   const [formData, setFormData] = useState({
     project_id: '',
@@ -111,7 +120,7 @@ export default function ExpensesPage() {
     details: '',
     amount: '',
     category: 'materials' as ExpenseCategory | '',
-    expense_date: new Date().toISOString().split('T')[0],
+    expense_date: initialExpenseDate.current,
     notes: '',
     receipt_url: '' as string | null,
     vendor: '',
@@ -179,10 +188,10 @@ export default function ExpensesPage() {
   React.useEffect(() => {
     if (!draft) return;
     const amount = Number(formData.amount);
-    setDraftWarnings(buildExpenseWarnings({amount:Number.isFinite(amount) ? amount : 0, expenseDate:formData.expense_date || new Date().toISOString().slice(0, 10), vendor:formData.vendor || null, projectId:formData.project_id, category:formData.category || 'other'}, expenses));
+    setDraftWarnings(buildExpenseWarnings({amount:Number.isFinite(amount) ? amount : 0, expenseDate:formData.expense_date || manilaDateISO(), vendor:formData.vendor || null, projectId:formData.project_id, category:formData.category || 'other'}, expenses));
   }, [draft, formData.amount, formData.expense_date, formData.vendor, formData.project_id, formData.category, expenses]);
 
-  const hasUnfinishedEntry = Boolean(formData.project_id || formData.description || formData.details || itemRows.length || formData.amount || formData.vendor || formData.notes || formData.receipt_url || pendingReceiptFile || draft || formData.category !== 'materials' || formData.expense_date !== new Date().toISOString().split('T')[0]);
+  const hasUnfinishedEntry = Boolean(formData.project_id || formData.description || formData.details || itemRows.length || formData.amount || formData.vendor || formData.notes || formData.receipt_url || pendingReceiptFile || draft || formData.category !== 'materials' || formData.expense_date !== initialExpenseDate.current);
   const snapshot = (receiptPath = formData.receipt_url): SavedDraftPayload => ({ version:1, form:{...formData, receipt_url:receiptPath}, rows:itemRows, receiptFileName, draft, draftInputKind, draftModel, draftExtractedText, aiResult, aiAccepted, contextWarnings });
   const unchangedSavedDraft = savedDraft && activeDraftId === savedDraft.draft_id && !pendingReceiptFile && stableDraftJson(snapshot()) === stableDraftJson(savedDraft.payload);
 
@@ -194,7 +203,8 @@ export default function ExpensesPage() {
   }, [hasUnfinishedEntry, unchangedSavedDraft]);
 
   const resetEntry = () => {
-    setFormData({ project_id:'', description:'', details:'', amount:'', category:'materials', expense_date:new Date().toISOString().split('T')[0], notes:'', receipt_url:null, vendor:'' });
+    initialExpenseDate.current = manilaDateISO();
+    setFormData({ project_id:'', description:'', details:'', amount:'', category:'materials', expense_date:initialExpenseDate.current, notes:'', receipt_url:null, vendor:'' });
     setItemRows([]); setReceiptFileName(null); setAiResult(null); setAiAccepted(false);
     setDraft(null); setDraftWarnings(null); setDraftInputKind(null); setDraftModel(null); setDraftExtractedText(null); setContextWarnings([]);
     setPendingReceiptFile(null); setPendingReceiptPreview(previous => { if (previous?.startsWith('blob:')) URL.revokeObjectURL(previous); return null; });
@@ -263,7 +273,13 @@ export default function ExpensesPage() {
   };
   const openEntry = () => {
     if (savedDraft && !hasUnfinishedEntry) void resumeDraft();
-    else setIsAddModalOpen(true);
+    else {
+      if (!hasUnfinishedEntry) {
+        initialExpenseDate.current = manilaDateISO();
+        setFormData(previous => ({ ...previous, expense_date: initialExpenseDate.current }));
+      }
+      setIsAddModalOpen(true);
+    }
   };
 
   useQuickAction('/expenses', ['expense-manual', 'expense-scan', 'expense-describe'], isFounder && assurance === 'ready' && !authLoading && isLoaded && draftLoadState !== 'loading', (action) => {
@@ -492,13 +508,14 @@ export default function ExpensesPage() {
         }
 
         setIsAddModalOpen(false);
+        initialExpenseDate.current = manilaDateISO();
         setFormData({
           project_id: '',
           description: '',
           details: '',
           amount: '',
           category: 'materials',
-          expense_date: new Date().toISOString().split('T')[0],
+          expense_date: initialExpenseDate.current,
           notes: '',
           receipt_url: null,
           vendor: '',
@@ -535,27 +552,26 @@ export default function ExpensesPage() {
   };
 
   const handleConfirmBaleAdvance = async () => {
-    if (!balePrompt || !baleWorkerId) return;
+    if (cutoverMode || advanceSubmitLock.current || !balePrompt || !baleWorkerId) return;
+    advanceSubmitLock.current = true;
     setIsCreatingAdvance(true);
-    const created = await createAdvance({
-      worker_id: baleWorkerId,
-      project_id: balePrompt.projectId,
-      amount: balePrompt.amount,
-      reason: balePrompt.description,
-      date: balePrompt.expenseDate,
-    });
-    setIsCreatingAdvance(false);
-
-    if (created) {
-      showToast('success', 'Worker advance recorded in the Bale ledger.');
-    } else {
-      showToast(
-        'error',
-        'The expense was saved, but the worker advance could not be created. Record it from the Advances page.'
-      );
+    try {
+      const created = await createAdvance({
+        worker_id: baleWorkerId,
+        project_id: balePrompt.projectId,
+        amount: balePrompt.amount,
+        reason: balePrompt.description,
+        date: balePrompt.expenseDate,
+      });
+      if (created) showToast('success', 'Worker advance recorded in the Bale ledger.');
+      else showToast('error', 'The expense was saved, but the advance outcome is not confirmed. Check the request and advance ledgers before retrying; do not pay or record it again based on this message.');
+    } catch {
+      showToast('error', 'The expense was saved, but the advance outcome is not confirmed. Check the request and advance ledgers before retrying; do not pay or record it again based on this message.');
+    } finally {
+      advanceSubmitLock.current = false;
+      setIsCreatingAdvance(false);
+      handleDismissBalePrompt();
     }
-
-    handleDismissBalePrompt();
   };
 
   // Upload the receipt photo to the PRIVATE `receipts` bucket and persist the
@@ -619,10 +635,11 @@ export default function ExpensesPage() {
       return null;
     }
     const path = buildReceiptObjectPath(user?.id || 'unattributed', check.extension);
-    const { error: uploadError } = await supabase.storage.from(RECEIPT_BUCKET).upload(path, file, {
+    const { error: uploadError } = await supabase.storage.from(RECEIPT_BUCKET).upload(path, canonicalReceiptUpload(file), {
       cacheControl: '3600',
       upsert: false,
-      contentType: file.type,
+      // Match the canonical type used by the inbox and future bucket limits.
+      contentType: canonicalReceiptMime(file.type)!,
     });
     if (uploadError) {
       showToast('error', `Receipt upload failed: ${uploadError.message}`);
@@ -748,7 +765,7 @@ export default function ExpensesPage() {
         buildExpenseWarnings(
           {
             amount: nextDraft.amount ?? 0,
-            expenseDate: nextDraft.expenseDate ?? new Date().toISOString().slice(0, 10),
+            expenseDate: nextDraft.expenseDate ?? manilaDateISO(),
             vendor: nextDraft.vendor,
             projectId: nextDraft.projectId ?? '',
             category: nextDraft.category ?? 'other',
@@ -846,7 +863,7 @@ export default function ExpensesPage() {
         buildExpenseWarnings(
           {
             amount: nextDraft.amount ?? 0,
-            expenseDate: nextDraft.expenseDate ?? new Date().toISOString().slice(0, 10),
+            expenseDate: nextDraft.expenseDate ?? manilaDateISO(),
             vendor: nextDraft.vendor,
             projectId: nextDraft.projectId ?? '',
             category: nextDraft.category ?? 'other',
@@ -927,14 +944,14 @@ export default function ExpensesPage() {
         {savedDraft && <div className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-brand/20 bg-surface-inset p-4"><div><p className="text-sm font-bold text-navy">Saved expense draft</p><p className="text-xs text-ink-secondary">{expenses.some(expense => expense.id === savedDraft.draft_id) ? 'This draft matches a recorded expense. Check the ledger before discarding it.' : 'Review before recording. Saving a draft does not add an expense.'}</p></div><div className="flex flex-wrap gap-2"><Button type="button" size="sm" variant="secondary" isLoading={isOpeningDraft} onClick={() => void resumeDraft()}>Continue draft</Button><Button type="button" size="sm" variant="ghost" onClick={() => setShowDiscardDraft(true)}>Discard draft</Button></div></div>}
         {hasUnfinishedEntry && (!savedDraft || activeDraftId !== savedDraft.draft_id) && <div className="rounded-xl border border-brand/20 bg-surface-inset p-4 text-sm text-ink-secondary">You have an unfinished entry on this page. <button type="button" onClick={() => setIsAddModalOpen(true)} className="font-semibold text-navy underline">Continue entry</button>. It is not saved until you choose Save draft or confirm the expense.</div>}
 
-        {isFounder && assurance === 'ready' && user && <ReceiptInbox key={user.id} userId={user.id} canUse={draftLoadState === 'ready' && isLoaded && !hasUnfinishedEntry && !savedDraft && !isAddModalOpen && !isDrafting && !isSubmitting} canScan={draftLoadState === 'ready' && isLoaded && !hasUnfinishedEntry && !savedDraft && !isAddModalOpen && !isDrafting && !isSubmitting && receiptRetrySeconds === 0} onView={path => void openReceiptPreview(path)} onUse={item => startInboxExpense(item, false)} onScan={item => startInboxExpense(item, true)} />}
+        {isFounder && assurance === 'ready' && user && <div id="expense-receipts" tabIndex={-1} className="scroll-mt-24 focus-visible:outline focus-visible:outline-2 focus-visible:outline-brand"><ReceiptInbox key={user.id} userId={user.id} canUse={draftLoadState === 'ready' && isLoaded && !hasUnfinishedEntry && !savedDraft && !isAddModalOpen && !isDrafting && !isSubmitting} canScan={draftLoadState === 'ready' && isLoaded && !hasUnfinishedEntry && !savedDraft && !isAddModalOpen && !isDrafting && !isSubmitting && receiptRetrySeconds === 0} onView={path => void openReceiptPreview(path)} onUse={item => startInboxExpense(item, false)} onScan={item => startInboxExpense(item, true)} /></div>}
 
         {/* ------------------------------------------------------------------
             Draft from text or a receipt photo.
             The model extracts; the Founder confirms in the modal below. Nothing
             written here reaches the ledger.
            ------------------------------------------------------------------ */}
-        <div data-page-guide="draft" className="rounded-xl border border-surface-border bg-white p-4 sm:p-5 space-y-3">
+        <div id="expense-draft" tabIndex={-1} data-page-guide="draft" className="scroll-mt-24 rounded-xl border border-surface-border bg-white p-4 sm:p-5 space-y-3 focus-visible:outline focus-visible:outline-2 focus-visible:outline-brand">
           <div className="flex flex-wrap items-center justify-between gap-2">
             <div className="flex items-center gap-2">
               <Sparkles className="h-4 w-4 text-navy" />
@@ -1064,6 +1081,7 @@ export default function ExpensesPage() {
           </div>
         )}
 
+        <div id="expense-list" tabIndex={-1} className="scroll-mt-24 focus-visible:outline focus-visible:outline-2 focus-visible:outline-brand">
         <WorkspaceFilters
           title="Find an expense"
           summary={<FilterSummary count={filteredExpenses.length} itemName="expense" active={Boolean(searchQuery) || categoryFilter !== 'all' || projectFilter !== 'all'} onClear={() => { setSearchQuery(''); setCategoryFilter('all'); setProjectFilter('all'); }} />}
@@ -1106,6 +1124,7 @@ export default function ExpensesPage() {
             </Select>
           </div>
         </WorkspaceFilters>
+        </div>
 
         {/* Expenses List */}
         <div data-page-guide="list" className="bg-white rounded-xl border border-surface-border overflow-hidden">
@@ -1675,7 +1694,9 @@ export default function ExpensesPage() {
         isOpen={Boolean(balePrompt)}
         onClose={handleDismissBalePrompt}
         title="Worker advance detected"
-        description="This expense looks like a cash advance (bale). Choose who received it — nothing is deducted automatically."
+        description={cutoverMode
+          ? 'This expense may be a worker Bale. The expense was saved, but no Bale was recorded. Check the Bale ledger; use the weekly workflow only after it has been verified and enabled.'
+          : 'This expense looks like a cash advance (bale). Choose who received it — nothing is deducted automatically.'}
         maxWidth="md"
       >
         {balePrompt && (
@@ -1687,6 +1708,7 @@ export default function ExpensesPage() {
               </div>
             </div>
 
+            {!cutoverMode && <>
             <Select
               label="Advance recipient"
               value={baleWorkerId}
@@ -1712,6 +1734,7 @@ export default function ExpensesPage() {
               </p>
             )}
 
+            </>}
             <div className="flex items-center justify-end gap-2 pt-1">
               <Button
                 type="button"
@@ -1720,18 +1743,18 @@ export default function ExpensesPage() {
                 onClick={handleDismissBalePrompt}
                 disabled={isCreatingAdvance}
               >
-                Not a worker advance
+                {cutoverMode ? 'Close' : 'Not a worker advance'}
               </Button>
-              <Button
+              {!cutoverMode && <Button
                 type="button"
                 variant="primary"
                 size="sm"
                 onClick={handleConfirmBaleAdvance}
-                disabled={!baleWorkerId}
+                disabled={!baleWorkerId || isCreatingAdvance}
                 isLoading={isCreatingAdvance}
               >
                 Record advance in Bale ledger
-              </Button>
+              </Button>}
             </div>
           </div>
         )}

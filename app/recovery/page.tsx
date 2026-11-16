@@ -59,7 +59,7 @@ export default function RecoveryChoicePage() {
   };
 
   if (isLoading || !user || assurance !== 'ready') {
-    return <AsintaLoader variant="fullscreen" title="Checking account security…" subtitle="Preparing your workspace securely" />;
+    return <AsintaLoader variant="fullscreen" title="Checking account security…" subtitle="Checking your account securely" />;
   }
   return (
     <main className="min-h-[100lvh] flex items-center justify-center bg-surface p-4">

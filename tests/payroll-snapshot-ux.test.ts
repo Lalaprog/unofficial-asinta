@@ -7,8 +7,17 @@ vi.mock('@/components/layout/AppShell',()=>({AppShell:({children}:{children:Reac
 vi.mock('@/components/ui/Toast',()=>({useToast:()=>({showToast:mock.toast})}));
 vi.mock('@/lib/data/store',()=>{const data={payroll:[],workers:[],projects:[],attendance:[],advances:[],createPayrollRun:mock.create,updatePayrollStatus:vi.fn()};return {useDataStore:()=>data}});
 import PayrollPage from '@/app/payroll/page';
-afterEach(()=>{cleanup();mock.create.mockReset()});
+afterEach(()=>{cleanup();vi.useRealTimers();mock.create.mockReset()});
 describe('payroll generation preview',()=>{
+  it('defaults to the Manila Sunday–Saturday worker week and warns while it is incomplete',()=>{
+    vi.useFakeTimers({toFake:['Date']});vi.setSystemTime(new Date('2026-10-24T16:01:00Z'));
+    render(React.createElement(PayrollPage));fireEvent.click(screen.getByRole('button',{name:'New Payroll Run'}));
+    expect((screen.getByLabelText('Period Start Date') as HTMLInputElement).value).toBe('2026-10-25');
+    expect((screen.getByLabelText('Period End Date') as HTMLInputElement).value).toBe('2026-10-31');
+    expect(screen.getByText(/period is still in progress/i)).toBeTruthy();
+    expect(screen.getByText(/legacy generator, not the requested weekly payroll workflow/i)).toBeTruthy();
+    expect(mock.create).not.toHaveBeenCalled();
+  });
   it('allows a server check even with zero loaded attendance and warns about site scope',async()=>{
     mock.create.mockResolvedValue(null);render(React.createElement(PayrollPage));fireEvent.click(screen.getByRole('button',{name:'New Payroll Run'}));
     expect(screen.getByText('0 loaded logs in range')).toBeTruthy();expect(screen.getByText(/preview may omit records/)).toBeTruthy();expect(screen.getByText(/site-scoped run may recalculate/)).toBeTruthy();

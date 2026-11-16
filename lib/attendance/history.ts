@@ -1,4 +1,5 @@
 import type { Attendance } from '@/types';
+import {parseRecordedCraft} from '@/lib/workforce/recordedCraft';
 
 export interface HistorySheet {
   date: string;
@@ -14,6 +15,8 @@ export interface HistorySheet {
 export interface HistoryRecord extends Attendance {
   worker_name: string | null;
   worker_position: string | null;
+  entry_craft?: string | null;
+  entry_craft_at?: string | null;
   project_name: string | null;
   is_supervisor: boolean;
 }
@@ -31,6 +34,7 @@ export function parseHistoryPage<T extends HistorySheet | HistoryRecord>(data: u
       if (![sheet.record_count, sheet.present_count, sheet.half_day_count, sheet.absent_count, sheet.leave_count, sheet.pending_count].every((n) => Number.isSafeInteger(n) && n >= 0)) throw new Error('Invalid attendance history counts');
     } else {
       const record = item as HistoryRecord;
+      parseRecordedCraft(record as unknown as Record<string,unknown>);
       if (typeof record.id !== 'string' || typeof record.worker_id !== 'string' || typeof record.is_supervisor !== 'boolean' || typeof record.is_founder_override !== 'boolean' || !['present', 'half_day', 'absent', 'leave'].includes(record.status)) throw new Error('Invalid attendance history record');
     }
   }

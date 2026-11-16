@@ -4,6 +4,8 @@ import {act,cleanup,render,waitFor} from '@testing-library/react';
 import {afterEach,beforeEach,describe,expect,it,vi} from 'vitest';
 
 const mock=vi.hoisted(()=>({snapshot:null as unknown,error:null as null|{message:string},writes:[] as Array<{kind:string,payload:any,filters:unknown[]}>,toast:vi.fn(),audit:vi.fn()}));
+vi.mock('@/lib/attendance/loadBaleRequests',()=>({loadBaleRequests:async()=>({data:[],coverage:{openOmitted:0,historyOmitted:0}})}));
+vi.mock('@/lib/data/loadFinancialRows',()=>({loadFinancialRows:async()=>({data:[],omitted:0})}));
 vi.mock('@/lib/supabase/client',()=>({createClient:()=>({
   rpc:(name:string)=>name==='visible_projects' ? {order:async()=>({data:[],error:null})} : Promise.resolve({data:mock.snapshot,error:mock.error}),
   from:(table:string)=>({

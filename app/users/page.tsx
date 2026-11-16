@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useRef, useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import { AppShell } from '@/components/layout/AppShell';
 import { useDataStore } from '@/lib/data/store';
 import { useAuth } from '@/lib/auth/authContext';
@@ -29,12 +29,19 @@ import { useToast } from '@/components/ui/Toast';
 import { generateTemporaryPassword, validatePasswordStrength } from '@/lib/users/admin';
 import { WorkspaceHeader } from '@/components/ui/WorkspaceHeader';
 import { WorkspaceFilters } from '@/components/ui/WorkspaceFilters';
+import { SupervisorPortrait } from '@/components/users/SupervisorPortrait';
+import { createClient } from '@/lib/supabase/client';
+import { loadAccountEditSnapshot, sameAccountEditSnapshot, type AccountEditSnapshot } from '@/lib/users/accountEditSnapshot';
 
 export default function UsersPage() {
   const { user: currentUser } = useAuth();
   const { users, workers, projects, projectSupervisors, refresh } = useDataStore();
   const { showToast } = useToast();
   const mutationLock = useRef(false);
+  const currentActor = useRef(currentUser?.id);
+  currentActor.current = currentUser?.id;
+  const mounted = useRef(true);
+  useEffect(() => { mounted.current = true; return () => { mounted.current = false; }; }, []);
   const [actionWarnings, setActionWarnings] = useState<string[]>([]);
 
   const [searchQuery, setSearchQuery] = useState('');
@@ -50,7 +57,7 @@ export default function UsersPage() {
   const [newIncludeInPayroll, setNewIncludeInPayroll] = useState(true);
   const [newPayRate, setNewPayRate] = useState('1200');
   const [newContactNumber, setNewContactNumber] = useState('');
-  const [sendWelcomeEmail, setSendWelcomeEmail] = useState(true);
+  const [sendWelcomeEmail, setSendWelcomeEmail] = useState(false);
   const [isCreating, setIsCreating] = useState(false);
 
   // One-time provisioned credentials banner
@@ -75,6 +82,10 @@ export default function UsersPage() {
   const [editContactNumber, setEditContactNumber] = useState('');
   const [editResetPassword, setEditResetPassword] = useState('');
   const [isUpdating, setIsUpdating] = useState(false);
+  const [loadingAccountId, setLoadingAccountId] = useState<string | null>(null);
+  const loadingAccountRef = useRef(false);
+  const editBaseline = useRef<{actor:string;snapshot:AccountEditSnapshot}|null>(null);
+  const [editWorkerRemoved, setEditWorkerRemoved] = useState(false);
   const [confirmingDeleteInModal, setConfirmingDeleteInModal] = useState(false);
   const [isDeleting, setIsDeleting] = useState(false);
 
@@ -109,7 +120,7 @@ export default function UsersPage() {
     setNewIncludeInPayroll(true);
     setNewPayRate('1200');
     setNewContactNumber('');
-    setSendWelcomeEmail(true);
+    setSendWelcomeEmail(false);
     setIsCreateOpen(true);
   };
 
@@ -165,26 +176,33 @@ export default function UsersPage() {
     }
   };
 
-  const openEditModal = (u: User) => {
-    const currentAssigned = projectSupervisors
-      .filter((ps) => ps.supervisor_id === u.id)
-      .map((ps) => ps.project_id);
-    const linkedWorker = workers.find((w) => w.id === u.id);
-
-    setEditingUser(u);
-    setEditName(u.name);
-    setEditRole(u.role);
-    setEditAssignedProjects(currentAssigned);
-    setEditIncludeInPayroll(Boolean(linkedWorker?.active));
-    setEditPayRate(String(linkedWorker?.pay_rate ?? 1200));
-    setEditPayRateType(linkedWorker?.pay_rate_type === 'hourly' ? 'hourly' : 'daily');
-    setEditContactNumber(
-      linkedWorker?.contact_number && linkedWorker.contact_number !== '—'
-        ? linkedWorker.contact_number
-        : ''
-    );
-    setEditResetPassword('');
-    setConfirmingDeleteInModal(false);
+  const openEditModal = async (u: User) => {
+    if (loadingAccountRef.current || !currentActor.current) return;
+    const actor = currentActor.current;
+    loadingAccountRef.current = true;
+    setLoadingAccountId(u.id);
+    try {
+      const snapshot = await loadAccountEditSnapshot(createClient(), u.id);
+      if (!mounted.current || currentActor.current !== actor) return;
+      const {user, assignedProjectIds, worker} = snapshot;
+      editBaseline.current = {actor,snapshot};
+      setEditName(user.name);
+      setEditRole(user.role);
+      setEditAssignedProjects(assignedProjectIds);
+      setEditIncludeInPayroll(Boolean(worker?.active));
+      setEditPayRate(String(worker?.pay_rate ?? 1200));
+      setEditPayRateType(worker?.pay_rate_type === 'hourly' ? 'hourly' : 'daily');
+      setEditContactNumber(worker?.contact_number && worker.contact_number !== '—' ? worker.contact_number : '');
+      setEditWorkerRemoved(Boolean(worker?.removed_at));
+      setEditResetPassword('');
+      setConfirmingDeleteInModal(false);
+      setEditingUser(user);
+    } catch {
+      if (mounted.current && currentActor.current === actor) showToast('error', 'Could not verify the account, workforce link and assigned sites. No changes were made; retry before editing.');
+    } finally {
+      loadingAccountRef.current = false;
+      if (mounted.current) setLoadingAccountId(null);
+    }
   };
 
   const handleEditSubmit = async (e: React.FormEvent) => {
@@ -195,14 +213,32 @@ export default function UsersPage() {
       const check = validatePasswordStrength(editResetPassword.trim());
       if (!check.valid) { showToast('error', check.error || 'Temporary password is too weak.'); return; }
     }
+    const baseline = editBaseline.current;
+    if (!baseline || baseline.actor !== currentActor.current || baseline.snapshot.user.id !== editingUser.id) {
+      showToast('error', 'The account or signed-in user changed. Close and reopen the editor before saving.');
+      return;
+    }
     mutationLock.current = true;
     setIsUpdating(true);
     try {
+      let latest: AccountEditSnapshot;
+      try {
+        latest = await loadAccountEditSnapshot(createClient(), editingUser.id);
+      } catch {
+        if (mounted.current && currentActor.current === baseline.actor) showToast('error', 'Could not recheck this account. No changes were sent; try again.');
+        return;
+      }
+      if (!mounted.current || currentActor.current !== baseline.actor) return;
+      if (!sameAccountEditSnapshot(baseline.snapshot, latest)) {
+        showToast('error', 'This account, workforce profile or assigned sites changed while editing. No changes were sent. Close and reopen the editor to review the latest details.');
+        return;
+      }
       const response = await fetch('/api/users', {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           userId: editingUser.id,
+          expectedSnapshot: baseline.snapshot,
           name: editName,
           role: editRole,
           assignedProjectIds: editRole === 'supervisor' ? editAssignedProjects : [],
@@ -441,6 +477,9 @@ export default function UsersPage() {
                     </Badge>
                   </div>
 
+                  {u.role === 'supervisor' && process.env.NEXT_PUBLIC_SUPERVISOR_PORTRAIT_PREVIEW === 'true' && (
+                    <SupervisorPortrait key={`${currentUser?.id ?? 'none'}:${u.id}`} id={u.id} name={u.name} />
+                  )}
                   {/* Permissions Description */}
                   <div className="p-3.5 rounded-2xl bg-surface-inset/50 border border-surface-border/70 text-xs space-y-2">
                     <div className="flex items-center justify-between gap-2">
@@ -492,10 +531,11 @@ export default function UsersPage() {
                     type="button"
                     variant="secondary"
                     size="sm"
-                    onClick={() => openEditModal(u)}
+                    onClick={() => void openEditModal(u)}
+                    disabled={loadingAccountId !== null}
                     leftIcon={<Settings2 className="w-3.5 h-3.5" />}
                   >
-                    Manage
+                    {loadingAccountId === u.id ? 'Checking…' : 'Manage'}
                   </Button>
                 </div>
               </div>
@@ -601,10 +641,10 @@ export default function UsersPage() {
                   />
                   <div className="space-y-0.5">
                     <div className="font-bold text-navy">
-                      Include Supervisor in Daily Attendance &amp; Payroll Engine
+                      Link Supervisor to a workforce profile
                     </div>
                     <div className="text-[11px] text-ink-secondary">
-                      Automatically adds this Supervisor to the site workforce roster so their daily attendance, cash advances (bale), and salary are computed in payroll runs.
+                      When the separate Supervisor payroll ledger is enabled, it requires an active linked profile. Project assignments are separate. Linking does not record a payment; the ledger uses a separately reviewed daily rate.
                     </div>
                   </div>
                 </label>
@@ -743,6 +783,7 @@ export default function UsersPage() {
                     <label className="block text-xs font-semibold text-ink-secondary">
                       Assigned Project Sites ({editAssignedProjects.length} selected)
                     </label>
+                    {editAssignedProjects.some(projectId => !projects.some(project => project.id === projectId)) && <p role="alert" className="text-status-warning">Some assigned sites are not in the loaded project list. They remain selected; refresh the page to review them before changing assignments.</p>}
                     <div className="max-h-36 overflow-y-auto p-3 rounded-2xl bg-surface-inset border border-surface-border space-y-2">
                       {projects.map((proj) => {
                         const checked = editAssignedProjects.includes(proj.id);
@@ -772,21 +813,21 @@ export default function UsersPage() {
                       <input
                         type="checkbox"
                         checked={editIncludeInPayroll}
-                        disabled={Boolean(editingUser && workers.find((worker) => worker.id === editingUser.id)?.removed_at)}
+                        disabled={editWorkerRemoved}
                         onChange={(e) => setEditIncludeInPayroll(e.target.checked)}
                         className="mt-0.5 rounded border-surface-border text-navy focus:ring-navy"
                       />
                       <div className="space-y-0.5">
                         <div className="font-bold text-navy">
-                          Include Supervisor in Daily Attendance &amp; Payroll Engine
+                          Link Supervisor to a workforce profile
                         </div>
                         <div className="text-[11px] text-ink-secondary">
-                          Keeps a linked Site Supervisor entry in the workforce roster so their daily attendance, cash advances (bale), and salary are computed in payroll runs.
+                          When the separate Supervisor payroll ledger is enabled, it requires an active linked profile. Project assignments are separate. Unchecking deactivates the linked profile; the ledger uses a separately reviewed daily rate.
                         </div>
                       </div>
                     </label>
 
-                    {editingUser && workers.find((worker) => worker.id === editingUser.id)?.removed_at && (
+                    {editWorkerRemoved && (
                       <p className="text-[11px] text-status-warning">This workforce profile was removed. Restore it in Workforce before including this Supervisor in payroll. The login and project access remain separate.</p>
                     )}
                     {editIncludeInPayroll && (

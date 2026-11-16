@@ -76,7 +76,7 @@ describe('responsive fields in real dialogs', () => {
 
   it('keeps equipment quantity and condition editable without changing inventory', () => {
     render(React.createElement(ToolsPage));
-    fireEvent.click(screen.getByRole('button', {name:'Add Tool'}));
+    fireEvent.click(screen.getByRole('button', {name:'Add owned tool'}));
     const dialog = screen.getByRole('dialog', {name:'Register New Tool / Machine'});
     const quantity = within(dialog).getByLabelText('Quantity (Units)') as HTMLInputElement;
     const condition = within(dialog).getByLabelText('Equipment Condition') as HTMLSelectElement;

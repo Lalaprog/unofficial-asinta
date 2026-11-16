@@ -1,0 +1,165 @@
+// @vitest-environment jsdom
+import React from 'react';
+import {cleanup,fireEvent,render,screen} from '@testing-library/react';
+import {PGlite} from '@electric-sql/pglite';
+import {readFileSync} from 'node:fs';
+import {afterEach,describe,expect,it,vi} from 'vitest';
+const mock=vi.hoisted(()=>({rpc:vi.fn()}));
+vi.mock('@/lib/supabase/client',()=>({createClient:()=>({rpc:mock.rpc})}));
+import {LegacyVoucherCostReview} from '@/components/projects/LegacyVoucherCostReview';
+import {LegacyCorrectionContext} from '@/components/payroll/LegacyCorrectionContext';
+import {parseLegacyRecordedSnapshot} from '@/lib/projects/legacyRecordedCostCoverage';
+import {parseSimpleRecordedCost} from '@/lib/projects/simpleRecordedCost';
+import {parseAdjustmentList} from '@/lib/payroll/paidAdjustments';
+import {parseCorrectionReview} from '@/lib/payroll/projectCostCorrection';
+import {ProjectReviewedCostSummary} from '@/components/projects/ProjectReviewedCostSummary';
+import {fixture,roles,candidatePaths,founder,supervisor,site,other,worker,payroll,baleExpense} from './helpers/project-cost-reconciliation-fixture';
+import {calculateCorrected,parseCorrectedInventory,parseCorrectedSaved} from '@/lib/projects/correctedCostReview';
+import {calculateLegacyCost,legacyCostMatchesAttempt,legacyCostMatchesBase,parseLegacyCostAttempt,parseLegacyCostInventory,parseLegacyCostSaved,verifyLegacyCostTotals} from '@/lib/projects/legacyVoucherCostReview';
+import {matchingLegacyOverview,parseLegacyRecordedCoverage} from '@/lib/projects/legacyRecordedCostCoverage';
+const sql=(name:string)=>readFileSync(`supabase/drafts/${name}.sql`,'utf8');const id=(n:number)=>`ac000000-0000-4000-8000-${String(n).padStart(12,'0')}`;const legacy=id(1),attrib=id(2),review=id(3);
+const read=async(db:PGlite,query:string,args:unknown[])=> (await db.query<{v:unknown}>(query,args)).rows[0].v;const j=JSON.stringify;
+async function setup(upgrade=false){const db=new PGlite();try{
+ await db.exec(`${roles} ${fixture}`);
+ await db.exec(`ALTER TABLE public.users ADD COLUMN name text;UPDATE public.users SET name=role;
+ ALTER TABLE public.workers ADD COLUMN position text,ADD COLUMN active boolean DEFAULT true;UPDATE public.workers SET position='Mason';
+ CREATE TABLE public.advances(id uuid PRIMARY KEY);
+ CREATE TABLE public.supervisor_period_payroll(id uuid PRIMARY KEY,supervisor_id uuid,supervisor_name text,period_start date,period_end date);
+ CREATE TABLE public.paid_period_assertion_case_events(id uuid PRIMARY KEY);
+ CREATE TABLE public.historical_external_worker_payroll(request_id uuid PRIMARY KEY,worker_id uuid,period_start date,period_end date,original jsonb,gross numeric);
+ CREATE TABLE public.attendance(worker_id uuid,project_id uuid,date date);
+ CREATE TABLE public.paid_period_assertion_cases(id uuid PRIMARY KEY,source_kind text,external_worker_id uuid,original_snapshot jsonb,difference numeric,status text);
+ CREATE TABLE public.historical_worker_attributions(request_id uuid,source_id uuid);CREATE TABLE public.historical_worker_attribution_sites(attribution_id uuid,project_id uuid);
+ CREATE FUNCTION public.paid_period_assertion_snapshot(p_kind text,p_id uuid) RETURNS jsonb LANGUAGE sql STABLE AS $$SELECT original FROM public.historical_external_worker_payroll WHERE request_id=p_id AND p_kind='external_worker'$$;
+ CREATE FUNCTION public.project_historical_worker_attributions(p_project uuid) RETURNS jsonb LANGUAGE sql STABLE AS $$SELECT jsonb_build_object('project_id',p_project,'items','[]'::jsonb)$$;
+ INSERT INTO public.payroll VALUES('${legacy}','${worker}','2024-10-06','2024-10-12','paid',400,50,0,350,8);`);
+ for(const path of candidatePaths)await db.exec(`BEGIN;${readFileSync(path,'utf8')} COMMIT;`);
+ for(const name of ['project_cost_historical_review','project_cost_correction_attribution','project_cost_correction_inventory','project_cost_corrected_preview','project_cost_corrected_review_ledger','project_cost_recorded_coverage','project_recorded_cost_snapshot','legacy_paid_voucher_attribution','project_cost_legacy_voucher_preview','project_cost_legacy_review_ledger','project_cost_legacy_correction_context','project_cost_legacy_corrected_source','project_cost_legacy_recorded_coverage','project_cost_legacy_recorded_snapshot'])await db.exec(`BEGIN;${sql(name)} COMMIT;`);
+ if(upgrade)await db.exec(`BEGIN;SET LOCAL app.legacy_correction_candidate='synthetic-only';${sql('project_cost_legacy_corrected_review_upgrade')} COMMIT;`);
+ await db.exec(`SET ROLE authenticated;SET test.uid='${founder}';SET test.assurance='yes'`);return db;
+ }catch(error){await db.close();throw error;}}
+afterEach(()=>{cleanup();sessionStorage.clear();vi.restoreAllMocks();vi.unstubAllEnvs();mock.rpc.mockReset();});
+describe('held legacy voucher through real local corrected-cost chain',()=>{
+ it('combines simple costs and older-pay coverage without omitting a split',async()=>{const db=await setup(true);try{
+  const third=id(99);await db.exec('RESET ROLE');await db.query('INSERT INTO public.projects VALUES($1,$2)',[third,'Unaffected site']);await db.exec('SET ROLE authenticated');
+  const combined=()=>read(db,'SELECT public.project_cost_legacy_recorded_snapshot($1) v',[third]);
+  expect(parseLegacyRecordedSnapshot(await combined(),third).simple?.totals).toBeNull(); // unallocated voucher
+  const oldSnapshot=()=>read(db,'SELECT public.project_recorded_cost_snapshot($1) v',[third]);
+  expect(parseSimpleRecordedCost(await oldSnapshot(),third)).toMatchObject({coverage:{unallocatedPaid:1,review:{found:false}},totals:null});
+  const source=await read(db,'SELECT public.legacy_paid_voucher_attribution($1) v',[legacy]) as {voucher:unknown;worker:unknown;cases:unknown};
+  await read(db,'SELECT public.record_legacy_paid_voucher_attribution($1,$2,$3::jsonb,$4::jsonb,$5::jsonb,$6,true,$7::jsonb) v',[attrib,legacy,j(source.voucher),j(source.worker),j([{project_id:site,gross:'250.00'},{project_id:other,gross:'150.00'}]),'Old ledger checked',j(source.cases)]);
+  // The legacy writer stores a separate split, not an ordinary paid allocation.
+  // Even without any saved review, an older automatic reader keeps withholding
+  // its amount until it can account for this voucher.
+  expect(parseSimpleRecordedCost(await oldSnapshot(),third)).toMatchObject({coverage:{unallocatedPaid:1,review:{found:false}},totals:null});
+  expect(parseSimpleRecordedCost(await read(db,'SELECT public.project_recorded_cost_snapshot($1) v',[site]),site)).toMatchObject({coverage:{unallocatedPaid:1,review:{found:false}},totals:null});
+  expect(parseLegacyRecordedSnapshot(await combined(),third)).toMatchObject({legacy:{siteAttributions:0,unallocatedPaid:0},simple:{totals:{total:0n}}});
+  expect(parseLegacyRecordedSnapshot(await read(db,'SELECT public.project_cost_legacy_recorded_snapshot($1) v',[site]),site)).toMatchObject({legacy:{siteAttributions:1},simple:null});
+  await db.exec(`RESET ROLE;UPDATE public.workers SET name='Changed worker' WHERE id='${worker}';SET ROLE authenticated`);const changed=parseLegacyRecordedSnapshot(await combined(),third);expect(changed.legacy.changedAttributions).toBe(1);expect(changed.simple?.totals).toBeNull();
+  await db.exec(`RESET ROLE;SET ROLE authenticated;SET test.uid='${supervisor}'`);await expect(combined()).rejects.toThrow(/Founder/);
+ }finally{await db.close();}},60000);
+ it('includes the split once, saves verified evidence, retries and detects later correction',async()=>{const db=await setup();try{
+ const before=parseLegacyRecordedCoverage(await read(db,'SELECT public.project_cost_legacy_recorded_coverage($1) v',[site]),site);expect(before).toMatchObject({unallocatedPaid:1,siteAttributions:0,changedAttributions:0});
+ const source=await read(db,'SELECT public.legacy_paid_voucher_attribution($1) v',[legacy]) as {voucher:unknown;worker:unknown;cases:unknown};
+ await read(db,'SELECT public.record_legacy_paid_voucher_attribution($1,$2,$3::jsonb,$4::jsonb,$5::jsonb,$6,true,$7::jsonb) v',[attrib,legacy,j(source.voucher),j(source.worker),j([{project_id:site,gross:'250.00'},{project_id:other,gross:'150.00'}]),'Old ledger checked',j(source.cases)]);
+ const afterSplit=parseLegacyRecordedCoverage(await read(db,'SELECT public.project_cost_legacy_recorded_coverage($1) v',[site]),site);expect(afterSplit).toMatchObject({unallocatedPaid:0,siteAttributions:1,changedAttributions:0});expect(matchingLegacyOverview(afterSplit)).toBeNull();
+ const raw=await read(db,'SELECT public.project_cost_legacy_voucher_inventory($1) v',[site]),inv=parseLegacyCostInventory(raw,site);expect(inv.legacy).toHaveLength(1);
+ const damaged=JSON.parse(j(raw));damaged.legacy_vouchers[0].site_gross='249.99';expect(()=>parseLegacyCostInventory(damaged,site)).toThrow(/differs/);
+ const repeated=JSON.parse(j(raw));repeated.legacy_vouchers.push(repeated.legacy_vouchers[0]);expect(()=>parseLegacyCostInventory(repeated,site)).toThrow(/Duplicate/);
+ const badStatus=JSON.parse(j(raw));badStatus.legacy_vouchers[0].status.source_changed=true;expect(()=>parseLegacyCostInventory(badStatus,site)).toThrow(/changed/);
+ const decisions={expenses:Object.fromEntries(inv.base.historical.base.expenses.map(e=>[e.id,e.id===baleExpense?{decision:'exclude',reason:'Bale already deducted'}:{decision:'include',reason:null}])),historical:{},corrections:{}};
+ const base=calculateCorrected(inv.base,decisions);expect(base.totals.total).toBe(165000n);
+ const rawBase=await read(db,'SELECT public.project_cost_correction_inventory($1) v',[site]);expect(legacyCostMatchesBase(inv,rawBase)).toBe(true);
+ await read(db,'SELECT public.record_project_cost_corrected_review($1,$2,0,$3::jsonb,$4::jsonb,$5,true) v',[id(4),site,j(rawBase),j(decisions),'Ordinary reviewed']);
+ const ordinary=parseCorrectedSaved(await read(db,'SELECT public.project_cost_corrected_review($1,NULL) v',[site]),site);expect(ordinary.found&&ordinary.totals.total).toBe(165000n);
+ const legacyChoices={[attrib]:{decision:'include',reason:null}},calc=calculateLegacyCost(inv,decisions,legacyChoices);expect(calc.totals.total).toBe(190000n);
+ const preview=await read(db,'SELECT public.project_cost_legacy_voucher_preview($1,$2::jsonb,$3::jsonb,$4::jsonb,true) v',[site,j(raw),j(decisions),j(legacyChoices)]);verifyLegacyCostTotals(preview,site,calc.totals);
+ expect(()=>verifyLegacyCostTotals({...preview as object,incomplete_total:'1900.01'},site,calc.totals)).toThrow(/differs/);expect(()=>calculateLegacyCost(inv,decisions,{})).toThrow(/every/);expect(()=>calculateLegacyCost(inv,decisions,{[attrib]:{decision:'exclude',reason:''}})).toThrow(/decision/);
+ const a={marker:{requestId:review,projectId:site,actorId:founder,expectedRevision:0},raw,choices:calc.choices,legacyChoices:calc.legacyChoices,note:'Review including older voucher'};expect(parseLegacyCostAttempt(j({version:1,...a}),site,founder)).toEqual(a);
+ const save=()=>read(db,'SELECT public.record_project_cost_legacy_review($1,$2,0,$3::jsonb,$4::jsonb,$5::jsonb,$6,true) v',[review,site,j(raw),j(decisions),j(legacyChoices),a.note]);expect(await save()).toMatchObject({revision:1,replayed:false});expect(await save()).toMatchObject({revision:1,replayed:true});
+ const saved=parseLegacyCostSaved(await read(db,'SELECT public.project_cost_legacy_review($1,NULL) v',[site]),site);expect(saved.found&&saved.freshness).toBe('matches');if(!saved.found)throw Error('Missing review');expect(legacyCostMatchesAttempt(saved,a)).toBe(true);expect(saved.totals.total).toBe(190000n);
+ const coverage=parseLegacyRecordedCoverage(await read(db,'SELECT public.project_cost_legacy_recorded_coverage($1) v',[site]),site);expect(matchingLegacyOverview(coverage)?.totals.total).toBe(190000n);
+ if(!coverage.review.found)throw Error('Ordinary review missing');
+ const divergent={...coverage,review:{...coverage.review,choices:{...coverage.review.choices,expenses:{...coverage.review.choices.expenses,[baleExpense]:{decision:'include' as const,reason:null}}}}};expect(matchingLegacyOverview(divergent)).toBeNull();
+ const incoming={...coverage,review:{...coverage.review,inventory:{...coverage.review.inventory,cases:[{sourceInSnapshot:false} as typeof coverage.review.inventory.cases[number]]}}};expect(matchingLegacyOverview(incoming)).toBeNull();
+ await read(db,"SELECT public.open_paid_payroll_adjustment($1,$2,$3::jsonb,1,'Later case') v",[id(5),legacy,j(source.voucher)]);
+ expect((await read(db,'SELECT public.project_cost_legacy_review($1,NULL) v',[site]) as {freshness:string}).freshness).toBe('unavailable');
+ const changed=parseLegacyRecordedCoverage(await read(db,'SELECT public.project_cost_legacy_recorded_coverage($1) v',[site]),site);expect(changed).toMatchObject({unallocatedPaid:1,siteAttributions:1,changedAttributions:1});expect(matchingLegacyOverview(changed)).toBeNull();
+ await expect(read(db,'SELECT public.project_cost_legacy_corrected_source($1) v',[legacy])).rejects.toThrow(/resolved attribution/);
+ const pending=await read(db,'SELECT public.project_cost_legacy_correction_context($1) v',[id(5)]);expect(pending).toMatchObject({source_kind:'legacy_voucher',payroll_id:legacy,incomplete:true,original:{case_count:1,split:[{project_id:site,gross:'250.00'},{project_id:other,gross:'150.00'}]},correction:{case:{status:'pending'}}});
+ await read(db,"SELECT public.resolve_paid_payroll_adjustment($1,'no_transfer',NULL,'No transfer') v",[id(5)]);
+ const caseInfo=await read(db,"SELECT public.project_cost_correction_attribution('voucher',$1,NULL) v",[id(5)]) as {case:unknown};
+ await read(db,"SELECT public.record_project_cost_correction_attribution($1,'voucher',$2,0,$3::jsonb,0,$4::jsonb,'Reviewed split',true) v",[id(6),id(5),j(caseInfo.case),j([{project_id:site,gross_change:'-50.00'},{project_id:other,gross_change:'50.00'}])]);
+ const resolved=await read(db,'SELECT public.project_cost_legacy_correction_context($1) v',[id(5)]);expect(resolved).toMatchObject({correction:{case:{status:'no_transfer'},attribution:{case_changed:false}}});
+ const evidence=(resolved as {correction:{case:unknown}}).correction,item=parseAdjustmentList({total:1,offset:0,items:[evidence.case]},legacy,0).items[0],current=parseCorrectionReview(evidence,'voucher',item);
+ mock.rpc.mockImplementation(async(name:string,args:Record<string,unknown>)=>{try{if(name!=='project_cost_legacy_correction_context')throw Error('unexpected');return {data:await read(db,'SELECT public.project_cost_legacy_correction_context($1) v',[args.p_case]),error:null};}catch(error){return {data:null,error};}});
+ render(React.createElement(LegacyCorrectionContext,{item,review:current,projects:[{id:site,name:'Site One'},{id:other,name:'Site Two'}]}));fireEvent.click(screen.getByRole('button',{name:'Check original older-voucher split'}));fireEvent.click(screen.getByRole('button',{name:'Load original voucher split'}));await screen.findByText('Site One · ₱250.00');expect(screen.getByText('Site Two · ₱150.00')).toBeTruthy();cleanup();
+ const corrected=await read(db,'SELECT public.project_cost_legacy_corrected_source($1) v',[legacy]);expect(corrected).toMatchObject({original_gross:'400.00',gross_change:'0.00',corrected_gross:'400.00',sites:[{project_id:site,original_gross:'250.00',gross_change:'-50.00',corrected_gross:'200.00'},{project_id:other,original_gross:'150.00',gross_change:'50.00',corrected_gross:'200.00'}]});
+ await expect(read(db,'SELECT public.project_cost_legacy_voucher_inventory($1) v',[site])).rejects.toThrow(/changed|correction/);
+ await db.exec(`RESET ROLE;UPDATE public.workers SET name='Renamed' WHERE id='${worker}';SET ROLE authenticated`);await expect(read(db,'SELECT public.project_cost_legacy_correction_context($1) v',[id(5)])).rejects.toMatchObject({code:'40001'});
+ render(React.createElement(LegacyCorrectionContext,{item,review:current,projects:[{id:site,name:'Site One'},{id:other,name:'Site Two'}]}));fireEvent.click(screen.getByRole('button',{name:'Check original older-voucher split'}));fireEvent.click(screen.getByRole('button',{name:'Load original voucher split'}));await screen.findByText(/No current older-voucher split could be verified/);expect(screen.queryByText('Site One · ₱250.00')).toBeNull();cleanup();
+ await db.exec('RESET ROLE');expect((await db.query('SELECT gross_pay::text gross,net_pay::text net FROM public.payroll WHERE id=$1',[legacy])).rows[0]).toEqual({gross:'400.00',net:'350.00'});expect((await db.query('SELECT sum(gross)::text total FROM public.weekly_worker_paid_allocations WHERE payroll_id=$1',[payroll])).rows[0]).toEqual({total:'750.00'});
+ }finally{await db.close();}},60000);
+ it('reviews in the UI, retries a lost save, and displays only the matching legacy total',async()=>{const db=await setup();try{
+  vi.stubEnv('NEXT_PUBLIC_FINANCE_FOUNDATION_PREVIEW','true');vi.stubEnv('NEXT_PUBLIC_LEGACY_VOUCHER_ATTRIBUTION_PREVIEW','true');
+  const source=await read(db,'SELECT public.legacy_paid_voucher_attribution($1) v',[legacy]) as {voucher:unknown;worker:unknown;cases:unknown};
+  await read(db,'SELECT public.record_legacy_paid_voucher_attribution($1,$2,$3::jsonb,$4::jsonb,$5::jsonb,$6,true,$7::jsonb) v',[attrib,legacy,j(source.voucher),j(source.worker),j([{project_id:site,gross:'250.00'},{project_id:other,gross:'150.00'}]),'Old ledger checked',j(source.cases)]);
+  const rawBase=await read(db,'SELECT public.project_cost_correction_inventory($1) v',[site]);const parsed=parseCorrectedInventory(rawBase,site);
+  const choices={expenses:Object.fromEntries(parsed.historical.base.expenses.map(e=>[e.id,e.id===baleExpense?{decision:'exclude',reason:'Bale already deducted'}:{decision:'include',reason:null}])),historical:{},corrections:{}};
+  await read(db,'SELECT public.record_project_cost_corrected_review($1,$2,0,$3::jsonb,$4::jsonb,$5,true) v',[id(4),site,j(rawBase),j(choices),'Ordinary reviewed']);
+  let writesAttempted=0;mock.rpc.mockImplementation(async(name:string,args:Record<string,unknown>)=>{try{let result:unknown;
+   if(name==='project_cost_legacy_voucher_inventory')result=await read(db,'SELECT public.project_cost_legacy_voucher_inventory($1) v',[args.p_project]);
+   else if(name==='project_cost_corrected_review')result=await read(db,'SELECT public.project_cost_corrected_review($1,$2) v',[args.p_project,args.p_revision]);
+   else if(name==='project_cost_legacy_review')result=await read(db,'SELECT public.project_cost_legacy_review($1,$2) v',[args.p_project,args.p_revision]);
+   else if(name==='project_cost_legacy_recorded_coverage')result=await read(db,'SELECT public.project_cost_legacy_recorded_coverage($1) v',[args.p_project]);
+   else if(name==='project_cost_legacy_voucher_preview')result=await read(db,'SELECT public.project_cost_legacy_voucher_preview($1,$2::jsonb,$3::jsonb,$4::jsonb,true) v',[args.p_project,j(args.p_snapshot),j(args.p_choices),j(args.p_legacy_choices)]);
+   else if(name==='record_project_cost_legacy_review'){writesAttempted++;if(writesAttempted===1||writesAttempted===3)return {data:null,error:{code:'40001'}};result=await read(db,'SELECT public.record_project_cost_legacy_review($1,$2,$3,$4::jsonb,$5::jsonb,$6::jsonb,$7,true) v',[args.p_request,args.p_project,args.p_expected_revision,j(args.p_snapshot),j(args.p_choices),j(args.p_legacy_choices),args.p_note]);if(writesAttempted===2)return {data:null,error:Error('response lost after commit')};}
+   else throw Error('Unexpected RPC');return {data:result,error:null};}catch(error){return {data:null,error};}});
+  vi.spyOn(crypto,'randomUUID').mockReturnValue(review);
+  render(React.createElement(ProjectReviewedCostSummary,{projectId:site,userId:founder,onReview:()=>{}}));await screen.findByText(/Older voucher attribution exists/);expect(screen.queryByText(/Reviewed cost: ₱/)).toBeNull();cleanup();
+  const panel=()=>React.createElement(LegacyVoucherCostReview,{projectId:site,userId:founder});render(panel());fireEvent.click(screen.getByRole('button',{name:'Review older voucher costs'}));fireEvent.click(screen.getByRole('button',{name:'Load older voucher cost review'}));await screen.findByText(/Using ordinary review revision/);
+  fireEvent.click(screen.getByRole('radio',{name:'Include voucher'}));fireEvent.click(screen.getByRole('button',{name:'Verify older voucher cost preview'}));await screen.findByText(/Incomplete reviewed amount ₱1,900.00/);
+  fireEvent.change(screen.getByLabelText('Older voucher review note'),{target:{value:'Old payroll verified'}});fireEvent.click(screen.getByRole('checkbox',{name:/I reviewed the original evidence/}));fireEvent.click(screen.getByRole('button',{name:'Save older voucher cost review'}));await screen.findByText(/Nothing was recorded; load the review again/);expect(sessionStorage.length).toBe(0);
+  fireEvent.click(screen.getByRole('button',{name:'Load older voucher cost review'}));await screen.findByText(/Using ordinary review revision/);fireEvent.click(screen.getByRole('radio',{name:'Include voucher'}));fireEvent.click(screen.getByRole('button',{name:'Verify older voucher cost preview'}));await screen.findByText(/Incomplete reviewed amount ₱1,900.00/);fireEvent.click(screen.getByRole('checkbox',{name:/I reviewed the original evidence/}));fireEvent.click(screen.getByRole('button',{name:'Save older voucher cost review'}));await screen.findByText(/Outcome unconfirmed/);
+  cleanup();render(panel());fireEvent.click(screen.getByRole('button',{name:'Review older voucher costs'}));fireEvent.click(await screen.findByRole('button',{name:'Retry exact legacy cost review'}));await screen.findByText(/Outcome unconfirmed/);expect(sessionStorage.length).toBe(1);fireEvent.click(screen.getByRole('button',{name:'Retry exact legacy cost review'}));await screen.findByText(/Legacy-inclusive review recorded and verified/);expect(sessionStorage.length).toBe(0);
+  const writes=mock.rpc.mock.calls.filter(([name])=>name==='record_project_cost_legacy_review');expect(writes).toHaveLength(4);expect(writes[1][1]).toEqual(writes[2][1]);expect(writes[2][1]).toEqual(writes[3][1]);cleanup();
+  render(React.createElement(ProjectReviewedCostSummary,{projectId:site,userId:founder,onReview:()=>{}}));await screen.findByText('Reviewed cost including older vouchers: ₱1,900.00');expect(screen.queryByText(/Reviewed cost: ₱/)).toBeNull();
+  await read(db,"SELECT public.open_paid_payroll_adjustment($1,$2,$3::jsonb,1,'Later case') v",[id(5),legacy,j(source.voucher)]);fireEvent.click(screen.getByRole('button',{name:'Refresh reviewed cost'}));await screen.findByText(/An older voucher split or its corrections changed/);expect(screen.queryByText(/Reviewed cost including older vouchers: ₱/)).toBeNull();
+ }finally{cleanup();await db.close();}},60000);
+ it('reconciles an original voucher correction across source and incoming sites exactly once',async()=>{const db=await setup(true);try{
+  const dest=id(40);await db.exec(`RESET ROLE;INSERT INTO public.projects VALUES('${dest}','Destination');SET ROLE authenticated`);
+  const original=await read(db,'SELECT public.legacy_paid_voucher_attribution($1) v',[legacy]) as {voucher:unknown;worker:unknown;cases:unknown};
+  await read(db,'SELECT public.record_legacy_paid_voucher_attribution($1,$2,$3::jsonb,$4::jsonb,$5::jsonb,$6,true,$7::jsonb) v',[attrib,legacy,j(original.voucher),j(original.worker),j([{project_id:site,gross:'250.00'},{project_id:other,gross:'150.00'}]),'Original ledger',j(original.cases)]);
+  await read(db,"SELECT public.open_paid_payroll_adjustment($1,$2,$3::jsonb,1,'Move original cost') v",[id(41),legacy,j(original.voucher)]);
+  await read(db,"SELECT public.resolve_paid_payroll_adjustment($1,'no_transfer',NULL,'Reallocation only') v",[id(41)]);
+  const caseInfo=await read(db,"SELECT public.project_cost_correction_attribution('voucher',$1,NULL) v",[id(41)]) as {case:unknown};
+  await read(db,"SELECT public.record_project_cost_correction_attribution($1,'voucher',$2,0,$3::jsonb,0,$4::jsonb,'Original site move',true) v",[id(42),id(41),j(caseInfo.case),j([{project_id:site,gross_change:'-50.00'},{project_id:dest,gross_change:'50.00'}])]);
+  for(const [project,expected] of [[site,'200.00'],[other,'150.00'],[dest,'50.00']] as const){
+   const raw=await read(db,'SELECT public.project_cost_legacy_voucher_inventory($1) v',[project]) as {base:{historical_review:{base:{expenses:{id:string}[]}};corrections:{kind:string;case_id:string}[]};legacy_vouchers:{site_gross:string}[]};expect(raw.legacy_vouchers).toHaveLength(1);expect(raw.legacy_vouchers[0].site_gross).toBe(expected);
+   const choices={expenses:Object.fromEntries(raw.base.historical_review.base.expenses.map(e=>[e.id,e.id===baleExpense?{decision:'exclude',reason:'Bale already deducted'}:{decision:'include',reason:null}])),historical:{},corrections:Object.fromEntries(raw.base.corrections.map(c=>[`${c.kind}:${c.case_id}`,{decision:'exclude',reason:'Included in corrected legacy source'}]))};
+   const legacyChoices={[attrib]:{decision:'include',reason:null}};
+   const parsed= parseLegacyCostInventory(raw,project);const calculated=calculateLegacyCost(parsed,choices,legacyChoices);
+   const preview=await read(db,'SELECT public.project_cost_legacy_voucher_preview($1,$2::jsonb,$3::jsonb,$4::jsonb,true) v',[project,j(raw),j(choices),j(legacyChoices)]);expect(preview).toMatchObject({legacy_included_gross:expected,incomplete:true});verifyLegacyCostTotals(preview,project,calculated.totals);
+   if(raw.base.corrections.length){const double={...choices,corrections:Object.fromEntries(raw.base.corrections.map(c=>[`${c.kind}:${c.case_id}`,{decision:'include',reason:'Invalid double count'}]))};await expect(read(db,'SELECT public.project_cost_legacy_voucher_preview($1,$2::jsonb,$3::jsonb,$4::jsonb,true) v',[project,j(raw),j(double),j(legacyChoices)])).rejects.toThrow(/must not also/);}
+   await read(db,'SELECT public.record_project_cost_corrected_review($1,$2,0,$3::jsonb,$4::jsonb,$5,true) v',[id(project===site?50:project===other?51:52),project,j(raw.base),j(choices),'Base reviewed']);
+   await read(db,'SELECT public.record_project_cost_legacy_review($1,$2,0,$3::jsonb,$4::jsonb,$5::jsonb,$6,true) v',[id(project===site?43:project===other?44:45),project,j(raw),j(choices),j(legacyChoices),'Original period reviewed']);
+   expect(await read(db,'SELECT public.project_cost_legacy_review($1,NULL) v',[project])).toMatchObject({freshness:'matches'});
+   const coverage=parseLegacyRecordedCoverage(await read(db,'SELECT public.project_cost_legacy_recorded_coverage($1) v',[project]),project);expect(coverage).toMatchObject({siteAttributions:1,changedAttributions:0,unallocatedPaid:0});expect(matchingLegacyOverview(coverage)?.totals.included).toBe(BigInt(expected.replace('.','')));
+  }
+  await read(db,"SELECT public.open_paid_payroll_adjustment($1,$2,$3::jsonb,1,'Second original correction') v",[id(46),legacy,j(original.voucher)]);
+  expect((await read(db,'SELECT public.project_cost_legacy_review($1,NULL) v',[site]) as {freshness:string}).freshness).toBe('unavailable');
+  await read(db,"SELECT public.resolve_paid_payroll_adjustment($1,'no_transfer',NULL,'No payment') v",[id(46)]);
+  const refreshed=await read(db,"SELECT public.project_cost_correction_attribution('voucher',$1,NULL) v",[id(41)]) as {case:unknown};
+  await read(db,"SELECT public.record_project_cost_correction_attribution($1,'voucher',$2,1,$3::jsonb,0,$4::jsonb,'Rechecked after another case',true) v",[id(48),id(41),j(refreshed.case),j([{project_id:site,gross_change:'-50.00'},{project_id:dest,gross_change:'50.00'}])]);
+  const second=await read(db,"SELECT public.project_cost_correction_attribution('voucher',$1,NULL) v",[id(46)]) as {case:unknown};
+  await read(db,"SELECT public.record_project_cost_correction_attribution($1,'voucher',$2,0,$3::jsonb,0,$4::jsonb,'Second move',true) v",[id(47),id(46),j(second.case),j([{project_id:other,gross_change:'-25.00'},{project_id:dest,gross_change:'25.00'}])]);
+  const raw2=await read(db,'SELECT public.project_cost_legacy_voucher_inventory($1) v',[site]) as {base:{historical_review:{base:{expenses:{id:string}[]}};corrections:{kind:string;case_id:string}[]}};
+  const decisions2={expenses:Object.fromEntries(raw2.base.historical_review.base.expenses.map(e=>[e.id,e.id===baleExpense?{decision:'exclude',reason:'Bale already deducted'}:{decision:'include',reason:null}])),historical:{},corrections:Object.fromEntries(raw2.base.corrections.map(c=>[`${c.kind}:${c.case_id}`,{decision:'exclude',reason:'Corrected legacy source'}]))};
+  const inventory2=parseLegacyCostInventory(raw2,site),missing={[attrib]:{decision:'include',reason:null}};
+  expect(()=>calculateLegacyCost(inventory2,decisions2,missing)).toThrow(/decision fields/);await expect(read(db,'SELECT public.project_cost_legacy_voucher_preview($1,$2::jsonb,$3::jsonb,$4::jsonb,true) v',[site,j(raw2),j(decisions2),j(missing)])).rejects.toThrow(/Distinct effects/);
+  const checked={[attrib]:{decision:'include',reason:null,case_review:{case_ids:[id(41),id(46)],note:'Different movements verified',non_overlapping:true}}};const result2=calculateLegacyCost(inventory2,decisions2,checked);
+  verifyLegacyCostTotals(await read(db,'SELECT public.project_cost_legacy_voucher_preview($1,$2::jsonb,$3::jsonb,$4::jsonb,true) v',[site,j(raw2),j(decisions2),j(checked)]),site,result2.totals);
+  await db.exec('RESET ROLE');expect((await db.query('SELECT gross_pay::text gross FROM public.payroll WHERE id=$1',[legacy])).rows[0]).toEqual({gross:'400.00'});
+ }finally{await db.close();}},60000);
+ it('denies supervisor and low-assurance access',async()=>{const db=await setup();try{await db.exec(`SET test.uid='${supervisor}'`);await expect(read(db,'SELECT public.project_cost_legacy_review($1,NULL) v',[site])).rejects.toMatchObject({code:'42501'});await expect(read(db,'SELECT public.project_cost_legacy_recorded_coverage($1) v',[site])).rejects.toMatchObject({code:'42501'});await expect(read(db,'SELECT public.project_cost_legacy_correction_context($1) v',[id(5)])).rejects.toMatchObject({code:'42501'});await db.exec(`SET test.uid='${founder}';SET test.assurance='no'`);await expect(read(db,'SELECT public.project_cost_legacy_voucher_inventory($1) v',[site])).rejects.toMatchObject({code:'42501'});await expect(read(db,'SELECT public.project_cost_legacy_correction_context($1) v',[id(5)])).rejects.toMatchObject({code:'42501'});}finally{await db.close();}},30000);
+});

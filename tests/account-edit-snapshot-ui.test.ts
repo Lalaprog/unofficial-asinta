@@ -1,0 +1,70 @@
+// @vitest-environment jsdom
+import React from 'react';
+import {cleanup,fireEvent,render,screen,within,waitFor} from '@testing-library/react';
+import {afterEach,beforeEach,describe,expect,it,vi} from 'vitest';
+const m=vi.hoisted(()=>({load:vi.fn(),toast:vi.fn(),refresh:vi.fn(),actor:'founder'}));
+vi.mock('@/lib/users/accountEditSnapshot',async(importOriginal)=>({...await importOriginal<typeof import('@/lib/users/accountEditSnapshot')>(),loadAccountEditSnapshot:m.load}));
+vi.mock('@/lib/supabase/client',()=>({createClient:()=>({})}));
+vi.mock('@/lib/auth/authContext',()=>({useAuth:()=>({user:{id:m.actor}})}));
+vi.mock('@/components/layout/AppShell',()=>({AppShell:({children}:{children:React.ReactNode})=>React.createElement('main',null,children)}));
+vi.mock('@/components/ui/Toast',()=>({useToast:()=>({showToast:m.toast})}));
+vi.mock('@/lib/data/store',()=>({useDataStore:()=>({users:[{id:'sup',name:'Old Name',email:'test@example.invalid',role:'supervisor',created_at:'2026-01-01T00:00:00Z'}],workers:[],projects:[{id:'a',name:'Site A',location:'Lipa'}],projectSupervisors:[],refresh:m.refresh})}));
+import UsersPage from '@/app/users/page';
+const user={id:'sup',name:'Current Name',email:'test@example.invalid',role:'supervisor',created_at:'2026-01-01T00:00:00Z'};
+beforeEach(()=>{m.actor='founder';m.load.mockReset();m.toast.mockReset();m.refresh.mockReset();});
+afterEach(()=>{cleanup();vi.unstubAllGlobals();});
+describe('team account edit snapshot',()=>{
+ it('starts each account creation with welcome email unchecked',async()=>{
+  render(React.createElement(UsersPage));fireEvent.click(screen.getByRole('button',{name:'Add Member'}));
+  let dialog=await screen.findByRole('dialog');
+  let email=within(dialog).getByRole('checkbox',{name:/Send welcome email/}) as HTMLInputElement;
+  expect(email.checked).toBe(false);fireEvent.click(email);expect(email.checked).toBe(true);
+  fireEvent.click(within(dialog).getByRole('button',{name:'Cancel'}));
+  fireEvent.click(screen.getByRole('button',{name:'Add Member'}));dialog=await screen.findByRole('dialog');
+  email=within(dialog).getByRole('checkbox',{name:/Send welcome email/}) as HTMLInputElement;
+  expect(email.checked).toBe(false);
+ });
+ it('uses the targeted read rather than an incomplete shared worker or assignment list',async()=>{
+  m.load.mockResolvedValue({user,assignedProjectIds:['a','b'],worker:{id:'sup',name:'Supervisor worker',position:'Site Supervisor',active:true,pay_rate:600,pay_rate_type:'daily',contact_number:'—',removed_at:null}});
+  const fetchMock=vi.fn().mockResolvedValue({ok:true,json:async()=>({ok:true,user})});vi.stubGlobal('fetch',fetchMock);
+  render(React.createElement(UsersPage));fireEvent.click(screen.getByRole('button',{name:'Manage'}));const dialog=await screen.findByRole('dialog');
+  expect((within(dialog).getByLabelText('Full Name') as HTMLInputElement).value).toBe('Current Name');
+  expect((within(dialog).getByRole('checkbox',{name:/Link Supervisor to a workforce profile/}) as HTMLInputElement).checked).toBe(true);
+  expect(within(dialog).getByRole('alert').textContent).toMatch(/Some assigned sites/);
+  fireEvent.click(within(dialog).getByRole('button',{name:'Save Changes'}));await waitFor(()=>expect(fetchMock).toHaveBeenCalledTimes(1));
+  const body=JSON.parse(fetchMock.mock.calls[0][1].body);expect(body).toMatchObject({userId:'sup',name:'Current Name',includeInPayroll:true,payRate:600,assignedProjectIds:['a','b'],expectedSnapshot:{user,assignedProjectIds:['a','b'],worker:{name:'Supervisor worker',position:'Site Supervisor'}}});
+ });
+ it('does not overwrite a changed account, worker or site list',async()=>{
+  const snapshot={user,assignedProjectIds:['a','b'],worker:{id:'sup',name:'Supervisor worker',position:'Site Supervisor',active:true,pay_rate:600,pay_rate_type:'daily',contact_number:'—',removed_at:null}};
+  m.load.mockResolvedValueOnce(snapshot).mockResolvedValueOnce({...snapshot,assignedProjectIds:['a','c']});
+  const fetchMock=vi.fn();vi.stubGlobal('fetch',fetchMock);
+  render(React.createElement(UsersPage));fireEvent.click(screen.getByRole('button',{name:'Manage'}));const dialog=await screen.findByRole('dialog');
+  fireEvent.change(within(dialog).getByLabelText('Full Name'),{target:{value:'Proposed Name'}});
+  fireEvent.click(within(dialog).getByRole('button',{name:'Save Changes'}));
+  await waitFor(()=>expect(m.toast).toHaveBeenCalledWith('error',expect.stringMatching(/changed while editing.*No changes were sent/)));
+  expect(fetchMock).not.toHaveBeenCalled();expect((within(dialog).getByLabelText('Full Name') as HTMLInputElement).value).toBe('Proposed Name');
+ });
+ it('does not send an edit if the signed-in actor changes during the recheck',async()=>{
+  const snapshot={user,assignedProjectIds:[],worker:null};let finish!:(value:typeof snapshot)=>void;
+  m.load.mockResolvedValueOnce(snapshot).mockImplementationOnce(()=>new Promise(resolve=>{finish=resolve;}));
+  const fetchMock=vi.fn();vi.stubGlobal('fetch',fetchMock);
+  const view=render(React.createElement(UsersPage));fireEvent.click(screen.getByRole('button',{name:'Manage'}));const dialog=await screen.findByRole('dialog');
+  fireEvent.click(within(dialog).getByRole('button',{name:'Save Changes'}));
+  m.actor='other-founder';view.rerender(React.createElement(UsersPage));finish(snapshot);
+  await waitFor(()=>expect((within(dialog).getByRole('button',{name:'Save Changes'}) as HTMLButtonElement).disabled).toBe(false));
+  expect(fetchMock).not.toHaveBeenCalled();
+ });
+ it('does not send an edit if the pre-save recheck fails',async()=>{
+  m.load.mockResolvedValueOnce({user,assignedProjectIds:[],worker:null}).mockRejectedValueOnce(Error('offline'));
+  const fetchMock=vi.fn();vi.stubGlobal('fetch',fetchMock);
+  render(React.createElement(UsersPage));fireEvent.click(screen.getByRole('button',{name:'Manage'}));const dialog=await screen.findByRole('dialog');
+  fireEvent.click(within(dialog).getByRole('button',{name:'Save Changes'}));
+  await waitFor(()=>expect(m.toast).toHaveBeenCalledWith('error',expect.stringMatching(/No changes were sent/)));
+  expect(fetchMock).not.toHaveBeenCalled();
+ });
+ it('does not open or submit an edit when the targeted read fails',async()=>{
+  m.load.mockRejectedValue(Error('incomplete'));const fetchMock=vi.fn();vi.stubGlobal('fetch',fetchMock);
+  render(React.createElement(UsersPage));fireEvent.click(screen.getByRole('button',{name:'Manage'}));await waitFor(()=>expect(m.toast).toHaveBeenCalledWith('error',expect.stringMatching(/No changes were made/)));
+  expect(screen.queryByRole('dialog')).toBeNull();expect(fetchMock).not.toHaveBeenCalled();
+ });
+});

@@ -36,6 +36,7 @@ import { buildReminderSMS, estimateSMSSegments } from '@/lib/sms/templates';
 import { loadSMSTemplate } from '@/lib/sms/loadTemplate';
 import { createClient as createSupabaseBrowserClient } from '@/lib/supabase/client';
 import { formatPeso } from '@/lib/email/format';
+import { manilaDateISO, shiftCalendarDate } from '@/lib/dates/manila';
 
 function getNextInvoiceNumber(invoices: Invoice[], year: number): string {
   const prefix = `ASINTA-${year}-`;
@@ -126,8 +127,8 @@ function InvoiceActionsMenu({
   );
 }
 
-const today = () => new Date().toISOString().split('T')[0];
-const defaultDueDate = () => new Date(Date.now() + 15 * 86400000).toISOString().split('T')[0];
+const today = () => manilaDateISO();
+const defaultDueDate = (issueDate: string) => shiftCalendarDate(issueDate, 15);
 
 export default function InvoicesPage() {
   const { showToast } = useToast();
@@ -151,10 +152,8 @@ export default function InvoicesPage() {
 
   // Modals state
   const [isCreateModalOpen, setIsCreateModalOpen] = useState(false);
-  useQuickAction('/invoices', ['invoice'], isFounder && assurance === 'ready' && !authLoading && isLoaded, () => {
-    setFormData(current => ({ ...current, invoice_number: getNextInvoiceNumber(invoices, Number(current.issue_date.slice(0, 4)) || new Date().getFullYear()) }));
-    setIsCreateModalOpen(true);
-  });
+  const issueDateEdited = React.useRef(false);
+  const dueDateEdited = React.useRef(false);
   const [isPaymentModalOpen, setIsPaymentModalOpen] = useState(false);
   const [isPreviewModalOpen, setIsPreviewModalOpen] = useState(false);
   const [isSmsModalOpen, setIsSmsModalOpen] = useState(false);
@@ -234,10 +233,21 @@ export default function InvoicesPage() {
     client_id: '',
     amount: '',
     issue_date: initialIssueDate,
-    due_date: defaultDueDate(),
+    due_date: defaultDueDate(initialIssueDate),
     notes: '',
     status: 'pending' as InvoiceStatus,
   });
+  const openCreateModal = () => {
+    const currentDate = today();
+    setFormData(current => {
+      const issueDate = issueDateEdited.current ? current.issue_date : currentDate;
+      return { ...current, issue_date: issueDate,
+        due_date: dueDateEdited.current || issueDateEdited.current ? current.due_date : defaultDueDate(currentDate),
+        invoice_number: getNextInvoiceNumber(invoices, Number(issueDate.slice(0, 4)) || Number(currentDate.slice(0, 4))) };
+    });
+    setIsCreateModalOpen(true);
+  };
+  useQuickAction('/invoices', ['invoice'], isFounder && assurance === 'ready' && !authLoading && isLoaded, openCreateModal);
 
   const formatPHP = formatPeso;
 
@@ -268,7 +278,7 @@ export default function InvoicesPage() {
     createLock.current = true;
     setIsCreating(true);
     try {
-      const issueYear = Number(formData.issue_date.slice(0, 4)) || new Date().getFullYear();
+      const issueYear = Number(formData.issue_date.slice(0, 4)) || Number(today().slice(0, 4));
       const invoiceNumber = getNextInvoiceNumber(invoices, issueYear);
       const created = await createInvoice({
         invoice_number: invoiceNumber,
@@ -289,13 +299,15 @@ export default function InvoicesPage() {
         setIsCreateModalOpen(false);
         const nextIssueDate = today();
         const nextYear = Number(nextIssueDate.slice(0, 4));
+        issueDateEdited.current = false;
+        dueDateEdited.current = false;
         setFormData({
           invoice_number: getNextInvoiceNumber([...invoices, created], nextYear),
           project_id: '',
           client_id: '',
           amount: '',
           issue_date: nextIssueDate,
-          due_date: defaultDueDate(),
+          due_date: defaultDueDate(nextIssueDate),
           notes: '',
           status: 'pending',
         });
@@ -362,11 +374,7 @@ export default function InvoicesPage() {
             <Button
               variant="primary"
               size="md"
-              onClick={() => {
-                const issueYear = Number(formData.issue_date.slice(0, 4)) || new Date().getFullYear();
-                setFormData((current) => ({ ...current, invoice_number: getNextInvoiceNumber(invoices, issueYear) }));
-                setIsCreateModalOpen(true);
-              }}
+              onClick={openCreateModal}
               leftIcon={<Plus className="w-4 h-4" />}
             >
               New Invoice
@@ -590,7 +598,8 @@ export default function InvoicesPage() {
               value={formData.issue_date}
               onChange={(e) => {
                 const issueDate = e.target.value;
-                const year = Number(issueDate.slice(0, 4)) || new Date().getFullYear();
+                issueDateEdited.current = true;
+                const year = Number(issueDate.slice(0, 4)) || Number(today().slice(0, 4));
                 setFormData({
                   ...formData,
                   issue_date: issueDate,
@@ -603,7 +612,7 @@ export default function InvoicesPage() {
               label="Due Date"
               type="date"
               value={formData.due_date}
-              onChange={(e) => setFormData({ ...formData, due_date: e.target.value })}
+              onChange={(e) => { dueDateEdited.current = true; setFormData({ ...formData, due_date: e.target.value }); }}
               required
             />
           </div>

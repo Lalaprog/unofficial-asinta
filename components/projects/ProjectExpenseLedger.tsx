@@ -6,16 +6,26 @@ import { Button } from '@/components/ui/Button';
 import { Badge } from '@/components/ui/Badge';
 import { formatPeso } from '@/lib/email/format';
 import { useExpenseLedger } from '@/lib/projects/useExpenseLedger';
+import { confirmedRentalPreviewEnabled, correctedProjectCostReviewPreviewEnabled, projectPaidWorkerEvidencePreviewEnabled, rentalConfirmationPreviewEnabled, projectCostReconciliationPreviewEnabled } from '@/lib/finance/featureAvailability';
+import { PaidWorkerEvidence } from '@/components/projects/PaidWorkerEvidence';
+import { ProjectCostReconciliation } from '@/components/projects/ProjectCostReconciliation';
+import { ConfirmedRentals } from '@/components/projects/ConfirmedRentals';
+import { RentalConfirmation } from '@/components/projects/RentalConfirmation';
+import { AdvancedTools } from '@/components/ui/AdvancedTools';
 
-export function ProjectExpenseLedger({projectId,userId,onRefreshTotals}:{projectId:string;userId:string|undefined;onRefreshTotals:()=>void}) {
+export function ProjectExpenseLedger({projectId,userId,onRefreshTotals,reviewTarget=null}:{projectId:string;userId:string|undefined;onRefreshTotals:()=>void;reviewTarget?:'corrected'|'scratch'|null}) {
  const ledger=useExpenseLedger(userId,true,projectId,true);
+ const [rentalRevision,setRentalRevision]=React.useState(0);
+ const scratchEnabled=projectCostReconciliationPreviewEnabled(),costReviewEnabled=scratchEnabled||correctedProjectCostReviewPreviewEnabled();
  if(!userId) return <p role="status" className="text-xs text-ink-secondary">Sign in to view recorded expenses.</p>;
  return <div className="animate-panel-enter animate-panel-lift space-y-4">
   <div className="flex flex-wrap items-center justify-between gap-2">
    <h3 className="font-bold text-navy text-sm">Site Disbursements &amp; Cost Ledger</h3>
    <div className="flex flex-wrap gap-2"><Button variant="secondary" size="sm" onClick={()=>{ledger.reload();onRefreshTotals()}}>Refresh ledger</Button><Link href="/expenses"><Button variant="primary" size="sm" leftIcon={<Sparkles className="w-3.5 h-3.5" />}>Record Expense</Button></Link></div>
   </div>
-  <p className="text-xs text-ink-secondary">Recorded expense entries only, newest first. Payroll and rentals appear only if already recorded as expenses; their automatic integration is not yet implemented. Pages and totals can change as records are edited; refresh to review the latest data.</p>
+  <p className="text-xs text-ink-secondary">Recorded expenses for this site, newest first. Paid payroll and rentals are checked separately under Cost review below.</p>
+  <div id="project-expense-entries" tabIndex={-1} className="scroll-mt-24 focus-visible:outline focus-visible:outline-2 focus-visible:outline-brand">
+   <h4 className="mb-2 text-sm font-semibold text-navy">Recorded expenses</h4>
   <div className="bg-white rounded-xl border border-surface-border overflow-hidden">
    <div className="divide-y divide-surface-border/70">
     {ledger.items.map(exp=><div key={exp.id} className="p-4 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
@@ -28,5 +38,18 @@ export function ProjectExpenseLedger({projectId,userId,onRefreshTotals}:{project
     {ledger.hasMore && !ledger.error && <div className="p-4"><Button variant="secondary" size="sm" disabled={ledger.loading} onClick={ledger.loadMore}>Show older expenses</Button><span className="ml-2 text-xs text-ink-secondary">{ledger.items.length} entries loaded</span></div>}
    </div>
   </div>
+  </div>
+  {(costReviewEnabled || projectPaidWorkerEvidencePreviewEnabled() || confirmedRentalPreviewEnabled() || rentalConfirmationPreviewEnabled()) && <AdvancedTools
+   title="Cost review, payroll evidence and rentals"
+   description="Optional checks for this site. They never change the recorded expenses above."
+   defaultOpen={reviewTarget !== null}
+  >
+  {costReviewEnabled && <div id="project-cost-review" tabIndex={-1} className="scroll-mt-24 focus-visible:outline focus-visible:outline-2 focus-visible:outline-brand"><ProjectCostReconciliation key={`reconciliation:${projectId}:${userId}`} projectId={projectId} userId={userId} reviewTarget={reviewTarget} scratchEnabled={scratchEnabled} /></div>}
+  {projectPaidWorkerEvidencePreviewEnabled() && <div id="project-payroll-evidence" tabIndex={-1} className="scroll-mt-24 focus-visible:outline focus-visible:outline-2 focus-visible:outline-brand"><PaidWorkerEvidence key={`paid:${projectId}:${userId}`} projectId={projectId} userId={userId} /></div>}
+  {(confirmedRentalPreviewEnabled() || rentalConfirmationPreviewEnabled()) && <div id="project-rentals" tabIndex={-1} className="scroll-mt-24 space-y-4 focus-visible:outline focus-visible:outline-2 focus-visible:outline-brand">
+   {confirmedRentalPreviewEnabled() && <ConfirmedRentals key={`rentals:${projectId}:${userId}:${rentalRevision}`} projectId={projectId} userId={userId} />}
+   {rentalConfirmationPreviewEnabled() && <RentalConfirmation key={`rental-confirmation:${projectId}:${userId}`} projectId={projectId} userId={userId} expenses={ledger.error||ledger.loading?[]:ledger.items} onRecorded={()=>{ledger.reload();onRefreshTotals();setRentalRevision(n=>n+1);}} />}
+  </div>}
+  </AdvancedTools>}
  </div>;
 }

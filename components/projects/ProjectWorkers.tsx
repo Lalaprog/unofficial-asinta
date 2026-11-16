@@ -8,12 +8,17 @@ import { Button } from '@/components/ui/Button';
 import { Input } from '@/components/ui/Input';
 import { ConfirmDialog } from '@/components/ui/ConfirmDialog';
 import type { Worker } from '@/types';
+import {ProjectWorkerMove} from './ProjectWorkerMove';
+import {workerMovePreviewEnabled} from '@/lib/workforce/atomicWorkerMove';
+import {useActiveCategories} from '@/lib/workforce/useActiveCategories';
+import {WorkerCategorySelect} from '@/components/workforce/WorkerCategorySelect';
 
 type AvailableWorker = Pick<Worker, 'id' | 'name' | 'position' | 'contact_number'>;
 
 export function ProjectWorkers({ projectId }: { projectId: string }) {
-  const { workers, refresh, isLoaded, loadError } = useDataStore();
-  const { isFounder } = useAuth();
+  const { workers, users, projects, refresh, isLoaded, loadError } = useDataStore();
+  const { isFounder, user, assurance } = useAuth();
+  const categories = useActiveCategories(user?.id,assurance);
   const [ids, setIds] = useState<string[] | null>(null);
   const [availableWorkers, setAvailableWorkers] = useState<AvailableWorker[] | null>(null);
   const [availableLoading, setAvailableLoading] = useState(false);
@@ -102,7 +107,7 @@ export function ProjectWorkers({ projectId }: { projectId: string }) {
 
   const create = async (event: React.FormEvent) => {
     event.preventDefault();
-    if (!name.trim() || !position.trim() || !rate.trim() || pending || needsCheck) return;
+    if (!name.trim() || !position.trim() || !rate.trim() || pending || needsCheck || (categories.enabled && !categories.items?.some(c=>c.label===position))) return;
     const requestId = crypto.randomUUID();
     const ok = await change({action:'create',requestId,name,position,contact,rate,rateType});
     if (ok) { setName(''); setPosition(''); setContact(''); setRate(''); setShowNew(false); setMessage('Worker registered and added to this project.'); }
@@ -115,6 +120,11 @@ export function ProjectWorkers({ projectId }: { projectId: string }) {
       <Button type="button" size="sm" variant="secondary" onClick={() => {if (!showAdd) void loadAvailable(); else {availabilitySequence.current += 1; setAvailableWorkers(null);} setShowAdd(!showAdd);setShowNew(false);}} disabled={loading || needsCheck || pending} leftIcon={<Plus className="h-4 w-4" />}>{showAdd ? 'Close' : 'Add worker'}</Button>
     </div>
     <p className="text-xs text-ink-secondary">This list starts empty; past attendance does not automatically assign workers. Roll Call uses the project team and keeps saved attendance visible for the selected date.</p>
+    {workerMovePreviewEnabled() && isFounder && user && assurance === 'ready' && !loading && ids && isLoaded && !loadError && !needsCheck && (
+      <ProjectWorkerMove key={`${user.id}:${projectId}`} actorId={user.id} projectId={projectId}
+        workers={current.filter((w): w is Worker => 'position' in w && w.active && !w.removed_at && !(users || []).some(u=>u.id===w.id && u.role==='supervisor')).map(w=>({id:w.id,name:`${w.name} · ${w.position} · ${w.id.slice(0,8)}`}))}
+        projects={(projects || []).map(p=>({id:p.id,name:`${p.name} · ${p.status} · ${p.id.slice(0,8)}`}))} onCompleted={()=>load(true)} />
+    )}
     {error && <div role="alert" className="rounded-xl border border-status-danger/20 bg-status-danger-bg p-3 text-xs text-status-danger">{error}</div>}
     {message && <p role="status" className="text-xs text-status-success">{message}</p>}
     {needsCheck && <Button type="button" variant="secondary" size="sm" disabled={pending} onClick={() => void load(true).then(ok => { if (ok && showAdd) void loadAvailable(); })}>Refresh and check team</Button>}
@@ -130,11 +140,11 @@ export function ProjectWorkers({ projectId }: { projectId: string }) {
       <Button type="button" size="sm" variant="outline" disabled={pending || availableLoading || availableError || !isLoaded || Boolean(loadError)} onClick={() => setShowNew(!showNew)}>{showNew ? 'Cancel new worker' : 'Register a new worker'}</Button>
       {showNew && <form onSubmit={create} className="space-y-3 border-t border-surface-border pt-3">
         <p className="text-xs text-ink-secondary">A new profile will be created and added to this project. Check the existing list first.</p>
-        <div className="grid gap-3 sm:grid-cols-2"><Input label="Full name" required maxLength={120} value={name} onChange={e=>setName(e.target.value)} /><Input label="Craft or position" required maxLength={120} value={position} onChange={e=>setPosition(e.target.value)} /><Input label="Contact number (optional)" maxLength={100} value={contact} onChange={e=>setContact(e.target.value)} /><Input label="Pay rate (PHP)" required inputMode="decimal" value={rate} onChange={e=>setRate(e.target.value)} /></div>
+        <div className="grid gap-3 sm:grid-cols-2"><Input label="Full name" required maxLength={120} value={name} onChange={e=>setName(e.target.value)} />{categories.enabled?<WorkerCategorySelect categories={categories} label="Craft or position" value={position} onChange={setPosition}/>:<Input label="Craft or position" required maxLength={120} value={position} onChange={e=>setPosition(e.target.value)} />}<Input label="Contact number (optional)" maxLength={100} value={contact} onChange={e=>setContact(e.target.value)} /><Input label="Pay rate (PHP)" required inputMode="decimal" value={rate} onChange={e=>setRate(e.target.value)} /></div>
         {similar.length > 0 && <p className="rounded-lg bg-status-warning-bg p-3 text-xs text-navy">Similar existing names: {similar.map(w=>`${w.name} (${w.position})`).join(', ')}. Check whether this is the same person before creating another profile.</p>}
         {hasHiddenMatch && <p className="rounded-lg bg-status-warning-bg p-3 text-xs text-navy">A similar profile may already exist. Ask the Founder to check before registering another worker.</p>}
         <label className="block text-xs font-semibold text-ink-secondary">Pay rate type<select value={rateType} onChange={e=>setRateType(e.target.value as 'daily'|'hourly')} className="mt-1 block min-h-11 w-full rounded-lg border border-surface-border bg-white px-3 text-sm sm:min-h-9"><option value="daily">Daily</option><option value="hourly">Hourly</option></select></label>
-        <Button type="submit" size="sm" isLoading={pending} disabled={pending}>Register and add to project</Button>
+        <Button type="submit" size="sm" isLoading={pending} disabled={pending || (categories.enabled && !categories.items?.some(c=>c.label===position))}>Register and add to project</Button>
       </form>}
     </div>}
     {loading ? <p role="status" className="text-xs text-ink-secondary">Loading project team…</p> : ids && <div className="space-y-2">

@@ -54,6 +54,21 @@
 }
 
 @layer utilities {
+  /* Compact task cards expand across the workspace when opened. Browsers without
+     :has() keep the accessible single-column fallback rather than squeezing forms. */
+  .workspace-bento {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr);
+    gap: 0.75rem;
+    align-items: start;
+  }
+  @supports selector(:has(*)) {
+    @media (min-width: 640px) {
+      .workspace-bento { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+      .workspace-bento > div:has(> section > button[aria-expanded="true"]) { grid-column: 1 / -1; }
+    }
+  }
+
   /* Quiet, flat surfaces keep the white canvas dominant; elevation is reserved for floating UI. */
   .neu-card {
     background-color: #FFFFFF;
