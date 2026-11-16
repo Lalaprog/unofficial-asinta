@@ -1,6 +1,6 @@
 # Older-pay project cost compatibility — development hold
 
-This describes the candidate on PR #104, not an installed migration or a launch approval. Older vouchers use a separate, reviewed project split; they do not become weekly paid allocations and the original payroll or Bale is not changed. Saved ordinary/cross-site reviews are only components and must not be substituted for the legacy-inclusive total.
+This describes PR #104's development-only candidate, not a client launch approval. The candidate is installed on the development database, but its writer is held and the matching production-target website has not been deployed. Older vouchers use a separate, reviewed project split; they do not become weekly paid allocations and the original payroll or Bale is not changed. Saved ordinary/cross-site reviews are only components and must not be substituted for the legacy-inclusive total.
 
 ## Checks completed
 

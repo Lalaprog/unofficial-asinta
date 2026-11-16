@@ -221,6 +221,25 @@ function normalizeProjectIds(input: unknown): string[] {
   return [...seen];
 }
 
+/** Avoid known partial account changes when a selected site no longer exists.
+ * This is only a precheck; a site can still change before the later write. */
+async function checkSelectedProjects(client: MinimalAdminSupabaseClient, ids: string[]): Promise<'ok'|'missing'|'unavailable'> {
+  try {
+    for (let start = 0; start < ids.length; start += 100) {
+      const selected = ids.slice(start, start + 100);
+      const {data, count, error} = await client.from('projects').select('id', {count:'exact'}).in('id', selected).limit(selected.length);
+      if (error || !Array.isArray(data) || !Number.isSafeInteger(count) || count < 0 || count !== data.length) return 'unavailable';
+      const found = new Set<string>();
+      for (const row of data) {
+        if (!row || typeof row.id !== 'string' || !selected.includes(row.id.toLowerCase()) || found.has(row.id.toLowerCase())) return 'unavailable';
+        found.add(row.id.toLowerCase());
+      }
+      if (found.size !== selected.length) return 'missing';
+    }
+    return 'ok';
+  } catch { return 'unavailable'; }
+}
+
 /**
  * Creates a new BALE account in both `auth.users` and `public.users`, assigns
  * supervisor project sites when applicable, and logs the action in `audit_log`.
@@ -303,13 +322,21 @@ export async function createTeamAccount(params: {
     };
   }
 
-  // 1. Check if email already exists in `public.users`.
-  const { data: existingProfile } = await adminClient
-    .from('users')
-    .select('id, email')
-    .eq('email', email)
-    .maybeSingle();
+  const siteCheck = await checkSelectedProjects(adminClient, assignedProjectIds);
+  if (siteCheck !== 'ok') return { status: siteCheck === 'missing' ? 409 : 503, body: { ok: false,
+    error: siteCheck === 'missing' ? 'A selected project is no longer available. Refresh the site selection; no account was created.' : 'Could not verify the selected projects. No account was created; retry.' } };
 
+  // 1. A failed duplicate check is not proof that the email is available.
+  let duplicateCheck: {data: unknown; error: unknown};
+  try {
+    duplicateCheck = await adminClient.from('users').select('id, email').eq('email', email).maybeSingle();
+  } catch {
+    return { status: 503, body: { ok: false, error: 'Could not check whether this email already has an account. No account was created; retry.' } };
+  }
+  const {data: existingProfile, error: duplicateError} = duplicateCheck;
+  if (duplicateError || existingProfile === undefined || (existingProfile !== null && (typeof existingProfile !== 'object' || Array.isArray(existingProfile)))) {
+    return { status: 503, body: { ok: false, error: 'Could not check whether this email already has an account. No account was created; retry.' } };
+  }
   if (existingProfile) {
     return {
       status: 409,
@@ -321,54 +348,39 @@ export async function createTeamAccount(params: {
   //    Free tier's 2–4/hr built-in email cap blocking onboarding) and
   //    `must_change_password: true` so the user is forced to set their own
   //    password on first login.
-  const { data: createdAuth, error: authCreateError } = await adminClient.auth.admin.createUser({
-    email,
-    password: rawTempPassword,
-    email_confirm: true,
-    user_metadata: {
-      name,
-      role,
-      must_change_password: true,
-      provisioned_by: callerEmail || callerId,
-    },
-  });
-
+  let authCreation: Awaited<ReturnType<MinimalAdminSupabaseClient['auth']['admin']['createUser']>>;
+  try {
+    authCreation = await adminClient.auth.admin.createUser({
+      email,
+      password: rawTempPassword,
+      email_confirm: true,
+      user_metadata: { name, role, must_change_password: true, provisioned_by: callerEmail || callerId },
+    });
+  } catch {
+    return { status: 503, body: { ok: false, error: 'Account creation was not confirmed. Check Supabase Auth and Team Accounts before retrying; an account may already exist.' } };
+  }
+  const {data: createdAuth, error: authCreateError} = authCreation;
   if (authCreateError || !createdAuth?.user?.id) {
-    return {
-      status: 400,
-      body: {
-        ok: false,
-        error: authCreateError?.message || 'Could not create the account in Supabase Auth.',
-      },
-    };
+    return { status: 503, body: { ok: false, error: 'Account creation was not confirmed. Check Supabase Auth and Team Accounts before retrying; an account may already exist.' } };
   }
 
   const newUserId = createdAuth.user.id;
 
   // 3. Insert profile row into `public.users`.
-  const { data: insertedUser, error: profileInsertError } = await adminClient
-    .from('users')
-    .insert({
-      id: newUserId,
-      name,
-      email,
-      role,
-    })
-    .select('id, name, email, role, created_at')
-    .single();
-
-  if (profileInsertError || !insertedUser) {
-    // Roll back the orphaned auth.users row.
-    const rollback = await adminClient.auth.admin.deleteUser(newUserId).catch(() => ({ data: null, error: { message: 'request failed' } }));
-    return {
-      status: 500,
-      body: {
-        ok: false,
-        error: rollback.error
-          ? 'The profile could not be created and Auth cleanup was not confirmed. Check Supabase Auth before retrying.'
-          : 'Profile creation was not confirmed and the new Auth account was removed. Check for a remaining profile before retrying.',
-      },
-    };
+  let profileResult: {data: User | null; error: unknown};
+  try {
+    profileResult = await adminClient.from('users').insert({id: newUserId, name, email, role})
+      .select('id, name, email, role, created_at').single();
+  } catch {
+    profileResult = {data: null, error: true};
+  }
+  const {data: insertedUser, error: profileInsertError} = profileResult;
+  if (profileInsertError || !insertedUser || insertedUser.id !== newUserId ||
+      insertedUser.name !== name || insertedUser.email !== email || insertedUser.role !== role ||
+      typeof insertedUser.created_at !== 'string' || Number.isNaN(Date.parse(insertedUser.created_at))) {
+    // A lost response can mean the profile was committed. Deleting Auth here
+    // could leave a live profile/history without its login; require inspection.
+    return { status: 500, body: { ok: false, error: `The account profile was not confirmed for account ID ${newUserId}. The new Auth account was not automatically removed. Check Supabase Auth and Team Accounts before retrying.` } };
   }
 
   // 4. Assign supervisor projects if applicable.
@@ -603,6 +615,12 @@ export async function updateTeamAccount(params: {
     }
   }
 
+  const requestedSites = nextRole === 'supervisor' && Array.isArray(input.assignedProjectIds)
+    ? normalizeProjectIds(input.assignedProjectIds) : [];
+  const siteCheck = await checkSelectedProjects(adminClient, requestedSites);
+  if (siteCheck !== 'ok') return { status: siteCheck === 'missing' ? 409 : 503, body: { ok: false,
+    error: siteCheck === 'missing' ? 'A selected project is no longer available. Refresh the site selection; no changes were made.' : 'Could not verify the selected projects. No changes were made; retry.' } };
+
   // The database re-checks actor and last-Founder invariants under a
   // transaction lock. Missing migration or an unconfirmed result fails closed.
   let updateResult: Awaited<ReturnType<MinimalAdminSupabaseClient['rpc']>>;
@@ -637,7 +655,7 @@ export async function updateTeamAccount(params: {
   // lost response is unconfirmed; never attempt a separate delete/insert.
   let assignedProjectIds: string[] | undefined;
   if (Array.isArray(input.assignedProjectIds) || nextRole === 'founder') {
-    const requested = nextRole === 'supervisor' ? normalizeProjectIds(input.assignedProjectIds) : [];
+    const requested = nextRole === 'supervisor' ? requestedSites : [];
     if (nextRole === 'supervisor') {
       try {
         const result = await adminClient.rpc('replace_supervisor_projects_guarded', {

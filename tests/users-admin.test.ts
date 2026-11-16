@@ -11,6 +11,7 @@ import {
 
 function makeMockAdminClient(options?: {
   existingEmail?: boolean;
+  emailCheck?: 'error' | 'throws' | 'invalid';
   removedWorker?: boolean;
   workerReadError?: boolean;
   snapshotWorker?: {id:string;name:string;position:string;active:boolean;pay_rate:number;pay_rate_type:'daily'|'hourly';contact_number:string|null;removed_at:string|null} | null;
@@ -19,6 +20,9 @@ function makeMockAdminClient(options?: {
   targetUser?: { id: string; name: string; email: string; role: 'founder' | 'supervisor'; created_at: string } | null;
   foundersCount?: number;
   profileInsertError?: { message: string } | null;
+  profileInsertThrows?: boolean;
+  profileInsertMismatch?: boolean;
+  projectLookup?: 'missing' | 'error' | 'incomplete' | 'throws';
 }) {
   const createUserSpy = vi.fn(async (attrs: { email: string; password: string; email_confirm: boolean; user_metadata?: Record<string, unknown> }) => ({
     data: { user: { id: 'new-user-1', email: attrs.email } },
@@ -31,6 +35,7 @@ function makeMockAdminClient(options?: {
   const deleteUserSpy = vi.fn(async () => ({ data: {}, error: null }));
   const auditInsertSpy = vi.fn(async () => ({ error: null }));
   const supervisorInsertSpy = vi.fn(async () => ({ error: null }));
+  const projectLookupSpy = vi.fn();
   const workerUpsertSpy = vi.fn(async (_row: Record<string, unknown>, _options: unknown) => ({ error: null }));
   const workerDeactivateSpy = vi.fn(async () => ({ error: null }));
   const attendanceNullSpy = vi.fn(async () => ({ error: null }));
@@ -65,6 +70,16 @@ function makeMockAdminClient(options?: {
     from: (table: string) => {
       if (table === 'audit_log') {
         return { insert: auditInsertSpy };
+      }
+      if (table === 'projects') {
+        return { select: () => ({ in: (_column:string, ids:string[]) => ({limit: async () => {
+          projectLookupSpy(ids);
+          if (options?.projectLookup === 'throws') throw Error('offline');
+          if (options?.projectLookup === 'error') return {data:null,count:null,error:{message:'offline'}};
+          if (options?.projectLookup === 'incomplete') return {data:[],count:ids.length,error:null};
+          const data=(options?.projectLookup === 'missing' ? ids.slice(1) : ids).map(id=>({id}));
+          return {data,count:data.length,error:null};
+        }}) }) };
       }
       if (table === 'project_supervisors') {
         return {
@@ -101,10 +116,13 @@ function makeMockAdminClient(options?: {
             eq: (col: string, val: string) => {
               if (col === 'email') {
                 return {
-                  maybeSingle: async () => ({
-                    data: options?.existingEmail ? { id: 'existing', email: val } : null,
-                    error: null,
-                  }),
+                  maybeSingle: async () => {
+                    if (options?.emailCheck === 'throws') throw Error('offline');
+                    return {
+                      data: options?.emailCheck === 'invalid' ? undefined : options?.existingEmail ? { id: 'existing', email: val } : null,
+                      error: options?.emailCheck === 'error' ? {message:'offline'} : null,
+                    };
+                  },
                 };
               }
               if (col === 'role' && val === 'founder') {
@@ -120,12 +138,13 @@ function makeMockAdminClient(options?: {
           }),
           insert: (row: { id: string; name: string; email: string; role: 'founder' | 'supervisor' }) => ({
             select: () => ({
-              single: async () => ({
-                data: options?.profileInsertError
-                  ? null
-                  : { ...row, created_at: '2026-10-11T00:00:00Z' },
-                error: options?.profileInsertError ?? null,
-              }),
+                single: async () => {
+                  if (options?.profileInsertThrows) throw Error('lost response');
+                  return {
+                    data: options?.profileInsertError ? null : { ...row, ...(options?.profileInsertMismatch ? {role:'founder'} : {}), created_at: '2026-10-11T00:00:00Z' },
+                    error: options?.profileInsertError ?? null,
+                  };
+                },
             }),
           }),
           update: (patch: { name?: string; role?: 'founder' | 'supervisor' }) => ({
@@ -155,6 +174,7 @@ function makeMockAdminClient(options?: {
     deleteUserSpy,
     auditInsertSpy,
     supervisorInsertSpy,
+    projectLookupSpy,
     workerUpsertSpy,
     workerDeactivateSpy,
     attendanceNullSpy,
@@ -225,25 +245,30 @@ describe('createTeamAccount', () => {
     expect(auditPayload).not.toContain('TempPassword2026!');
   });
 
-  it('rolls back the auth.users row if inserting into public.users fails', async () => {
-    const { client, deleteUserSpy } = makeMockAdminClient({
-      profileInsertError: { message: 'db constraint error' },
-    });
-
-    const res = await createTeamAccount({
-      callerId: 'founder-1',
-      callerEmail: 'junel@asinta.ph',
-      input: {
-        name: 'Test User',
-        email: 'test@asinta.ph',
-        role: 'supervisor',
-        temporaryPassword: 'TempPassword2026!',
-      },
-      adminClient: client,
-    });
-
+  it.each([{profileInsertError:{message:'db error'}},{profileInsertThrows:true},{profileInsertMismatch:true}])('holds Auth cleanup when profile creation is unconfirmed', async options => {
+    const { client, deleteUserSpy, supervisorInsertSpy, workerUpsertSpy } = makeMockAdminClient(options);
+    const sendWelcomeMail=vi.fn();
+    const res = await createTeamAccount({callerId:'founder-1', input:{
+      name:'Test User', email:'test@asinta.ph', role:'supervisor', temporaryPassword:'TempPassword2026!', sendWelcomeEmail:true,
+    }, adminClient:client, sendWelcomeMail});
     expect(res.status).toBe(500);
-    expect(deleteUserSpy).toHaveBeenCalledWith('new-user-1');
+    expect(res.body.error).toMatch(/not confirmed.*not automatically removed.*before retrying/i);
+    expect(deleteUserSpy).not.toHaveBeenCalled();expect(supervisorInsertSpy).not.toHaveBeenCalled();expect(workerUpsertSpy).not.toHaveBeenCalled();expect(sendWelcomeMail).not.toHaveBeenCalled();
+  });
+
+  it('reports unknown Auth creation outcomes without creating the profile or sending credentials',async()=>{
+    const {client,createUserSpy,deleteUserSpy}=makeMockAdminClient();
+    createUserSpy.mockRejectedValueOnce(Error('lost response'));
+    const sendWelcomeMail=vi.fn();
+    const res=await createTeamAccount({callerId:'founder-1',input:{name:'Test User',email:'test@example.invalid',role:'founder',temporaryPassword:'SafePass123',sendWelcomeEmail:true},adminClient:client,sendWelcomeMail});
+    expect(res.status).toBe(503);expect(res.body.error).toMatch(/not confirmed.*before retrying/i);
+    expect(deleteUserSpy).not.toHaveBeenCalled();expect(sendWelcomeMail).not.toHaveBeenCalled();
+  });
+
+  it.each(['error','throws','invalid'] as const)('does not create Auth when duplicate-email lookup is %s',async emailCheck=>{
+    const {client,createUserSpy}=makeMockAdminClient({emailCheck});
+    const result=await createTeamAccount({callerId:'founder-1',input:{name:'Test User',email:'test@example.invalid',role:'founder',temporaryPassword:'SafePass123'},adminClient:client});
+    expect(result.status).toBe(503);expect(result.body.error).toMatch(/No account was created/);expect(createUserSpy).not.toHaveBeenCalled();
   });
 
   it('rejects duplicate email addresses with 409', async () => {
@@ -404,6 +429,22 @@ describe('team administration partial outcomes', () => {
     const result=await updateTeamAccount({callerId:'founder-1',input:{userId:'sup-1',includeInPayroll:true,payRate:0,payRateType:'hourly',contactNumber:''},adminClient:client});
     expect(result.body.ok).toBe(true);
     expect(workerUpsertSpy).toHaveBeenCalledWith(expect.objectContaining({id:'sup-1',pay_rate:0,pay_rate_type:'hourly',active:true}),{onConflict:'id'});
+  });
+  it.each(['missing','error','incomplete','throws'] as const)('does not change or create accounts when project verification is %s',async projectLookup=>{
+    const selected=['00000000-0000-4000-8000-000000000101'];
+    const {client,rpcSpy,createUserSpy,updateUserByIdSpy,workerUpsertSpy}=makeMockAdminClient({projectLookup});
+    const update=await updateTeamAccount({callerId:'founder-1',input:{userId:'sup-1',assignedProjectIds:selected},adminClient:client});
+    expect(update.status).toBe(projectLookup==='missing'?409:503);
+    const create=await createTeamAccount({callerId:'founder-1',input:{name:'Test User',email:'test@example.invalid',role:'supervisor',temporaryPassword:'SafePass123',assignedProjectIds:selected},adminClient:client});
+    expect(create.status).toBe(projectLookup==='missing'?409:503);
+    expect(rpcSpy).not.toHaveBeenCalled();expect(createUserSpy).not.toHaveBeenCalled();expect(updateUserByIdSpy).not.toHaveBeenCalled();expect(workerUpsertSpy).not.toHaveBeenCalled();
+  });
+  it('checks a large project selection in bounded batches before saving',async()=>{
+    const ids=Array.from({length:101},(_,n)=>`00000000-0000-4000-8000-${String(n).padStart(12,'0')}`);
+    const {client,projectLookupSpy,rpcSpy}=makeMockAdminClient();
+    const res=await updateTeamAccount({callerId:'founder-1',input:{userId:'sup-1',assignedProjectIds:ids},adminClient:client});
+    expect(res.body.ok).toBe(true);expect(projectLookupSpy.mock.calls.map(call=>call[0].length)).toEqual([100,1]);
+    expect(rpcSpy).toHaveBeenCalledWith('replace_supervisor_projects_guarded',expect.objectContaining({p_projects:ids}));
   });
   it('rejects stale, invalid or unreadable expected snapshots before any account write', async () => {
     const user={id:'sup-1',name:'Engr. Marco Reyes',email:'marco@asinta.ph',role:'supervisor',created_at:'2026-10-11T00:00:00Z'};
