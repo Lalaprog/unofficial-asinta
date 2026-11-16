@@ -203,6 +203,7 @@ These are known gaps, not test failures. Report them only if the behaviour is wo
 - **No real money, SMS, or email.** Nothing in the app transfers funds. Email/SMS screens should not be used with real recipients.
 - **AI is a suggestion only.** Accuracy on real receipt photos is not verified; F17-style checks only cover a fictional text draft.
 - **Backup and restore are not done.** Do not enter anyone's real payroll, client, or receipt data.
+- **Welcome email and first-login password change.** The welcome email is opt-in, unchecked by default, and sends a real email through the firm SMTP, so **skip it**: leave the checkbox off every time. The forced "Set Your Personal Password" gate is verified in code but is not device-tested, because testing it needs a newly created account and your existing accounts keep their logins. If you ever choose to test it, create a fictional account with a mailbox you control, never a real worker's address, and expect it to leave a real Auth account behind.
 - **Chapters 4 screenshots and figure legibility** are your separate paper task.
 
 ---
