@@ -18,6 +18,19 @@ const requiredFlags = [
   // A production-target release must use the matching case-bound client.
   'NEXT_PUBLIC_HISTORICAL_CASE_BINDING_PREVIEW',
 ];
+// The older-pay writer is released only with the complete matching cost UI.
+// This checks build configuration, not the database grant or deployed website.
+const legacyCostCompanionFlags = [
+  'NEXT_PUBLIC_SIMPLE_RECORDED_COST_PREVIEW',
+  'NEXT_PUBLIC_CROSS_SITE_SOURCE_REVIEW_PREVIEW',
+  'NEXT_PUBLIC_CROSS_SITE_LEDGER_PREVIEW',
+  'NEXT_PUBLIC_CROSS_SITE_ATOMIC_OVERVIEW',
+];
+if (production && env.NEXT_PUBLIC_LEGACY_VOUCHER_ATTRIBUTION_PREVIEW === 'true' &&
+    legacyCostCompanionFlags.some(key => env[key] !== 'true')) {
+  console.error('Production build stopped: older-pay cost requires all matching recorded-cost and cross-site flags.');
+  process.exitCode = 1;
+}
 if (production && (
   env.VERCEL_GIT_COMMIT_REF !== 'arena/e137cf5b-unofficial-asinta' ||
   !/^[a-f0-9]{40}$/.test(env.ASINTA_DEVELOPMENT_RELEASE_SHA || '') ||

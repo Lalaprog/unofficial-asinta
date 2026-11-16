@@ -32,6 +32,15 @@ describe('development deployment target check',()=>{
    {NEXT_PUBLIC_SUPABASE_URL:'https://wrong.example'},{NEXT_PUBLIC_SUPABASE_ANON_KEY:''}
   ])expect(run({...release,...override}).status).toBe(1);
  });
+ it('rejects a production older-pay release when any matching cost gate is missing',()=>{
+  const companions=['NEXT_PUBLIC_SIMPLE_RECORDED_COST_PREVIEW','NEXT_PUBLIC_CROSS_SITE_SOURCE_REVIEW_PREVIEW','NEXT_PUBLIC_CROSS_SITE_LEDGER_PREVIEW','NEXT_PUBLIC_CROSS_SITE_ATOMIC_OVERVIEW'];
+  const legacyRelease={...release,NEXT_PUBLIC_LEGACY_VOUCHER_ATTRIBUTION_PREVIEW:'true',...Object.fromEntries(companions.map(flag=>[flag,'true']))};
+  expect(run(legacyRelease).status).toBe(0);
+  for(const flag of companions) expect(run({...legacyRelease,[flag]:'false'}).status,flag).toBe(1);
+  // Existing production configuration and isolated preview builds remain valid.
+  expect(run({...release,NEXT_PUBLIC_LEGACY_VOUCHER_ATTRIBUTION_PREVIEW:'false'}).status).toBe(0);
+  expect(run({NEXT_PUBLIC_LEGACY_VOUCHER_ATTRIBUTION_PREVIEW:'true'}).status).toBe(0);
+ });
  it('never prints values on failure, and does not require development configuration in other modes',()=>{
   const bad=run({NEXT_PUBLIC_SUPABASE_URL:'https://user:password@bad.test',NEXT_PUBLIC_SUPABASE_ANON_KEY:'sensitive-key'});
   expect(bad.stderr).not.toContain('password');expect(bad.stderr).not.toContain('sensitive-key');expect(bad.stdout).not.toContain('bad.test');
