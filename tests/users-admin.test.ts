@@ -192,7 +192,7 @@ describe('createTeamAccount', () => {
         email: 'Marco@Asinta.ph',
         role: 'supervisor',
         temporaryPassword: 'TempPassword2026!',
-        assignedProjectIds: ['proj-1', 'proj-2'],
+        assignedProjectIds: ['00000000-0000-4000-8000-000000000101', '00000000-0000-4000-8000-000000000102'],
         sendWelcomeEmail: true,
       },
       adminClient: client,
@@ -215,8 +215,8 @@ describe('createTeamAccount', () => {
       })
     );
     expect(supervisorInsertSpy).toHaveBeenCalledWith([
-      { project_id: 'proj-1', supervisor_id: 'new-user-1' },
-      { project_id: 'proj-2', supervisor_id: 'new-user-1' },
+      { project_id: '00000000-0000-4000-8000-000000000101', supervisor_id: 'new-user-1' },
+      { project_id: '00000000-0000-4000-8000-000000000102', supervisor_id: 'new-user-1' },
     ]);
 
     // Audit log must NEVER store the temporary password.
@@ -358,16 +358,63 @@ describe('updateTeamAccount & deleteTeamAccount safety guards', () => {
 });
 
 describe('team administration partial outcomes', () => {
+  it('never silently overwrites or reactivates a worker for account-only edits', async () => {
+    const {client,workerUpsertSpy,workerDeactivateSpy}=makeMockAdminClient({removedWorker:true});
+    const result=await updateTeamAccount({callerId:'founder-1',input:{userId:'sup-1',name:'Updated Name'},adminClient:client});
+    expect(result.body.ok).toBe(true);
+    expect(result.body.warnings?.join(' ')).toMatch(/roster was not changed/i);
+    expect(workerUpsertSpy).not.toHaveBeenCalled();
+    expect(workerDeactivateSpy).not.toHaveBeenCalled();
+  });
+  it('requires explicit complete payroll details and rejects malformed site selections before any writes', async () => {
+    for (const input of [
+      {includeInPayroll:true},
+      {includeInPayroll:true,payRate:600,payRateType:'daily'},
+      {includeInPayroll:true,payRate:600,payRateType:'invalid',contactNumber:''},
+      {payRate:600}, {includeInPayroll:'yes'}, {role:'invalid'},
+      {assignedProjectIds:['00000000-0000-4000-8000-000000000103',null]}, {assignedProjectIds:['']}, {assignedProjectIds:['not-a-uuid']},
+      {assignedProjectIds:Array(1001).fill('00000000-0000-4000-8000-000000000103')}, {assignedProjectIds:null},
+    ]) {
+      const {client,rpcSpy,updateUserByIdSpy,workerUpsertSpy,workerDeactivateSpy}=makeMockAdminClient();
+      const result=await updateTeamAccount({callerId:'founder-1',input:{userId:'sup-1',...input},adminClient:client});
+      expect(result.status,JSON.stringify(input)).toBe(400);
+      expect(rpcSpy).not.toHaveBeenCalled();expect(updateUserByIdSpy).not.toHaveBeenCalled();
+      expect(workerUpsertSpy).not.toHaveBeenCalled();expect(workerDeactivateSpy).not.toHaveBeenCalled();
+    }
+  });
+  it('rejects malformed sites before account creation, while an explicit empty list is allowed', async () => {
+    const {client,createUserSpy}=makeMockAdminClient();
+    const base={name:'Test User',email:'test@example.invalid',role:'supervisor',temporaryPassword:'SafePass123',sendWelcomeEmail:false};
+    expect((await createTeamAccount({callerId:'founder-1',input:{...base,assignedProjectIds:['00000000-0000-4000-8000-000000000103',null]},adminClient:client})).status).toBe(400);
+    expect(createUserSpy).not.toHaveBeenCalled();
+    expect((await createTeamAccount({callerId:'founder-1',input:{...base,assignedProjectIds:[]},adminClient:client})).body.ok).toBe(true);
+  });
+  it('does not send welcome credentials without an explicit true selection', async () => {
+    const {client,createUserSpy}=makeMockAdminClient();
+    const sendWelcomeMail=vi.fn(async()=>({accepted:true}));
+    const base={name:'Test User',email:'test@example.invalid',role:'founder',temporaryPassword:'SafePass123'};
+    const noChoice=await createTeamAccount({callerId:'founder-1',input:base,adminClient:client,sendWelcomeMail});
+    expect(noChoice.body.ok).toBe(true);expect(sendWelcomeMail).not.toHaveBeenCalled();
+    createUserSpy.mockClear();
+    const invalid=await createTeamAccount({callerId:'founder-1',input:{...base,sendWelcomeEmail:'false'},adminClient:client,sendWelcomeMail});
+    expect(invalid.status).toBe(400);expect(createUserSpy).not.toHaveBeenCalled();expect(sendWelcomeMail).not.toHaveBeenCalled();
+  });
+  it('writes explicitly reviewed payroll details, including a zero rate', async () => {
+    const {client,workerUpsertSpy}=makeMockAdminClient();
+    const result=await updateTeamAccount({callerId:'founder-1',input:{userId:'sup-1',includeInPayroll:true,payRate:0,payRateType:'hourly',contactNumber:''},adminClient:client});
+    expect(result.body.ok).toBe(true);
+    expect(workerUpsertSpy).toHaveBeenCalledWith(expect.objectContaining({id:'sup-1',pay_rate:0,pay_rate_type:'hourly',active:true}),{onConflict:'id'});
+  });
   it('rejects stale, invalid or unreadable expected snapshots before any account write', async () => {
     const user={id:'sup-1',name:'Engr. Marco Reyes',email:'marco@asinta.ph',role:'supervisor',created_at:'2026-10-11T00:00:00Z'};
     const worker={id:'sup-1',name:'Workforce name',position:'Site Supervisor',active:true,pay_rate:600,pay_rate_type:'daily' as const,contact_number:'—',removed_at:null};
-    const expected={user,worker,assignedProjectIds:['proj-1']};
+    const expected={user,worker,assignedProjectIds:['00000000-0000-4000-8000-000000000101']};
     for (const [options,snapshot,status] of [
-      [{snapshotWorker:{...worker,name:'Changed elsewhere'},snapshotProjects:['proj-1']},expected,409],
-      [{snapshotWorker:{...worker,position:'Changed elsewhere'},snapshotProjects:['proj-1']},expected,409],
-      [{snapshotWorker:worker,snapshotProjects:['proj-2']},expected,409],
-      [{snapshotWorker:worker,snapshotProjects:['proj-1'],snapshotError:true},expected,503],
-      [{snapshotWorker:worker,snapshotProjects:['proj-1']},{...expected,assignedProjectIds:['proj-1','proj-1']},400],
+      [{snapshotWorker:{...worker,name:'Changed elsewhere'},snapshotProjects:['00000000-0000-4000-8000-000000000101']},expected,409],
+      [{snapshotWorker:{...worker,position:'Changed elsewhere'},snapshotProjects:['00000000-0000-4000-8000-000000000101']},expected,409],
+      [{snapshotWorker:worker,snapshotProjects:['00000000-0000-4000-8000-000000000102']},expected,409],
+      [{snapshotWorker:worker,snapshotProjects:['00000000-0000-4000-8000-000000000101'],snapshotError:true},expected,503],
+      [{snapshotWorker:worker,snapshotProjects:['00000000-0000-4000-8000-000000000101']},{...expected,assignedProjectIds:['00000000-0000-4000-8000-000000000101','00000000-0000-4000-8000-000000000101']},400],
     ] as const) {
       const {client,rpcSpy,updateUserByIdSpy,workerUpsertSpy}=makeMockAdminClient(options);
       const result=await updateTeamAccount({callerId:'founder-1',input:{userId:'sup-1',expectedSnapshot:snapshot},adminClient:client});
@@ -377,13 +424,13 @@ describe('team administration partial outcomes', () => {
   it('allows an unchanged expected snapshot through to the existing guarded update', async () => {
     const user={id:'sup-1',name:'Engr. Marco Reyes',email:'marco@asinta.ph',role:'supervisor',created_at:'2026-10-11T00:00:00Z'};
     const worker={id:'sup-1',name:'Workforce name',position:'Site Supervisor',active:true,pay_rate:600,pay_rate_type:'daily' as const,contact_number:'—',removed_at:null};
-    const {client,rpcSpy}=makeMockAdminClient({snapshotWorker:worker,snapshotProjects:['proj-1']});
-    const result=await updateTeamAccount({callerId:'founder-1',input:{userId:'sup-1',name:'Updated',expectedSnapshot:{user,worker,assignedProjectIds:['proj-1']}},adminClient:client});
+    const {client,rpcSpy}=makeMockAdminClient({snapshotWorker:worker,snapshotProjects:['00000000-0000-4000-8000-000000000101']});
+    const result=await updateTeamAccount({callerId:'founder-1',input:{userId:'sup-1',name:'Updated',expectedSnapshot:{user,worker,assignedProjectIds:['00000000-0000-4000-8000-000000000101']}},adminClient:client});
     expect(result.body.ok).toBe(true);expect(rpcSpy).toHaveBeenCalledWith('update_team_profile_guarded',expect.objectContaining({p_target:'sup-1',p_name:'Updated'}));
   });
   it('does not implicitly restore a removed worker during an account edit', async () => {
     const {client,rpcSpy,updateUserByIdSpy,workerUpsertSpy}=makeMockAdminClient({removedWorker:true});
-    const result=await updateTeamAccount({callerId:'founder-1',input:{userId:'sup-1',includeInPayroll:true},adminClient:client});
+    const result=await updateTeamAccount({callerId:'founder-1',input:{userId:'sup-1',includeInPayroll:true,payRate:600,payRateType:'daily',contactNumber:''},adminClient:client});
     expect(result.status).toBe(409);expect(result.body.error).toMatch(/restore.*Workforce/i);
     expect(rpcSpy).not.toHaveBeenCalled();expect(updateUserByIdSpy).not.toHaveBeenCalled();expect(workerUpsertSpy).not.toHaveBeenCalled();
     const accountOnly=await updateTeamAccount({callerId:'founder-1',input:{userId:'sup-1',includeInPayroll:false},adminClient:client});
@@ -391,22 +438,29 @@ describe('team administration partial outcomes', () => {
   });
   it('does not change an account when its worker profile cannot be checked', async () => {
     const {client,rpcSpy}=makeMockAdminClient({workerReadError:true});
-    const result=await updateTeamAccount({callerId:'founder-1',input:{userId:'sup-1',includeInPayroll:true},adminClient:client});
+    const result=await updateTeamAccount({callerId:'founder-1',input:{userId:'sup-1',includeInPayroll:true,payRate:600,payRateType:'daily',contactNumber:''},adminClient:client});
     expect(result.status).toBe(503);expect(rpcSpy).not.toHaveBeenCalled();
   });
   it('uses the atomic assignment RPC when a supervisor is assigned several projects', async () => {
     const { client, rpcSpy, supervisorInsertSpy } = makeMockAdminClient();
-    const res = await updateTeamAccount({ callerId:'founder-1', input:{userId:'sup-1',assignedProjectIds:['proj-1','proj-2']}, adminClient:client });
+    const res = await updateTeamAccount({ callerId:'founder-1', input:{userId:'sup-1',assignedProjectIds:['00000000-0000-4000-8000-000000000101','00000000-0000-4000-8000-000000000102']}, adminClient:client });
     expect(res.body.ok).toBe(true);
-    expect(res.body.assignedProjectIds).toEqual(['proj-1','proj-2']);
-    expect(rpcSpy).toHaveBeenCalledWith('replace_supervisor_projects_guarded', {p_actor:'founder-1',p_target:'sup-1',p_projects:['proj-1','proj-2']});
+    expect(res.body.assignedProjectIds).toEqual(['00000000-0000-4000-8000-000000000101','00000000-0000-4000-8000-000000000102']);
+    expect(rpcSpy).toHaveBeenCalledWith('replace_supervisor_projects_guarded', {p_actor:'founder-1',p_target:'sup-1',p_projects:['00000000-0000-4000-8000-000000000101','00000000-0000-4000-8000-000000000102']});
     expect(supervisorInsertSpy).not.toHaveBeenCalled();
+  });
+  it('normalizes duplicate UUIDs before requesting an atomic assignment replacement', async () => {
+    const {client,rpcSpy}=makeMockAdminClient();
+    const id='abcdef12-3456-4abc-8abc-123456789abc';
+    const res=await updateTeamAccount({callerId:'founder-1',input:{userId:'sup-1',assignedProjectIds:[id,id.toUpperCase()]},adminClient:client});
+    expect(res.body.assignedProjectIds).toEqual([id]);
+    expect(rpcSpy).toHaveBeenCalledWith('replace_supervisor_projects_guarded',{p_actor:'founder-1',p_target:'sup-1',p_projects:[id]});
   });
   it('warns when assignment outcome is unconfirmed without a fallback delete and insert', async () => {
     const { client, rpcSpy, supervisorInsertSpy } = makeMockAdminClient();
     rpcSpy.mockImplementationOnce(async (_name,args) => ({data:{id:args.p_target,name:'Supervisor',role:'supervisor'},error:null}) as never);
     rpcSpy.mockImplementationOnce(async () => { throw new Error('lost response'); });
-    const res = await updateTeamAccount({ callerId:'founder-1', input:{userId:'sup-1',assignedProjectIds:['proj-1']}, adminClient:client });
+    const res = await updateTeamAccount({ callerId:'founder-1', input:{userId:'sup-1',assignedProjectIds:['00000000-0000-4000-8000-000000000101']}, adminClient:client });
     expect(res.body.warnings?.join(' ')).toMatch(/assignments were not confirmed/i);
     expect(res.body.assignedProjectIds).toBeUndefined();
     expect(supervisorInsertSpy).not.toHaveBeenCalled();
@@ -423,13 +477,21 @@ describe('team administration partial outcomes', () => {
     expect(JSON.stringify(auditInsertSpy.mock.calls)).not.toContain('password_reset_to_temporary');
   });
 
+  it('does not confirm or disclose a reset when Auth responds with a different account', async () => {
+    const {client,updateUserByIdSpy,auditInsertSpy}=makeMockAdminClient();
+    updateUserByIdSpy.mockImplementationOnce(async()=>({data:{user:{id:'other-user'}},error:null}) as never);
+    const res=await updateTeamAccount({callerId:'founder-1',input:{userId:'sup-1',resetTemporaryPassword:'SafePass123'},adminClient:client});
+    expect(res.body.temporaryPassword).toBeUndefined();
+    expect(res.body.warnings?.join(' ')).toMatch(/password reset were not confirmed/i);
+    expect(JSON.stringify(auditInsertSpy.mock.calls)).not.toContain('password_reset_to_temporary');
+  });
   it('reports failed or thrown assignment and roster writes while retaining provisioned credentials', async () => {
     const { client, supervisorInsertSpy, workerUpsertSpy } = makeMockAdminClient();
     supervisorInsertSpy.mockRejectedValueOnce(new Error('network'));
     workerUpsertSpy.mockImplementationOnce(async () => ({ error: { message: 'database error' } }) as never);
     const res = await createTeamAccount({ callerId: 'founder-1', input: {
       name: 'Test User', email: 'test@example.com', role: 'supervisor', temporaryPassword: 'SafePass123',
-      assignedProjectIds: ['site-1'], includeInPayroll: true, payRate: 0, sendWelcomeEmail: false,
+      assignedProjectIds: ['00000000-0000-4000-8000-000000000103'], includeInPayroll: true, payRate: 0, sendWelcomeEmail: false,
     }, adminClient: client });
     expect(res.body.ok).toBe(true);
     expect(res.body.temporaryPassword).toBe('SafePass123');
@@ -448,7 +510,7 @@ describe('team administration partial outcomes', () => {
   it('keeps credentials available if the welcome email outcome is unknown', async () => {
     const { client } = makeMockAdminClient();
     const res = await createTeamAccount({ callerId: 'founder-1', input: {
-      name: 'Test User', email: 'test@example.com', role: 'founder', temporaryPassword: 'SafePass123',
+      name: 'Test User', email: 'test@example.com', role: 'founder', temporaryPassword: 'SafePass123', sendWelcomeEmail: true,
     }, adminClient: client, sendWelcomeMail: async () => { throw new Error('timeout'); } });
     expect(res.body.ok).toBe(true);
     expect(res.body.temporaryPassword).toBe('SafePass123');

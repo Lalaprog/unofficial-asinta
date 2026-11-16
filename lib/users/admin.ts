@@ -202,12 +202,20 @@ export function parseTeamPayRate(value: unknown): number | null {
     Math.abs(rate * 100 - Math.round(rate * 100)) < 1e-5 ? rate : null;
 }
 
+function validOptionalProjectIds(input: unknown): boolean {
+  // Postgres expects UUIDs. Catch malformed lists before the separate profile
+  // and Auth writes, rather than silently removing items or failing afterward.
+  const uuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+  return input === undefined || (Array.isArray(input) && input.length <= 1000 &&
+    input.every(item => typeof item === 'string' && uuid.test(item.trim())));
+}
+
 function normalizeProjectIds(input: unknown): string[] {
   if (!Array.isArray(input)) return [];
   const seen = new Set<string>();
   for (const item of input) {
     if (typeof item === 'string' && item.trim()) {
-      seen.add(item.trim());
+      seen.add(item.trim().toLowerCase());
     }
   }
   return [...seen];
@@ -241,6 +249,14 @@ export async function createTeamAccount(params: {
 > {
   const { callerId, callerEmail, input, adminClient, sendWelcomeMail } = params;
 
+  if (!validOptionalProjectIds(input.assignedProjectIds)) {
+    return { status: 400, body: { ok: false, error: 'Invalid assigned sites. Review the complete site selection; no account was created.' } };
+  }
+  if ((input.sendWelcomeEmail !== undefined && typeof input.sendWelcomeEmail !== 'boolean') ||
+      (input.includeInPayroll !== undefined && typeof input.includeInPayroll !== 'boolean')) {
+    return { status: 400, body: { ok: false, error: 'Invalid email or payroll selection; no account was created.' } };
+  }
+
   const name = typeof input.name === 'string' ? input.name.trim() : '';
   const email = typeof input.email === 'string' ? input.email.trim().toLowerCase() : '';
   const role = input.role === 'founder' || input.role === 'supervisor' ? input.role : null;
@@ -249,7 +265,8 @@ export async function createTeamAccount(params: {
       ? input.temporaryPassword.trim()
       : generateTemporaryPassword();
   const assignedProjectIds = role === 'supervisor' ? normalizeProjectIds(input.assignedProjectIds) : [];
-  const shouldSendEmail = input.sendWelcomeEmail !== false;
+  // Sending credentials requires an affirmative choice, not an omitted field.
+  const shouldSendEmail = input.sendWelcomeEmail === true;
   const warnings: string[] = [];
   const includeInPayroll = role === 'supervisor' && input.includeInPayroll !== false;
   const requestedRate = parseTeamPayRate(input.payRate);
@@ -466,6 +483,21 @@ export async function updateTeamAccount(params: {
   if (!targetUserId) {
     return { status: 400, body: { ok: false, error: 'Target userId is required.' } };
   }
+  if (!validOptionalProjectIds(input.assignedProjectIds)) {
+    return { status: 400, body: { ok: false, error: 'Invalid assigned sites. Review the complete site selection; no changes were made.' } };
+  }
+  if (input.role !== undefined && input.role !== 'founder' && input.role !== 'supervisor') {
+    return { status: 400, body: { ok: false, error: 'Role must be either founder or supervisor; no changes were made.' } };
+  }
+  if (input.includeInPayroll !== undefined && typeof input.includeInPayroll !== 'boolean') {
+    return { status: 400, body: { ok: false, error: 'Invalid payroll selection; no changes were made.' } };
+  }
+  // Older partial callers sometimes omit payroll fields. Do not treat omission
+  // as permission to create/reactivate a worker or overwrite their rate.
+  if (input.includeInPayroll === undefined &&
+      (input.payRate !== undefined || input.payRateType !== undefined || input.contactNumber !== undefined)) {
+    return { status: 400, body: { ok: false, error: 'Choose whether to include the Supervisor in payroll before changing roster details; no changes were made.' } };
+  }
 
   const { data: beforeUser, error: fetchError } = await adminClient
     .from('users')
@@ -530,14 +562,20 @@ export async function updateTeamAccount(params: {
 
   const warnings: string[] = [];
   const requestedRate = parseTeamPayRate(input.payRate);
-  if (nextRole === 'supervisor' && input.includeInPayroll !== false && requestedRate === null) {
-    return { status: 400, body: { ok: false, error: 'Enter a valid payroll rate from 0 to 99,999,999.99 with at most two decimal places.' } };
+  if (nextRole === 'supervisor' && input.includeInPayroll === true &&
+      (input.payRate === undefined || requestedRate === null ||
+       (input.payRateType !== 'daily' && input.payRateType !== 'hourly') ||
+       typeof input.contactNumber !== 'string')) {
+    return { status: 400, body: { ok: false, error: 'Provide the payroll rate, rate type and contact field. Enter a rate from 0 to 99,999,999.99 with at most two decimal places; no changes were made.' } };
+  }
+  if (nextRole === 'supervisor' && input.includeInPayroll === undefined && nextName !== beforeUser.name) {
+    warnings.push('The linked payroll roster was not changed. Check the workforce name if it should match the updated account.');
   }
 
   // Do not let an account edit implicitly restore a removed workforce profile.
   // Check before changing the account; the database constraint also protects
   // against a concurrent removal after this read.
-  if (nextRole === 'supervisor' && input.includeInPayroll !== false) {
+  if (nextRole === 'supervisor' && input.includeInPayroll === true) {
     try {
       const { data: worker, error: workerError } = await adminClient.from('workers')
         .select('id, removed_at').eq('id', targetUserId).maybeSingle();
@@ -589,7 +627,8 @@ export async function updateTeamAccount(params: {
       ...(resetPasswordValue ? { must_change_password: true } : {}),
     },
   }).catch(() => ({ data: { user: null }, error: { message: 'request failed' } }));
-  const authUpdateConfirmed = !authUpdate.error && Boolean(authUpdate.data?.user);
+  // A response for another identity cannot confirm this account's Auth change.
+  const authUpdateConfirmed = !authUpdate.error && authUpdate.data?.user?.id === targetUserId;
   if (!authUpdateConfirmed) warnings.push(resetPasswordValue
     ? 'Auth update and password reset were not confirmed. Do not share the proposed password; check Supabase Auth before retrying.'
     : 'Auth metadata update was not confirmed. Check Supabase Auth and the profile before retrying.');
@@ -621,9 +660,10 @@ export async function updateTeamAccount(params: {
     }
   }
 
-  // Sync 1:1 linked `public.workers` profile for Supervisor attendance & payroll.
-  if (nextRole === 'supervisor' && input.includeInPayroll !== false) {
-    const payRate = requestedRate ?? 1200;
+  // Only an explicit payroll selection may write the linked worker profile.
+  // Account-only callers must not silently replace rates or reactivate workers.
+  if (nextRole === 'supervisor' && input.includeInPayroll === true) {
+    const payRate = requestedRate!;
     const payRateType = input.payRateType === 'hourly' ? 'hourly' : 'daily';
     const contactNumber =
       typeof input.contactNumber === 'string' && input.contactNumber.trim()

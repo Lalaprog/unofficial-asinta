@@ -57,7 +57,7 @@ export default function UsersPage() {
   const [newIncludeInPayroll, setNewIncludeInPayroll] = useState(true);
   const [newPayRate, setNewPayRate] = useState('1200');
   const [newContactNumber, setNewContactNumber] = useState('');
-  const [sendWelcomeEmail, setSendWelcomeEmail] = useState(true);
+  const [sendWelcomeEmail, setSendWelcomeEmail] = useState(false);
   const [isCreating, setIsCreating] = useState(false);
 
   // One-time provisioned credentials banner
@@ -120,7 +120,7 @@ export default function UsersPage() {
     setNewIncludeInPayroll(true);
     setNewPayRate('1200');
     setNewContactNumber('');
-    setSendWelcomeEmail(true);
+    setSendWelcomeEmail(false);
     setIsCreateOpen(true);
   };
 

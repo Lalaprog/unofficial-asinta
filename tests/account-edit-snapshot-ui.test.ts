@@ -14,6 +14,16 @@ const user={id:'sup',name:'Current Name',email:'test@example.invalid',role:'supe
 beforeEach(()=>{m.actor='founder';m.load.mockReset();m.toast.mockReset();m.refresh.mockReset();});
 afterEach(()=>{cleanup();vi.unstubAllGlobals();});
 describe('team account edit snapshot',()=>{
+ it('starts each account creation with welcome email unchecked',async()=>{
+  render(React.createElement(UsersPage));fireEvent.click(screen.getByRole('button',{name:'Add Member'}));
+  let dialog=await screen.findByRole('dialog');
+  let email=within(dialog).getByRole('checkbox',{name:/Send welcome email/}) as HTMLInputElement;
+  expect(email.checked).toBe(false);fireEvent.click(email);expect(email.checked).toBe(true);
+  fireEvent.click(within(dialog).getByRole('button',{name:'Cancel'}));
+  fireEvent.click(screen.getByRole('button',{name:'Add Member'}));dialog=await screen.findByRole('dialog');
+  email=within(dialog).getByRole('checkbox',{name:/Send welcome email/}) as HTMLInputElement;
+  expect(email.checked).toBe(false);
+ });
  it('uses the targeted read rather than an incomplete shared worker or assignment list',async()=>{
   m.load.mockResolvedValue({user,assignedProjectIds:['a','b'],worker:{id:'sup',name:'Supervisor worker',position:'Site Supervisor',active:true,pay_rate:600,pay_rate_type:'daily',contact_number:'—',removed_at:null}});
   const fetchMock=vi.fn().mockResolvedValue({ok:true,json:async()=>({ok:true,user})});vi.stubGlobal('fetch',fetchMock);
