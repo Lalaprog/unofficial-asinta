@@ -23,6 +23,7 @@ function makeMockAdminClient(options?: {
   profileInsertThrows?: boolean;
   profileInsertMismatch?: boolean;
   projectLookup?: 'missing' | 'error' | 'incomplete' | 'throws';
+  workerConditional?: 'stale' | 'error' | 'throws';
 }) {
   const createUserSpy = vi.fn(async (attrs: { email: string; password: string; email_confirm: boolean; user_metadata?: Record<string, unknown> }) => ({
     data: { user: { id: 'new-user-1', email: attrs.email } },
@@ -38,6 +39,8 @@ function makeMockAdminClient(options?: {
   const projectLookupSpy = vi.fn();
   const workerUpsertSpy = vi.fn(async (_row: Record<string, unknown>, _options: unknown) => ({ error: null }));
   const workerDeactivateSpy = vi.fn(async () => ({ error: null }));
+  const conditionalWorkerWrite=vi.fn();
+  const workerCondition=vi.fn();
   const attendanceNullSpy = vi.fn(async () => ({ error: null }));
   const rpcSpy = vi.fn(async (name: string, args: Record<string, unknown>) => ({
     data: name === 'delete_team_profile_guarded' ? { id: args.p_target } : name === 'replace_supervisor_projects_guarded' ? { project_count: (args.p_projects as string[]).length } : { ...targetUser, id: args.p_target, name: args.p_name, role: args.p_role },
@@ -89,10 +92,30 @@ function makeMockAdminClient(options?: {
         };
       }
       if (table === 'workers') {
+        const conditional=(action:string,row:Record<string,unknown>)=>{
+          conditionalWorkerWrite(action,row);
+          const query={
+            eq:(column:string,value:unknown)=>{workerCondition('eq',column,value);return query;},
+            is:(column:string,value:unknown)=>{workerCondition('is',column,value);return query;},
+            select:()=>({maybeSingle:async()=>{
+              if(options?.workerConditional==='throws')throw Error('lost response');
+              if(options?.workerConditional==='error')return {data:null,error:{message:'failed'}};
+              return {data:options?.workerConditional==='stale'?null:{id:'sup-1'},error:null};
+            }}),
+          };
+          return query;
+        };
         return {
           upsert: workerUpsertSpy,
+          insert: (row:Record<string,unknown>)=>conditional('insert',row),
           select: (columns:string) => ({ eq: () => ({ maybeSingle: async () => ({data: columns.includes('name') ? (options?.snapshotWorker??null) : options?.removedWorker ? {id:'sup-1',removed_at:'2026-11-07'} : null,error:options?.workerReadError ? {message:'read failed'} : null}) }) }),
-          update: () => ({ eq: workerDeactivateSpy }),
+          update: (row:Record<string,unknown>) => {
+            const query=conditional('update',row);
+            return Object.keys(row).length===1 ? {...query, eq:(column:string,value:unknown)=>{
+              query.eq(column,value);
+              return Object.assign(query,{then:(resolve:(value:unknown)=>void,reject:(reason:unknown)=>void)=>workerDeactivateSpy().then(resolve,reject)});
+            }} : query;
+          },
         };
       }
       if (table === 'attendance') {
@@ -177,6 +200,8 @@ function makeMockAdminClient(options?: {
     projectLookupSpy,
     workerUpsertSpy,
     workerDeactivateSpy,
+    conditionalWorkerWrite,
+    workerCondition,
     attendanceNullSpy,
     expensesNullSpy,
   };
@@ -461,6 +486,45 @@ describe('team administration partial outcomes', () => {
       const result=await updateTeamAccount({callerId:'founder-1',input:{userId:'sup-1',expectedSnapshot:snapshot},adminClient:client});
       expect(result.status).toBe(status);expect(rpcSpy).not.toHaveBeenCalled();expect(updateUserByIdSpy).not.toHaveBeenCalled();expect(workerUpsertSpy).not.toHaveBeenCalled();
     }
+  });
+  it('conditionally updates the reviewed worker without an unsafe upsert', async () => {
+    const user={id:'sup-1',name:'Engr. Marco Reyes',email:'marco@asinta.ph',role:'supervisor' as const,created_at:'2026-10-11T00:00:00Z'};
+    const worker={id:'sup-1',name:'Workforce name',position:'Site Supervisor',active:true,pay_rate:600,pay_rate_type:'daily' as const,contact_number:'—',removed_at:null};
+    const {client,conditionalWorkerWrite,workerCondition,workerUpsertSpy}=makeMockAdminClient({snapshotWorker:worker});
+    const res=await updateTeamAccount({callerId:'founder-1',input:{userId:'sup-1',expectedSnapshot:{user,worker,assignedProjectIds:[]},includeInPayroll:true,payRate:700,payRateType:'daily',contactNumber:''},adminClient:client});
+    expect(res.body.ok).toBe(true);expect(res.body.warnings).toBeUndefined();expect(workerUpsertSpy).not.toHaveBeenCalled();
+    expect(conditionalWorkerWrite).toHaveBeenCalledWith('update',expect.objectContaining({id:'sup-1',pay_rate:700}));
+    expect(workerCondition.mock.calls).toEqual([['eq','id','sup-1'],['eq','name','Workforce name'],['eq','position','Site Supervisor'],['eq','active',true],['eq','pay_rate',600],['eq','pay_rate_type','daily'],['eq','contact_number','—'],['is','removed_at',null]]);
+  });
+  it.each(['stale','error','throws'] as const)('reports %s worker writes without overwriting the profile',async workerConditional=>{
+    const user={id:'sup-1',name:'Engr. Marco Reyes',email:'marco@asinta.ph',role:'supervisor' as const,created_at:'2026-10-11T00:00:00Z'};
+    const worker={id:'sup-1',name:'Workforce name',position:'Site Supervisor',active:true,pay_rate:600,pay_rate_type:'daily' as const,contact_number:'—',removed_at:null};
+    const {client,workerUpsertSpy,conditionalWorkerWrite}=makeMockAdminClient({snapshotWorker:worker,workerConditional});
+    const res=await updateTeamAccount({callerId:'founder-1',input:{userId:'sup-1',expectedSnapshot:{user,worker,assignedProjectIds:[]},includeInPayroll:true,payRate:700,payRateType:'daily',contactNumber:''},adminClient:client});
+    expect(res.body.ok).toBe(true);expect(res.body.warnings?.join(' ')).toMatch(/roster update was not confirmed/i);
+    expect(workerUpsertSpy).not.toHaveBeenCalled();expect(conditionalWorkerWrite).toHaveBeenCalledTimes(1);
+  });
+  it.each(['stale','error','throws'] as const)('does not deactivate a changed workforce profile (%s)',async workerConditional=>{
+    const user={id:'sup-1',name:'Engr. Marco Reyes',email:'marco@asinta.ph',role:'supervisor' as const,created_at:'2026-10-11T00:00:00Z'};
+    const worker={id:'sup-1',name:'Workforce name',position:'Site Supervisor',active:true,pay_rate:600,pay_rate_type:'daily' as const,contact_number:null,removed_at:null};
+    const {client,conditionalWorkerWrite,workerCondition,workerDeactivateSpy}=makeMockAdminClient({snapshotWorker:worker,workerConditional});
+    const res=await updateTeamAccount({callerId:'founder-1',input:{userId:'sup-1',expectedSnapshot:{user,worker,assignedProjectIds:[]},includeInPayroll:false},adminClient:client});
+    expect(res.body.ok).toBe(true);expect(res.body.warnings?.join(' ')).toMatch(/deactivation was not confirmed/i);
+    expect(conditionalWorkerWrite).toHaveBeenCalledWith('update',{active:false});
+    expect(workerCondition).toHaveBeenCalledWith('is','contact_number',null);expect(workerDeactivateSpy).not.toHaveBeenCalled();
+  });
+  it('does not deactivate a workforce profile created after an absent snapshot',async()=>{
+    const user={id:'sup-1',name:'Engr. Marco Reyes',email:'marco@asinta.ph',role:'supervisor' as const,created_at:'2026-10-11T00:00:00Z'};
+    const {client,conditionalWorkerWrite}=makeMockAdminClient();
+    const res=await updateTeamAccount({callerId:'founder-1',input:{userId:'sup-1',expectedSnapshot:{user,worker:null,assignedProjectIds:[]},includeInPayroll:false},adminClient:client});
+    expect(res.body.warnings?.join(' ')).toMatch(/No payroll profile/);expect(conditionalWorkerWrite).not.toHaveBeenCalled();
+  });
+  it('inserts rather than overwriting a profile created after a missing-worker snapshot',async()=>{
+    const user={id:'sup-1',name:'Engr. Marco Reyes',email:'marco@asinta.ph',role:'supervisor' as const,created_at:'2026-10-11T00:00:00Z'};
+    const {client,conditionalWorkerWrite,workerUpsertSpy}=makeMockAdminClient({snapshotWorker:null,workerConditional:'error'});
+    const res=await updateTeamAccount({callerId:'founder-1',input:{userId:'sup-1',expectedSnapshot:{user,worker:null,assignedProjectIds:[]},includeInPayroll:true,payRate:700,payRateType:'daily',contactNumber:''},adminClient:client});
+    expect(conditionalWorkerWrite).toHaveBeenCalledWith('insert',expect.objectContaining({id:'sup-1'}));
+    expect(workerUpsertSpy).not.toHaveBeenCalled();expect(res.body.warnings?.join(' ')).toMatch(/roster update was not confirmed/i);
   });
   it('allows an unchanged expected snapshot through to the existing guarded update', async () => {
     const user={id:'sup-1',name:'Engr. Marco Reyes',email:'marco@asinta.ph',role:'supervisor',created_at:'2026-10-11T00:00:00Z'};

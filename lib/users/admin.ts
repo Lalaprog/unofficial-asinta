@@ -19,7 +19,7 @@
  */
 
 import type { User, UserRole } from '@/types';
-import {loadAccountEditSnapshot,parseAccountEditSnapshot,sameAccountEditSnapshot} from './accountEditSnapshot';
+import {loadAccountEditSnapshot,parseAccountEditSnapshot,sameAccountEditSnapshot,type AccountEditSnapshot} from './accountEditSnapshot';
 
 async function writeUserAuditEntry(
   adminClient: MinimalAdminSupabaseClient,
@@ -58,6 +58,19 @@ async function writeUserAuditEntry(
 // Convert both API errors and transport exceptions into reviewable warnings.
 async function mutationFailed(operation: () => PromiseLike<{ error: unknown }>): Promise<boolean> {
   try { return Boolean((await operation()).error); } catch { return true; }
+}
+
+/** Match every reviewed worker field in the same UPDATE as the write. */
+async function updateReviewedWorker(client: MinimalAdminSupabaseClient, old: NonNullable<AccountEditSnapshot['worker']>, changes: Record<string,unknown>): Promise<boolean> {
+  try {
+    let query=client.from('workers').update(changes).eq('id',old.id)
+      .eq('name',old.name).eq('position',old.position).eq('active',old.active)
+      .eq('pay_rate',old.pay_rate).eq('pay_rate_type',old.pay_rate_type);
+    query=old.contact_number===null?query.is('contact_number',null):query.eq('contact_number',old.contact_number);
+    query=old.removed_at===null?query.is('removed_at',null):query.eq('removed_at',old.removed_at);
+    const result=await query.select('id').maybeSingle();
+    return !result.error && result.data?.id===old.id;
+  } catch { return false; }
 }
 
 export interface MinimalAdminSupabaseClient {
@@ -603,14 +616,14 @@ export async function updateTeamAccount(params: {
   // This blocks already-committed changes, not races after this read; the
   // Auth, profile, assignments and worker writes remain separate operations.
   // Older clients without a snapshot retain their existing behavior.
+  let expectedSnapshot: AccountEditSnapshot | undefined;
   if (input.expectedSnapshot !== undefined) {
-    let expected;
-    try { expected = parseAccountEditSnapshot(input.expectedSnapshot, targetUserId); }
+    try { expectedSnapshot = parseAccountEditSnapshot(input.expectedSnapshot, targetUserId); }
     catch { return {status:400,body:{ok:false,error:'The account edit snapshot is invalid. Close and reopen the editor; no changes were made.'}}; }
     let current;
     try { current = await loadAccountEditSnapshot(adminClient, targetUserId); }
     catch { return {status:503,body:{ok:false,error:'Could not recheck the account, workforce profile and assigned sites. No changes were made; try again.'}}; }
-    if (!sameAccountEditSnapshot(expected, current)) {
+    if (!sameAccountEditSnapshot(expectedSnapshot, current)) {
       return {status:409,body:{ok:false,error:'This account, workforce profile or assigned sites changed while editing. No changes were made. Close and reopen the editor to review the latest details.'}};
     }
   }
@@ -688,25 +701,40 @@ export async function updateTeamAccount(params: {
         ? input.contactNumber.trim()
         : '—';
 
-    const workerFailed = await mutationFailed(() => adminClient.from('workers').upsert(
-      {
-        id: targetUserId,
-        name: nextName,
-        contact_number: contactNumber,
-        position: 'Site Supervisor',
-        pay_rate: payRate,
-        pay_rate_type: payRateType,
-        active: true,
-      },
-      { onConflict: 'id' }
-    ));
-    if (workerFailed) warnings.push('Payroll roster update was not confirmed. The profile may have been removed; check Workforce and restore it before including this Supervisor in payroll. Check the account changes before retrying.');
+    const workerRow = {id: targetUserId, name: nextName, contact_number: contactNumber,
+      position: 'Site Supervisor', pay_rate: payRate, pay_rate_type: payRateType, active: true};
+    let workerFailed: boolean;
+    if (!expectedSnapshot) {
+      // Compatibility for old callers; they do not have a reviewed baseline.
+      workerFailed = await mutationFailed(() => adminClient.from('workers').upsert(workerRow, {onConflict:'id'}));
+    } else {
+      // Match the reviewed worker row in the write itself. A concurrent change
+      // after the earlier recheck must not be overwritten. If it was absent,
+      // INSERT (not upsert) prevents replacing a newly created profile.
+      const old=expectedSnapshot.worker;
+      if (old) workerFailed=!(await updateReviewedWorker(adminClient, old, workerRow));
+      else {
+        try {
+          const result=await adminClient.from('workers').insert(workerRow).select('id').maybeSingle();
+          workerFailed=Boolean(result.error) || result.data?.id!==targetUserId;
+        } catch { workerFailed=true; }
+      }
+    }
+    if (workerFailed) warnings.push('Payroll roster update was not confirmed or the profile changed. Check Workforce and the account changes before retrying; restore a removed profile only through Workforce.');
   } else if (nextRole === 'founder' || input.includeInPayroll === false) {
-    const workerFailed = await mutationFailed(() => adminClient
-      .from('workers')
-      .update({ active: false })
-      .eq('id', targetUserId));
-    if (workerFailed) warnings.push('Payroll roster deactivation was not confirmed. Check the worker record before running payroll.');
+    let workerFailed: boolean;
+    if (!expectedSnapshot) {
+      workerFailed = await mutationFailed(() => adminClient.from('workers').update({ active: false }).eq('id', targetUserId));
+    } else if (expectedSnapshot.worker) {
+      workerFailed = !(await updateReviewedWorker(adminClient, expectedSnapshot.worker, { active: false }));
+    } else {
+      // No reviewed profile to deactivate. Do not affect one created since the review.
+      workerFailed = false;
+      if (nextRole === 'supervisor' || expectedSnapshot.user.role === 'supervisor') {
+        warnings.push('No payroll profile was present in the reviewed account. Check Workforce before running payroll if another profile may have been created.');
+      }
+    }
+    if (workerFailed) warnings.push('Payroll roster deactivation was not confirmed or the profile changed. Check Workforce and the account changes before running payroll or retrying.');
   }
 
   const auditRes = await writeUserAuditEntry(adminClient, {

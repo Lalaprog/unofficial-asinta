@@ -58,8 +58,10 @@ function Summary({projectId,onReview}:{projectId:string;userId:string;onReview:(
      const response=await client.rpc(legacyEnabled?'project_cost_legacy_cross_site_overview':'project_cost_cross_site_overview',{p_project:projectId});if(response.error)throw response.error;
      if(legacyEnabled){const current=parseLegacyCrossSiteOverview(response.data,projectId);if(!active)return;
       setCoverage(current.legacy);setLegacySignals({siteAttributions:current.legacy.siteAttributions,changedAttributions:current.legacy.changedAttributions});
-      if(current.legacy.siteAttributions>0){const matching=matchingLegacyOverview(current.legacy);setState(matching?{status:'legacy',review:matching}:current.mixed?{status:'mixed',...current.mixed}:{status:'legacy-unavailable'});return;}
+      // Changed evidence takes precedence even when another split is present;
+      // direct the Founder to investigate it rather than just request a review.
       if(current.legacy.changedAttributions>0){setState({status:'legacy-changed'});return;}
+      if(current.legacy.siteAttributions>0){const matching=matchingLegacyOverview(current.legacy);setState(matching?{status:'legacy',review:matching}:current.mixed?{status:'mixed',...current.mixed}:{status:'legacy-unavailable'});return;}
       setState(current.cross?{status:'cross',review:current.cross}:{status:current.legacy.review.found?'incoming':'empty'});return;
      }
      const current=parseAtomicCrossSiteOverview(response.data,projectId);if(!active)return;
