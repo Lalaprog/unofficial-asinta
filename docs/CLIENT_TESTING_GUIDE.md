@@ -25,6 +25,7 @@ This is the practical checklist for the promoted development site. It is written
 | Client | TEST ONLY Client |
 | Sites | TEST Site A, TEST Site B, TEST Site C (all active) |
 | Supervisor assignment | Sherwin → Sites A and B only |
+| Second Supervisor (recommended) | Create one fictional account on **Site C only** to test cross-supervisor isolation; see T17 |
 | Workers | TEST Worker Alpha (Carpenter, ₱600/day, Site A), TEST Worker Bravo (Mason, ₱650/day, Site B), TEST Worker Charlie (Laborer, ₱500/day, unassigned), TEST Worker Delta (Carpenter, ₱700/day, Site C), Sherwin (Supervisor profile) |
 | Attendance | Alpha at Site A and Bravo at Site B, **25–30 October 2026** (Sunday–Saturday week of 25–31 Oct) |
 | Expenses | 4 existing expense rows |
@@ -145,6 +146,7 @@ Because the only attendance is in the last week of October, the **current-week**
 ## Priority 4 — accounts, roles, and isolation
 
 ### T17. Supervisor sign-in and site scope (10 min, use the phone)
+0. If you have not already, create a second fictional Supervisor limited to **Site C** (T26), so you can prove two Supervisors do not see each other's sites.
 1. Sign in as the Supervisor.
 2. Expected: only **Site A and Site B** appear; Site C is not selectable anywhere, including Roll Call, Bale, and project lists.
 3. Expected: Founder-only pages (Payroll, Site Expenses, Team Accounts, Firm Settings, Dashboard) are not reachable.
@@ -166,12 +168,29 @@ Because the only attendance is in the last week of October, the **current-week**
 3. Reopen the same editor in two tabs, change one field in each, and save both.
 4. Expected: the second save refuses with a "changed while editing" message rather than overwriting.
 5. Report: whether the refusal happened, and whether the workforce row stayed intact.
-6. Do not change the Supervisor's role, do not remove the payroll link, and **do not send a welcome email** during testing.
+6. Do not change the Supervisor's role and do not remove the payroll link. Leave the welcome email unchecked.
 
 ### T21. Add and archive a fictional worker (5 min)
 1. Add a worker to Site C, then archive/remove them.
 2. Expected: the worker can be restored; attendance/payroll history is not deleted; the login (there is none for workers) is unaffected.
 3. Report any hard delete, missing restore, or lost history.
+
+### T26. Create a second Supervisor and force the password change (10 min) — `/users` (Founder)
+This is the only way to reach the first-login password screen, and it gives you a second Supervisor for isolation tests.
+1. Create a fictional account (e.g. "SupTest Two") with an email **you own**, role Supervisor, assigned to **Site C only**.
+2. Leave **Include in payroll** checked (it is the default). This creates a linked workforce profile.
+3. Tick the welcome email **once** if you want to test it, then enter the temporary password yourself if the mail is slow — the credential card is the reliable path.
+4. Sign in as the new account with the temporary password.
+5. Expected: the workspace is blocked by "Set Your Personal Password"; the only alternative is Sign Out. Save a new password and the workspace opens.
+6. Sign out and sign back in as SupTest Two with the **new** password. Expected: sign-in works; the temporary password no longer does.
+7. Sign in as Founder, open SupTest Two, and confirm it is limited to Site C in Roll Call, project lists and Bale.
+8. **Keep the account.** A second Supervisor is a valid standing state, not cleanup debt.
+9. Report: whether the forced screen appeared, whether the old password stopped working, and whether Site C is the only site SupTest Two can reach.
+
+### T27. Team account removal, only if you want to see the guard (5 min)
+1. Try to remove SupTest Two **after** it has submitted a Roll Call.
+2. Expected: removal is refused with a message that the account is linked to existing records, and the account stays usable.
+3. Report the exact message. This refusal is the current intended behaviour, but it reveals a known gap: there is no way to switch the login off yet. Do not delete accounts that hold history.
 
 ---
 
@@ -203,7 +222,8 @@ These are known gaps, not test failures. Report them only if the behaviour is wo
 - **No real money, SMS, or email.** Nothing in the app transfers funds. Email/SMS screens should not be used with real recipients.
 - **AI is a suggestion only.** Accuracy on real receipt photos is not verified; F17-style checks only cover a fictional text draft.
 - **Backup and restore are not done.** Do not enter anyone's real payroll, client, or receipt data.
-- **Welcome email and first-login password change.** The welcome email is opt-in, unchecked by default, and sends a real email through the firm SMTP, so **skip it**: leave the checkbox off every time. The forced "Set Your Personal Password" gate is verified in code but is not device-tested, because testing it needs a newly created account and your existing accounts keep their logins. If you ever choose to test it, create a fictional account with a mailbox you control, never a real worker's address, and expect it to leave a real Auth account behind.
+- **Welcome email.** It is opt-in, unchecked by default, and sends a real email through the firm SMTP to whatever address you type. At most tick it once, for the fictional SupTest account in T26, to a mailbox you control; never a real worker's address. Account creation does not depend on it — the credential card is the reliable path.
+- **Account offboarding.** There is no "disable login" action yet. Removal is refused once an account holds history, so a departed Supervisor's login cannot be switched off. For now keep fictional test accounts instead of deleting them, and treat real offboarding as an open item.
 - **Chapters 4 screenshots and figure legibility** are your separate paper task.
 
 ---
