@@ -956,26 +956,25 @@ export default function FounderDashboard() {
                     <h2 className="break-words text-[10px] font-bold uppercase tracking-[0.13em] text-ink-secondary">
                       Workforce &amp; pay
                     </h2>
-                    <p className="mt-0.5 text-[10px] font-semibold uppercase tracking-wider text-brand">
-                      Payroll vouchers
+                    <details className="mt-1 text-[11px] text-ink-secondary lg:hidden"><summary className="cursor-pointer font-semibold text-brand">About this figure</summary><p className="mt-1 leading-relaxed">Full vouchers may appear at multiple sites; this is not a site cost or a complete list. Weekly and Supervisor payroll appear only where enabled.</p></details>
+                    <p className="mt-0.5 truncate text-[11px] text-ink-muted">
+                      {activeProject ? `${activeProject.name} · Approximate matches use attendance, notes or past advances` : 'Across all projects'}
                     </p>
                   </div>
-                  <Link
-                    href="/payroll"
-                    className="group/link inline-flex shrink-0 items-center gap-1 rounded-full border border-[#e3ddd2] bg-[#faf8f3] px-2.5 py-0.5 text-[11px] font-semibold text-brand transition-colors hover:bg-[#f2ede2]"
-                  >
-                    Open payroll <ArrowGlyph className="h-3 w-3" />
-                  </Link>
+                  <span className="inline-flex shrink-0 items-center gap-1 rounded-full border border-[#e3ddd2] bg-[#faf8f3] px-2.5 py-0.5 text-[10px] font-bold text-ink-secondary">
+                    <AnimatedInteger value={metrics.payroll.approvedUnpaidCount} suffix=" to pay" />
+                  </span>
                 </div>
-
-                <p className="mt-2 text-[11px] leading-relaxed text-ink-secondary">Legacy vouchers only; weekly and Supervisor payroll are not included.{activeProject && ' Approximate matches use attendance, notes or past advances. Full vouchers may appear at multiple sites; not a site cost or complete list.'}</p>
                 <div className="mt-2.5 flex items-baseline justify-between gap-2">
                   <p className="break-words text-2xl font-semibold tracking-tight text-navy sm:text-[28px]">
                     <AnimatedPeso amount={metrics.payroll.approvedUnpaid} className="font-serif" />
                   </p>
-                  <span className="shrink-0 text-[11px] font-medium text-ink-secondary">
-                    <AnimatedInteger value={metrics.payroll.approvedUnpaidCount} /> approved to pay
-                  </span>
+                  <Link
+                    href="/payroll"
+                    className="group/link inline-flex shrink-0 items-center gap-1 text-[11px] font-semibold text-brand hover:underline"
+                  >
+                    Open payroll <ArrowGlyph className="h-3 w-3" />
+                  </Link>
                 </div>
 
                 <div className="mt-1.5 flex items-center justify-between text-xs text-ink-secondary">

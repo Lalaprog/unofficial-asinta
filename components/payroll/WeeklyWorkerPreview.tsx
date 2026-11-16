@@ -22,7 +22,7 @@ export function WeeklyWorkerPreview() {
  const [open,setOpen]=useState(false);
  return <section className="overflow-hidden rounded-2xl border border-surface-border bg-white">
   <button type="button" aria-expanded={open} onClick={()=>setOpen(v=>!v)} className="flex min-h-11 w-full items-center justify-between gap-3 p-4 text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-brand sm:p-5">
-   <span><span className="block text-sm font-semibold text-navy">Weekly worker planning preview</span><span className="mt-1 block text-xs text-ink-secondary">{weeklyWorkerActionsPreviewEnabled()?'Sunday–Saturday · experimental voucher actions available':'Sunday–Saturday · read-only, not a payroll run'}</span></span><ChevronDown aria-hidden="true" className={`h-4 w-4 shrink-0 ${open?'rotate-180':''}`} />
+   <span><span className="block text-sm font-semibold text-navy">This week&rsquo;s worker pay</span><span className="mt-1 block text-xs text-ink-secondary">{weeklyWorkerActionsPreviewEnabled()?'Sunday–Saturday · save a draft, then approve and record payment':'Sunday–Saturday · estimate only'}</span></span><ChevronDown aria-hidden="true" className={`h-4 w-4 shrink-0 ${open?'rotate-180':''}`} />
   </button>
   {open && <Contents />}
  </section>;

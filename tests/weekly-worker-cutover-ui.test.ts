@@ -19,7 +19,7 @@ describe('experimental weekly cutover: legacy UI hold',()=>{
  });
  it('hides legacy writers even if the other weekly gates are missing',()=>{
   vi.stubEnv('NEXT_PUBLIC_WEEKLY_WORKER_CUTOVER_PREVIEW','true');vi.stubEnv('NEXT_PUBLIC_FINANCE_FOUNDATION_PREVIEW','false');
-  render(React.createElement(PayrollPage));expect(screen.queryByRole('button',{name:'New Payroll Run'})).toBeNull();expect(screen.queryByRole('button',{name:'Approve'})).toBeNull();expect(screen.queryByRole('button',{name:'Mark as Paid'})).toBeNull();expect(screen.getAllByRole('button',{name:'Print Payslip'})).toHaveLength(2);expect(screen.getByText(/complete weekly voucher controls are not enabled/)).toBeTruthy();expect(mock.create).not.toHaveBeenCalled();expect(mock.update).not.toHaveBeenCalled();
+  render(React.createElement(PayrollPage));expect(screen.queryByRole('button',{name:'New Payroll Run'})).toBeNull();expect(screen.queryByRole('button',{name:'Approve'})).toBeNull();expect(screen.queryByRole('button',{name:'Mark as Paid'})).toBeNull();expect(screen.getAllByRole('button',{name:'Print Payslip'})).toHaveLength(2);expect(screen.getByText(/weekly controls are not fully enabled/)).toBeTruthy();expect(mock.create).not.toHaveBeenCalled();expect(mock.update).not.toHaveBeenCalled();
  });
  it('closes an open legacy confirmation when cutover mode becomes active',()=>{
   const view=render(React.createElement(PayrollPage));fireEvent.click(screen.getByRole('button',{name:'Approve'}));expect(screen.getByRole('button',{name:'Approve voucher'})).toBeTruthy();

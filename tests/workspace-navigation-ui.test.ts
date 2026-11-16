@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import React, {useState} from 'react';
-import {cleanup, fireEvent, render, screen, within} from '@testing-library/react';
+import {cleanup, fireEvent, render, screen} from '@testing-library/react';
 import {afterEach, describe, expect, it, vi} from 'vitest';
 
 vi.mock('@/components/payroll/WeeklyWorkerPreview', () => ({WeeklyWorkerPreview: () => React.createElement(Card,{name:'Weekly worker'})}));
@@ -10,7 +10,6 @@ vi.mock('@/components/attendance/SupervisorDayPanel', () => ({SupervisorDayPanel
 vi.mock('@/components/attendance/SupervisorLeavePanel', () => ({SupervisorLeavePanel: () => React.createElement(Card,{name:'Leave'})}));
 import {PayrollFoundationPanels} from '@/components/payroll/PayrollFoundationPanels';
 import {SupervisorFoundationPanels} from '@/components/attendance/SupervisorFoundationPanels';
-import {WorkspaceJumpLinks} from '@/components/ui/WorkspaceJumpLinks';
 
 function Card({name}:{name:string}) {
  const [open,setOpen]=useState(false);
@@ -21,18 +20,14 @@ function Card({name}:{name:string}) {
 }
 afterEach(()=>{cleanup();vi.unstubAllEnvs();});
 describe('workspace navigation',()=>{
- it('offers ordinary labelled links without performing work or hiding content',()=>{
-  render(React.createElement(WorkspaceJumpLinks,{label:'Example sections',links:[{href:'#one',label:'First task'},{href:'#two',label:'Second task'}]}));
-  const nav=screen.getByRole('navigation',{name:'Example sections'});
-  expect(within(nav).getByRole('link',{name:'First task'}).getAttribute('href')).toBe('#one');
-  expect(within(nav).getByRole('link',{name:'Second task'}).getAttribute('href')).toBe('#two');
- });
  it('keeps independent open panels and drafts intact while another task opens',()=>{
   vi.stubEnv('NEXT_PUBLIC_FINANCE_FOUNDATION_PREVIEW','true');
   const view=render(React.createElement(React.Fragment,null,React.createElement(PayrollFoundationPanels),React.createElement(SupervisorFoundationPanels)));
   fireEvent.click(screen.getByRole('button',{name:'Weekly worker'}));
   fireEvent.change(screen.getByRole('textbox',{name:'Weekly worker draft'}),{target:{value:'unfinished'}});
+  fireEvent.click(screen.getByRole('button',{name:'More payroll tools'}));
   fireEvent.click(screen.getByRole('button',{name:'Allowances'}));
+  fireEvent.click(screen.getByRole('button',{name:'My own attendance and leave'}));
   fireEvent.click(screen.getByRole('button',{name:'Leave'}));
   expect((screen.getByRole('textbox',{name:'Weekly worker draft'}) as HTMLInputElement).value).toBe('unfinished');
   expect(screen.getByRole('button',{name:'Weekly worker'}).getAttribute('aria-expanded')).toBe('true');

@@ -14,21 +14,17 @@ beforeEach(()=>mocks.rpc.mockReset());afterEach(()=>{cleanup();vi.unstubAllEnvs(
 describe('project expense display',()=>{
  it('keeps project-cost review separately disabled and does not load it automatically',async()=>{
   vi.stubEnv('NEXT_PUBLIC_FINANCE_FOUNDATION_PREVIEW','true');vi.stubEnv('NEXT_PUBLIC_PROJECT_COST_RECONCILIATION_PREVIEW','false');mocks.rpc.mockResolvedValue(page([],false));const view=render(React.createElement(ProjectExpenseLedger,{projectId:'site',userId:'founder',onRefreshTotals:vi.fn()}));await screen.findByText(/No recorded expenses/);expect(screen.queryByText('Experimental project-cost review')).toBeNull();
-  vi.stubEnv('NEXT_PUBLIC_PROJECT_COST_RECONCILIATION_PREVIEW','true');view.rerender(React.createElement(ProjectExpenseLedger,{projectId:'site',userId:'founder',onRefreshTotals:vi.fn()}));expect(screen.getByText('Experimental project-cost review')).toBeTruthy();expect(mocks.rpc.mock.calls.some(([name])=>name==='project_cost_reconciliation_preview')).toBe(false);
+  vi.stubEnv('NEXT_PUBLIC_PROJECT_COST_RECONCILIATION_PREVIEW','true');view.rerender(React.createElement(ProjectExpenseLedger,{projectId:'site',userId:'founder',onRefreshTotals:vi.fn()}));fireEvent.click(screen.getByRole('button',{name:'Cost review, payroll evidence and rentals'}));expect(screen.getByText('Experimental project-cost review')).toBeTruthy();expect(mocks.rpc.mock.calls.some(([name])=>name==='project_cost_reconciliation_preview')).toBe(false);
  });
  it('puts recorded expenses before optional review tools and links to enabled sections',async()=>{
   vi.stubEnv('NEXT_PUBLIC_FINANCE_FOUNDATION_PREVIEW','true');vi.stubEnv('NEXT_PUBLIC_PROJECT_COST_RECONCILIATION_PREVIEW','true');
   mocks.rpc.mockResolvedValue(page([],false));
   const view=render(React.createElement(ProjectExpenseLedger,{projectId:'site',userId:'founder',onRefreshTotals:vi.fn(),reviewTarget:'scratch'}));
   await screen.findByText(/No recorded expenses/);
-  const nav=screen.getByRole('navigation',{name:'Project cost sections'});
-  const entries=nav.querySelector('a[href="#project-expense-entries"]');
-  const review=nav.querySelector('a[href="#project-cost-review"]');
-  expect(entries).toBeTruthy();expect(review).toBeTruthy();
   const ledger=view.container.querySelector('#project-expense-entries')!;
   const cost=view.container.querySelector('#project-cost-review')!;
   expect(ledger.compareDocumentPosition(cost) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
-  expect(document.activeElement?.textContent).toBe('Experimental project-cost review');
+  expect(screen.getByRole('button',{name:'Cost review, payroll evidence and rentals'}).getAttribute('aria-expanded')).toBe('true');
   expect(mocks.rpc.mock.calls.some(([name])=>name==='project_cost_reconciliation_preview')).toBe(false);
  });
  it('shows server records in centavos and loads older pages',async()=>{

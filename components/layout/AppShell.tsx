@@ -133,7 +133,7 @@ export const AppShell: React.FC<AppShellProps> = ({ children, requireFounder = f
 
   // Do not render cached workspace content while assurance is unresolved.
   if (user && assurance !== 'ready') {
-    return <AsintaLoader variant="fullscreen" title="Checking account security…" subtitle="Preparing your workspace securely" />;
+    return <AsintaLoader variant="fullscreen" title="Checking account security…" subtitle="Checking your account securely" />;
   }
 
   // 1b. Resolving authentication session
@@ -143,7 +143,7 @@ export const AppShell: React.FC<AppShellProps> = ({ children, requireFounder = f
         <SkeletonShell />
         <AsintaLoader
           variant="fullscreen"
-          title="Verifying credentials & preparing your workspace…"
+          title="Signing you in…"
           subtitle="Authenticating your Asinta workspace access"
         />
       </div>

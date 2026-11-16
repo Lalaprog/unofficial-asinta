@@ -1,7 +1,6 @@
 'use client';
 import React,{useEffect,useRef,useState} from 'react';
 import {Button} from '@/components/ui/Button';
-import {WorkspaceJumpLinks} from '@/components/ui/WorkspaceJumpLinks';
 import {createClient} from '@/lib/supabase/client';
 import {costCents,estimateProjectCost,formatCostCents,parseCostSnapshot,potentialDuplicateExpenses,type CostChoice,type CostSnapshot} from '@/lib/projects/projectCostReconciliation';
 import {PotentialDuplicateExpense} from './PotentialDuplicateExpense';
@@ -37,14 +36,6 @@ export function ProjectCostReconciliation({projectId,userId,reviewTarget=null,sc
   {scratchEnabled&&<div id="advanced-project-cost-tools" hidden={primaryReview&&!advancedOpen} className="space-y-3">
   <h4 ref={scratchTarget} tabIndex={-1} className="text-sm font-bold text-navy">Experimental project-cost review</h4>
   <p>This temporary scratchpad compares recorded expenses, paid worker allocations and confirmed rental links from one database snapshot. It saves nothing and does not prove payment or a final project cost.</p>
-  <WorkspaceJumpLinks label="Cost review tools" links={[
-   {href:'#cost-scratch',label:'Scratch estimate'},
-   ...(historicalCostReviewPreviewEnabled() ? [{href:'#cost-historical-review',label:'Historical review'}] : []),
-   ...(historicalWorkerAttributionPreviewEnabled() ? [{href:'#cost-historical-evidence',label:'Historical evidence'}] : []),
-   ...(projectCostCorrectionPreviewEnabled() ? [{href:'#cost-correction-evidence',label:'Correction evidence'}] : []),
-   ...(correctedProjectCostReviewPreviewEnabled() ? [{href:'#cost-corrected-review',label:'Corrected review'}] : []),
-   ...(projectCostReviewLedgerPreviewEnabled() && !historicalCostReviewPreviewEnabled() ? [{href:'#cost-review-ledger',label:'Review history'}] : []),
-  ]} />
   <p id="cost-scratch" tabIndex={-1} className="scroll-mt-24 rounded-lg bg-status-warning-bg p-3">Review each expense for Bale, payroll or rental duplicates before choosing. A confirmed rental is already represented by its linked expense—never add it again. The AI Bale hint is not proof. Legacy or externally paid payroll, correction amounts, missing allocations and unrecorded expenses may be absent from the estimate. Matching voucher adjustment cases are shown separately, without allocating them. Check original records and other projects independently.</p>
   <Button type="button" size="sm" variant="secondary" disabled={loading} onClick={load}>{snapshot?'Reload review snapshot':'Load review snapshot'}</Button>
   {loading&&<p role="status">Loading complete review snapshot…</p>}{error&&<p role="alert">{error}</p>}

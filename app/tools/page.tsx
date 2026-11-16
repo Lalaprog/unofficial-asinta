@@ -42,6 +42,7 @@ export default function ToolsPage() {
   const [isEditModalOpen, setIsEditModalOpen] = useState(false);
   const [pendingDelete, setPendingDelete] = useState<{ id: string; name: string } | null>(null);
   const [selectedTool, setSelectedTool] = useState<Tool | null>(null);
+  const [toolView, setToolView] = useState<'owned' | 'rented'>('owned');
 
   const [formData, setFormData] = useState({
     name: '',
@@ -117,14 +118,27 @@ export default function ToolsPage() {
         <WorkspaceHeader
           eyebrow="Equipment"
           title="Tools & Equipment"
-          description={`${tools.length} equipment record(s). Track condition and where each item is assigned.`}
+          description="Add and track owned tools below. For rentals, open the Rented equipment tab."
           action={<Button variant="primary" size="sm" onClick={() => {
             setFormData({ name: '', quantity: '1', condition: 'excellent', project_id: '' });
             setIsAddModalOpen(true);
-          }} leftIcon={<Plus className="w-4 h-4" />}>Add Tool</Button>}
+          }} leftIcon={<Plus className="w-4 h-4" />}>Add owned tool</Button>}
         />
+
+        <div role="tablist" aria-label="Equipment type" className="flex flex-wrap gap-2">
+          <button type="button" role="tab" aria-selected={toolView === 'owned'} onClick={() => setToolView('owned')}
+            className={`min-h-11 rounded-lg border px-4 text-xs font-semibold focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand focus-visible:ring-offset-2 ${toolView === 'owned' ? 'border-navy bg-navy text-white' : 'border-surface-border bg-white text-navy hover:bg-surface-inset'}`}>Owned equipment</button>
+          <button type="button" role="tab" aria-selected={toolView === 'rented'} onClick={() => setToolView('rented')}
+            className={`min-h-11 rounded-lg border px-4 text-xs font-semibold focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand focus-visible:ring-offset-2 ${toolView === 'rented' ? 'border-navy bg-navy text-white' : 'border-surface-border bg-white text-navy hover:bg-surface-inset'}`}>Rented equipment</button>
+        </div>
+
+        {toolView === 'rented' ? <section className="space-y-2 rounded-2xl border border-surface-border bg-white p-4 text-xs text-ink-secondary sm:p-5">
+          <h2 className="text-sm font-semibold text-navy">Where rentals are recorded</h2>
+          <p>Rented equipment is an expense, not inventory. Record the rental cost under <strong>Site Expenses</strong> for that project, then link it as a rental from the project&rsquo;s <strong>Expenses</strong> tab. It appears there with its own confirmation status, and it is counted once in the project cost.</p>
+          <p>Nothing is added to the owned equipment list, and confirming a rental does not send a payment.</p>
+          <Button variant="secondary" size="sm" onClick={() => { window.location.href = '/expenses'; }} leftIcon={<Plus className="w-4 h-4" />}>Record a rental expense</Button>
+        </section> : <>
         <OwnedEquipmentFoundation userId={user?.id} isFounder={isFounder} assurance={assurance} authLoading={authLoading} />
-        {ownedEquipmentPreviewEnabled() && <p className="rounded-xl border border-status-warning/25 bg-status-warning-bg p-3 text-xs text-ink-secondary">The cards below are the older single-site view. They cannot show split locations. Use the allocation workspace above for recorded allocations; legacy edits or deletes on managed items may be rejected.</p>}
         <WorkspaceFilters title="Find equipment" summary={<FilterSummary count={filteredTools.length} itemName="tool" active={Boolean(searchQuery) || conditionFilter !== 'all'} onClear={() => { setSearchQuery(''); setConditionFilter('all'); }} />}>
           <div className="flex flex-col sm:flex-row sm:items-end gap-3">
             <div className="w-full sm:w-80">
@@ -206,10 +220,10 @@ export default function ToolsPage() {
                   {/* Allocation */}
                   <div className="p-3 rounded-xl bg-surface-inset/60 border border-surface-border text-xs">
                     <div className="text-[11px] font-medium text-ink-secondary">
-                      {ownedEquipmentPreviewEnabled() ? 'Legacy single-site view' : 'Current Site Deployment'}
+                      Recorded site
                     </div>
                     <div className="font-semibold text-navy mt-0.5">
-                      {ownedEquipmentPreviewEnabled() && !tool.project_id ? 'Unassigned in legacy view; check allocation workspace' : proj ? proj.name : tool.project_id ? 'Assigned project unavailable' : 'Asinta Studio Central Depot'}
+                      {ownedEquipmentPreviewEnabled() && !tool.project_id ? 'No site recorded — check Units by site above' : proj ? proj.name : tool.project_id ? 'Assigned project unavailable' : 'Asinta Studio Central Depot'}
                     </div>
                   </div>
                 </div>
@@ -249,6 +263,7 @@ export default function ToolsPage() {
             </div>
           )}
         </div>
+        </>}
       </div>
 
       {/* ADD / EDIT TOOL MODAL */}

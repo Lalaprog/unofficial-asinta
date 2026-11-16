@@ -40,7 +40,7 @@ describe('payroll project site search', () => {
   it('keeps matrix and run scope unchanged while searching, then shares an explicitly selected site', async () => {
     mock.create.mockResolvedValue(false);
     render(React.createElement(PayrollPage));
-    fireEvent.click(screen.getByRole('button', { name: /Payroll-period attendance matrix/ }));
+    fireEvent.click(screen.getByRole('button', { name: 'Attendance matrix and period tools' }));fireEvent.click(screen.getByRole('button', { name: /Payroll-period attendance matrix/ }));
     const matrixSelect = screen.getByRole('combobox', { name: 'Matrix project site' }) as HTMLSelectElement;
     fireEvent.click(screen.getByRole('button', { name: 'Search matrix project sites' }));
     fireEvent.change(screen.getByRole('searchbox', { name: 'Search matrix project sites' }), { target: { value: 'luna' } });

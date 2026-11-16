@@ -14,7 +14,6 @@ import {
 import { Button } from '@/components/ui/Button';
 import { FilterSummary } from '@/components/ui/FilterSummary';
 import { WorkspaceHeader } from '@/components/ui/WorkspaceHeader';
-import { WorkspaceJumpLinks } from '@/components/ui/WorkspaceJumpLinks';
 import { EmptyState } from '@/components/ui/EmptyState';
 import { WorkspaceFilters } from '@/components/ui/WorkspaceFilters';
 import { useToast } from '@/components/ui/Toast';
@@ -27,10 +26,11 @@ import { PayslipBatch } from '@/components/payroll/PayslipBatch';
 import { formatPeso, formatPesoCompact } from '@/lib/email/format';
 import { formatRecordedWork } from '@/lib/payroll/display';
 import { AttendanceMatrix } from '@/components/payroll/AttendanceMatrix';
+import { AdvancedTools } from '@/components/ui/AdvancedTools';
 import { PayrollFoundationPanels } from '@/components/payroll/PayrollFoundationPanels';
 import { getManilaClock } from '@/lib/reminders/scheduler';
 import { workerPayrollPeriod } from '@/lib/payroll/periods';
-import { financeFoundationEnabled, weeklyWorkerCutoverMode, weeklyWorkerReturnPreviewEnabled } from '@/lib/finance/featureAvailability';
+import { weeklyWorkerCutoverMode, weeklyWorkerReturnPreviewEnabled } from '@/lib/finance/featureAvailability';
 
 export default function PayrollPage() {
   const { showToast } = useToast();
@@ -192,26 +192,29 @@ export default function PayrollPage() {
         <WorkspaceHeader
           eyebrow="Workforce & pay"
           title="Payroll"
-          description="Review attendance-based vouchers, Bale deductions and worker payslips."
+          description="Load a week, check the amounts, then save a draft. Approval and payment are separate steps."
           action={<div className="flex flex-wrap gap-2"><Button variant="secondary" size="md" onClick={() => setIsBatchPayslipOpen(true)} leftIcon={<Printer className="w-4 h-4" />}>Print worker payslips</Button>{!cutoverMode && <Button variant="primary" size="md" onClick={() => setIsGenerateModalOpen(true)} leftIcon={<Plus className="w-4 h-4" />}>New Payroll Run</Button>}</div>}
         />
 
-        <div className="rounded-xl border border-status-warning/25 bg-status-warning-bg p-3 text-xs leading-relaxed text-ink-secondary" role="note">
-          {cutoverMode ? (weeklyWorkerReturnPreviewEnabled() ? 'Experimental weekly cutover mode: legacy payroll actions are hidden. Use the weekly voucher controls below, and reconcile existing vouchers before recording any external payment. This is not proof that the database or scheduler is ready.' : 'Experimental weekly cutover mode: legacy payroll actions are hidden, but the complete weekly voucher controls are not enabled. Do not record payroll until the configuration is reviewed.') : 'The current payroll generator uses the existing legacy rules. The requested weekly payroll and Bale rules are not yet implemented. Verify amounts against your records before approving or recording a payment.'}
-        </div>
-
-        <WorkspaceJumpLinks label="Payroll page sections" links={[
-          ...(financeFoundationEnabled() ? [{href: '#payroll-workspaces', label: 'Payroll workspaces'}] : []),
-          {href: '#payroll-attendance', label: 'Attendance matrix'},
-          {href: '#payroll-vouchers', label: 'Find vouchers'},
-        ]} />
+        {cutoverMode && <div className="rounded-xl border border-status-warning/25 bg-status-warning-bg p-3 text-xs leading-relaxed text-ink-secondary" role="note">
+          {weeklyWorkerReturnPreviewEnabled() ? 'Weekly payroll mode: the old payroll actions are hidden. Use the weekly controls below and reconcile existing vouchers before recording any external payment.' : 'Weekly payroll mode is on, but the weekly controls are not fully enabled. Do not record payroll until the configuration is reviewed.'}
+        </div>}
 
         <PayrollFoundationPanels />
 
-        <div id="payroll-attendance" tabIndex={-1} className="scroll-mt-24 focus-visible:outline focus-visible:outline-2 focus-visible:outline-brand"><AttendanceMatrix start={periodStart} end={periodEnd} site={generateProjectId} setStart={setPeriodStart} setEnd={setPeriodEnd} setSite={setGenerateProjectId} projects={projects} /></div>
+        <AdvancedTools
+          title="Attendance matrix and period tools"
+          description="A read-only view of recorded attendance by worker and date. It never creates or changes payroll."
+        >
+          <div id="payroll-attendance"><AttendanceMatrix start={periodStart} end={periodEnd} site={generateProjectId} setStart={setPeriodStart} setEnd={setPeriodEnd} setSite={setGenerateProjectId} projects={projects} /></div>
+        </AdvancedTools>
 
-        {/* Top Summary Cards */}
-        <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 auto-rows-fr">
+        <div id="payroll-vouchers" className="scroll-mt-24 space-y-3">
+          <div>
+            <h2 className="text-base font-semibold text-navy">2. Saved payroll vouchers</h2>
+            <p className="mt-1 text-xs leading-relaxed text-ink-secondary">Every voucher already saved for the shown filters. Draft and approved vouchers are not necessarily paid.</p>
+          </div>
+          <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
           <div className="h-full p-4 sm:p-5 rounded-xl bg-white border border-surface-border flex flex-col justify-between">
             <div className="text-xs font-medium text-ink-secondary">Net pay on shown vouchers</div>
             <div className="text-2xl font-bold text-navy mt-1 tabular-nums break-words">{formatPHP(totalNetDisbursement)}</div>
@@ -230,9 +233,6 @@ export default function PayrollPage() {
           </div>
         </div>
 
-        <p className="text-xs leading-relaxed text-ink-secondary">Summary reflects the current filters and includes vouchers of all shown statuses. Deductions on draft or approved vouchers are not necessarily collected.</p>
-
-        <div id="payroll-vouchers" tabIndex={-1} className="scroll-mt-24 focus-visible:outline focus-visible:outline-2 focus-visible:outline-brand">
         <WorkspaceFilters title="Find a payroll voucher" summary={<FilterSummary count={filteredPayroll.length} itemName="payroll" active={Boolean(searchQuery) || projectFilter !== 'all' || statusFilter !== 'all'} onClear={() => { setSearchQuery(''); setProjectFilter('all'); setStatusFilter('all'); }} />}>
           <div className="flex flex-col sm:flex-row flex-wrap sm:items-end gap-3">
             <div className="w-full sm:w-80">
@@ -275,7 +275,6 @@ export default function PayrollPage() {
             </div>
           </div>
         </WorkspaceFilters>
-        </div>
 
         {/* Payroll Table */}
         <div data-page-guide="list" className="bg-white rounded-xl border border-surface-border overflow-hidden">
@@ -393,6 +392,7 @@ export default function PayrollPage() {
               <EmptyState title={payroll.length === 0 ? 'No payroll vouchers yet' : 'No payroll vouchers match'} description={payroll.length === 0 ? 'No payroll vouchers have been recorded yet.' : 'No payroll vouchers match the current search or filters. Clear filters to see all vouchers.'} />
             )}
           </div>
+        </div>
         </div>
       </div>
 

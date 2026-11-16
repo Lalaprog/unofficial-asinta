@@ -375,7 +375,7 @@ export default function SettingsPage() {
               <Database className="w-5 h-5 text-navy" />
               <CardTitle>Data &amp; Session</CardTitle>
             </div>
-            <CardDescription>Refresh workspace records and review session security.</CardDescription>
+            <CardDescription>Refresh data and review session security.</CardDescription>
           </CardHeader>
           <CardContent className="space-y-4 text-xs">
             <div className="p-4 rounded-2xl bg-slate-50 border border-slate-200 space-y-2">

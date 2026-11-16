@@ -35,6 +35,10 @@ describe('unfinished finance foundation UI release gate', () => {
   it('mounts the panels only for an explicit true build value', () => {
     vi.stubEnv('NEXT_PUBLIC_FINANCE_FOUNDATION_PREVIEW','true');
     render(React.createElement(React.Fragment, null, React.createElement(PayrollFoundationPanels), React.createElement(SupervisorFoundationPanels)));
+    // The primary week mounts immediately; everything else is lazy until its drawer opens.
+    expect(mock.mounts.mock.calls.map(([name]) => name)).toEqual(['weekly']);
+    fireEvent.click(screen.getByRole('button',{name:'More payroll tools'}));
+    fireEvent.click(screen.getByRole('button',{name:'My own attendance and leave'}));
     expect(mock.mounts.mock.calls.map(([name]) => name)).toEqual(['weekly','allowance','review','day','leave']);
   });
   it('exposes both weekly write surfaces only when the full coordinated set is enabled', () => {
@@ -54,7 +58,7 @@ describe('unfinished finance foundation UI release gate', () => {
   it('requires both switches for the Supervisor payroll preview', () => {
     vi.stubEnv('NEXT_PUBLIC_FINANCE_FOUNDATION_PREVIEW','true');vi.stubEnv('NEXT_PUBLIC_SUPERVISOR_PAYROLL_PREVIEW','false');
     const view=render(React.createElement(PayrollFoundationPanels));expect(screen.queryByText('Supervisor payroll preview')).toBeNull();
-    vi.stubEnv('NEXT_PUBLIC_SUPERVISOR_PAYROLL_PREVIEW','true');view.rerender(React.createElement(PayrollFoundationPanels));expect(screen.getByText('Supervisor payroll preview')).toBeTruthy();
+    vi.stubEnv('NEXT_PUBLIC_SUPERVISOR_PAYROLL_PREVIEW','true');view.rerender(React.createElement(PayrollFoundationPanels));fireEvent.click(screen.getByRole('button',{name:'More payroll tools'}));expect(screen.getByText('Supervisor payroll preview')).toBeTruthy();
     vi.stubEnv('NEXT_PUBLIC_FINANCE_FOUNDATION_PREVIEW','false');view.rerender(React.createElement(PayrollFoundationPanels));expect(screen.queryByText('Supervisor payroll preview')).toBeNull();
   });
   it('hides missing-schema controls but preserves Founder edit and approval actions', () => {

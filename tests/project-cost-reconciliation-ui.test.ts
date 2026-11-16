@@ -21,13 +21,12 @@ describe('temporary project-cost review',()=>{
   vi.stubEnv('NEXT_PUBLIC_FINANCE_FOUNDATION_PREVIEW','true');vi.stubEnv('NEXT_PUBLIC_PROJECT_COST_RECONCILIATION_PREVIEW','true');vi.stubEnv('NEXT_PUBLIC_HISTORICAL_WORKER_ATTRIBUTION_PREVIEW','false');const view=render(panel());expect(screen.queryByRole('button',{name:'Load historical evidence'})).toBeNull();
   vi.stubEnv('NEXT_PUBLIC_HISTORICAL_WORKER_ATTRIBUTION_PREVIEW','true');view.rerender(panel());expect(screen.getByRole('button',{name:'Load historical evidence'})).toBeTruthy();expect(mock.rpc).not.toHaveBeenCalled();
  });
- it('only links to available cost review tools without loading a snapshot',()=>{
+ it('keeps every cost review tool available without loading a snapshot',()=>{
   vi.stubEnv('NEXT_PUBLIC_FINANCE_FOUNDATION_PREVIEW','true');vi.stubEnv('NEXT_PUBLIC_PROJECT_COST_RECONCILIATION_PREVIEW','true');vi.stubEnv('NEXT_PUBLIC_HISTORICAL_WORKER_ATTRIBUTION_PREVIEW','true');
-  const view=render(panel());const nav=screen.getByRole('navigation',{name:'Cost review tools'});
-  for(const link of within(nav).getAllByRole('link')){
-   const href=link.getAttribute('href')!;expect(href.startsWith('#')).toBe(true);expect(view.container.querySelector(href)).toBeTruthy();
-  }
-  expect(within(nav).getByRole('link',{name:'Historical evidence'})).toBeTruthy();expect(mock.rpc).not.toHaveBeenCalled();
+  render(panel());
+  expect(screen.getByRole('button',{name:'Load review snapshot'})).toBeTruthy();
+  expect(screen.getByRole('button',{name:'Load historical evidence'})).toBeTruthy();
+  expect(mock.rpc).not.toHaveBeenCalled();
  });
  it('requires every manual choice and acknowledgement before a temporary result, without adding rentals twice',async()=>{await load();expect(screen.getByText(/not an extra amount/)).toBeTruthy();expect(screen.getByText(/AI flagged possible Bale/)).toBeTruthy();expect(screen.getByText(/Whole worker-week voucher: gross/).textContent).toMatch(/Bale ₱100.00/);expect(screen.queryByText(/Temporary, incomplete estimate/)).toBeNull();
   choose(materialExpense,'Include expense');choose(baleExpense,'Exclude from this preview');expect((screen.getByRole('checkbox') as HTMLInputElement).disabled).toBe(true);choose(rentalExpense,'Include expense');fireEvent.click(screen.getByRole('checkbox'));expect(screen.getByText('Temporary, incomplete estimate: ₱1,650.00')).toBeTruthy();expect(screen.getByText(/Expenses excluded from this preview: ₱100.00/)).toBeTruthy();expect(mock.rpc).toHaveBeenCalledTimes(1);

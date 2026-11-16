@@ -253,7 +253,7 @@ export default function LoginPage() {
     return (
       <AsintaLoader
         variant="fullscreen"
-        title="Verifying credentials & preparing your workspace…"
+        title="Signing you in…"
         subtitle="Synchronizing studio ledger & site records"
       />
     );

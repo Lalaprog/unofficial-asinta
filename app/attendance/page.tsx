@@ -1087,7 +1087,7 @@ function AttendancePageInner() {
                 ? 'Submitted daily attendance logs & approval status'
                 : activeTab === 'workforce'
                   ? isSupervisor ? 'Workers assigned to the selected project' : `${workers.filter((w) => w.active).length} active craftsmen & supervisors`
-                  : 'Mark crew on site'}
+                  : isSupervisor ? 'Choose the site, then mark each worker and submit' : 'Choose the site and date, mark the crew, then submit'}
             </p>
           </div>
 
@@ -1129,109 +1129,6 @@ function AttendancePageInner() {
             </div>
           )}
         </div>
-
-        {activeTab === 'terminal' && assurance === 'ready' && !authLoading && (isFounder || isSupervisor) && <SupervisorFoundationPanels />}
-
-        {/* Founder Review Banner: Supervisor Attendance Submitted with Crew Report */}
-        {isFounder && (pendingApprovals.loading || pendingApprovals.error || (pendingApprovals.total ?? 0) > 0) && (
-          <div className="p-3.5 rounded-xl bg-status-warning-bg/60 border border-status-warning/25 space-y-3 text-xs">
-            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
-              <div className="flex items-start sm:items-center gap-2.5">
-                <ShieldAlert className="w-5 h-5 text-status-warning shrink-0 mt-0.5 sm:mt-0" />
-                <div>
-                  <div className="font-bold text-navy text-sm">
-                    Supervisor approvals {pendingApprovals.total !== null ? `(${pendingApprovals.total} pending)` : ''}
-                  </div>
-                  <div className="text-ink-secondary">
-                    Review these supervisor logs before payroll. This queue reflects the last check; refresh for changes made elsewhere.
-                  </div>
-                </div>
-              </div>
-            </div>
-
-            {pendingApprovals.loading && <p role="status" className="text-ink-secondary">Loading pending approvals…</p>}
-            {pendingApprovals.error && <p role="alert" className="text-status-danger">Could not load the approval queue. Retry before assuming there are no pending approvals.</p>}
-            {pendingApprovals.items.length > 0 && <div className="divide-y divide-surface-border/60 bg-white rounded-xl border border-surface-border overflow-hidden">
-              {pendingApprovals.items.map((rec) => {
-                const legacyLocked = generalSupervisorCutover && (users.some(u => u.id === rec.worker_id && u.role === 'supervisor') || projectSupervisors.some(ps => ps.supervisor_id === rec.worker_id));
-                return (
-                  <div
-                    key={rec.id}
-                    className="p-3 flex flex-col sm:flex-row sm:items-center justify-between gap-2"
-                  >
-                    <div className="space-y-0.5">
-                      <div className="flex items-center gap-2 flex-wrap">
-                        <span className="font-bold text-navy">{rec.worker_name || 'Supervisor'}</span>
-                        <Badge variant="warning" size="sm">
-                          Site Supervisor
-                        </Badge>
-                        <span className="text-ink-secondary">
-                          · Attendance at <strong className="text-navy">{rec.project_name || 'Project Site'}</strong> on <strong>{rec.date}</strong>
-                        </span>
-                      </div>
-                      {legacyLocked && <p className="font-semibold text-status-warning">Historical site record is read-only; review general daily attendance and reconcile this history separately.</p>}
-                      {rec.notes && (
-                        <div className="whitespace-pre-wrap break-words text-[11px] text-ink-muted">{rec.notes}</div>
-                      )}
-                    </div>
-
-                    <div className="flex items-center flex-wrap gap-1.5 shrink-0">
-                      <Button
-                        type="button"
-                        variant="primary"
-                        size="sm"
-                        className="min-h-11 sm:min-h-9"
-                        disabled={legacyLocked || isReviewingSupervisor || pendingApprovals.loading || Boolean(pendingApprovals.error)}
-                        onClick={() => handleFounderSupervisorReview(rec, 'present')}
-                        leftIcon={<ShieldCheck className="w-3.5 h-3.5" />}
-                      >
-                        Approve Full Day
-                      </Button>
-                      <Button
-                        type="button"
-                        variant="secondary"
-                        size="sm"
-                        className="min-h-11 sm:min-h-9"
-                        disabled={legacyLocked || isReviewingSupervisor || pendingApprovals.loading || Boolean(pendingApprovals.error)}
-                        onClick={() => handleFounderSupervisorReview(rec, 'half_day')}
-                      >
-                        Half Day
-                      </Button>
-                      <Button
-                        type="button"
-                        variant="danger"
-                        size="sm"
-                        className="min-h-11 sm:min-h-9"
-                        disabled={legacyLocked || isReviewingSupervisor || pendingApprovals.loading || Boolean(pendingApprovals.error)}
-                        onClick={() => handleFounderSupervisorReview(rec, 'absent')}
-                        leftIcon={<XCircle className="w-3.5 h-3.5" />}
-                      >
-                        Mark Absent
-                      </Button>
-                    </div>
-                  </div>
-                );
-              })}
-            </div>}
-            <div className="flex flex-wrap gap-2">
-              {pendingApprovals.hasMore && (
-                <Button type="button" variant="secondary" size="sm" disabled={pendingApprovals.loading} onClick={pendingApprovals.loadMore}>
-                  Show more pending approvals
-                </Button>
-              )}
-              <Button type="button" variant="secondary" size="sm" disabled={pendingApprovals.loading} onClick={() => void pendingApprovals.refresh()}>
-                {pendingApprovals.error ? 'Retry approvals' : 'Refresh approvals'}
-              </Button>
-            </div>
-          </div>
-        )}
-
-        {isFounder && !pendingApprovals.loading && !pendingApprovals.error && pendingApprovals.total === 0 && (
-          <div className="flex flex-wrap items-center justify-between gap-2 rounded-xl border border-surface-border bg-white px-3.5 py-2 text-xs text-ink-secondary">
-            <span>No pending supervisor approvals at last check.</span>
-            <Button type="button" variant="ghost" size="sm" onClick={() => void pendingApprovals.refresh()}>Refresh approvals</Button>
-          </div>
-        )}
 
         {activeTab === 'terminal' && supervisorIdentityNeedsReview && (
           <div role="alert" className="rounded-xl border border-status-warning/30 bg-status-warning-bg p-4 text-sm text-navy">
@@ -1909,9 +1806,120 @@ function AttendancePageInner() {
           </form>
         )}
 
+        {activeTab === 'terminal' && <div className="space-y-4 pt-2">
+          <h2 className="px-1 text-sm font-semibold text-navy">Additional actions</h2>
+        {isFounder && (pendingApprovals.total ?? 0) > 0 && (
+          <p className="rounded-xl border border-status-warning/25 bg-status-warning-bg/60 px-3.5 py-2 text-xs text-navy">
+            <strong>{pendingApprovals.total} Supervisor {pendingApprovals.total === 1 ? 'log' : 'logs'}</strong> waiting for approval. <Link href="/attendance?tab=history" prefetch={false} className="font-semibold text-brand underline">Review in Attendance History</Link>
+          </p>
+        )}
+        {activeTab === 'terminal' && assurance === 'ready' && !authLoading && (isFounder || isSupervisor) && <SupervisorFoundationPanels />}
+
+
+        </div>}
+
         {/* TAB 2: ATTENDANCE HISTORY & FOUNDER OVERRIDE (GROUPED BY DAILY SITE SHEETS) */}
         {activeTab === 'history' && (
           <div className="space-y-4">
+        {/* Founder Review Banner: Supervisor Attendance Submitted with Crew Report */}
+        {isFounder && (pendingApprovals.loading || pendingApprovals.error || (pendingApprovals.total ?? 0) > 0) && (
+          <div className="p-3.5 rounded-xl bg-status-warning-bg/60 border border-status-warning/25 space-y-3 text-xs">
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+              <div className="flex items-start sm:items-center gap-2.5">
+                <ShieldAlert className="w-5 h-5 text-status-warning shrink-0 mt-0.5 sm:mt-0" />
+                <div>
+                  <div className="font-bold text-navy text-sm">
+                    Supervisor approvals {pendingApprovals.total !== null ? `(${pendingApprovals.total} pending)` : ''}
+                  </div>
+                  <div className="text-ink-secondary">
+                    Review these supervisor logs before payroll. This queue reflects the last check; refresh for changes made elsewhere.
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            {pendingApprovals.loading && <p role="status" className="text-ink-secondary">Loading pending approvals…</p>}
+            {pendingApprovals.error && <p role="alert" className="text-status-danger">Could not load the approval queue. Retry before assuming there are no pending approvals.</p>}
+            {pendingApprovals.items.length > 0 && <div className="divide-y divide-surface-border/60 bg-white rounded-xl border border-surface-border overflow-hidden">
+              {pendingApprovals.items.map((rec) => {
+                const legacyLocked = generalSupervisorCutover && (users.some(u => u.id === rec.worker_id && u.role === 'supervisor') || projectSupervisors.some(ps => ps.supervisor_id === rec.worker_id));
+                return (
+                  <div
+                    key={rec.id}
+                    className="p-3 flex flex-col sm:flex-row sm:items-center justify-between gap-2"
+                  >
+                    <div className="space-y-0.5">
+                      <div className="flex items-center gap-2 flex-wrap">
+                        <span className="font-bold text-navy">{rec.worker_name || 'Supervisor'}</span>
+                        <Badge variant="warning" size="sm">
+                          Site Supervisor
+                        </Badge>
+                        <span className="text-ink-secondary">
+                          · Attendance at <strong className="text-navy">{rec.project_name || 'Project Site'}</strong> on <strong>{rec.date}</strong>
+                        </span>
+                      </div>
+                      {legacyLocked && <p className="font-semibold text-status-warning">Historical site record is read-only; review general daily attendance and reconcile this history separately.</p>}
+                      {rec.notes && (
+                        <div className="whitespace-pre-wrap break-words text-[11px] text-ink-muted">{rec.notes}</div>
+                      )}
+                    </div>
+
+                    <div className="flex items-center flex-wrap gap-1.5 shrink-0">
+                      <Button
+                        type="button"
+                        variant="primary"
+                        size="sm"
+                        className="min-h-11 sm:min-h-9"
+                        disabled={legacyLocked || isReviewingSupervisor || pendingApprovals.loading || Boolean(pendingApprovals.error)}
+                        onClick={() => handleFounderSupervisorReview(rec, 'present')}
+                        leftIcon={<ShieldCheck className="w-3.5 h-3.5" />}
+                      >
+                        Approve Full Day
+                      </Button>
+                      <Button
+                        type="button"
+                        variant="secondary"
+                        size="sm"
+                        className="min-h-11 sm:min-h-9"
+                        disabled={legacyLocked || isReviewingSupervisor || pendingApprovals.loading || Boolean(pendingApprovals.error)}
+                        onClick={() => handleFounderSupervisorReview(rec, 'half_day')}
+                      >
+                        Half Day
+                      </Button>
+                      <Button
+                        type="button"
+                        variant="danger"
+                        size="sm"
+                        className="min-h-11 sm:min-h-9"
+                        disabled={legacyLocked || isReviewingSupervisor || pendingApprovals.loading || Boolean(pendingApprovals.error)}
+                        onClick={() => handleFounderSupervisorReview(rec, 'absent')}
+                        leftIcon={<XCircle className="w-3.5 h-3.5" />}
+                      >
+                        Mark Absent
+                      </Button>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>}
+            <div className="flex flex-wrap gap-2">
+              {pendingApprovals.hasMore && (
+                <Button type="button" variant="secondary" size="sm" disabled={pendingApprovals.loading} onClick={pendingApprovals.loadMore}>
+                  Show more pending approvals
+                </Button>
+              )}
+              <Button type="button" variant="secondary" size="sm" disabled={pendingApprovals.loading} onClick={() => void pendingApprovals.refresh()}>
+                {pendingApprovals.error ? 'Retry approvals' : 'Refresh approvals'}
+              </Button>
+            </div>
+          </div>
+        )}
+        {isFounder && !pendingApprovals.loading && !pendingApprovals.error && pendingApprovals.total === 0 && (
+          <div className="flex flex-wrap items-center justify-between gap-2 rounded-xl border border-surface-border bg-white px-3.5 py-2 text-xs text-ink-secondary">
+            <span>No pending supervisor approvals at last check.</span>
+            <Button type="button" variant="ghost" size="sm" onClick={() => void pendingApprovals.refresh()}>Refresh approvals</Button>
+          </div>
+        )}
             {/* Keep search visible on mobile; reveal secondary filters only on request. */}
             <div data-page-guide="filters" className="space-y-3 rounded-2xl border border-surface-border bg-white p-3.5 shadow-sm">
               <div className="flex items-center gap-2 lg:hidden">
@@ -2102,7 +2110,7 @@ function AttendancePageInner() {
             </Modal>
 
             <div className="grid gap-4 lg:grid-cols-[minmax(19rem,0.85fr)_minmax(0,1.15fr)] lg:items-start">
-              <AttendanceHistoryCalendar userId={user?.id} today={today} filters={historyFilters} settling={isHistorySearchSettling} revision={historyRevision} onSelectDate={setHistoryDateFilter} />
+              <div className="lg:sticky lg:top-24 lg:self-start"><AttendanceHistoryCalendar userId={user?.id} today={today} filters={historyFilters} settling={isHistorySearchSettling} revision={historyRevision} onSelectDate={setHistoryDateFilter} /></div>
               <div className="min-w-0 space-y-3">
                 <div className="space-y-1 text-xs text-ink-secondary">
                   <p aria-live="polite">{history.loading || isHistorySearchSettling ? 'Updating results…' : history.error ? 'History could not be loaded; retry to update results.' : `Showing ${history.items.length} date/site ${history.items.length === 1 ? 'sheet' : 'sheets'} from the server. Counts reflect the current filters.`}</p>

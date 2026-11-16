@@ -33,6 +33,20 @@ This is the practical checklist for the promoted development site. It is written
 
 Because the only attendance is in the last week of October, the **current-week** payroll preview will look empty until you submit a new Roll Call. That is expected, not a failure.
 
+### Layout changed on 16–17 November — where things moved
+
+The screens were reorganised for readability. No rule, amount, or record was changed.
+
+- **Jump-to link bars are gone.** Pages now open on the task itself; scroll or use the section headings.
+- **Payroll** starts with **1. This week's worker pay**. Allowances, Supervisor pay, historical pay and paid-record reviews are inside **More payroll tools**. Existing vouchers and the filters are under **2. Saved payroll vouchers**. The attendance matrix is inside **Attendance matrix and period tools**.
+- **Daily Roll Call** opens on the site/date selector and the crew list. Your own attendance and leave are under **Additional actions** below the crew list.
+- **Founder approvals of Supervisor logs** now live at the top of **Attendance History**. The Roll Call tab shows a short "N logs waiting" link instead of the full queue.
+- **Attendance History** keeps the calendar on the left while the list scrolls on desktop; on a phone the calendar sits above the list.
+- **Tools & Equipment** has two tabs: **Owned equipment** and **Rented equipment**. Unit locations are under **Units by site**.
+- **A project's Expenses tab** shows recorded expenses first; cost review, payroll evidence and rentals are inside **Cost review, payroll evidence and rentals**. **Paid payroll for this site** is a separate drawer on the Overview tab.
+
+If a control you remember is not where you expect, say which screen you were on and what you were trying to do rather than assuming it was removed.
+
 ---
 
 ## Priority 1 — blockers (do these first)

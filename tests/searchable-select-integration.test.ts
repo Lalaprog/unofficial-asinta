@@ -38,7 +38,7 @@ describe('searchable native selectors in existing forms',()=>{
   });
   it('retains the depot default and sends the explicitly selected site in the tool form',async()=>{
     mock.projects=Array.from({length:10},(_,i)=>({id:`site-${i}`,name:i===8?'Luna Site':`Site ${i}`}));
-    render(React.createElement(ToolsPage));fireEvent.click(screen.getByRole('button',{name:'Add Tool'}));
+    render(React.createElement(ToolsPage));fireEvent.click(screen.getByRole('button',{name:'Add owned tool'}));
     const modal=screen.getByRole('dialog',{name:'Register New Tool / Machine'});
     const select=within(modal).getByRole('combobox',{name:'Assigned Project Site'}) as HTMLSelectElement;
     expect(select.value).toBe('');fireEvent.click(within(modal).getByRole('button',{name:'Search project sites'}));

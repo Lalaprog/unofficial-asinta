@@ -10,7 +10,7 @@ import {equipmentAttempt,parseEquipmentAttempt,parseEquipmentSnapshot,verifyEqui
 
 export function OwnedEquipmentManager({userId}:{userId:string}){
  const [open,setOpen]=useState(false);
- return <section className="rounded-2xl border border-surface-border bg-white p-4"><button type="button" aria-expanded={open} onClick={()=>setOpen(v=>!v)} className="min-h-11 w-full text-left text-sm font-semibold text-navy">Owned equipment allocation workspace {open?'▴':'▾'}</button>{open&&<Contents key={userId} userId={userId}/>}</section>;
+ return <section className="rounded-2xl border border-surface-border bg-white p-4"><button type="button" aria-expanded={open} onClick={()=>setOpen(v=>!v)} className="min-h-11 w-full text-left text-sm font-semibold text-navy">Units by site {open?'▴':'▾'}</button>{open&&<Contents key={userId} userId={userId}/>}</section>;
 }
 function Contents({userId}:{userId:string}){
  const storageKey=`owned-equipment-attempt:${userId}`;
